@@ -11,6 +11,22 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Codemode-only tool exposure + thread-history tools (2026-10-16).** The
+  model is now offered exactly one tool: `codemode` (every registration
+  carries `callers: ["tools"]` — pi-durable's native script-only marker;
+  `agent.callable` still reaches everything, and the codemode prompt section
+  lists the tools for the model). Two new guild tools, script-only likewise:
+  `thread_history` (the current chat's messages, newest-first pages,
+  `beforeSeq` cursor, role/text server-side filters, 4 KB per-event clip,
+  100-event clamp; optional permission-checked `chatId` for cross-chat
+  drill-in) and `thread_search` (ILIKE over the text fields of every chat in
+  the owner's (org, user) list scope, snippet hits only, 30-hit clamp). The
+  QuickJS VM holds no state between scripts, so the tools are the persistence
+  — every fetch is bounded server-side, never a whole-thread dump. The
+  approval gate skips the codemode wrapper call (its nested calls gate
+  individually; gating the wrapper asked the judge before the script even
+  ran). Judge-consult and spill semantics unchanged for nested calls; tests
+  migrated to script their tool calls (`return await tools.bash(…)`).
 - **Composer bottom padding is remount-safe (2026-10-16, 0.5.56).** The
   reported "composer overlaps the last line at scroll-bottom" bug was the
   composer's ResizeObserver: it observed once on mount, but the

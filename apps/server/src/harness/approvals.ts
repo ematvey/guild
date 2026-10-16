@@ -22,6 +22,7 @@
 
 import { hook, ToolTask } from "@earendil-works/pi-durable";
 import type { TaskRuntime } from "@earendil-works/pi-durable";
+import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
@@ -413,6 +414,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
   return hook(ToolTask, {
     async beforeTool(call: ToolCall, api, context) {
       const runtime = api as unknown as TaskRuntime<never, never, never, never>;
+      // The codemode wrapper call is not a capability — every nested call it
+      // makes runs this gate on its own. Gating the wrapper too would ask
+      // (a judge consult) before the script has even run, once per call.
+      if (call.name === CODEMODE_TOOL_NAME) return undefined;
       const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
       if (chatId === null) return undefined; // unmapped conversation: no gate
       const executor = await deps.executorKind(Number(runtime.conversationId));

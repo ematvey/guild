@@ -54,7 +54,8 @@ import type { SkillReadSink } from "../platform/skillReads.js";
 import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
-import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { createGuildExtension, toolsOnlyCaller, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { createThreadHistoryTools } from "./thread-history.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -153,6 +154,10 @@ export class GuildRuntime {
    *  and the `codemode` prompt section) — one registration object shared
    *  by every conversation configure, like CodingTools. */
   private readonly codemodeExtension: Extension;
+  /** CodingTools with every tool demoted to script-only (codemode-only
+   *  exposure): the same registrations, sections, and hooks — only
+   *  `callers` changes, so the model is offered none of them directly. */
+  private readonly codingToolsScriptOnly: Extension;
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
@@ -275,9 +280,16 @@ export class GuildRuntime {
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (spec decision 12: built-in coding tools enabled) + codemode.
-    this.guildExtension = createGuildExtension(this.extensionDeps());
+    this.guildExtension = createGuildExtension({
+      ...this.extensionDeps(),
+      threadTools: createThreadHistoryTools({
+        pool: this.pool,
+        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+      }),
+    });
     this.registry.install(this.guildExtension);
-    this.registry.install(CodingTools);
+    this.codingToolsScriptOnly = { ...CodingTools, tools: (CodingTools.tools ?? []).map(toolsOnlyCaller) };
+    this.registry.install(this.codingToolsScriptOnly);
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
@@ -289,8 +301,12 @@ export class GuildRuntime {
    *  extensions with their tools — every configure starts from this. */
   private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
     return {
-      extensions: [this.guildExtension, CodingTools, this.codemodeExtension],
-      tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...(this.codemodeExtension.tools ?? [])],
+      extensions: [this.guildExtension, this.codingToolsScriptOnly, this.codemodeExtension],
+      tools: [
+        ...(this.codingToolsScriptOnly.tools ?? []),
+        ...this.skillsRuntime.tools(),
+        ...(this.codemodeExtension.tools ?? []),
+      ],
     };
   }
 
@@ -566,7 +582,11 @@ export class GuildRuntime {
       models: this.models,
       registry: this.registry,
       settings: {
-        extensions: [this.registry.snapshot().extension("guild")!, CodingTools, this.codemodeExtension],
+        extensions: [
+          this.registry.snapshot().extension("guild")!,
+          this.codingToolsScriptOnly,
+          this.codemodeExtension,
+        ],
         // Decision 12: automatic background compaction on (built-in default
         // thresholds), steering/follow-ups on (the inbox boundary places
         // queued inputs; "one-at-a-time" keeps turn semantics).
@@ -807,7 +827,7 @@ export class GuildRuntime {
       await conversation.configure(
         {
           extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
-          tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
+          tools: [...base.tools, ...prepared.tools.map(toolsOnlyCaller), ...userPrepared.tools.map(toolsOnlyCaller)],
         },
         BACKGROUND_CONTEXT,
       );
