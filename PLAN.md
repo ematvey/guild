@@ -22,7 +22,11 @@ not kept here — it lives in git.
   retained one parent/history render across five clock ticks. Failure-window
   regressions pass in both worker modes, and restart recovery places an
   existing idle queued submission without another message. Details:
-  `docs/plans/2026-10-17-idle-inbox-recovery.md`.
+  `docs/plans/2026-10-17-idle-inbox-recovery.md`. Dev health and public updater
+  now report 0.5.70; live bundle `index-BWjK-s0s.js`, six signed artifacts,
+  public installer hash verified. A live turn completed and cleared generating.
+  Broad validation: 463 pass, three known WS/golden assertions plus a transient
+  database cleanup failure (M6 subsequently passed all 26 tests).
 
 - **Live projections recover from authoritative records; machine work owns a
   cancellable lifetime (2026-10-17, 0.5.69).** Invalid `pi.live` chains are archived and
