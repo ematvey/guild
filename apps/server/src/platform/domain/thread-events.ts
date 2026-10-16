@@ -173,6 +173,7 @@ export function threadEventWire(event: ThreadEvent): string {
         usage: raw(usageWire(event.usage)),
         model: event.model,
         interrupted: event.interrupted,
+        error: event.error ?? undefined,
       });
     case "tool_result":
       return obj({
@@ -292,6 +293,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         usage: (payload["usage"] ?? {}) as UsagePayload,
         model: String(payload["model"] ?? ""),
         ...(payload["interrupted"] === undefined ? {} : { interrupted: Boolean(payload["interrupted"]) }),
+        ...(payload["error"] === undefined || payload["error"] === null ? {} : { error: String(payload["error"]) }),
       };
     case "tool_result":
       return {

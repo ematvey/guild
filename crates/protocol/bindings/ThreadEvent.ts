@@ -30,7 +30,13 @@ mode?: string | null, } | { "type": "system_message", content: string, } | { "ty
 /**
  * Aborted mid-stream: blocks carry the delivered prefix only.
  */
-interrupted?: boolean | null, } | { "type": "tool_result", turn: number, step: number, call_id: string, name: string, 
+interrupted?: boolean | null, 
+/**
+ * A failed provider attempt: the human-readable error. The client
+ * renders it only while it is the thread's latest block (a later
+ * retry that produced content supersedes it).
+ */
+error?: string | null, } | { "type": "tool_result", turn: number, step: number, call_id: string, name: string, 
 /**
  * Model-facing text (what the model reads as the tool result).
  */

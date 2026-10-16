@@ -591,6 +591,11 @@ pub enum ThreadEvent {
         /// Aborted mid-stream: blocks carry the delivered prefix only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         interrupted: Option<bool>,
+        /// A failed provider attempt: the human-readable error. The client
+        /// renders it only while it is the thread's latest block (a later
+        /// retry that produced content supersedes it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     ToolResult {
         turn: u32,
