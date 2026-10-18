@@ -11,6 +11,15 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **The hover timestamp keeps equal gaps (2026-10-18, 0.5.78).** The
+  worked-for label carried a -6px top margin that pulled it into the
+  timestamp band hanging 4..16px under the preceding message, so a hovered
+  message sat its stamp on the label's cap height. Sibling margins collapse
+  into the list's 20px rhythm, so only padding moves the label: it now
+  clears the band with `pt-2`. Measured on the fixed thread: 13px above the
+  stamp, 13px below it. Dev compose serves 0.5.78 and all six signed client
+  artifacts are published.
+
 - **Machine identity is derived, not minted (2026-10-18, 0.5.77).** A
   desktop whose webview storage was lost minted a fresh random UUID, the
   registry inserted a second row, and the chats bound to the old id answered
