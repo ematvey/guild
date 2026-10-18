@@ -11,6 +11,16 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Casual work entries sit where their run was (2026-10-18, 0.5.76).** The
+  entry builder flushed the pending run on every reasoning/tool block instead
+  of on the block that ends the run, so each tool became its own entry, the
+  entries landed after the text that followed the run, and the sub-second
+  ones (hidden by the under-one-second rule) left only stragglers visible as a
+  trailing "Agent worked for 1 second" under the answer. The grouping is now
+  the pure `viewEntries(blocks, view)` in `worked-for-block.tsx`, exported and
+  covered by four tests (contiguous collapse, no trailing entry, turn-start
+  anchoring, technical 1:1). Validation: 358 desktop tests, typecheck clean.
+
 - **Context usage stays inside the composer (2026-10-17, 0.5.75).** An 18px
   ring sits immediately left of the model picker; hover/focus exposes the
   token count, capacity and percentage. Measurements come from committed
