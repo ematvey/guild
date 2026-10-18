@@ -37,7 +37,14 @@ not kept here — it lives in git.
   the client id; a host rename is the same machine; an OS reinstall (new
   MachineGuid) or an unsysprepped clone is a new identity. Validation: 548
   server tests + 361 desktop tests, typecheck, the Rust app-server suite, and
-  the golden WS replay against the derived row id.
+  the golden WS replay against the derived row id. Delivery (shipped inside
+  0.5.78, which carries both this and the hover-timestamp spacing fix): dev
+  compose serves 0.5.78 with the identity bundle (`index-DNMtjNNs.js`) and all
+  four signed desktop artifacts advertise 0.5.78. Live migration on the dev
+  stack re-keyed both online machines on their first post-deploy connect and
+  moved every binding with them (WORKSTATION 10 chats, devbox 27); the five
+  WORKSTATION chats that had been reporting "machine offline" resolve to the live
+  row again.
 
 - **Casual work entries sit where their run was (2026-10-18, 0.5.76).** The
   entry builder flushed the pending run on every reasoning/tool block instead
