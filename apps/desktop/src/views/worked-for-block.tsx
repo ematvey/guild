@@ -82,8 +82,12 @@ export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stoppi
   }, [active, stopping]);
   const label = workRunLabel(run, active, stopping, nowMs, turnStart);
   if (label === null) return null;
+  // The top padding — not a margin — clears the hover-stamp band under the
+  // preceding message: the band hangs 4..16px below it, and sibling margins
+  // collapse into the list's own 20px rhythm, so only padding moves the
+  // label. It keeps the timestamp's gaps equal above and below.
   return (
-    <div className="-mt-1.5! mb-2.5! py-0 text-sm text-muted-foreground">
+    <div className="mt-0! mb-2.5! pt-2! pb-0 text-sm text-muted-foreground">
       {active ? <span className="animate-pulse">{label}</span> : label}
     </div>
   );
