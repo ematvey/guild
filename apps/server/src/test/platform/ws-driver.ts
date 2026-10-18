@@ -6,6 +6,7 @@
 
 import WebSocket from "ws";
 import crypto from "node:crypto";
+import { canonicalMachineId } from "../../platform/store/machines.js";
 
 export type FrameRecord =
   | { kind: "text"; data: string; t?: number }
@@ -202,6 +203,11 @@ export async function runScenario(
   if (login.status !== 200) throw new Error(`login failed: ${login.status} ${login.body}`);
   const loginBody = JSON.parse(login.body) as { token: string; user: { id: string; org_id: string } };
   const token = loginBody.token;
+  // The registry keys a machine by the id derived from its hardware
+  // fingerprint, not the id the client minted; the control-plane routes
+  // address the derived one.
+  const machineRowId =
+    canonicalMachineId(loginBody.user.org_id, loginBody.user.id, opts.fingerprint) ?? opts.machineId;
 
   const step = (name: string): ScenarioStep => {
     const s: ScenarioStep = { name, frames: [] };
@@ -264,7 +270,7 @@ export async function runScenario(
     const ws = globalThis.__m5MachineWs as ScriptedClient;
     const post = http(base, {
       method: "POST",
-      path: `/api/v1/machines/${opts.machineId}/fs`,
+      path: `/api/v1/machines/${machineRowId}/fs`,
       token,
       body: { op: "fs_home" },
     });
@@ -291,7 +297,7 @@ export async function runScenario(
     const s = step("fs-unknown-op");
     const res = await http(base, {
       method: "POST",
-      path: `/api/v1/machines/${opts.machineId}/fs`,
+      path: `/api/v1/machines/${machineRowId}/fs`,
       token,
       body: { op: "fs_write_everything" },
     });
@@ -317,7 +323,7 @@ export async function runScenario(
     const t = await ticket(base, token);
     const thief = new ScriptedClient(
       base,
-      `ticket=${t}&machine_id=${opts.machineId}&instance_id=${crypto.randomUUID()}&resume=false`,
+      `ticket=${t}&machine_id=${opts.machineId}&machine_fingerprint=${opts.fingerprint}&instance_id=${crypto.randomUUID()}&resume=false`,
     );
     await thief.open().catch(() => {});
     await thief.until((f) => f.kind === "text" && f.data.includes("displaced"), 10_000).catch(() => {});
@@ -340,7 +346,7 @@ export async function runScenario(
     const t = await ticket(base, token);
     const stale = new ScriptedClient(
       base,
-      `ticket=${t}&machine_id=${opts.machineId}&instance_id=${crypto.randomUUID()}&resume=true`,
+      `ticket=${t}&machine_id=${opts.machineId}&machine_fingerprint=${opts.fingerprint}&instance_id=${crypto.randomUUID()}&resume=true`,
     );
     await stale.open().catch(() => {});
     await stale.closed();

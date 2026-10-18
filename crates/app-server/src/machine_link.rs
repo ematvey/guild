@@ -74,9 +74,11 @@ fn non_empty(v: &str) -> Option<String> {
 }
 
 /// Stable per-install hardware identity, lowercase-trimmed: MachineGuid on
-/// Windows, /etc/machine-id on Linux, IOPlatformUUID on macOS.
+/// Windows, /etc/machine-id on Linux, IOPlatformUUID on macOS. The server
+/// derives the machine's registry id from it, so `machine.info` reports it
+/// too — the webview matches its own row in the machine list by this value.
 #[cfg(windows)]
-fn machine_fingerprint() -> Option<String> {
+pub(crate) fn machine_fingerprint() -> Option<String> {
     use winreg::enums::HKEY_LOCAL_MACHINE;
     use winreg::RegKey;
     let key = RegKey::predef(HKEY_LOCAL_MACHINE)
@@ -87,13 +89,13 @@ fn machine_fingerprint() -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn machine_fingerprint() -> Option<String> {
+pub(crate) fn machine_fingerprint() -> Option<String> {
     let raw = std::fs::read_to_string("/etc/machine-id").ok()?;
     non_empty(&raw).map(|v| v.to_lowercase())
 }
 
 #[cfg(target_os = "macos")]
-fn machine_fingerprint() -> Option<String> {
+pub(crate) fn machine_fingerprint() -> Option<String> {
     let output = std::process::Command::new("ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()

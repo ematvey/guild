@@ -19,6 +19,7 @@ function machineInfo(row: MachineRow, connected: boolean): Record<string, unknow
     ...(row.app_version !== null ? { app_version: row.app_version } : {}),
     connected,
     first_connected_at: row.first_connected_at,
+    hardware_fingerprint: row.hardware_fingerprint,
     last_connected_at: row.last_connected_at,
     ...(row.last_ip !== null ? { last_ip: row.last_ip } : {}),
     last_seen_at: row.last_seen_at,
