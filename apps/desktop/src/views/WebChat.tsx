@@ -14,8 +14,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { highlightJs } from "./js-highlight";
-import { WorkedForBlock } from "./worked-for-block";
-export { workRunLabel } from "./worked-for-block";
+import { WorkedForBlock, viewEntries } from "./worked-for-block";
+export { workRunLabel, viewEntries } from "./worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   Archive,
@@ -2997,32 +2997,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // with one WorkedForBlock. Everything else (user, text, errors,
   // compaction cards, queued-send chips, approvals) is identical.
   const { entries: displayEntries, finalAgent, lastAgent } = useMemo(() => {
-    type Plain = { kind: "plain"; b: Block; i: number };
-    type Entry = { kind: "work"; run: Block[]; turnStart?: string } | Plain;
-    const entries: Entry[] = [];
-    let run: Block[] = [];
-    // The live "Agent is working Ns" clock anchors to the TURN's user
-    // message, not the run's own open-time: the turn is what the user is
-    // waiting on, so the counter starts at 0 when the agent begins and
-    // never resets between steps (per-run open-times are polluted anyway —
-    // a state publish carrying the next step's buffer can arrive before
-    // the previous step's commit, making the new live block inherit the
-    // old open-time). Settled runs keep their own per-run duration.
-    let turnStart: string | undefined;
-    const flush = () => {
-      if (run.length) entries.push({ kind: "work", run, turnStart });
-      run = [];
-    };
-    blocks.forEach((b, i) => {
-      if (b.kind === "user") turnStart = b.ts;
-      if (chatView !== "casual" || (b.kind !== "reasoning" && b.kind !== "tool")) {
-        entries.push({ kind: "plain", b, i });
-        return;
-      }
-      flush();
-      run.push(b);
-    });
-    flush();
+    const entries = viewEntries(blocks, chatView);
     // Hover stamps under agent text mark only the turn's final message: an
     // intermediate text block between tool runs is context, not the answer,
     // and stamping each one costs hover space under the whole transcript.

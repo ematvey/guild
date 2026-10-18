@@ -1,5 +1,43 @@
 import { memo, useEffect, useState } from "react";
+import type { ChatViewMode } from "../transport";
 import type { Block } from "../lib/thread-reducer";
+
+export type ViewEntry =
+  | { kind: "plain"; b: Block; i: number }
+  | { kind: "work"; run: Block[]; turnStart?: string };
+
+/// Transcript entries for one view. Technical renders every block 1:1;
+/// casual replaces each CONTIGUOUS thinking/tool run with one work entry.
+/// The pending run is flushed when a non-run block arrives, so a work entry
+/// sits where its run was and never trails the text that followed it.
+///
+/// The live "Agent is working Ns" clock anchors to the TURN's user message,
+/// not the run's own open-time: the turn is what the user is waiting on, so
+/// the counter starts at 0 when the agent begins and never resets between
+/// steps (per-run open-times are polluted anyway — a state publish carrying
+/// the next step's buffer can arrive before the previous step's commit,
+/// making the new live block inherit the old open-time). Settled runs keep
+/// their own per-run duration.
+export function viewEntries(blocks: Block[], view: ChatViewMode): ViewEntry[] {
+  const entries: ViewEntry[] = [];
+  let run: Block[] = [];
+  let turnStart: string | undefined;
+  const flush = () => {
+    if (run.length) entries.push({ kind: "work", run, turnStart });
+    run = [];
+  };
+  blocks.forEach((b, i) => {
+    if (b.kind === "user") turnStart = b.ts;
+    if (view === "casual" && (b.kind === "reasoning" || b.kind === "tool")) {
+      run.push(b);
+      return;
+    }
+    flush();
+    entries.push({ kind: "plain", b, i });
+  });
+  flush();
+  return entries;
+}
 
 export function workRunLabel(
   run: Block[],
