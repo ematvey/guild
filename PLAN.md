@@ -20,6 +20,10 @@ not kept here — it lives in git.
   the pure `viewEntries(blocks, view)` in `worked-for-block.tsx`, exported and
   covered by four tests (contiguous collapse, no trailing entry, turn-start
   anchoring, technical 1:1). Validation: 358 desktop tests, typecheck clean.
+  Browser check on the thread that showed the bug: entries now read user,
+  "worked 2s", the pre-tool text, "worked 7s", the answer — no label after
+  the answer. Dev compose and all six signed client artifacts serve 0.5.76;
+  the dev manifest advertises four platforms.
 
 - **Context usage stays inside the composer (2026-10-17, 0.5.75).** An 18px
   ring sits immediately left of the model picker; hover/focus exposes the
