@@ -11,6 +11,25 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Machine identity is derived, not minted (2026-10-18, 0.5.77).** A
+  desktop whose webview storage was lost minted a fresh random UUID, the
+  registry inserted a second row, and the chats bound to the old id answered
+  "machine offline" forever while the machines page showed the box online
+  (the old row was gone; found on WORKSTATION, five chats). Registry ids are now
+  uuidv5 over (org, user, hardware fingerprint) — `canonicalMachineId` in
+  `platform/store/machines.ts` — applied at connect and inside
+  `upsertConnected`, so the row and the hub slot are keyed by the machine, not
+  by the client install; a legacy client-issued row with the same fingerprint
+  is still adopted and its projects/chats move with it. The desktop learns its
+  own row through `hardware_fingerprint` in `/api/v1/machines` (a post-Rust
+  addition; the golden fixture carries it) plus the fingerprint `machine.info`
+  now reports, and adopts the server's id whenever the machine list is fetched
+  (`machineIdForFingerprint`). Bounds: a connect without a fingerprint keeps
+  the client id; a host rename is the same machine; an OS reinstall (new
+  MachineGuid) or an unsysprepped clone is a new identity. Validation: 548
+  server tests + 361 desktop tests, typecheck, the Rust app-server suite, and
+  the golden WS replay against the derived row id.
+
 - **Casual work entries sit where their run was (2026-10-18, 0.5.76).** The
   entry builder flushed the pending run on every reasoning/tool block instead
   of on the block that ends the run, so each tool became its own entry, the

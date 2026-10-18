@@ -49,9 +49,75 @@ export function serverUrl(): string {
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
-/** Stable machine identity (per app install): the executor key machine
- * tools are bound to. */
+/** The id the server registered this computer under, once known. */
+const SERVER_MACHINE_ID_KEY = "guild_server_machine_id";
+
+let serverMachineId: string | null | undefined;
+let fingerprintProbe: Promise<string | null> | null = null;
+
+/** This computer's hardware identity, as the daemon reports it. The server
+ *  keys the machine registry on it, so it is what identifies "this machine"
+ *  across reinstallations. Null in the browser shell and when the daemon
+ *  cannot read it. */
+function localFingerprint(): Promise<string | null> {
+  if (!IS_TAURI) return Promise.resolve(null);
+  fingerprintProbe ??= rpcCall("machine.info", {}, 10_000)
+    .then((res) =>
+      typeof res?.result?.fingerprint === "string"
+        ? res.result.fingerprint.toLowerCase()
+        : null,
+    )
+    .catch(() => null);
+  return fingerprintProbe;
+}
+
+/** The machine id this computer is registered under, found in the caller's
+ *  own machine list by hardware fingerprint (the server derives the id from
+ *  it, so the match is exact). Null when this computer has not registered
+ *  yet. */
+export function machineIdForFingerprint(
+  machines: MachineInfo[],
+  fingerprint: string | null,
+): string | null {
+  if (fingerprint === null) return null;
+  const wanted = fingerprint.toLowerCase();
+  const row = machines.find((m) => (m.hardware_fingerprint ?? "").toLowerCase() === wanted);
+  return row ? row.machine_id : null;
+}
+
+/** Matches this computer's registry row by hardware fingerprint and adopts
+ *  its id, so the UI's local-machine checks line up with the server's
+ *  derived identity. */
+async function adoptOwnMachineId(machines: MachineInfo[]): Promise<void> {
+  const id = machineIdForFingerprint(machines, await localFingerprint());
+  if (id !== null) adoptServerMachineId(id);
+}
+
+/** Pins the machine id the server registered this computer under. */
+export function adoptServerMachineId(id: string): void {
+  if (serverMachineId === id) return;
+  serverMachineId = id;
+  try {
+    localStorage.setItem(SERVER_MACHINE_ID_KEY, id);
+  } catch {
+    // Storage denied: the in-memory value still serves this session.
+  }
+}
+
+/** Stable machine identity: the executor key machine tools are bound to.
+ *  Once the server has registered this computer the value is the server's —
+ *  derived there from the hardware fingerprint — so a reinstalled client
+ *  re-attaches to its machine instead of forking a new one. Until then (first
+ *  launch, before the machine list arrives) a local UUID stands in. */
 export function machineId(): string {
+  if (serverMachineId === undefined) {
+    try {
+      serverMachineId = localStorage.getItem(SERVER_MACHINE_ID_KEY);
+    } catch {
+      serverMachineId = null;
+    }
+  }
+  if (serverMachineId) return serverMachineId;
   let id = localStorage.getItem(MACHINE_ID_KEY);
   if (!id) {
     id = crypto.randomUUID();
@@ -790,6 +856,10 @@ export interface MachineInfo {
   os_version?: string;
   app_version?: string;
   last_ip?: string;
+  /** The machine's hardware identity (MachineGuid / machine-id / IOPlatformUUID).
+   *  The server derives its machine_id from it, and the desktop matches its
+   *  own row by it. */
+  hardware_fingerprint?: string | null;
   first_connected_at: string;
   last_connected_at: string;
   last_seen_at: string;
@@ -806,7 +876,9 @@ export async function listMachines(): Promise<MachineInfo[] | null> {
     // null = request failed (distinguishable from a legitimately empty list)
     if (!res.ok) return null;
     const v = await res.json().catch(() => ({}));
-    return v?.machines ?? [];
+    const machines: MachineInfo[] = v?.machines ?? [];
+    await adoptOwnMachineId(machines);
+    return machines;
     } catch {
     // A rejected fetch (offline, TLS, server down) is a failure like any
     // other: the null contract covers it, so call sites only handle null.
