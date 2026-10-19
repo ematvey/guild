@@ -427,6 +427,49 @@ describe("gateway/chat turn flow", () => {
     expect(Number(commandsAfter.rows[0]!.n)).toBe(1);
   }, TEST_TIMEOUT);
 
+  it("a turn naming a model the org no longer has runs on the default route", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: { title: "stale model chat" },
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+
+    // A client whose catalog predates the route change (an open tab, an
+    // older bundle) still sends the old id: the turn falls back instead of
+    // failing on a model that no longer resolves.
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(stack.memberToken),
+      payload: {
+        chat_id: chat.id,
+        model: "GLM-Retired-Model",
+        messages: [{ role: "user", content: "say hello" }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    await waitFor(async () => {
+      const thread = await stack.env.app.inject({
+        method: "GET",
+        url: `/api/v1/chats/${chat.id}/thread`,
+        headers: auth(stack.memberToken),
+      });
+      const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+      return events.some((e) => e.event.type === "assistant_message");
+    });
+    const thread = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${chat.id}/thread`,
+      headers: auth(stack.memberToken),
+    });
+    const rows = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
+    const assistant = rows.find((r) => r.event.type === "assistant_message");
+    expect(assistant!.event.model).toBe("GLM-Test-Model");
+  });
+
   it("the /api/v1/threads surface: path-carried chat, thread read under the renamed prefix", async () => {
     const created = await stack.env.app.inject({
       method: "POST",

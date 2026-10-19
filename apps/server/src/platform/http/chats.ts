@@ -517,7 +517,7 @@ async function submitTurn(
   }
 
   const chatId = chatIdRaw.toLowerCase();
-  const model = body["model"] as string;
+  const model = await resolveTurnModel(gateway, user.org_id, body["model"] as string);
   const messages = body["messages"] as { role?: unknown; content?: unknown }[];
   if (body["client_tools"] !== undefined && typeof body["client_tools"] !== "boolean") {
     throw invalidTypeText(req, "client_tools");
@@ -675,6 +675,19 @@ function commandAck(command: { id: string; status: string; invocation_id: string
       status: command.status,
     }),
   );
+}
+
+/** The route this turn runs on: the requested model while the org still has
+ *  it, else the default (first enabled) route. A chat carries no pinned
+ *  model, so a client whose catalog predates an admin's route change — an
+ *  open tab, an older desktop bundle — keeps working instead of failing the
+ *  turn on a model that no longer exists. An org with no routes keeps the
+ *  request as sent, so the submission fails with the route error. */
+async function resolveTurnModel(gateway: GatewayCtx, orgId: string, requested: string): Promise<string> {
+  const routes = await gateway.gatewayStore.listModels(orgId);
+  if (routes.length === 0) return requested;
+  if (routes.some((route) => route.model === requested)) return requested;
+  return routes[0]!.model;
 }
 
 /** Re-serializes the request the way serde renders ChatCompletionRequest
