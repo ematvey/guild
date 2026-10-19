@@ -5,11 +5,9 @@ import { DesktopTooltip } from "./desktop-tooltip";
 const count = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
 /** Only committed history revisions trigger a read; streaming text does not. */
-export function ContextRing({ chatId, model, name = "", revision }: {
+export function ContextRing({ chatId, model, revision }: {
   chatId: string | null;
   model: string;
-  /** User-visible name of the selected route; the raw id never renders. */
-  name?: string;
   revision: number | null;
 }) {
   const key = `${chatId ?? ""}:${model}`;
@@ -29,7 +27,7 @@ export function ContextRing({ chatId, model, name = "", revision }: {
   const percent = known ? Math.round(usage.tokens! / usage.max! * 100) : null;
   const fill = percent === null ? 0 : Math.max(0, Math.min(100, percent));
   const label = known
-    ? `Context: ~${count.format(usage.tokens!)} / ${count.format(usage.max!)} tokens (${percent}%). Last completed request, including its response${usage.usage_model !== model ? `; measured on ${name || "an earlier model"}` : ""}.`
+    ? `Context: ~${count.format(usage.tokens!)} / ${count.format(usage.max!)} tokens (${percent}%). Last completed request, including its response${usage.usage_model !== model ? `; measured on ${usage.usage_model_alias ?? "a model the catalog no longer lists"}` : ""}.`
     : !chatId ? "Context usage available after the first response"
     : !model ? "Choose a model to see context usage"
     : read?.key !== key ? "Loading context usage"

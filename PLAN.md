@@ -11,6 +11,21 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **The 2026-10-18 review's criticals are closed (2026-10-19, 0.5.82).**
+  Project binding is owner-only: `lockBindableMachine` matches the machine's
+  `user_id`, with the org kept as a tenancy filter — a project's folder is the
+  workdir its chats execute in, so an org-wide bind was remote execution on a
+  coworker's machine. An unmapped conversation now blocks command-bearing
+  tools instead of failing open; non-command tools keep the pre-approved
+  batch contract. The composer ignores Enter while an IME is composing. A
+  malformed path escape parses to the default route and the address is
+  rewritten, instead of throwing from the render-time route initializer. The
+  route upsert runs in one transaction, so a rename onto a taken id or
+  display name is a 409 from the index, not a lost race or a 500. Route
+  display names are unique per org (case-insensitive; the empty default may
+  repeat), and the context tooltip names the route that actually measured the
+  usage instead of the currently selected one.
+
 - **A turn naming a retired model runs on the default route (2026-10-19).**
   A chat pins no model: the picker offers the org's catalog, and the turn
   carries whatever the client has in hand. A tab opened before an admin

@@ -98,6 +98,17 @@ describe("M2 LLM gateway endpoints", () => {
     await put({ model: "m-alias", alias: "Other", provider: "mock-openai", price_in: 0, price_out: 0 });
     const clash = await put({ original_model: "m-alias-v2", model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 });
     expect(clash.statusCode).toBe(409);
+
+    // A display name identifies a route to users, so it cannot repeat — in
+    // either the create or the rename path, and regardless of case.
+    const dupName = await put({ model: "m-alias-3", alias: "guild fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    expect(dupName.statusCode).toBe(409);
+    expect((await put({ model: "m-alias-3", alias: "Third", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    const renameDup = await put({ original_model: "m-alias-3", model: "m-alias-3", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    expect(renameDup.statusCode).toBe(409);
+    // Unnamed routes may repeat the empty default.
+    expect((await put({ model: "m-alias-4", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    expect((await put({ model: "m-alias-5", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
   });
 
   it("route temperature: default applies when the client sends none, client value wins", async () => {

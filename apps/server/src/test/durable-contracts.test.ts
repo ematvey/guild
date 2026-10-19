@@ -536,6 +536,76 @@ describe("durable integration contracts", () => {
     15_000,
   );
 
+  it(
+    "blocks a command tool when the conversation has no approval mapping",
+    async () => {
+      let executions = 0;
+      const registry = createRegistry();
+      const gate = createApprovalGate({
+        pool: stack.env.db,
+        threads,
+        log,
+        execPolicy: {} as never,
+        approvalTimeoutMs: 60_000,
+        selfBaseUrl: "",
+        internalKey: null,
+        allowShellTools: true,
+        // The mapping is missing, so no chat policy can be read. Failing open
+        // here would skip the exec policy, the shell allowlist and the card.
+        chatOfConversation: async () => null,
+        executorKind: async () => "machine",
+        currentModel: async () => null,
+      });
+      registry.install(
+        defineExtension({
+          name: "unmapped-gate",
+          hooks: [gate],
+          tools: [
+            defineTool({
+              name: "bash",
+              description: "bash",
+              parameters: Type.Object({}),
+              execute: async () => {
+                executions++;
+                return { output: [{ type: "text", text: "ran" }] };
+              },
+            }),
+          ],
+        }),
+      );
+      const faux = fauxProvider();
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall("bash", {}, { id: "unmapped-call" }), { stopReason: "toolUse" }),
+        fauxAssistantMessage("could not run"),
+      ]);
+      const models = createModels();
+      models.setProvider(faux.provider);
+      const h = await open(registry, models);
+      const c = await h.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: { model: { provider: "faux", modelId: "faux-1" } },
+        },
+        context,
+      );
+      try {
+        const submission = await c.submit({ type: "input", content: "run it" }, context);
+        expect((await (await h.submission(submission.id, context))!.wait(context)).status).toBe("done");
+        expect(executions).toBe(0);
+        const rows = await stack.env.db.query<{ record: string }>(
+          "SELECT record FROM entries WHERE conversation_id = $1 ORDER BY id",
+          [Number(c.id)],
+        );
+        expect(rows.rows.map((r) => r.record).join("\n")).toContain(
+          "denied: this conversation has no approval mapping",
+        );
+      } finally {
+        await h.close(context);
+      }
+    },
+    15_000,
+  );
+
   it("does not replay a skill publication interrupted after its external effect", async () => {
     const push = new SkillRuntime({} as never).tools().find((t) => t.name === "push_skill")!;
     let calls = 0;

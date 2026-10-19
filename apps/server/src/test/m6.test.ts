@@ -474,6 +474,17 @@ describe("M6 projects", () => {
     expect(json(del)).toEqual({ ok: true });
   });
 
+  it("refuses to bind a project to another user's machine", async () => {
+    // The folder a project names is the workdir its chats execute in, so a
+    // bind onto a coworker's machine would run tools on their machine.
+    const res = await inject("POST", "/api/v1/projects", e.adminToken, {
+      folder: "C:\\code\\not-mine",
+      machine_id: "machine-1",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(json(res).error).toMatchObject({ code: "bad_request", message: "unknown machine" });
+  });
+
   it("enforces one live project per (machine, folder), including case and separator variants", async () => {
     const folder = "C:\\code\\web";
     const first = await inject("POST", "/api/v1/projects", e.memberToken, { folder, machine_id: "machine-1" });

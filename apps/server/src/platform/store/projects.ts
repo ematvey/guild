@@ -48,7 +48,10 @@ export class ProjectStore {
   /** Locks the machine's registry row and proves bindability inside the
    *  caller's transaction: a fingerprint adoption (which locks the same row
    *  before re-keying) can never commit between this check and the binding
-   *  write. */
+   *  write. Only the machine's owning user may bind to it — the org check is
+   *  tenancy, not permission. A project's folder is the workdir its chats
+   *  execute in, so an org-wide bind would let a member run tools on a
+   *  coworker's machine. */
   private async lockBindableMachine(
     client: PoolClient,
     machineId: string,
@@ -56,7 +59,7 @@ export class ProjectStore {
     orgId: string,
   ): Promise<void> {
     const res = await client.query(
-      "SELECT machine_id FROM machines WHERE machine_id = $1 AND (user_id = $2 OR org_id = $3) FOR UPDATE",
+      "SELECT machine_id FROM machines WHERE machine_id = $1 AND user_id = $2 AND org_id = $3 FOR UPDATE",
       [machineId, userId, orgId],
     );
     if (res.rows.length === 0) throw ApiError.badRequest("unknown machine");
@@ -64,7 +67,7 @@ export class ProjectStore {
 
   /** Creates a project. Names are display labels derived from the chosen
    *  folder — duplicate names are allowed. The machine must be registered
-   *  to the caller or their org. One live project per (machine, folder):
+   *  to the caller. One live project per (machine, folder):
    *  the unique index is the guard (it covers a cross-device race and a
    *  second user of a shared machine); a violation is a 409. Archived
    *  projects step aside and free the folder. */
