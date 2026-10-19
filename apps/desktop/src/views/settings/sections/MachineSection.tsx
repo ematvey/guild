@@ -69,10 +69,7 @@ export function MachineSection() {
               >
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   {m.connected ? (
-                    <span className="relative flex size-2 shrink-0">
-                      <span className="absolute inline-flex size-2 animate-ping rounded-full bg-emerald-500/60" />
-                      <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-                    </span>
+                    <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
                   ) : (
                     <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
                   )}
