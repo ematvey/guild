@@ -27,7 +27,7 @@
       "http": [
         {
           "status": 200,
-          "body": "{\"machines\":[{\"app_version\":\"0.5.34\",\"connected\":true,\"first_connected_at\":\"__TS__\",\"hardware_fingerprint\":\"CAP-FP-1\",\"last_connected_at\":\"__TS__\",\"last_ip\":\"127.0.0.1\",\"last_seen_at\":\"__TS__\",\"machine_id\":\"__UUID__\",\"name\":\"CAPBOX\",\"os\":\"Linux\",\"os_version\":\"6.1\"}]}"
+          "body": "{\"machines\":[{\"app_version\":\"0.5.34\",\"connected\":true,\"first_connected_at\":\"__TS__\",\"last_connected_at\":\"__TS__\",\"last_ip\":\"127.0.0.1\",\"last_seen_at\":\"__TS__\",\"machine_id\":\"__UUID__\",\"name\":\"CAPBOX\",\"os\":\"Linux\",\"os_version\":\"6.1\"}]}"
         }
       ],
       "frames": [

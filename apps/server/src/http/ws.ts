@@ -21,7 +21,6 @@ import type { PlatformPool } from "../platform/db.js";
 import { ApiError } from "../platform/errors.js";
 import { requireUser } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { canonicalMachineId } from "../platform/store/machines.js";
 import { uuidv7 } from "../platform/time.js";
 import { LiveHub, type LiveMember } from "../hub/live.js";
 import { SocketSink } from "../hub/sink.js";
@@ -332,12 +331,7 @@ async function driveSocket(
   const sink = new SocketSink();
   const connId = uuidv7();
   const meta = metaFromQuery(query);
-  // The slot and the registry row are keyed by the machine's derived
-  // identity, not by the id the client minted for its own install.
-  const machineId =
-    query.machine_id === null
-      ? null
-      : canonicalMachineId(user.org_id, user.id, meta.fingerprint) ?? query.machine_id;
+  const machineId = query.machine_id;
   const member: LiveMember = {
     conn_id: connId,
     user_id: user.id,

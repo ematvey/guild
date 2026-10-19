@@ -11,6 +11,24 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Machine ids stay handles; the hardware id only matches (2026-10-18, 0.5.79).**
+  Reverts the derived ids of 0.5.77/0.5.78 (`uuidv5(org, user, fingerprint)`):
+  keying the id on the hardware turned a hardware change into an identity
+  change, so an OS reinstall or a board swap stranded every binding — the
+  failure the derivation was meant to cure, with no way back. The registry
+  keeps the machine's id as a stable handle: a connect matches an existing row
+  of the same org and user by hardware fingerprint, the row is re-keyed to the
+  incoming client id, and its projects and chats move with it. Open: a connect
+  whose fingerprint changed matches nothing (Windows Setup mints a new
+  MachineGuid, Linux a new /etc/machine-id), so that machine registers as new
+  and its old chats go dark. Two candidates — derive the *fingerprint* from the
+  firmware/board UUID (DMI product_uuid, SMBIOS) so it survives an OS reinstall,
+  or keep the fingerprint and give the user an explicit takeover on the machines
+  page. Undecided; the label is deliberately not used as matching evidence
+  (two hosts can share a name, and a wrong match silently hands one machine's
+  chats to another). Data: the dev stack's rows re-key themselves back on each
+  machine's next connect.
+
 - **The hover timestamp keeps equal gaps (2026-10-18, 0.5.78).** The
   worked-for label carried a -6px top margin that pulled it into the
   timestamp band hanging 4..16px under the preceding message, so a hovered
@@ -19,32 +37,6 @@ not kept here — it lives in git.
   clears the band with `pt-2`. Measured on the fixed thread: 13px above the
   stamp, 13px below it. Dev compose serves 0.5.78 and all six signed client
   artifacts are published.
-
-- **Machine identity is derived, not minted (2026-10-18, 0.5.77).** A
-  desktop whose webview storage was lost minted a fresh random UUID, the
-  registry inserted a second row, and the chats bound to the old id answered
-  "machine offline" forever while the machines page showed the box online
-  (the old row was gone; found on WORKSTATION, five chats). Registry ids are now
-  uuidv5 over (org, user, hardware fingerprint) — `canonicalMachineId` in
-  `platform/store/machines.ts` — applied at connect and inside
-  `upsertConnected`, so the row and the hub slot are keyed by the machine, not
-  by the client install; a legacy client-issued row with the same fingerprint
-  is still adopted and its projects/chats move with it. The desktop learns its
-  own row through `hardware_fingerprint` in `/api/v1/machines` (a post-Rust
-  addition; the golden fixture carries it) plus the fingerprint `machine.info`
-  now reports, and adopts the server's id whenever the machine list is fetched
-  (`machineIdForFingerprint`). Bounds: a connect without a fingerprint keeps
-  the client id; a host rename is the same machine; an OS reinstall (new
-  MachineGuid) or an unsysprepped clone is a new identity. Validation: 548
-  server tests + 361 desktop tests, typecheck, the Rust app-server suite, and
-  the golden WS replay against the derived row id. Delivery (shipped inside
-  0.5.78, which carries both this and the hover-timestamp spacing fix): dev
-  compose serves 0.5.78 with the identity bundle (`index-DNMtjNNs.js`) and all
-  four signed desktop artifacts advertise 0.5.78. Live migration on the dev
-  stack re-keyed both online machines on their first post-deploy connect and
-  moved every binding with them (WORKSTATION 10 chats, devbox 27); the five
-  WORKSTATION chats that had been reporting "machine offline" resolve to the live
-  row again.
 
 - **Casual work entries sit where their run was (2026-10-18, 0.5.76).** The
   entry builder flushed the pending run on every reasoning/tool block instead

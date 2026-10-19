@@ -3,7 +3,6 @@
 // checks read. Writes happen at socket connect (upsert with fingerprint
 // adoption) and on a 30s-throttled ping heartbeat (last_seen).
 
-import crypto from "node:crypto";
 import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
@@ -59,34 +58,6 @@ function nonEmpty(value: string | null | undefined): string | null {
   return value !== null && value !== undefined && value !== "" ? value : null;
 }
 
-/** Namespace for the derived machine ids (uuidv5 over org, user, hardware
- *  fingerprint). Fixed forever: changing it re-keys every registered
- *  machine. */
-const MACHINE_ID_NAMESPACE = "5b1f0e2c-9c3a-5b77-8f1d-6a4c2d9e7b10";
-
-/** The registry identity a connect lands on: derived from the pairing's org,
- *  user and hardware fingerprint, so the same OS install paired by the same
- *  user keeps one id across client reinstalls, storage wipes and upgrades —
- *  a client that loses its local state re-attaches instead of forking a
- *  second row and stranding the chats bound to the first. `null` when the
- *  connect reports no fingerprint (nothing to derive from); the caller then
- *  keeps the client-issued id. */
-export function canonicalMachineId(
-  orgId: string,
-  userId: string,
-  fingerprint: string | null,
-): string | null {
-  if (fingerprint === null) return null;
-  const name = `${orgId}\u0000${userId}\u0000${fingerprint.toLowerCase()}`;
-  const namespace = Buffer.from(MACHINE_ID_NAMESPACE.replace(/-/g, ""), "hex");
-  const digest = crypto.createHash("sha1").update(namespace).update(name, "utf8").digest();
-  const bytes = Buffer.from(digest.subarray(0, 16));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 export class MachineStore {
   constructor(readonly pool: PlatformPool) {}
 
@@ -103,16 +74,14 @@ export class MachineStore {
     return row ? [row.user_id, row.org_id] : null;
   }
 
-  /** Registers a machine connect. The connect is keyed by
-   *  `canonicalMachineId` whenever it carries a hardware fingerprint, so the
-   *  row outlives the client's local identity. A known machine_id of the
-   *  same org AND same user is a reconnect (metadata refresh only, never a
-   *  re-key); a known id owned by a different user is refused — client-issued
-   *  ids are untrusted within an org too, so only the row's owner reconnects.
-   *  An unknown machine_id is a new registration: a fingerprint match on the
+  /** Registers a machine connect. A known machine_id of the same org AND
+   *  same user is a reconnect (metadata refresh only, never a re-key); a
+   *  known id owned by a different user is refused — client-issued ids are
+   *  untrusted within an org too, so only the row's owner reconnects. An
+   *  unknown machine_id is a new registration: a fingerprint match on the
    *  same org and same user adopts the old row — its machine_id is re-keyed
-   *  to the incoming one (thread bindings move with it), and re_paired_at is
-   *  stamped. No match inserts a fresh row.
+   *  to the incoming one (thread bindings keep working through the caller's
+   *  id), and re_paired_at is stamped. No match inserts a fresh row.
    *
    *  A machine_id already registered to a DIFFERENT org is left untouched
    *  (client-issued ids make cross-org claims untrustworthy); the returned
@@ -134,8 +103,6 @@ export class MachineStore {
     osVersion = nonEmpty(osVersion);
     appVersion = nonEmpty(appVersion);
     ip = nonEmpty(ip);
-    // Registry identity is the machine's, not the client install's.
-    machineId = canonicalMachineId(orgId, userId, fingerprint) ?? machineId;
 
     const client = await this.pool.connect();
     try {
