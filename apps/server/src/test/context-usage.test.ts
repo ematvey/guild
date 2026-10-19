@@ -10,7 +10,7 @@ const url = () => `/api/v1/threads/${chatId}/context?model=Context-Test`;
 beforeAll(async () => {
   stack = await setupM2Stack();
   await stack.routeModel("Context-Test");
-  await stack.env.db.query("UPDATE model_routes SET context_window = 500000 WHERE org_id = $1", [stack.orgId]);
+  await stack.env.db.query("UPDATE model_routes SET context_window = 500000, alias = 'Context Alias' WHERE org_id = $1", [stack.orgId]);
   await stack.routeModel("Context-Small");
   await stack.env.db.query("UPDATE model_routes SET context_window = 10000 WHERE org_id = $1 AND model = 'Context-Small'", [stack.orgId]);
   const chat = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers: headers(), payload: {} });
@@ -34,20 +34,20 @@ describe("composer context usage from committed provider measurements", () => {
   it("leaves unmeasured usage unknown, with the selected model's real capacity", async () => {
     const response = await stack.env.app.inject({ url: url(), headers: headers() });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ tokens: null, max: 500000, model: "Context-Test", usage_model: null });
+    expect(response.json()).toEqual({ tokens: null, max: 500000, model: "Context-Test", usage_model: null, usage_model_alias: null });
   });
 
   it("includes cached input and the answer, ignores failed requests, and keeps tenant scope", async () => {
     await assistant(1001, 1420);
     await assistant(1002, 99999, "error");
     const response = await stack.env.app.inject({ url: url(), headers: headers() });
-    expect(response.json()).toEqual({ tokens: 1420, max: 500000, model: "Context-Test", usage_model: "Context-Test" });
+    expect(response.json()).toEqual({ tokens: 1420, max: 500000, model: "Context-Test", usage_model: "Context-Test", usage_model_alias: "Context Alias" });
     const store = new ThreadStore(stack.env.db);
     expect(await store.contextUsage(crypto.randomUUID(), chatId)).toBeNull();
     const switched = await stack.env.app.inject({
       url: `/api/v1/threads/${chatId}/context?model=Context-Small`, headers: headers(),
     });
-    expect(switched.json()).toEqual({ tokens: 1420, max: 10000, model: "Context-Small", usage_model: "Context-Test" });
+    expect(switched.json()).toEqual({ tokens: 1420, max: 10000, model: "Context-Small", usage_model: "Context-Test", usage_model_alias: "Context Alias" });
   });
 
   it("invalidates the old measurement after a head change and resumes on the next response", async () => {

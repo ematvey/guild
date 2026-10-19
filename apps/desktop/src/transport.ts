@@ -208,6 +208,8 @@ export interface ThreadContextUsage {
   max: number | null;
   model: string | null;
   usage_model: string | null;
+  /** Display name of `usage_model`; null when that route is gone or unnamed. */
+  usage_model_alias: string | null;
 }
 
 export async function fetchThreadContext(chatId: string, model: string, signal: AbortSignal): Promise<ThreadContextUsage> {

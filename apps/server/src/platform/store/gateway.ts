@@ -186,6 +186,16 @@ export class GatewayStore {
     return res.rows;
   }
 
+  /** The route's display name, or null when the route is gone or unnamed. */
+  async aliasOf(orgId: string, model: string): Promise<string | null> {
+    const res = await this.pool.query<{ alias: string }>(
+      "SELECT alias FROM model_routes WHERE org_id = $1 AND model = $2",
+      [orgId, model],
+    );
+    const alias = res.rows[0]?.alias ?? null;
+    return alias === "" ? null : alias;
+  }
+
   /** The model's context window (thread gauge); null when no route or the
    *  column is unset. */
   async contextWindow(orgId: string, model: string): Promise<number | null> {
@@ -210,7 +220,9 @@ export class GatewayStore {
 
   /** Creates or updates a route. When `originalModel` differs from
    *  `model`, the existing route row is renamed in place (its id keys the
-   *  route, so a retyped id must move the row, not create a second one). */
+   *  route, so a retyped id must move the row, not create a second one).
+   *  Both paths run in one transaction, so the uniqueness checks are the
+   *  indexes: a duplicate id or display name is a 409, never a lost race. */
   async upsertRoute(
     orgId: string,
     originalModel: string,
@@ -227,37 +239,49 @@ export class GatewayStore {
     temperature: number | null,
     modalities: string[],
   ): Promise<void> {
-    if (originalModel !== model) {
-      const clash = await this.pool.query(
-        "SELECT 1 FROM model_routes WHERE org_id = $1 AND model = $2",
-        [orgId, model],
-      );
-      if ((clash.rowCount ?? 0) > 0) {
-        throw ApiError.conflict("already_exists", `a route for '${model}' already exists`);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (originalModel !== model) {
+        const res = await client.query(
+          "UPDATE model_routes SET model = $3, alias = $4, provider = $5, enabled = $6, " +
+            "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
+            "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
+            "modalities = $14 WHERE org_id = $1 AND model = $2",
+          [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+        );
+        if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
+      } else {
+        await client.query(
+          "INSERT INTO model_routes (org_id, model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
+            "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) " +
+            "ON CONFLICT (org_id, model) " +
+            "DO UPDATE SET alias = EXCLUDED.alias, provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
+            "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
+            "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
+            "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
+            "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
+            "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
+          [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+        );
       }
-      const res = await this.pool.query(
-        "UPDATE model_routes SET model = $3, alias = $4, provider = $5, enabled = $6, " +
-          "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
-          "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
-          "modalities = $14 WHERE org_id = $1 AND model = $2",
-        [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
-      );
-      if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
-      return;
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      const code = (error as { code?: string }).code;
+      if (code === "23505") {
+        throw ApiError.conflict(
+          "already_exists",
+          (error as { constraint?: string }).constraint === "model_routes_org_alias_idx"
+            ? `a route named '${alias}' already exists`
+            : `a route for '${model}' already exists`,
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
     }
-    await this.pool.query(
-      "INSERT INTO model_routes (org_id, model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
-        "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) " +
-        "ON CONFLICT (org_id, model) " +
-        "DO UPDATE SET alias = EXCLUDED.alias, provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
-        "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
-        "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
-        "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
-        "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
-        "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
-      [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
-    );
   }
 
   /** Resolves a model to its provider route with the decrypted org key.

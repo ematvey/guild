@@ -202,7 +202,14 @@ export function registerChatsRoutes(
     const model = queryParam(req, "model") || usage?.model || null;
     const max = model === null ? null :
       (await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW;
-    return { tokens: usage?.tokens ?? null, max, model, usage_model: usage?.model ?? null };
+    // The measurement may come from a route the chat has since left, or from
+    // one an admin retired: the alias names it for the tooltip, and a null
+    // alias keeps the tooltip from naming a model it cannot identify.
+    const usageModel = usage?.model ?? null;
+    const usageModelAlias = usageModel === null
+      ? null
+      : await gateway.gatewayStore.aliasOf(user.org_id, usageModel);
+    return { tokens: usage?.tokens ?? null, max, model, usage_model: usageModel, usage_model_alias: usageModelAlias };
   });
 
   const stopTurn = async (req: FastifyRequest, reply: FastifyReply) => {

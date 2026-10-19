@@ -9,6 +9,7 @@ import {
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
+  isImeEnter,
   mentionCandidates,
   composerSkills,
   parseChatRoute,
@@ -103,6 +104,25 @@ describe("parseChatRoute / chatRoutePath", () => {
     });
     // everything else defaults to the Chats tab
     expect(parseChatRoute("/thread/x")).toMatchObject({ tab: "chats" });
+  });
+
+  it("a malformed escape falls back to the default route instead of throwing", () => {
+    // decodeURIComponent throws on these; a throw from the render-time route
+    // initializer would crash the app into a Reload loop on the same URL.
+    for (const path of ["/thread/%E0%A4%A", "/skills/a%", "/settings/models/a%zz"]) {
+      expect(parseChatRoute(path)).toMatchObject({
+        chatId: null,
+        tab: "chats",
+        invalid: true,
+      });
+    }
+  });
+
+  it("round-trips a settings detail whose segments hold / and %", () => {
+    const r = parseChatRoute("/settings/models");
+    const path = chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, "models", "a/b%c");
+    const back = parseChatRoute(path);
+    expect(back.settingsDetail).toBe("a/b%c");
   });
 
   it("parses every skills page state; skills is chat-independent and top-level", () => {
@@ -1013,5 +1033,15 @@ describe("workRunLabel (casual worked-for entry)", () => {
         "2026-10-15T12:00:00.000Z",
       ),
     ).toBe("Agent worked for 3 seconds");
+  });
+});
+
+describe("isImeEnter", () => {
+  it("treats an IME commit as not-a-submit", () => {
+    // A candidate is committed with Enter; both signals mean "composing".
+    expect(isImeEnter({ nativeEvent: { isComposing: true } })).toBe(true);
+    expect(isImeEnter({ keyCode: 229 })).toBe(true);
+    expect(isImeEnter({ nativeEvent: { isComposing: false }, keyCode: 13 })).toBe(false);
+    expect(isImeEnter({})).toBe(false);
   });
 });

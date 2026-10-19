@@ -475,9 +475,17 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         return undefined;
       }
       const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
-      if (chatId === null) return undefined; // unmapped conversation: no gate
-      const executor = await deps.executorKind(Number(runtime.conversationId));
       const isCommandTool = call.name === "bash" || call.name === "execute";
+      // An unmapped conversation has no policy to consult, and failing open
+      // here skipped the static deny rules, the shell allowlist and the card
+      // for every tool. A command-bearing tool is refused instead; non-command
+      // tools keep the batch contract below (pre-approved file operations).
+      if (chatId === null) {
+        return isCommandTool
+          ? { block: "denied: this conversation has no approval mapping" }
+          : undefined;
+      }
+      const executor = await deps.executorKind(Number(runtime.conversationId));
 
       // 1. Static exec policy (the machine `execute` path's rules, applied
       //    to the harness's bash tool — same rules, same matcher).

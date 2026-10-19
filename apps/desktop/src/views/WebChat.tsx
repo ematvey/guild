@@ -337,14 +337,48 @@ interface ChatRoute {
    * section lives in pane state. */
   settingsSection: string | null;
   settingsDetail: string | null;
+  /** Set when the pathname held a malformed escape: the route is the default
+   *  one and the caller rewrites the address (a reload must not re-enter it). */
+  invalid?: true;
 }
 
+/** Decodes one path segment; null when the escape is malformed. */
+const decodeSegment = (segment: string): string | null => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+};
+
+/** True when a keystroke is an IME committing a candidate rather than a
+ *  submit: `isComposing` on the native event, or the legacy 229 keyCode that
+ *  Safari reports for the same thing. */
+export const isImeEnter = (e: {
+  keyCode?: number;
+  nativeEvent?: { isComposing?: boolean };
+}): boolean => e.nativeEvent?.isComposing === true || e.keyCode === 229;
+
 export const parseChatRoute = (pathname: string): ChatRoute => {
-  const parts = pathname
-    .replace(/^\/+|\/+$/g, "")
-    .split("/")
-    .filter(Boolean)
-    .map(decodeURIComponent);
+  const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  const decoded = raw.map(decodeSegment);
+  // A malformed escape cannot name anything: fall back to the default route
+  // instead of throwing from a render-time initializer (an error boundary
+  // that only offers Reload would loop on the same URL forever).
+  if (decoded.some((segment) => segment === null)) {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+      invalid: true,
+    };
+  }
+  const parts = decoded as string[];
   // The rail's panel tabs own top-level addresses: /chats (the default),
   // /work, and /settings (bare, or with a deep-linked section). Tab picks
   // navigate, so back/forward and reloads restore the tab like any other
@@ -380,7 +414,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     // segment was encoded separately, so a model id like "a/b" round-trips
     // as one part.
     const section = parts.length > 1 ? parts[1] : null;
-    const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
+    // Segments arrive decoded once (each was encoded separately), so a model
+    // id containing a literal "%" round-trips; a second decode would throw.
+    const detail = parts.length > 2 ? parts.slice(2).join("/") : null;
     return {
       chatId: null,
       projectId: null,
@@ -1767,6 +1803,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // pathname, so back/forward, reloads and deep links all land in exactly
   // the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
+  // A malformed escape parses to the default route; the address is rewritten
+  // to match, so reload and back/forward do not land on the broken one again.
+  useEffect(() => {
+    if (route.invalid) window.history.replaceState(null, "", "/chats");
+  }, [route.invalid]);
   const chatId = route.chatId;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
@@ -3726,6 +3767,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   }
                 }
                 if (e.key === "Enter" && !e.shiftKey) {
+                  // An IME commits a candidate with Enter; that keystroke is
+                  // the commit, not a submit.
+                  if (isImeEnter(e)) return;
                   e.preventDefault();
                   // While a turn runs: Enter queues for the turn's next
                   // pause; Ctrl/Cmd+Enter steers — interrupts the turn and
@@ -3873,7 +3917,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <ContextRing chatId={chatId} model={model}
-                  name={models?.find((m) => m.id === model)?.alias ?? ""}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
