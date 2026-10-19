@@ -291,9 +291,8 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "pair" => pair_task(shared.clone(), req, out_tx).await,
         "chat.send" => chat_send_task(shared.clone(), req, out_tx).await,
         "machine.info" => {
-            // Hostname label sent during machine registration, plus the
-            // hardware fingerprint the server derives the registry id from
-            // (the webview matches its own machine row by it).
+            // Hostname label sent during machine registration; the id is
+            // generated webview-side (stable per app install).
             let name = std::env::var("COMPUTERNAME")
                 .ok()
                 .or_else(|| {
@@ -305,13 +304,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                 .unwrap_or_else(|| "guild-machine".to_string());
             let _ = out_tx.send(response_value(
                 req.id,
-                Ok(Response::ok(
-                    req.id,
-                    serde_json::json!({
-                        "name": name,
-                        "fingerprint": crate::machine_link::machine_fingerprint(),
-                    }),
-                )),
+                Ok(Response::ok(req.id, serde_json::json!({ "name": name }))),
             ));
         }
         "session.info" => {

@@ -5,7 +5,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createM5TestEnv, type M5TestEnv } from "./m5-harness.js";
 import { ScriptedClient } from "./ws-driver.js";
-import { canonicalMachineId } from "../../platform/store/machines.js";
 import crypto from "node:crypto";
 
 let env: M5TestEnv;
@@ -167,7 +166,7 @@ describe("ws upgrade gates", () => {
 });
 
 describe("ws machine lifecycle", () => {
-  it("keys the durable row by the derived identity; a second live link on it is refused", async () => {
+  it("registers the durable row with metadata; re-pair adoption re-keys and displaces", async () => {
     await bootstrap();
     const l = await login();
     const t1 = await ticket(l.token);
@@ -177,71 +176,29 @@ describe("ws machine lifecycle", () => {
     );
     await old.open();
     await old.until((f) => f.kind === "text" && f.data.includes("thread_list"));
-    const derived = canonicalMachineId(l.orgId, l.userId, "FP-9")!;
-    let row = (await env.db.query("SELECT * FROM machines WHERE machine_id = $1", [derived])).rows[0];
+    let row = (await env.db.query("SELECT * FROM machines WHERE machine_id = 're-old'")).rows[0];
     expect(row.label).toBe("OLD");
     expect(row.hardware_fingerprint).toBe("FP-9");
     expect(row.re_paired_at).toBeNull();
-    expect((await env.db.query("SELECT * FROM machines WHERE machine_id = 're-old'")).rows.length).toBe(0);
 
-    // A second live install (new local id, same hardware) claims the same
-    // derived id, so the live-slot rule refuses it rather than forking a row.
+    // Same physical machine re-pairs under a new local id.
     const t2 = await ticket(l.token);
     const fresh = new ScriptedClient(
       base,
       machineQuery(t2, "re-new", "&machine_name=NEW&machine_fingerprint=FP-9"),
     );
     await fresh.open();
-    await fresh.until((f) => f.kind === "text" && f.data.includes('"displaced"'));
-    await fresh.closed();
-
-    // Once the holding link is gone the same install reconnects onto its row:
-    // metadata refresh, no re-key, no second row.
-    old.end();
+    await fresh.until((f) => f.kind === "text" && f.data.includes("thread_list"));
+    // The still-live old registration is displaced.
+    await old.until((f) => f.kind === "text" && f.data.includes("displaced"));
     await old.closed();
-    const t3 = await ticket(l.token);
-    const again = new ScriptedClient(
-      base,
-      machineQuery(t3, "re-new", "&machine_name=NEW&machine_fingerprint=FP-9"),
-    );
-    await again.open();
-    await again.until((f) => f.kind === "text" && f.data.includes("thread_list"));
-    row = (await env.db.query("SELECT * FROM machines WHERE machine_id = $1", [derived])).rows[0];
+    row = (await env.db.query("SELECT * FROM machines WHERE machine_id = 're-new'")).rows[0];
     expect(row.hardware_fingerprint).toBe("FP-9");
     expect(row.label).toBe("NEW"); // the fresh connect's metadata
-    expect(row.re_paired_at).toBeNull(); // a reconnect, not a re-pair
-    expect((await env.db.query("SELECT * FROM machines WHERE machine_id = 're-new'")).rows.length).toBe(0);
-    again.end();
-    await again.closed();
-  });
-
-  it("adopts a legacy client-issued row for the same hardware and moves its bindings", async () => {
-    await bootstrap();
-    const l = await login();
-    await env.db.query(
-      `INSERT INTO machines (machine_id, org_id, user_id, label, hardware_fingerprint, os)
-       VALUES ('legacy-row', $1, $2, 'LEGACY', 'FP-LEGACY', 'Linux')`,
-      [l.orgId, l.userId],
-    );
-    const chat = (
-      await env.db.query<{ id: string }>(
-        `INSERT INTO chats (id, org_id, user_id, title, machine_id, machine_label)
-         VALUES (gen_random_uuid(), $1, $2, 'legacy chat', 'legacy-row', 'LEGACY') RETURNING id`,
-        [l.orgId, l.userId],
-      )
-    ).rows[0]!.id;
-
-    const t = await ticket(l.token);
-    const ws = new ScriptedClient(base, machineQuery(t, "legacy-client", "&machine_name=LEGACY&machine_fingerprint=FP-LEGACY"));
-    await ws.open();
-    await ws.until((f) => f.kind === "text" && f.data.includes("thread_list"));
-
-    const derived = canonicalMachineId(l.orgId, l.userId, "FP-LEGACY")!;
-    expect((await env.db.query("SELECT * FROM machines WHERE machine_id = 'legacy-row'")).rows.length).toBe(0);
-    expect((await env.db.query("SELECT machine_id, re_paired_at FROM machines WHERE machine_id = $1", [derived])).rows.length).toBe(1);
-    expect((await env.db.query("SELECT machine_id FROM chats WHERE id = $1", [chat])).rows[0]!.machine_id).toBe(derived);
-    ws.end();
-    await ws.closed();
+    expect(row.re_paired_at).not.toBeNull();
+    expect((await env.db.query("SELECT * FROM machines WHERE machine_id = 're-old'")).rows.length).toBe(0);
+    fresh.end();
+    await fresh.closed();
   });
 
   it("revoking the session emits AuthRequired and ends the socket", { timeout: 20_000 }, async () => {
