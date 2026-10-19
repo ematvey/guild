@@ -1,1 +1,1 @@
-{"routes":[{"context_window":500000,"enabled":true,"max_output_tokens":null,"modalities":["image","video"],"model":"GLM-5.3-Flash","price_per_mtok_in_usd":0.0,"price_per_mtok_out_usd":0.0,"provider":"openai","quota_monthly_usd":null,"reasoning":true,"temperature":null}]}
+{"routes":[{"alias":"","context_window":500000,"enabled":true,"max_output_tokens":null,"modalities":["image","video"],"model":"GLM-5.3-Flash","price_per_mtok_in_usd":0.0,"price_per_mtok_out_usd":0.0,"provider":"openai","quota_monthly_usd":null,"reasoning":true,"temperature":null}]}

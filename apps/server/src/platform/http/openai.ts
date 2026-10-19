@@ -249,7 +249,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx):
       return reply.type("application/json").send(
         rustJsonText({
           object: "list",
-          data: models.map((m) => ({ id: m, object: "model", owned_by: "organization_owner" })),
+          data: models.map((m) => ({ id: m.model, object: "model", owned_by: "organization_owner" })),
         }),
       );
     } catch (error) {

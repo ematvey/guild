@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Model routes carry a user-visible name; the model id stays internal (2026-10-19, 0.5.81).**
+  `model_routes.alias` is the display name the chat model picker, context
+  ring and route pages show; the `model` column remains the wire id sent to
+  the provider and the identifier API clients address. `/api/v1/models` keeps
+  returning the id list for older clients and the Rust engine, plus an
+  `aliases` map; a route without an alias falls back to its id until an admin
+  names it. The admin route form now edits both fields, and a changed id
+  renames the existing row in place (a rename onto an existing id is a 409,
+  not an overwrite). Old thread entries and usage rows keep the historical
+  id; that is data, not a live route reference. Dev compose serves 0.5.81,
+  the migration is applied, and all six signed client artifacts are
+  published.
+
 - **Machine ids stay handles; the hardware id only matches (2026-10-18, 0.5.79).**
   Reverts the derived ids of 0.5.77/0.5.78 (`uuidv5(org, user, fingerprint)`):
   keying the id on the hardware turned a hardware change into an identity

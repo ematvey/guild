@@ -697,7 +697,14 @@ export async function saveChatViewMode(mode: ChatViewMode): Promise<void> {
   } catch { /* best effort — the toggle already applied locally */ }
 }
 
-export async function listModels(): Promise<string[] | null> {
+/** A model route as chats see it: the id travels on the wire, the alias is
+ *  the display name (empty when the admin has not named the route). */
+export interface ModelOption {
+  id: string;
+  alias: string;
+}
+
+export async function listModels(): Promise<ModelOption[] | null> {
   try {
     const token = getToken();
   // /api/v1/models is primary since the 2026-10-15 thread rename; the
@@ -708,12 +715,22 @@ export async function listModels(): Promise<string[] | null> {
     // null = request failed (distinguishable from a legitimately empty list)
     if (!res.ok) return null;
     const v = await res.json().catch(() => ({}));
-    return v.models ?? [];
+    const ids: unknown = v.models ?? [];
+    const aliases: Record<string, string> = v.aliases ?? {};
+    return Array.isArray(ids)
+      ? ids.filter((id): id is string => typeof id === "string")
+          .map((id) => ({ id, alias: aliases[id] ?? "" }))
+      : [];
     } catch {
     // A rejected fetch (offline, TLS, server down) is a failure like any
     // other: the null contract covers it, so call sites only handle null.
     return null;
   }
+}
+
+/** The chat-visible label: the admin's alias, else the route id. */
+export function modelLabel(m: ModelOption): string {
+  return m.alias !== "" ? m.alias : m.id;
 }
 
 
