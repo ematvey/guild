@@ -118,6 +118,7 @@ import {
   listChats,
   listMachines,
   listModels,
+  modelLabel,
   listProjects,
   saveChatViewMode,
   updateChat,
@@ -131,6 +132,7 @@ import {
   startSocket,
   watchMachinePresence,
   type ThreadState,
+  type ModelOption,
   getApproval,
   type ApprovalPolicy,
   type ChatApprovalMode,
@@ -1716,7 +1718,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const persistFiles = (target: string | null, files: readonly DraftAttachment[]) => {
     void fileStore.saveDraft(target, files).catch(storageFailure);
   };
-  const [models, setModels] = useState<string[] | null>(null);
+  const [models, setModels] = useState<ModelOption[] | null>(null);
   // Sign-out hygiene: drafts can hold sensitive composer text, so they are
   // cleared with the session — a shared browser's next account must not
   // inherit them. Every sign-out path in this view goes through here.
@@ -2080,7 +2082,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         return;
       }
       setModels(m);
-      if (m.length > 0) setModel((cur) => cur || m[0]);
+      if (m.length > 0) setModel((cur) => cur || m[0].id);
     });
   }, []);
 
@@ -3871,6 +3873,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <ContextRing chatId={chatId} model={model}
+                  name={models?.find((m) => m.id === model)?.alias ?? ""}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
@@ -3879,8 +3882,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     </SelectTrigger>
                     <SelectContent>
                       {models.map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {m}
+                        <SelectItem key={m.id} value={m.id}>
+                          {modelLabel(m)}
                         </SelectItem>
                       ))}
                     </SelectContent>

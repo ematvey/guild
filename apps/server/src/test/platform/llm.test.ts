@@ -62,6 +62,44 @@ describe("M2 LLM gateway endpoints", () => {
     expect(Number(row!["cost_usd"])).toBeCloseTo(0.000014, 10);
   });
 
+  it("route alias is the user-visible name; the model id can be renamed in place", async () => {
+    const put = (payload: Record<string, unknown>) =>
+      stack.env.app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/gateway/routes",
+        headers: { authorization: `Bearer ${stack.adminToken}`, "content-type": "application/json" },
+        payload,
+      });
+    const models = async () => {
+      const res = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/models",
+        headers: { authorization: `Bearer ${stack.memberToken}` },
+      });
+      return JSON.parse(res.body) as { models: string[]; aliases: Record<string, string> };
+    };
+
+    expect((await put({ model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    let listed = await models();
+    expect(listed.models).toContain("m-alias");
+    expect(listed.models).not.toContain("m-alias-v2");
+    expect(listed.aliases["m-alias"]).toBe("Guild Fast");
+
+    // Rename the route: the row moves, no second route appears, the alias
+    // stays with it.
+    expect((await put({ original_model: "m-alias", model: "m-alias-v2", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    listed = await models();
+    expect(listed.models).toContain("m-alias-v2");
+    expect(listed.models).not.toContain("m-alias");
+    expect(listed.aliases["m-alias-v2"]).toBe("Guild Fast");
+    expect(listed.aliases["m-alias"]).toBeUndefined();
+
+    // Renaming onto an existing id is a conflict, not an overwrite.
+    await put({ model: "m-alias", alias: "Other", provider: "mock-openai", price_in: 0, price_out: 0 });
+    const clash = await put({ original_model: "m-alias-v2", model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    expect(clash.statusCode).toBe(409);
+  });
+
   it("route temperature: default applies when the client sends none, client value wins", async () => {
     // Route with a configured default temperature (the stray-token fix).
     await stack.env.app.inject({

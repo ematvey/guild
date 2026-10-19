@@ -39,6 +39,8 @@ import { FactCard, FactGrid } from "../components/fact-card";
 
 interface RouteRow {
   model: string;
+  /** User-visible display name; empty falls back to the model id. */
+  alias: string;
   provider: string;
   enabled: boolean;
   price_per_mtok_in_usd: number;
@@ -152,12 +154,15 @@ export default function ModelsSection({
   const routeColumns = useMemo<ColumnDef<RouteRow, any>[]>(
     () => [
       {
-        accessorKey: "model",
+        accessorKey: "alias",
         header: "Model",
         cell: ({ row }) => (
           <div className="flex min-w-0 items-center gap-2">
             <StatusDot enabled={row.original.enabled} />
-            <span className="truncate font-medium">{row.original.model}</span>
+            <div className="min-w-0">
+              <p className="truncate font-medium">{row.original.alias || row.original.model}</p>
+              <p className="truncate text-xs text-muted-foreground">{row.original.model}</p>
+            </div>
           </div>
         ),
       },
@@ -217,6 +222,7 @@ export default function ModelsSection({
         model={view.model}
         providers={providers}
         onChanged={() => reload()}
+        onRenamed={(model) => onDetailChange(model)}
         onBack={() => {
           reload();
           onDetailChange(null);
@@ -309,7 +315,7 @@ export default function ModelsSection({
           <DataTable
             columns={routeColumns}
             data={routes}
-            search={(r) => `${r.model} ${providerName(r.provider)}`}
+            search={(r) => `${r.alias} ${r.model} ${providerName(r.provider)}`}
             searchPlaceholder="Search models…"
             onRowClick={(r) => onDetailChange(r.model)}
             empty={
@@ -687,11 +693,13 @@ function RouteDetail({
   model,
   providers,
   onChanged,
+  onRenamed,
   onBack,
 }: {
   model: string;
   providers: ProviderRow[] | null;
   onChanged: () => void;
+  onRenamed: (model: string) => void;
   onBack: () => void;
 }) {
   const { route: r, settled, error: loadError } = useRouteField(model);
@@ -740,7 +748,9 @@ function RouteDetail({
         return;
       }
       await api("PUT", "/api/v1/admin/gateway/routes", {
-        model: draft.model,
+        original_model: model,
+        model: draft.model.trim(),
+        alias: draft.alias.trim(),
         provider: draft.provider,
         enabled: draft.enabled,
         price_in: draft.price_per_mtok_in_usd,
@@ -754,8 +764,9 @@ function RouteDetail({
         ...(draft.temperature != null || tempText.trim() !== "" ? { temperature: parsedTemp } : {}),
         modalities: draft.modalities,
       });
-      toast.success("Route saved", { description: draft.model });
+      toast.success("Route saved", { description: draft.alias.trim() || draft.model.trim() });
       onChanged();
+      if (draft.model.trim() !== model) onRenamed(draft.model.trim());
       setDraft(null);
       setMode("view");
     } catch (e) {
@@ -771,7 +782,7 @@ function RouteDetail({
     setBusy(true);
     try {
       await api("DELETE", `/api/v1/admin/gateway/routes/${encodeURIComponent(model)}`);
-      toast.success("Route deleted", { description: r.model });
+      toast.success("Route deleted", { description: r.alias || r.model });
       onBack();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -785,12 +796,25 @@ function RouteDetail({
       <div>
         <PageHeader
           title="Edit route"
-          description={draft.model}
+          description={draft.alias || draft.model}
           back={{ label: "Models", onClick: onBack }}
         />
         <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-          <Field label="Model id" hint="Immutable — the id keys the route; editing it would create a second route.">
-            <Input value={draft.model} disabled />
+          <Field
+            label="Display name"
+            hint="Shown to chat users. The model id stays internal."
+          >
+            <Input
+              value={draft.alias}
+              placeholder="e.g. Guild Fast"
+              onChange={(e) => patch({ alias: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="Model id"
+            hint="The name sent to the provider and used by API clients. Changing it renames the route in place."
+          >
+            <Input value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
           </Field>
           <Field label="Provider">
             <ProviderSelect
@@ -893,7 +917,10 @@ function RouteDetail({
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
-            <Button disabled={busy} onClick={save}>
+            <Button
+              disabled={busy || !draft.model.trim() || !draft.alias.trim()}
+              onClick={save}
+            >
               {busy ? "Saving…" : "Save"}
             </Button>
             <Button
@@ -916,7 +943,7 @@ function RouteDetail({
   return (
     <div>
       <PageHeader
-        title={r.model}
+        title={r.alias || r.model}
         description={
           r.enabled ? "Selectable in chats." : "Disabled — not selectable in chats."
         }
@@ -931,6 +958,12 @@ function RouteDetail({
         }
       />
       <FactGrid>
+        <FactCard label="Display name">
+          <span>{r.alias || "not set — users see the model id"}</span>
+        </FactCard>
+        <FactCard label="Model id">
+          <span className="font-mono text-sm">{r.model}</span>
+        </FactCard>
         <FactCard label="Provider">
           <div className="flex items-center gap-2">
             <Chip>{providerName}</Chip>
@@ -966,7 +999,7 @@ function RouteDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete route?</AlertDialogTitle>
             <AlertDialogDescription>
-              {r.model} disappears from the chat model selector. This cannot be undone.
+              {r.alias || r.model} disappears from the chat model selector. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -995,6 +1028,7 @@ function RouteAdd({
   onBack: () => void;
 }) {
   const [model, setModel] = useState("");
+  const [alias, setAlias] = useState("");
   const [provider, setProvider] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1012,7 +1046,17 @@ function RouteAdd({
         back={{ label: "Models", onClick: onBack }}
       />
       <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-        <Field label="Model id">
+        <Field
+          label="Display name"
+          hint="Shown to chat users. The model id stays internal."
+        >
+          <Input
+            value={alias}
+            placeholder="e.g. Guild Fast"
+            onChange={(e) => setAlias(e.target.value)}
+          />
+        </Field>
+        <Field label="Model id" hint="The name sent to the provider and used by API clients.">
           <Input
             value={model}
             placeholder="e.g. GLM-5.3-Flash"
@@ -1028,13 +1072,14 @@ function RouteAdd({
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button
-            disabled={!model.trim() || !provider || busy}
+            disabled={!model.trim() || !alias.trim() || !provider || busy}
             onClick={async () => {
               setBusy(true);
               setError(null);
               try {
                 await api("PUT", "/api/v1/admin/gateway/routes", {
                   model: model.trim(),
+                  alias: alias.trim(),
                   provider,
                   enabled: true,
                   price_in: 0,
@@ -1042,7 +1087,7 @@ function RouteAdd({
                   reasoning: false,
                   modalities: [],
                 });
-                toast.success("Route created", { description: model.trim() });
+                toast.success("Route created", { description: alias.trim() });
                 onAdded(model.trim());
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);

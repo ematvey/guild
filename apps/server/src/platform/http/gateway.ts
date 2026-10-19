@@ -22,7 +22,14 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
   const listModels = async (req: FastifyRequest) => {
     const user = await requireUser(ctx, req);
     const list = await gateway.gatewayStore.listModels(user.org_id);
-    return rustJsonText({ models: list });
+    // `models` stays the id list for older clients (and the Rust engine);
+    // `aliases` maps ids to the admin's display name. An absent/empty entry
+    // means the client falls back to the id.
+    const aliases: Record<string, string> = {};
+    for (const row of list) {
+      if (row.alias !== "") aliases[row.model] = row.alias;
+    }
+    return rustJsonText({ models: list.map((r) => r.model), aliases });
   };
   app.get("/api/v1/models", listModels);
   app.get("/api/v1/gateway/models", listModels);
@@ -44,7 +51,13 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
     const admin = await requireAdminUser(ctx, req);
     const body = requireJsonBody(req);
     const model = body["model"];
-    if (typeof model !== "string") throw ApiError.badRequest("missing model");
+    if (typeof model !== "string" || model.trim() === "") throw ApiError.badRequest("missing model");
+    // A rename moves the existing row; the UI sends the id it opened.
+    const originalModel =
+      typeof body["original_model"] === "string" && (body["original_model"] as string).trim() !== ""
+        ? (body["original_model"] as string).trim()
+        : model.trim();
+    const alias = typeof body["alias"] === "string" ? (body["alias"] as string).trim() : "";
     const provider = body["provider"];
     if (typeof provider !== "string") throw ApiError.badRequest("missing provider");
     const enabled = body["enabled"] === undefined ? true : body["enabled"] === true;
@@ -73,7 +86,9 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       : [];
     await gateway.gatewayStore.upsertRoute(
       admin.org_id,
-      model,
+      originalModel,
+      model.trim(),
+      alias,
       provider,
       enabled,
       priceIn,

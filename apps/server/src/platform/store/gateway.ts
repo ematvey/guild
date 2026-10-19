@@ -39,6 +39,8 @@ export interface RouteRow {
  *  field names match the Rust AdminRouteRow). */
 export interface AdminRouteRow {
   model: string;
+  /** Display name shown to chat users; empty = use the model id. */
+  alias: string;
   provider: string;
   enabled: boolean;
   price_per_mtok_in_usd: number;
@@ -174,12 +176,14 @@ export class GatewayStore {
     await this.pool.query("DELETE FROM model_routes WHERE org_id = $1 AND model = $2", [orgId, model]);
   }
 
-  async listModels(orgId: string): Promise<string[]> {
-    const res = await this.pool.query<{ model: string }>(
-      "SELECT model FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model",
+  /** Enabled routes selectable in chats; the alias is the user-visible
+   *  label, empty when the admin has not named the route. */
+  async listModels(orgId: string): Promise<{ model: string; alias: string }[]> {
+    const res = await this.pool.query<{ model: string; alias: string }>(
+      "SELECT model, alias FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model",
       [orgId],
     );
-    return res.rows.map((r) => r.model);
+    return res.rows;
   }
 
   /** The model's context window (thread gauge); null when no route or the
@@ -196,7 +200,7 @@ export class GatewayStore {
    *  provider key itself is never returned). */
   async listRoutes(orgId: string): Promise<AdminRouteRow[]> {
     const res = await this.pool.query<AdminRouteRow>(
-      "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
+      "SELECT model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
         "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities " +
         "FROM model_routes WHERE org_id = $1 ORDER BY model",
       [orgId],
@@ -204,9 +208,14 @@ export class GatewayStore {
     return res.rows;
   }
 
+  /** Creates or updates a route. When `originalModel` differs from
+   *  `model`, the existing route row is renamed in place (its id keys the
+   *  route, so a retyped id must move the row, not create a second one). */
   async upsertRoute(
     orgId: string,
+    originalModel: string,
     model: string,
+    alias: string,
     provider: string,
     enabled: boolean,
     priceIn: number,
@@ -218,18 +227,36 @@ export class GatewayStore {
     temperature: number | null,
     modalities: string[],
   ): Promise<void> {
+    if (originalModel !== model) {
+      const clash = await this.pool.query(
+        "SELECT 1 FROM model_routes WHERE org_id = $1 AND model = $2",
+        [orgId, model],
+      );
+      if ((clash.rowCount ?? 0) > 0) {
+        throw ApiError.conflict("already_exists", `a route for '${model}' already exists`);
+      }
+      const res = await this.pool.query(
+        "UPDATE model_routes SET model = $3, alias = $4, provider = $5, enabled = $6, " +
+          "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
+          "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
+          "modalities = $14 WHERE org_id = $1 AND model = $2",
+        [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+      );
+      if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
+      return;
+    }
     await this.pool.query(
-      "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
+      "INSERT INTO model_routes (org_id, model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
         "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) " +
         "ON CONFLICT (org_id, model) " +
-        "DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
+        "DO UPDATE SET alias = EXCLUDED.alias, provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
         "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
         "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
         "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
         "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
         "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
-      [orgId, model, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+      [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
     );
   }
 
