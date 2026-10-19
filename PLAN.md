@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **A turn naming a retired model runs on the default route (2026-10-19).**
+  A chat pins no model: the picker offers the org's catalog, and the turn
+  carries whatever the client has in hand. A tab opened before an admin
+  changed the routes (or an older desktop bundle) kept sending the old id and
+  the submission failed at `resolveRoute`. Submission now resolves the
+  request against the org's enabled routes — a name still on the list is used
+  as sent, anything else falls back to the default (first) route — so the
+  turn succeeds and its assistant event records the model that actually ran.
+  Dev's only route is aliased `Auto`, so the picker reads Auto while the wire
+  id stays `deepseek-v4.1-flash`.
+
 - **Model routes carry a user-visible name; the model id stays internal (2026-10-19, 0.5.81).**
   `model_routes.alias` is the display name the chat model picker, context
   ring and route pages show; the `model` column remains the wire id sent to
