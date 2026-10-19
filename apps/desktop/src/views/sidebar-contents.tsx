@@ -275,10 +275,7 @@ function ProjectHeader({
         <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
           {machine.online !== undefined &&
             (machine.online ? (
-              <span className="relative flex size-1.5 shrink-0">
-                <span className="absolute inline-flex size-1.5 animate-ping rounded-full bg-emerald-500/60" />
-                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-              </span>
+              <span className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500" />
             ) : (
               <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
             ))}
