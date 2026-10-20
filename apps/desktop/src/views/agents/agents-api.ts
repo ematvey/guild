@@ -308,6 +308,20 @@ export async function getAgentThread(
   );
 }
 
+export async function renameAgentThread(
+  id: string,
+  threadId: string,
+  title: string,
+): Promise<AgentThread> {
+  return oneOf<AgentThread>(
+    await request<unknown>(`${agentBase(id)}/threads/${encodeURIComponent(threadId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+    "thread",
+  );
+}
+
 export async function createAgentThread(
   id: string,
   title?: string,
