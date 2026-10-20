@@ -119,17 +119,19 @@ done
 # gets the same capacity. Setting it repeatedly is idempotent and covers
 # agents created while this sidecar is running.
 quota_gib="${GUILD_AGENT_WORKSPACE_GIB:-50}"
-(
+quota_interval="${GUILD_AGENT_QUOTA_INTERVAL:-300}"
+# The mount lives in the host namespace, so the sweep must run there too.
+nsenter -t 1 -m -- sh -c '
   while true; do
-    for dir in "$mountpoint"/agents/*/*; do
+    for dir in "$1"/agents/*/*; do
       [ -d "$dir" ] || continue
-      rel="${dir#"$mountpoint"}"
-      LD_LIBRARY_PATH="$host_lib" "$host_bin" quota set "$meta_url" \
-        --path "$rel" --capacity "$quota_gib" >/dev/null 2>&1 || true
+      rel=${dir#"$1"}
+      LD_LIBRARY_PATH="$2" "$3" quota set "$4" \
+        --path "$rel" --capacity "$5" >/dev/null 2>&1 || true
     done
-    sleep "${GUILD_AGENT_QUOTA_INTERVAL:-300}"
+    sleep "$6"
   done
-) &
+' sh "$mountpoint" "$host_lib" "$host_bin" "$meta_url" "$quota_gib" "$quota_interval" &
 quota_pid=$!
 
 cleanup_quota() {
