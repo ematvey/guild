@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS agent_team_grants (
 CREATE TABLE IF NOT EXISTS agent_threads (
     id UUID PRIMARY KEY,
     agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    -- The transcript lives in the existing chat journal; one chat per thread.
+    chat_id UUID NOT NULL UNIQUE REFERENCES chats(id) ON DELETE CASCADE,
     title TEXT NOT NULL DEFAULT '',
     title_locked BOOLEAN NOT NULL DEFAULT false,
     kind TEXT NOT NULL DEFAULT 'thread'
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_threads (
 
 CREATE INDEX IF NOT EXISTS agent_threads_agent_activity_idx
     ON agent_threads (agent_id, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS agent_threads_chat_idx ON agent_threads (chat_id);
 CREATE UNIQUE INDEX IF NOT EXISTS agent_threads_one_default_idx
     ON agent_threads (agent_id) WHERE kind = 'default';
 
