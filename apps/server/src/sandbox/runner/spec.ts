@@ -14,6 +14,12 @@ export interface RunnerConfig {
   runtime: string;
   /** Docker volume name of guild_data, as the host daemon knows it. */
   volume: string;
+  /** The agent workspace volume inside the runner (agent subpath dirs are
+   *  created here). */
+  agentDataDir: string;
+  /** Docker volume name of the agent workspace volume (JuiceFS-backed), as
+   *  the host daemon knows it. */
+  agentVolume: string;
   /** Docker network for proxied sandboxes, or "none". */
   network: string;
   /** Egress proxy URL handed to proxied sandboxes. */
@@ -37,11 +43,18 @@ export const SANDBOX_HOME = `${WORKSPACE}/.sandbox-home`;
 export const AGENT_PATH = "/opt/guild/agent.js";
 export const LABEL = "guild.sandbox";
 
-const SUBPATH = /^(workspaces|chats)\/[0-9a-f-]{36}\/[A-Za-z0-9_-]{1,64}$/;
+const UUID = "[0-9a-f-]{36}";
+const SUBPATH = new RegExp(`^(workspaces|chats)/${UUID}/[A-Za-z0-9_-]{1,64}$`);
+const AGENT_SUBPATH = new RegExp(`^agents/${UUID}/${UUID}$`);
 const KEY = /^[A-Za-z0-9:_-]{1,200}$/;
 
 export function validSubpath(subpath: string): boolean {
-  return SUBPATH.test(subpath);
+  return SUBPATH.test(subpath) || AGENT_SUBPATH.test(subpath);
+}
+
+/** Agents get an always-on sandbox on the agent workspace volume. */
+export function isAgentSubpath(subpath: string): boolean {
+  return subpath.startsWith("agents/");
 }
 
 export function validKey(key: string): boolean {
@@ -85,6 +98,7 @@ export function sandboxEnv(config: Pick<RunnerConfig, "network" | "proxyUrl">): 
 
 /** Docker create body for one sandbox. */
 export function containerSpec(config: RunnerConfig, key: string, subpath: string): Record<string, unknown> {
+  const source = isAgentSubpath(subpath) ? config.agentVolume : config.volume;
   return {
     Image: config.image,
     Cmd: ["sleep", "infinity"],
@@ -113,7 +127,7 @@ export function containerSpec(config: RunnerConfig, key: string, subpath: string
       Mounts: [
         {
           Type: "volume",
-          Source: config.volume,
+          Source: source,
           Target: WORKSPACE,
           VolumeOptions: { Subpath: subpath, NoCopy: true },
         },
@@ -175,6 +189,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, discovered: { project: 
     image: env.GUILD_SANDBOX_IMAGE ?? "guild-sandbox:latest",
     runtime: env.GUILD_SANDBOX_RUNTIME ?? "runsc",
     volume: env.GUILD_SANDBOX_VOLUME ?? `${project}_guild_data`,
+    agentDataDir: env.GUILD_SANDBOX_AGENT_DIR ?? "/workspaces",
+    agentVolume: env.GUILD_SANDBOX_AGENT_VOLUME ?? `${project}_guild_workspaces`,
     network: networkMode === "none" ? "none" : (env.GUILD_SANDBOX_NETWORK ?? `${project}_sandbox`),
     proxyUrl: networkMode === "none" ? null : requireProxyUrl(env),
     project,
