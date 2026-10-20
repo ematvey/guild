@@ -12,6 +12,7 @@ import {
   agentExecSpec,
   containerName,
   containerSpec,
+  isAgentSubpath,
   validKey,
   validSubpath,
   type RunnerConfig,
@@ -126,7 +127,14 @@ export class SandboxManager {
    *  root-owned, so their trees are handed over once. */
   private async prepareDataRoot(): Promise<void> {
     const root = this.config.dataDir;
-    for (const dir of [root, path.join(root, "workspaces"), path.join(root, "chats")]) {
+    const agentRoot = this.config.agentDataDir;
+    for (const dir of [
+      root,
+      path.join(root, "workspaces"),
+      path.join(root, "chats"),
+      agentRoot,
+      path.join(agentRoot, "agents"),
+    ]) {
       await mkdir(dir, { recursive: true });
       const stat = await lstat(dir);
       if (stat.isSymbolicLink()) throw new Error(`${dir} is a symbolic link`);
@@ -140,7 +148,8 @@ export class SandboxManager {
   /** Creates the workspace dir on the shared volume (runner side), owned by
    *  the sandbox uid, refusing anything that resolves outside the volume. */
   private async prepareDir(subpath: string): Promise<void> {
-    const root = await realpath(this.config.dataDir);
+    const base = isAgentSubpath(subpath) ? this.config.agentDataDir : this.config.dataDir;
+    const root = await realpath(base);
     const dir = path.join(root, subpath);
     await mkdir(dir, { recursive: true });
     const stat = await lstat(dir);
@@ -181,6 +190,7 @@ export class SandboxManager {
     let excess = running.length - this.config.maxRunning + 1;
     if (excess <= 0) return;
     const idle = running
+      .filter((c) => !isAgentSubpath(c.Labels?.[`${LABEL}.subpath`] ?? ""))
       .map((c) => ({ name: c.Names[0]!.replace(/^\//, ""), usage: this.usage.get(c.Names[0]!.replace(/^\//, "")) }))
       .filter((c) => c.name !== except && (c.usage?.attached ?? 0) === 0)
       .sort((a, b) => (a.usage?.lastUsed ?? 0) - (b.usage?.lastUsed ?? 0));
@@ -274,10 +284,11 @@ export class SandboxManager {
   }
 
   /** Stops sandboxes idle past idleStopMs, removes those stopped and idle
-   *  past idleRemoveMs. */
+   *  past idleRemoveMs. Agent sandboxes are always-on: never reaped. */
   async reap(now = Date.now()): Promise<void> {
     for (const c of await this.list()) {
       const name = c.Names[0]!.replace(/^\//, "");
+      if (isAgentSubpath(c.Labels?.[`${LABEL}.subpath`] ?? "")) continue;
       const usage = this.usage.get(name) ?? this.touch(name);
       if (usage.attached > 0) continue;
       const idle = now - usage.lastUsed;

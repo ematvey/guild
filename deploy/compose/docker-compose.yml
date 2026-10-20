@@ -60,6 +60,66 @@ services:
       mc mb --ignore-existing local/guild
       "
 
+  juicefs-init:
+    # One-shot: the JuiceFS metadata lives in its own Postgres database
+    # (guild_meta), separate from the app database. Uses the stack's
+    # GUILD_DATABASE_URL credentials; the host dir prerequisite is
+    # documented in docs/deploy-nuances.md.
+    image: postgres:17
+    restart: "no"
+    env_file: ${GUILD_CONFIG_ENV:-config.env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      GUILD_JUICE_META_DB: ${GUILD_JUICE_META_DB:-guild_meta}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        admin_url="$${GUILD_DATABASE_URL%/*}/postgres"
+        for _ in $$(seq 1 60); do
+          psql "$$admin_url" -tAc 'SELECT 1' >/dev/null 2>&1 && break
+          sleep 1
+        done
+        psql "$$admin_url" -tAc 'SELECT 1' >/dev/null
+        exists=$$(psql "$$admin_url" -tAc "SELECT 1 FROM pg_database WHERE datname='$$GUILD_JUICE_META_DB'")
+        if [ "$$exists" != "1" ]; then
+          psql "$$admin_url" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$$GUILD_JUICE_META_DB\""
+        fi
+
+  juicefs:
+    # JuiceFS sidecar: mounts the agent workspace volume into the host dir
+    # (rshared) so the server and runner bind it. Settings come from
+    # config.env (GUILD_JUICE_* and the GUILD_S3_* fallbacks); defaults live
+    # in deploy/juicefs/entrypoint.sh. Host prerequisite: the bind source
+    # directory must exist (docs/deploy-nuances.md §4b).
+    image: ${GUILD_JUICE_IMAGE:-juicedata/mount:ce-v1.3.1}
+    restart: unless-stopped
+    env_file: ${GUILD_CONFIG_ENV:-config.env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      GUILD_JUICE_MOUNT: /mnt/juicefs
+    entrypoint: ["/usr/local/bin/guild-juicefs-entrypoint"]
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ../juicefs/entrypoint.sh:/usr/local/bin/guild-juicefs-entrypoint:ro
+      - ${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}:/mnt/juicefs:rshared
+    depends_on:
+      juicefs-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "stat -f -c %T /mnt/juicefs | grep -qi fuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
   server:
     # The TS server (apps/server) is the only server: it serves the whole
     # public surface (HTTP + the hub WS upgrade) — gateway, chats/turns on
@@ -74,7 +134,7 @@ services:
     restart: unless-stopped
     ports:
       - "${GUILD_HTTP_PORT:-8080}:8080"
-    env_file: config.env
+    env_file: ${GUILD_CONFIG_ENV:-config.env}
     extra_hosts:
       # reach the host-published shared services (postgres/clickhouse/rustfs)
       - "host.docker.internal:host-gateway"
@@ -82,10 +142,17 @@ services:
       # Server-side tools run in gVisor sandboxes via the runner below
       # (GUILD_SANDBOX_RUNNER_TOKEN is shared through config.env).
       GUILD_SANDBOX_RUNNER_URL: http://sandbox-runner:8090
+      # Agent workspaces (read-only for the file browser).
+      GUILD_AGENT_WORKSPACE_ROOT: /workspaces
+    depends_on:
+      juicefs:
+        condition: service_healthy
     volumes:
       # GUILD_DATA_DIR: the server-side workspace sessions root
       # (workspaces/<org>/<name>) and plain-chat sandboxes (chats/<org>/<id>).
       - guild_data:/data
+      # JuiceFS-backed agent workspaces: agents/<org>/<agent>, read-only.
+      - guild_workspaces:/workspaces:ro
 
   sandbox-runner:
     # The only process holding the Docker socket: creates one gVisor
@@ -99,18 +166,25 @@ services:
     restart: unless-stopped
     user: "0:0"
     command: ["bun", "src/sandbox/runner/main.ts"]
-    env_file: config.env
+    env_file: ${GUILD_CONFIG_ENV:-config.env}
     environment:
       GUILD_SANDBOX_IMAGE: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
       # By address: Docker's embedded DNS does not work under gVisor, and
       # proxied clients never need DNS themselves (CONNECT carries the name).
       GUILD_SANDBOX_PROXY_URL: http://${GUILD_SANDBOX_EGRESS_IP:-10.213.0.2}:3128
+      # Agent subpath dirs are created on the agent volume mounted here.
+      GUILD_SANDBOX_AGENT_DIR: /workspaces
     depends_on:
-      - sandbox-image
+      sandbox-image:
+        condition: service_started
+      juicefs:
+        condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Subpath dirs are created and handed to the sandbox uid here.
       - guild_data:/data
+      # JuiceFS-backed agent workspaces: agents/<org>/<agent>, read-write.
+      - guild_workspaces:/workspaces
 
   sandbox-image:
     # Build-only: `docker compose up --build` builds the sandbox image the
@@ -152,3 +226,12 @@ volumes:
   chdata:
   miniodata:
   guild_data:
+  # The JuiceFS mount, reached through the host directory the sidecar
+  # mounts into. The bind source must exist before `docker compose up`
+  # (docs/deploy-nuances.md §4b).
+  guild_workspaces:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}
