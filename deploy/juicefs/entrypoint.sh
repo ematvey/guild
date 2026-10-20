@@ -115,4 +115,26 @@ while [ "$i" -lt 60 ]; do
 done
 [ "$i" -lt 60 ] || die "timed out waiting for the mount"
 
+# Per-agent workspace quota: every agent directory under agents/<org>/<id>
+# gets the same capacity. Setting it repeatedly is idempotent and covers
+# agents created while this sidecar is running.
+quota_gib="${GUILD_AGENT_WORKSPACE_GIB:-50}"
+(
+  while true; do
+    for dir in "$mountpoint"/agents/*/*; do
+      [ -d "$dir" ] || continue
+      rel="${dir#"$mountpoint"}"
+      LD_LIBRARY_PATH="$host_lib" "$host_bin" quota set "$meta_url" \
+        --path "$rel" --capacity "$quota_gib" >/dev/null 2>&1 || true
+    done
+    sleep "${GUILD_AGENT_QUOTA_INTERVAL:-300}"
+  done
+) &
+quota_pid=$!
+
+cleanup_quota() {
+  kill "$quota_pid" >/dev/null 2>&1 || true
+}
+trap 'cleanup_quota; cleanup' TERM INT EXIT
+
 wait "$mount_pid"

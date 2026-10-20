@@ -28,6 +28,7 @@ describe("loadConfig", () => {
       poolMax: 10,
       dataDir: path.resolve("./data"),
       agentWorkspaceRoot: "/workspaces",
+      agentWorkspaceWriteRoot: "/workspaces",
       allowShellTools: false,
       sandbox: { mode: "inprocess-unsafe" },
       approvalTimeoutMs: 300_000,
