@@ -12,6 +12,8 @@ import type {
   Agent,
   AgentAccess,
   AgentActivityEntry,
+  AgentArtifactStatus,
+  AgentDelegationArtifact,
   AgentNotice,
   AgentRole,
   AgentRun,
@@ -113,6 +115,9 @@ const RUN_COLUMNS = `r.id, r.agent_id, r.thread_id, r.routine_id, r.parent_run_i
   ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
   ${TS("r.created_at")} AS created_at`;
 
+const ARTIFACT_COLUMNS = `d.id, d.run_id, d.parent_run_id, d.agent_id, d.path, d.size,
+  d.status, d.inbox_path, d.staging_path, ${TS("d.created_at")} AS created_at`;
+
 const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.payload,
   ${TS("n.read_at")} AS read_at, ${TS("n.created_at")} AS created_at`;
 
@@ -181,6 +186,21 @@ function toRun(row: Record<string, unknown>): AgentRun {
     tokens: Number(row.tokens ?? 0),
     started_at: row.started_at === null || row.started_at === undefined ? null : pgTimestampToRfc3339(row.started_at as string),
     finished_at: row.finished_at === null || row.finished_at === undefined ? null : pgTimestampToRfc3339(row.finished_at as string),
+    created_at: pgTimestampToRfc3339(row.created_at as string),
+  };
+}
+
+function toArtifact(row: Record<string, unknown>): AgentDelegationArtifact {
+  return {
+    id: row.id as string,
+    run_id: row.run_id as string,
+    parent_run_id: row.parent_run_id as string,
+    agent_id: row.agent_id as string,
+    path: row.path as string,
+    size: Number(row.size ?? 0),
+    status: row.status as AgentArtifactStatus,
+    inbox_path: (row.inbox_path as string | null) ?? null,
+    staging_path: (row.staging_path as string | null) ?? null,
     created_at: pgTimestampToRfc3339(row.created_at as string),
   };
 }
@@ -674,6 +694,113 @@ export class AgentStore {
 
   /** Creates a run row. A2 calls this before admission; the returned row is
    *  the durable run identity. */
+
+  /** The oldest queued/running run for a chat journal row. Tools run inside
+   *  a turn use this to resolve the run they belong to. */
+  async runningRunForChat(chatId: string): Promise<AgentRun | null> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${RUN_COLUMNS} FROM agent_runs r
+       JOIN agent_threads t ON t.id = r.thread_id
+       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+       ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
+      [chatId],
+    );
+    return res.rows[0] === undefined ? null : toRun(res.rows[0]);
+  }
+
+  /** Direct children of one run, oldest first. */
+  async childRuns(parentRunId: string): Promise<AgentRun[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${RUN_COLUMNS} FROM agent_runs r
+       WHERE r.parent_run_id = $1 ORDER BY r.created_at ASC, r.id ASC`,
+      [parentRunId],
+    );
+    return res.rows.map(toRun);
+  }
+
+  async childCount(parentRunId: string): Promise<number> {
+    const res = await this.pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM agent_runs WHERE parent_run_id = $1",
+      [parentRunId],
+    );
+    return Number(res.rows[0]?.count ?? 0);
+  }
+
+  /** Walks parent_run_id from one run to the root, returning every ancestor
+   *  run (nearest first). */
+  async ancestorRuns(runId: string): Promise<AgentRun[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `WITH RECURSIVE chain AS (
+         SELECT r.*, 1 AS distance FROM agent_runs r WHERE r.id = $1
+         UNION ALL
+         SELECT parent.*, chain.distance + 1
+         FROM agent_runs parent JOIN chain ON parent.id = chain.parent_run_id
+         WHERE chain.parent_run_id IS NOT NULL AND chain.distance < 64
+       )
+       SELECT ${RUN_COLUMNS} FROM chain r
+       ORDER BY r.distance ASC`,
+      [runId],
+    );
+    return res.rows.map(toRun);
+  }
+
+  async createArtifact(input: {
+    run_id: string;
+    parent_run_id: string;
+    agent_id: string;
+    path: string;
+    size: number;
+    status: AgentArtifactStatus;
+    inbox_path?: string | null;
+    staging_path?: string | null;
+  }): Promise<AgentDelegationArtifact> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `WITH d AS (
+         INSERT INTO agent_delegation_artifacts
+           (id, run_id, parent_run_id, agent_id, path, size, status, inbox_path, staging_path)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (run_id, path) DO UPDATE SET
+           size = EXCLUDED.size, status = EXCLUDED.status,
+           inbox_path = EXCLUDED.inbox_path, staging_path = EXCLUDED.staging_path
+         RETURNING *)
+       SELECT ${ARTIFACT_COLUMNS} FROM d`,
+      [
+        uuidv7(),
+        input.run_id,
+        input.parent_run_id,
+        input.agent_id,
+        input.path,
+        input.size,
+        input.status,
+        input.inbox_path ?? null,
+        input.staging_path ?? null,
+      ],
+    );
+    return toArtifact(res.rows[0]!);
+  }
+
+  async listArtifacts(runId: string): Promise<AgentDelegationArtifact[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${ARTIFACT_COLUMNS} FROM agent_delegation_artifacts d
+       WHERE d.run_id = $1 ORDER BY d.created_at ASC, d.path ASC`,
+      [runId],
+    );
+    return res.rows.map(toArtifact);
+  }
+
+  /** Marks every staged artifact of one run released; returns the rows that
+   *  were staged before this call. */
+  async releaseArtifacts(runId: string): Promise<AgentDelegationArtifact[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `WITH released AS (
+         UPDATE agent_delegation_artifacts SET status = 'released'
+         WHERE run_id = $1 AND status = 'staged' RETURNING *)
+       SELECT ${ARTIFACT_COLUMNS} FROM released d ORDER BY d.created_at ASC, d.path ASC`,
+      [runId],
+    );
+    return res.rows.map(toArtifact);
+  }
+
   async createRun(input: CreateRunInput): Promise<AgentRun> {
     const id = uuidv7();
     const res = await this.pool.query<Record<string, unknown>>(
