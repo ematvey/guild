@@ -140,7 +140,7 @@ export class AgentFiles {
     const names = await readdir(abs);
     const entries: AgentFileEntry[] = [];
     for (const name of names) {
-      if (!showHidden && HIDDEN_NAMES.has(name)) continue;
+      if (!showHidden && (name.startsWith(".") || HIDDEN_NAMES.has(name))) continue;
       const childRel = rel === "" ? name : `${rel}/${name}`;
       const childAbs = path.join(abs, name);
       const stats = await lstat(childAbs);
