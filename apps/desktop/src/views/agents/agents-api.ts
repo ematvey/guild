@@ -150,7 +150,7 @@ export interface AgentRoutine {
   agent_id: string;
   name: string;
   kind: "cron" | "once";
-  schedule: string;
+  schedule: string | null;
   timezone: string;
   run_at?: string | null;
   prompt: string;
@@ -225,7 +225,7 @@ export interface UpdateAgentInput {
 export interface RoutineInput {
   name: string;
   kind: "cron" | "once";
-  schedule: string;
+  schedule: string | null;
   timezone: string;
   run_at?: string | null;
   prompt: string;
@@ -632,6 +632,34 @@ export const SAFE_BASELINE_TOOLS: AgentToolInfo[] = [
     label: "Schedule reminder",
     group: "Routines",
     description: "Schedule a one-shot reminder for this agent.",
+    safe: true,
+  },
+  {
+    name: "list_routines",
+    label: "List routines",
+    group: "Routines",
+    description: "List this agent's routines and their schedules.",
+    safe: true,
+  },
+  {
+    name: "create_routine",
+    label: "Create routine",
+    group: "Routines",
+    description: "Create a recurring routine from a cron or interval schedule.",
+    safe: true,
+  },
+  {
+    name: "update_routine",
+    label: "Update routine",
+    group: "Routines",
+    description: "Change a routine's schedule, prompt or enabled state.",
+    safe: true,
+  },
+  {
+    name: "delete_routine",
+    label: "Delete routine",
+    group: "Routines",
+    description: "Delete a routine and stop its schedule.",
     safe: true,
   },
 ];

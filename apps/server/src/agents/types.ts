@@ -38,6 +38,10 @@ export type AgentToolName =
   | "conversation_read"
   | "send_message"
   | "schedule_reminder"
+  | "list_routines"
+  | "create_routine"
+  | "update_routine"
+  | "delete_routine"
   | "delegate"
   | "release_artifacts";
 
@@ -165,6 +169,10 @@ export const DEFAULT_AGENT_TOOLS: AgentToolName[] = [
   "conversation_read",
   "send_message",
   "schedule_reminder",
+  "list_routines",
+  "create_routine",
+  "update_routine",
+  "delete_routine",
 ];
 
 /** One activity-log row: a run joined with its agent's display name. */

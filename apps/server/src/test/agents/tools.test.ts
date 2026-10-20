@@ -76,9 +76,14 @@ dbDescribe("agent conversation tools", () => {
     });
   });
 
-  it("registers schedule_reminder for agent conversations", () => {
+  it("registers the routine management tools", () => {
     const tools = createAgentTools({ pool: env!.db, store, threads, agent });
-    expect(tools.map((tool) => tool.name)).toContain("schedule_reminder");
+    const names = tools.map((tool) => tool.name);
+    expect(names).toContain("schedule_reminder");
+    expect(names).toContain("list_routines");
+    expect(names).toContain("create_routine");
+    expect(names).toContain("update_routine");
+    expect(names).toContain("delete_routine");
   });
 
   it("search and read are scoped to the calling agent", async () => {

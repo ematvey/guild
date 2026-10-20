@@ -56,8 +56,10 @@ import {
   listAgents,
   listMyTeams,
   restoreAgent,
+  sendAgentTurn,
   updateAgent,
   type Agent,
+  type AgentRoutine,
   type AgentRun,
   type AgentThread,
   type AgentToolInfo,
@@ -163,6 +165,31 @@ export function AgentPage({
     }
   };
 
+  /** Routines are written in chat: open a fresh thread and hand the agent the
+   *  intent, so the schedule, prompt and later changes all live in the
+   *  transcript instead of a form. */
+  const startRoutineThread = async (title: string, message: string) => {
+    const row = await createAgentThread(agentId, title);
+    await sendAgentTurn(agentId, { thread_id: row.id, message });
+    onNavigate({ view: "agent", agentId, tab: "threads", threadId: row.id });
+  };
+
+  const newRoutine = () =>
+    startRoutineThread(
+      "New routine",
+      "I want to create a new routine. Ask me what it should do, how often it should run " +
+        "(for example weekdays at 09:00), and the timezone. Once I answer, create it with " +
+        "create_routine and show me the human-readable schedule.",
+    );
+
+  const editRoutine = (routine: AgentRoutine) =>
+    startRoutineThread(
+      `Edit routine: ${routine.name}`,
+      `I want to change the routine "${routine.name}" (${routine.id}). Its current schedule is ` +
+        `${routine.schedule ?? routine.run_at ?? "one-shot"} in ${routine.timezone}. Ask me what to ` +
+        "change, then update it with update_routine. If I ask to remove it, use delete_routine.",
+    );
+
   if (error !== null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -245,7 +272,13 @@ export function AgentPage({
             <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} />
           )}
           {tab === "routines" && (
-            <AgentRoutines agentId={agent.id} routineId={routineId} onNavigate={onNavigate} />
+            <AgentRoutines
+              agentId={agent.id}
+              routineId={routineId}
+              onNavigate={onNavigate}
+              onNewRoutine={newRoutine}
+              onEditRoutine={editRoutine}
+            />
           )}
           {tab === "activity" && (
             <ActivityPage
