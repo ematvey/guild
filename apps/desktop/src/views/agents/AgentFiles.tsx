@@ -149,13 +149,19 @@ export function AgentFiles({
   const forceNextFetch = useRef(false);
 
   const path = filePath ?? "";
+  const previewKind = previewKindOf(path.split("/").pop() ?? "");
+  const inlinePreview = previewKind === "image" || previewKind === "pdf";
   const activeKey = fileViewKey(path, hidden);
   const cachedView = cache.current.get(activeKey);
   const shownEntries = cachedView?.entries ?? entries;
   const shownListingDir = cachedView?.listingDir ?? listingDir;
   const shownIsDirectory = cachedView?.isDirectory ?? isDirectory;
-  const previewKind = previewKindOf(path.split("/").pop() ?? "");
-  const inlinePreview = previewKind === "image" || previewKind === "pdf";
+  const cachedPreview = cachedView?.preview;
+  const shownPreview = cachedPreview !== undefined ? cachedPreview : preview;
+  const shownPreviewError =
+    cachedPreview !== undefined || (cachedView !== undefined && inlinePreview) ? null : previewError;
+  const shownPreviewLoading =
+    cachedPreview !== undefined ? false : previewLoading;
   const blobUrl = useBlobUrl(agentId, path, path !== "" && !shownIsDirectory && inlinePreview);
   const breadcrumbs = useMemo(() => fileBreadcrumbs(path), [path]);
   const normalize = (rows: AgentFileEntry[], dir: string): AgentFileEntry[] =>
@@ -481,15 +487,15 @@ export function AgentFiles({
               </Button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3" data-scrollable>
-              {previewError !== null && (
+              {shownPreviewError !== null && (
                 <ErrorState
                   title="Could not preview this file"
-                  message={previewError}
+                  message={shownPreviewError}
                   onRetry={refresh}
                 />
               )}
-              {previewError === null && previewLoading && <InlineLoading label="Loading preview" />}
-              {previewError === null && !previewLoading && inlinePreview && (
+              {shownPreviewError === null && shownPreviewLoading && <InlineLoading label="Loading preview" />}
+              {shownPreviewError === null && !shownPreviewLoading && inlinePreview && (
                 blobUrl === null ? (
                   <InlineLoading label="Loading preview" />
                 ) : previewKind === "image" ? (
@@ -506,10 +512,10 @@ export function AgentFiles({
                   />
                 )
               )}
-              {previewError === null && !previewLoading && !inlinePreview && preview !== null && (
-                <FilePreview content={preview} path={path} />
+              {shownPreviewError === null && !shownPreviewLoading && !inlinePreview && shownPreview !== null && (
+                <FilePreview content={shownPreview} path={path} />
               )}
-              {previewError === null && !previewLoading && !inlinePreview && preview === null && (
+              {shownPreviewError === null && !shownPreviewLoading && !inlinePreview && shownPreview === null && (
                 <EmptyState
                   title="No preview"
                   body="Download the file to inspect it."
