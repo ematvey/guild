@@ -230,20 +230,27 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
 - The `juicefs-init` one-shot service creates the `guild_meta` database in
   the stack's Postgres from `GUILD_DATABASE_URL` credentials, then exits.
 - The `juicefs` sidecar formats the volume once (`juicefs format` is skipped
-  when `juicefs status` reports an existing volume), mounts it in the
-  foreground into the host dir with `rshared`, and needs `/dev/fuse`,
-  `SYS_ADMIN`, and an unconfined AppArmor profile. Its healthcheck is
-  `stat -f` on the mountpoint.
+  when `juicefs status` reports an existing volume), then mounts it in the
+  **host mount namespace**: it runs with `pid: host` and `privileged: true`,
+  installs the client at `/usr/local/bin/juicefs` (plus library symlinks under
+  `/usr/local/lib/juicefs`) and mounts via `nsenter -t 1 -m -n`. A FUSE mount
+  created inside the sidecar's own namespace is not visible to the Docker
+  daemon, so it cannot back the per-agent sandbox subpaths. The healthcheck
+  runs `nsenter -t 1 -m -- stat -f` on `/mnt/guild`.
 - `server` binds `guild_workspaces` read-only at `/workspaces` (file
   browser, `GUILD_AGENT_WORKSPACE_ROOT`); `sandbox-runner` binds it
   read-write and creates `agents/<org>/<agent>` subpaths for the sandboxes.
-  Both wait for the `juicefs` healthcheck.
+  Both wait for the `juicefs` healthcheck and restart with it (`depends_on:
+  restart: true`).
 - Chat/legacy workspaces stay on `guild_data`; the agent volume is separate.
 - JuiceFS settings come from `deploy/compose/config.env`
   (`GUILD_JUICE_*`, with `GUILD_S3_*` fallbacks). Defaults are in
   `deploy/juicefs/entrypoint.sh`. The object-storage bucket must already
   exist before the first `juicefs format` (for the isolated instance the
-  init script creates it).
+  init script creates it). The sidecar writes `127.0.0.1
+  host.docker.internal` into the host `/etc/hosts` when missing, because the
+  host-namespace mount resolves the same S3/Postgres names as the
+  containers.
 - Other stacks can point the services at a different config file with
   `GUILD_CONFIG_ENV=/path/to/config.env` (default `config.env` next to the
   compose file).
