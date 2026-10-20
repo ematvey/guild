@@ -58,7 +58,7 @@ dbDescribe("agent conversation tools", () => {
 
   it("send_message creates a thread, assistant message, unread chat and notice", async () => {
     const result = await sendAgentMessage(
-      { store, threads, agent },
+      { pool: env!.db, store, threads, agent },
       { text: "The report is ready." },
     );
     const thread = await store.getThread(agent.id, result.thread_id);

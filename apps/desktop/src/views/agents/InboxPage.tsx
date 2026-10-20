@@ -91,16 +91,21 @@ export function InboxPage({
 
   const open = (notice: AgentNotice) => {
     if (!notice.read_at) void markRead(notice, true);
-    if (notice.run_id) {
-      onNavigate({ view: "run", runId: notice.run_id });
+    const runId =
+      notice.run_id ?? (typeof notice.payload.run_id === "string" ? notice.payload.run_id : null);
+    const threadId =
+      notice.thread_id ??
+      (typeof notice.payload.thread_id === "string" ? notice.payload.thread_id : null);
+    if (runId) {
+      onNavigate({ view: "run", runId });
       return;
     }
-    if (notice.agent_id && notice.thread_id) {
+    if (notice.agent_id && threadId) {
       onNavigate({
         view: "agent",
         agentId: notice.agent_id,
         tab: "threads",
-        threadId: notice.thread_id,
+        threadId,
       });
       return;
     }
