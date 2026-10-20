@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { humanSchedule, scheduleLabel } from "./AgentRoutines";
+import { humanSchedule, nextRunLabel, scheduleLabel } from "./AgentRoutines";
 import type { AgentRoutine } from "./agents-api";
 
 function routine(patch: Partial<AgentRoutine>): AgentRoutine {
@@ -41,6 +41,13 @@ describe("humanSchedule", () => {
 describe("scheduleLabel", () => {
   it("adds the timezone to a recurring routine", () => {
     expect(scheduleLabel(routine({}))).toBe("Weekdays at 09:00 · Asia/Dubai");
+  });
+
+  it("describes future runs without clamping them to just now", () => {
+    const now = Date.parse("2026-10-21T00:00:00.000Z");
+    expect(nextRunLabel("2026-10-21T04:30:00.000Z", now)).toBe("in 4h");
+    expect(nextRunLabel("2026-10-26T05:00:00.000Z", now)).toContain("Oct");
+    expect(nextRunLabel("2026-10-20T00:00:00.000Z", now)).toBe("due now");
   });
 
   it("formats a one-shot reminder as a date", () => {
