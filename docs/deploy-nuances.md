@@ -213,6 +213,64 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
   and runs the runner + e2e suites in a throwaway `guild-sbx-it` project
   (subnets `10.214.0.0/24`, `10.214.1.0/24`; runner on loopback :18090).
 
+### 4b. JuiceFS agent workspaces
+
+Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
+
+- **Host prerequisite (the only one):** create the bind source once per
+  stack. No systemd unit is involved.
+
+  ```bash
+  sudo mkdir -p /mnt/guild
+  ```
+
+  For the isolated instance use its own directory (`/mnt/guild-agents-vfs`,
+  see below). The compose volume `guild_workspaces` binds that directory;
+  `docker compose up` fails at volume creation when it does not exist.
+- The `juicefs-init` one-shot service creates the `guild_meta` database in
+  the stack's Postgres from `GUILD_DATABASE_URL` credentials, then exits.
+- The `juicefs` sidecar formats the volume once (`juicefs format` is skipped
+  when `juicefs status` reports an existing volume), mounts it in the
+  foreground into the host dir with `rshared`, and needs `/dev/fuse`,
+  `SYS_ADMIN`, and an unconfined AppArmor profile. Its healthcheck is
+  `stat -f` on the mountpoint.
+- `server` binds `guild_workspaces` read-only at `/workspaces` (file
+  browser, `GUILD_AGENT_WORKSPACE_ROOT`); `sandbox-runner` binds it
+  read-write and creates `agents/<org>/<agent>` subpaths for the sandboxes.
+  Both wait for the `juicefs` healthcheck.
+- Chat/legacy workspaces stay on `guild_data`; the agent volume is separate.
+- JuiceFS settings come from `deploy/compose/config.env`
+  (`GUILD_JUICE_*`, with `GUILD_S3_*` fallbacks). Defaults are in
+  `deploy/juicefs/entrypoint.sh`. The object-storage bucket must already
+  exist before the first `juicefs format` (for the isolated instance the
+  init script creates it).
+- Other stacks can point the services at a different config file with
+  `GUILD_CONFIG_ENV=/path/to/config.env` (default `config.env` next to the
+  compose file).
+
+**Isolated instance** (`scripts/agents-vfs-init.mjs`) — a disposable
+verification stack with fixed resources, never the dev/prod stacks:
+
+| Resource | Value |
+|---|---|
+| Compose project | `guild-agents-vfs` |
+| HTTP port | `18093` |
+| App database | `guild_agents_vfs` |
+| JuiceFS metadata database | `guild_meta` |
+| Object-storage bucket | `guild-agents-vfs` |
+| Host volume dir | `/mnt/guild-agents-vfs` |
+
+Host prerequisites for the isolated instance:
+
+```bash
+sudo mkdir -p /mnt/guild-agents-vfs
+```
+
+The script refuses any other database, bucket, port, or volume directory.
+It provisions the app database, `guild_meta`, the bucket, and the host
+directory, then prints how to bring the compose project up with the
+isolated config file (`GUILD_CONFIG_ENV`).
+
 ---
 
 ## 5. First-run / admin plumbing

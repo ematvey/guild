@@ -19,7 +19,6 @@ import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerObservabilityRoutes } from "./observability.js";
 import { registerChatsRoutes } from "./chats.js";
-import { registerAgentSessionRoutes } from "./agents.js";
 import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerThreadStreamRoute } from "./thread-stream.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
@@ -34,6 +33,7 @@ import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
 import { registerIntegrationToolRoutes } from "./integration_tools.js";
 import { registerUserMcpRoutes } from "./user_mcp.js";
+import { registerAgentRoutes } from "../../agents/routes.js";
 
 export interface NativeRouteGroup {
   /** Route group name (for the report / rollback notes). */
@@ -72,9 +72,11 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "admin-integrations", paths: ["/api/v1/admin/integrations", "/api/v1/admin/integrations/*"] },
   { name: "integration-tools", paths: ["/api/v1/integrations", "/api/v1/integrations/*"] },
   { name: "user-mcp", paths: ["/api/v1/mcp", "/api/v1/mcp/*"] },
-  // M4: workspace agent sessions + tool artifacts (the spill surface).
-  { name: "agents", paths: ["/api/v1/agents/sessions", "/api/v1/agents/sessions/*"] },
+  // Tool artifacts (the spill surface).
   { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
+  // Persistent agents: CRUD/lifecycle, threads, files, runs, activity, inbox,
+  // conversation search.
+  { name: "agents", paths: ["/api/v1/agents", "/api/v1/agents/*", "/api/v1/runs", "/api/v1/runs/*", "/api/v1/activity", "/api/v1/inbox", "/api/v1/inbox/*"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -128,7 +130,6 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerMachineRoutes(scope, chats, auth);
     registerWsRoutes(scope, chats, auth);
     registerChatsRoutes(scope, chats, gateway, auth, ctx.objects);
-    registerAgentSessionRoutes(scope, chats, gateway, auth, ctx.config);
     registerToolArtifactRoutes(scope, chats, auth, infra);
     registerThreadStreamRoute(scope, chats, auth, ctx.pool);
     // M6 long tail.
@@ -144,6 +145,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth);
     registerUserMcpRoutes(scope, auth);
+    registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
   });
 
   // The script-facing integration tool API accepts ANY content type as raw

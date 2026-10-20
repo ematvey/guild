@@ -9,10 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
-import { RunnerClient } from "../../sandbox/client.js";
-import { SandboxExecutionEnv } from "../../sandbox/env.js";
 
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
@@ -48,6 +45,7 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
         GUILD_DATA_DIR: mkdtempSync(path.join(tmpdir(), "guild-sbx-e2e-data-")),
         GUILD_SANDBOX_RUNNER_URL: URL_!,
         GUILD_SANDBOX_RUNNER_TOKEN: TOKEN,
+        GUILD_ALLOW_SHELL_TOOLS: "1",
         GUILD_APPROVAL_TIMEOUT_MS: "60000",
       },
       { dbPrefix: "guild_sbx_e2e_test", logLevel: process.env.SBX_TEST_LOG ?? "error" },
@@ -80,35 +78,15 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     throw new Error("turn did not settle");
   }
 
-  async function approveNext(chatId: string): Promise<void> {
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      const request = (await events(chatId)).find((e) => e.event["type"] === "approval_request");
-      if (request !== undefined) {
-        const callId = String(request.event["call_id"]);
-        const res = await stack.env.app.inject({
-          method: "POST",
-          url: `/api/v1/gateway/chat/${chatId}/approvals/${callId}`,
-          headers: auth(),
-          payload: { approved: true },
-        });
-        expect(res.statusCode).toBe(200);
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error("no approval request");
-  }
-
-  it("workspace session: shell and file tools run inside the gVisor sandbox", async () => {
-    const created = await stack.env.app.inject({
+  it("plain chat: shell and file tools run inside the gVisor sandbox", async () => {
+    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/chats", headers: auth(), payload: { title: "sbx-shell" } });
+    const chatId = (JSON.parse(created.body) as { id: string }).id;
+    await stack.env.app.inject({
       method: "POST",
-      url: "/api/v1/agents/sessions",
+      url: `/api/v1/chats/${chatId}/approval`,
       headers: auth(),
-      payload: { workspace_name: "sbx-e2e" },
+      payload: { default: "full_access" },
     });
-    expect(created.statusCode).toBe(200);
-    const session = JSON.parse(created.body) as { id: string; chat_id: string };
 
     stack.mock.setResponses([
       {
@@ -116,37 +94,27 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
           "bash",
           JSON.stringify({
             command:
-              "uname -r; id -u; tr '\\0' '\\n' < /proc/self/environ | grep -c '^GUILD_' ; ls /data 2>&1 | head -1; echo from-sandbox > out.txt; pwd",
+              "uname -r; id -u; tr '\\0' '\\n' < /proc/self/environ | grep -c '^GUILD_' ; ls /data 2>&1 | head -1; echo from-sandbox > out.txt; cat out.txt; pwd",
           }),
         ),
       },
       { body: finalSse },
     ]);
-    const turn = await stack.env.app.inject({
+    const submit = await stack.env.app.inject({
       method: "POST",
-      url: `/api/v1/agents/sessions/${session.id}/turns`,
+      url: "/api/v1/gateway/chat",
       headers: auth(),
-      payload: { message: "inspect", model: "GLM-Test-Model" },
+      payload: { chat_id: chatId, model: "GLM-Test-Model", messages: [{ role: "user", content: "inspect" }] },
     });
-    expect(turn.statusCode).toBe(200);
-    // Command tools still go through the exec policy + approval gate in
-    // workspace sessions; approve the card.
-    await approveNext(session.chat_id);
-    const result = await toolResult(session.chat_id);
+    expect(submit.statusCode).toBe(200);
+    const result = await toolResult(chatId);
     expect(result.is_error, result.content).toBe(false);
     expect(result.content).toMatch(/gvisor/);
     expect(result.content).toMatch(/^1000$/m);
     expect(result.content).toMatch(/^0$/m);
     expect(result.content).toMatch(/cannot access '\/data'/);
+    expect(result.content).toMatch(/^from-sandbox$/m);
     expect(result.content).toMatch(/^\/workspace$/m);
-
-    // The file is in the session's workspace on the sandbox volume.
-    const runner = new RunnerClient(URL_!, TOKEN);
-    const target = { key: `ws:${stack.orgId}:sbx-e2e`, subpath: `workspaces/${stack.orgId}/sbx-e2e` };
-    const env = new SandboxExecutionEnv({ id: "check", cwd: "/workspace", connect: async () => runner.connect(await runner.ensure(target)) });
-    const read = await env.readTextFile("out.txt", BACKGROUND_CONTEXT);
-    env.disconnect();
-    expect(read.ok && read.value).toBe("from-sandbox\n");
   }, 180_000);
 
   it("plain chat: the file tools cannot reach the server's secrets", async () => {

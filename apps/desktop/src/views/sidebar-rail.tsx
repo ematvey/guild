@@ -2,7 +2,16 @@
 // chats, projects (work) and skills. Help and Settings sit at the bottom,
 // above the account menu — all global across tabs and never scroll away.
 
-import { CircleHelp, FolderKanban, MessageSquare, Package, Settings } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  CircleHelp,
+  FolderKanban,
+  Inbox,
+  MessageSquare,
+  Package,
+  Settings,
+} from "lucide-react";
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -12,11 +21,21 @@ import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../transport";
 
-export type SidebarTab = "chats" | "work" | "skills" | "settings";
+export type SidebarTab =
+  | "inbox"
+  | "chats"
+  | "agents"
+  | "work"
+  | "activity"
+  | "skills"
+  | "settings";
 
 const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
+  { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "work", label: "Work", icon: FolderKanban },
+  { id: "agents", label: "Agents", icon: Bot },
+  { id: "work", label: "Projects", icon: FolderKanban },
+  { id: "activity", label: "Activity", icon: Activity },
   { id: "skills", label: "Skills", icon: Package },
 ];
 
@@ -29,11 +48,13 @@ function RailButton({
   icon: Icon,
   active,
   onClick,
+  badge,
 }: {
   label: string;
   icon: typeof MessageSquare;
   active: boolean;
   onClick: () => void;
+  badge?: number;
 }) {
   return (
     <Tooltip>
@@ -43,13 +64,21 @@ function RailButton({
           aria-label={label}
           aria-current={active}
           onClick={onClick}
-          className={`flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
+          className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
             active
               ? "bg-accent text-accent-foreground"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <Icon className="size-5" />
+          {badge !== undefined && badge > 0 && (
+            <span
+              aria-label={`${badge} unread`}
+              className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-semibold leading-4 text-black"
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">{label}</TooltipContent>
@@ -67,9 +96,12 @@ export function SidebarRail({
   onOpenDevice,
   onSignOut,
   onAddWorkspace,
+  inboxUnread,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
+  /** Attention items only — the Inbox badge never counts activity. */
+  inboxUnread?: number;
   /** The big help/learn popup (a route overlay, not a panel tab). */
   onOpenHelp: () => void;
   email: string;
@@ -96,6 +128,7 @@ export function SidebarRail({
             icon={Icon}
             active={activeTab === id}
             onClick={() => onTabChange(id)}
+            badge={id === "inbox" ? inboxUnread : undefined}
           />
         ))}
       </div>

@@ -45,6 +45,34 @@ describe("parseChatRoute / chatRoutePath", () => {
     return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail, r.newChat);
   };
 
+  it("owns the agents surface addresses without touching chat routes", () => {
+    const deep = parseChatRoute("/agents/a1/files/notes/today.md");
+    expect(deep.agents).toEqual({
+      view: "agent",
+      agentId: "a1",
+      tab: "files",
+      filePath: "notes/today.md",
+    });
+    expect(
+      chatRoutePath(
+        deep.chatId,
+        deep.projectId,
+        deep.overlay,
+        deep.skills,
+        deep.tab,
+        deep.settingsSection,
+        deep.settingsDetail,
+        deep.newChat,
+        deep.agents,
+      ),
+    ).toBe("/agents/a1/files/notes/today.md");
+    expect(parseChatRoute("/inbox").agents).toEqual({ view: "inbox" });
+    expect(parseChatRoute("/activity").agents).toEqual({ view: "activity" });
+    expect(parseChatRoute("/runs/r1").agents).toEqual({ view: "run", runId: "r1" });
+    // A chat deep link still parses as a chat, not an agents route.
+    expect(parseChatRoute("/thread/c1").agents).toBeNull();
+  });
+
   it("round-trips every route shape", () => {
     for (const path of [
       "/chats",
@@ -175,6 +203,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -188,6 +217,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       settingsDetail: null,
       overlay: { kind: "device" },
       skills: null,
+      agents: null,
       newChat: false,
     });
     // /help deep links alias the onboarding guide (the guide IS the help
@@ -204,6 +234,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       settingsDetail: null,
       overlay: { kind: "onboard" },
       skills: null,
+      agents: null,
       newChat: false,
     });
     // onboarding: chat-independent top-level surface, prefixes drop
@@ -215,6 +246,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       settingsDetail: null,
       overlay: { kind: "onboard" },
       skills: null,
+      agents: null,
       newChat: false,
     });
     expect(parseChatRoute("/project/p1/thread/c1/onboard")).toMatchObject({
@@ -227,6 +259,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "settings",
       overlay: null,
       skills: null,
+      agents: null,
       settingsSection: "integrations",
       settingsDetail: "a/b",
       newChat: false,
@@ -237,6 +270,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -247,6 +281,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -275,6 +310,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: "p1",
       overlay: null,
       skills: null,
+      agents: null,
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
@@ -285,6 +321,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: "p1",
       overlay: null,
       skills: null,
+      agents: null,
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
@@ -298,6 +335,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
