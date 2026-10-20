@@ -126,3 +126,26 @@ export interface AgentNotice {
   read_at: string | null;
   created_at: string;
 }
+
+/** The caller's effective access to one agent: the resolved grant role plus
+ *  the two capability flags routes check. Admins resolve as `owner`. */
+export interface AgentAccess {
+  role: AgentRole | null;
+  can_manage: boolean;
+  can_use: boolean;
+}
+
+/** The tool baseline a new agent starts with (design decision 18). */
+export const DEFAULT_AGENT_TOOLS: AgentToolName[] = [
+  "read",
+  "write",
+  "list",
+  "conversations_search",
+  "send_message",
+  "schedule_reminder",
+];
+
+/** One activity-log row: a run joined with its agent's display name. */
+export interface AgentActivityEntry extends AgentRun {
+  agent_name: string;
+}
