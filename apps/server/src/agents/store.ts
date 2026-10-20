@@ -461,7 +461,7 @@ export class AgentStore {
 
   /** Creates a chat journal row plus its agent_threads row in one
    *  transaction. The chat is owned by the agent's owner. */
-  async createThread(agentId: string, title: string): Promise<AgentThread> {
+  async createThread(agentId: string, title: string, kind: AgentThreadKind = "thread"): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
     const client = await this.pool.connect();
@@ -476,8 +476,8 @@ export class AgentStore {
       );
       await client.query(
         `INSERT INTO agent_threads (id, agent_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, $4, false, 'thread')`,
-        [id, agentId, chat.id, title],
+         VALUES ($1, $2, $3, $4, false, $5)`,
+        [id, agentId, chat.id, title, kind],
       );
       await client.query("COMMIT");
     } catch (error) {
