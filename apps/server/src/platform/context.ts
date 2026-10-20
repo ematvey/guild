@@ -188,6 +188,7 @@ export class PlatformContext {
           )
         : undefined;
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
+    this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: new AgentStore(this.pool),
