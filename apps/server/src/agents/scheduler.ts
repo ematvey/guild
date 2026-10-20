@@ -4,6 +4,8 @@
 // failure notices and auto-disable. The loop lives in the server process;
 // tests start it explicitly.
 
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import { uuidv7 } from "../platform/time.js";
@@ -30,6 +32,8 @@ export interface AgentSchedulerDeps {
   enabled?: boolean;
   intervalMs?: number;
   now?: () => Date;
+  /** Read-write workspace root; the deletion sweep removes agent dirs. */
+  workspaceRoot?: string;
 }
 
 interface DueRoutine {
@@ -103,10 +107,30 @@ export class AgentScheduler {
       await this.reconcileClaimed();
       await this.materializeDue(now);
       await this.claimDue(now);
+      await this.purgeDue();
     } catch (error) {
       this.deps.log.warn({ err: error }, "agent scheduler tick failed");
     } finally {
       this.ticking = false;
+    }
+  }
+
+  /** Phase two of agent deletion: rows past their grace period are purged
+   *  and their workspace directories removed. */
+  private async purgeDue(): Promise<void> {
+    const due = await this.deps.store.dueForPurge();
+    for (const row of due) {
+      try {
+        await this.deps.store.purgeById(row.org_id, row.id);
+        if (this.deps.workspaceRoot !== undefined) {
+          await rm(path.join(this.deps.workspaceRoot, "agents", row.org_id, row.id), {
+            recursive: true,
+            force: true,
+          });
+        }
+      } catch (error) {
+        this.deps.log.warn({ err: error, agentId: row.id }, "agent purge failed");
+      }
     }
   }
 

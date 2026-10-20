@@ -285,6 +285,17 @@ export async function restoreAgent(id: string): Promise<Agent> {
   );
 }
 
+export async function exportAgent(id: string): Promise<unknown> {
+  const body = await request<{ export: unknown }>(`${agentBase(id)}/export`);
+  return body.export;
+}
+
+export async function purgeAgent(id: string, force = false): Promise<void> {
+  await request<{ purged: boolean }>(`${agentBase(id)}/purge${force ? "?force=1" : ""}`, {
+    method: "POST",
+  });
+}
+
 export async function deleteAgent(id: string): Promise<void> {
   await request<void>(agentBase(id), { method: "DELETE" });
 }

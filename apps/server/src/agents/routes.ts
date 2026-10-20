@@ -298,6 +298,28 @@ export function registerAgentRoutes(
     return sendJson(reply, { agent });
   });
 
+  app.get("/api/v1/agents/:id/export", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    const bundle = await store.export(agent.org_id, agentId);
+    return sendJson(reply, { export: bundle });
+  });
+
+  app.post("/api/v1/agents/:id/purge", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    if (agent.status !== "deleting") {
+      throw ApiError.badRequest("agent is not in the deletion grace period");
+    }
+    const force = queryParam(req, "force") === "1" && (user.role === "admin" || user.role === "owner");
+    const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
+    if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
+    await store.purge(user, agentId);
+    return sendJson(reply, { purged: true });
+  });
+
   app.get("/api/v1/agents/:id/threads", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");

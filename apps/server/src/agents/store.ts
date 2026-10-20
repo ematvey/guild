@@ -266,6 +266,18 @@ export function deriveTitleFromMessage(message: string): string {
   return text.length <= 60 ? text : text.slice(0, 60).trim();
 }
 
+/** Per-organization ceiling on live agents (archived agents still count
+ *  until they are deleted). */
+export const MAX_AGENTS_PER_ORG = 25;
+
+/** Default per-agent sandbox budget recorded with every new agent. */
+export const DEFAULT_AGENT_RESOURCES = {
+  vcpu: 1,
+  memory_mb: 2048,
+  pids: 256,
+  workspace_gib: 50,
+} as const;
+
 export class AgentStore {
   private readonly chats: ChatStore;
 
@@ -280,6 +292,17 @@ export class AgentStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [user.org_id]);
+      const live = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM agents
+         WHERE org_id = $1 AND status IN ('active', 'archived')`,
+        [user.org_id],
+      );
+      if (Number(live.rows[0]?.count ?? "0") >= MAX_AGENTS_PER_ORG) {
+        throw ApiError.badRequest(
+          `agent limit reached: ${MAX_AGENTS_PER_ORG} agents per organization`,
+        );
+      }
       await client.query(
         `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, visibility, resources)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)`,
@@ -292,7 +315,11 @@ export class AgentStore {
           input.model,
           JSON.stringify(input.tools ?? DEFAULT_AGENT_TOOLS),
           input.visibility ?? "private",
-          JSON.stringify(input.resources ?? {}),
+          JSON.stringify(
+            input.resources === undefined || Object.keys(input.resources).length === 0
+              ? DEFAULT_AGENT_RESOURCES
+              : input.resources,
+          ),
         ],
       );
       const chat = await this.chats.createChatOn(client, user.org_id, user.id, null, null);
@@ -440,6 +467,12 @@ export class AgentStore {
    *  workspace directory. */
   async purge(user: UserRow, agentId: string): Promise<void> {
     const { agent } = await this.requireAccess(user, agentId, "manage");
+    await this.purgeById(agent.org_id, agentId);
+  }
+
+  /** Phase two without an access check: the deletion sweeper and the
+   *  owner-initiated purge route both land here. */
+  async purgeById(orgId: string, agentId: string): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -447,7 +480,7 @@ export class AgentStore {
         "SELECT chat_id FROM agent_threads WHERE agent_id = $1",
         [agentId],
       );
-      await client.query("DELETE FROM agents WHERE org_id = $1 AND id = $2", [agent.org_id, agentId]);
+      await client.query("DELETE FROM agents WHERE org_id = $1 AND id = $2", [orgId, agentId]);
       for (const row of chats.rows) {
         await client.query("DELETE FROM chats WHERE id = $1", [row.chat_id]);
       }
@@ -458,6 +491,34 @@ export class AgentStore {
     } finally {
       client.release();
     }
+  }
+
+  /** Agents whose grace period elapsed; the scheduler purges them. */
+  async dueForPurge(): Promise<{ id: string; org_id: string }[]> {
+    const res = await this.pool.query<{ id: string; org_id: string }>(
+      `SELECT id, org_id FROM agents
+       WHERE status = 'deleting' AND purge_after IS NOT NULL AND purge_after <= now()
+       ORDER BY purge_after ASC LIMIT 50`,
+    );
+    return res.rows;
+  }
+
+  /** A deletion export: the agent's definition, threads, routines and the
+   *  newest runs. Transcripts stay in the chat journal rows listed by id. */
+  async export(orgId: string, agentId: string): Promise<Record<string, unknown>> {
+    const agent = await this.fetchOrThrow(orgId, agentId);
+    const [threads, routines, runs] = await Promise.all([
+      this.listThreads(agentId, { includeRoutineRuns: true }),
+      this.listRoutines(agentId),
+      this.listRuns(agentId, { limit: 200 }),
+    ]);
+    return {
+      exported_at: new Date().toISOString(),
+      agent,
+      threads,
+      routines,
+      runs,
+    };
   }
 
   /** Reads the org's configured grace period when the optional
