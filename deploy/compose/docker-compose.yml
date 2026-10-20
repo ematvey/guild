@@ -137,6 +137,7 @@ services:
       GUILD_SANDBOX_RUNNER_URL: http://sandbox-runner:8090
       # Agent workspaces (read-only for the file browser).
       GUILD_AGENT_WORKSPACE_ROOT: /workspaces
+      GUILD_AGENT_WORKSPACE_WRITE_ROOT: /workspaces-write
     depends_on:
       juicefs:
         condition: service_healthy
@@ -146,7 +147,9 @@ services:
       # (workspaces/<org>/<name>) and plain-chat sandboxes (chats/<org>/<id>).
       - guild_data:/data
       # JuiceFS-backed agent workspaces: agents/<org>/<agent>, read-only.
+      # The second mount is the write surface for delegation artifacts only.
       - guild_workspaces:/workspaces:ro
+      - guild_workspaces:/workspaces-write
 
   sandbox-runner:
     # The only process holding the Docker socket: creates one gVisor
