@@ -65,6 +65,13 @@ function optionalString(body: Record<string, unknown>, name: string): string | u
   return value;
 }
 
+/** Nullable string: the forms send null for an unused field; the API treats
+ *  it as absent rather than a type error. */
+function nullableString(body: Record<string, unknown>, name: string): string | undefined {
+  if (body[name] === null) return undefined;
+  return optionalString(body, name);
+}
+
 function requiredString(body: Record<string, unknown>, name: string): string {
   const value = optionalString(body, name);
   if (value === undefined || value.trim() === "") throw ApiError.badRequest(`missing ${name}`);
@@ -430,7 +437,7 @@ export function registerAgentRoutes(
       kind,
       schedule: optionalString(body, "schedule"),
       timezone: optionalString(body, "timezone"),
-      run_at: optionalString(body, "run_at"),
+      run_at: nullableString(body, "run_at"),
       prompt: requiredString(body, "prompt"),
       enabled: booleanField(body, "enabled"),
     });
@@ -454,7 +461,7 @@ export function registerAgentRoutes(
       kind: routineKindField(body),
       schedule: optionalString(body, "schedule"),
       timezone: optionalString(body, "timezone"),
-      run_at: optionalString(body, "run_at"),
+      run_at: nullableString(body, "run_at"),
       prompt: optionalString(body, "prompt"),
       enabled: booleanField(body, "enabled"),
     });
