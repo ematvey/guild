@@ -127,6 +127,19 @@ export interface AgentNotice {
   created_at: string;
 }
 
+/** One derived run-detail step: a tool call, an assistant text block, or a
+ *  file touched by the run's workspace turn. */
+export interface AgentRunStep {
+  type: "tool_call" | "assistant_text" | "file";
+  seq?: number;
+  ts: string;
+  text?: string;
+  name?: string;
+  call_id?: string;
+  is_error?: boolean;
+  paths?: string[];
+}
+
 /** The caller's effective access to one agent: the resolved grant role plus
  *  the two capability flags routes check. Admins resolve as `owner`. */
 export interface AgentAccess {
@@ -141,6 +154,7 @@ export const DEFAULT_AGENT_TOOLS: AgentToolName[] = [
   "write",
   "list",
   "conversations_search",
+  "conversation_read",
   "send_message",
   "schedule_reminder",
 ];

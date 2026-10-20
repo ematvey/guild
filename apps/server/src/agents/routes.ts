@@ -4,12 +4,14 @@
 // touches a store.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { IdentityCtx, InfraContext } from "../platform/contexts.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../platform/contexts.js";
 import { ApiError, sortedJson } from "../platform/errors.js";
 import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.js";
+import { submitTurn } from "../platform/http/chats.js";
+import type { ObjectStore } from "../platform/s3.js";
 import { AgentFiles } from "./files.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
-import type { AgentRunStatus, AgentStatus, AgentToolName, AgentTrigger, AgentVisibility } from "./types.js";
+import type { Agent, AgentRunStatus, AgentStatus, AgentThread, AgentToolName, AgentTrigger, AgentVisibility } from "./types.js";
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
@@ -91,9 +93,77 @@ function showHidden(req: FastifyRequest): boolean {
   return value === "1" || value === "true";
 }
 
-export function registerAgentRoutes(app: FastifyInstance, auth: IdentityCtx, infra: InfraContext): void {
+export function registerAgentRoutes(
+  app: FastifyInstance,
+  auth: IdentityCtx,
+  infra: InfraContext,
+  chats: ChatsCtx,
+  gateway: GatewayCtx,
+  objects: ObjectStore,
+): void {
   const store = new AgentStore(infra.pool);
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
+
+  async function agentTurn(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    user: Awaited<ReturnType<typeof requireUser>>,
+    agent: Agent,
+    thread: AgentThread,
+  ): Promise<FastifyReply> {
+    const body = jsonBody(req);
+    const message = requiredString(body, "message");
+    const rawAttachments = body["attachment_ids"];
+    if (
+      rawAttachments !== undefined &&
+      (!Array.isArray(rawAttachments) || rawAttachments.some((value) => typeof value !== "string"))
+    ) {
+      throw ApiError.badRequest("attachment_ids must be an array of strings");
+    }
+    const attachmentIds = (rawAttachments ?? []) as string[];
+    // The agent's model must resolve to an enabled gateway route; a missing
+    // route fails before a run row is created.
+    await gateway.gatewayStore.resolveRoute(agent.org_id, agent.model, gateway.masterKey());
+    const run = await store.createRun({
+      agent_id: agent.id,
+      thread_id: thread.id,
+      trigger: "message",
+      status: "running",
+      started_at: new Date().toISOString(),
+    });
+    try {
+      const chat = await chats.chats.getChatInOrg(agent.org_id, thread.chat_id);
+      const ack = await submitTurn(
+        chats,
+        gateway,
+        auth,
+        objects,
+        user,
+        req,
+        {
+          model: agent.model,
+          messages: [{ role: "user", content: message }],
+          attachment_ids: attachmentIds,
+        },
+        thread.chat_id,
+        chat,
+      );
+      await store.deriveThreadTitle(agent.id, thread.id, message);
+      await store.touchThread(agent.id, thread.id);
+      return reply.type("application/json").send(ack);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      await store
+        .updateRun(run.id, {
+          status: "failed",
+          error_code: "turn_submit_failed",
+          error_message: text,
+          finished_at: new Date().toISOString(),
+        })
+        .catch(() => {});
+      throw error;
+    }
+  }
 
   app.post("/api/v1/agents", async (req, reply) => {
     const user = await requireUser(auth, req);
@@ -207,6 +277,25 @@ export function registerAgentRoutes(app: FastifyInstance, auth: IdentityCtx, inf
     return sendJson(reply, { thread: await store.renameThread(agentId, threadId, title) });
   });
 
+  app.post("/api/v1/agents/:id/threads/:threadId/turns", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const threadId = parseUuidParam(req, "threadId");
+    const { agent } = await store.requireAccess(user, agentId, "use");
+    const thread = await store.getThread(agentId, threadId);
+    return agentTurn(req, reply, user, agent, thread);
+  });
+
+  app.post("/api/v1/agents/:id/turns", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "use");
+    const threads = await store.listThreads(agentId);
+    const thread = threads.find((item) => item.kind === "default") ?? threads[0];
+    if (thread === undefined) throw ApiError.notFound("no such thread");
+    return agentTurn(req, reply, user, agent, thread);
+  });
+
   app.get("/api/v1/agents/:id/files", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
@@ -253,7 +342,7 @@ export function registerAgentRoutes(app: FastifyInstance, auth: IdentityCtx, inf
     const user = await requireUser(auth, req);
     const run = await store.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
-    return sendJson(reply, { run });
+    return sendJson(reply, { run, steps: await store.runSteps(run) });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {
