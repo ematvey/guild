@@ -195,6 +195,7 @@ export class PlatformContext {
       runtime: this.runtime,
       log,
       enabled: config.agentsScheduler,
+      workspaceRoot: config.agentWorkspaceWriteRoot,
     });
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).

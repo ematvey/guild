@@ -4,6 +4,7 @@ import {
   ArchiveRestore,
   ArrowRight,
   Clock,
+  Download,
   FileText,
   Loader2,
   MessageSquare,
@@ -14,6 +15,16 @@ import {
   Wrench,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +47,7 @@ import {
   archiveAgent,
   createAgentThread,
   deleteAgent,
+  exportAgent,
   getAgent,
   groupTools,
   listAgentTools,
@@ -268,6 +280,8 @@ function AgentActions({
   onDeleted: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const archived = agent.status === "archived";
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -279,18 +293,27 @@ function AgentActions({
     }
   };
   const remove = async () => {
-    if (
-      !window.confirm(
-        `Delete ${agent.name}? The agent stops now and is hidden. An admin can restore it during the grace period (default 30 days) before its workspace, threads and runs are purged.`,
-      )
-    )
-      return;
     setBusy(true);
     try {
       await deleteAgent(agent.id);
       onDeleted();
     } finally {
       setBusy(false);
+    }
+  };
+  const download = async () => {
+    setExporting(true);
+    try {
+      const bundle = await exportAgent(agent.id);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
     }
   };
   return (
@@ -315,9 +338,13 @@ function AgentActions({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => void download()} disabled={exporting}>
+              <Download className="size-4" />
+              {exporting ? "Preparing export…" : "Export data"}
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
-              onSelect={() => void remove()}
+              onSelect={() => setConfirmOpen(true)}
             >
               <Trash2 className="size-4" />
               Delete agent
@@ -326,6 +353,32 @@ function AgentActions({
         )}
         {!manage && <DropdownMenuItem disabled>Owner or admin only</DropdownMenuItem>}
       </DropdownMenuContent>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The agent stops now and disappears from the directory. Its workspace, threads and
+              runs stay recoverable during the organization&apos;s grace period (30 days by
+              default); after that they are purged. Download an export first if you need the
+              definitions and run history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button variant="outline" onClick={() => void download()} disabled={exporting}>
+              <Download />
+              {exporting ? "Preparing…" : "Download export"}
+            </Button>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void remove()}
+            >
+              Delete agent
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DropdownMenu>
   );
 }
@@ -562,6 +615,24 @@ function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const download = async () => {
+    setExporting(true);
+    try {
+      const bundle = await exportAgent(agent.id);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     void listModels().then((rows) => setModels(rows ?? []));
@@ -775,20 +846,7 @@ function AgentSettings({
             {agent.status === "archived" ? <ArchiveRestore /> : <Archive />}
             {agent.status === "archived" ? "Restore agent" : "Archive agent"}
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={async () => {
-              if (
-                !window.confirm(
-                  `Delete ${agent.name}? It stops now and is hidden. An admin can restore it during the grace period before its workspace, threads and runs are purged.`,
-                )
-              )
-                return;
-              await deleteAgent(agent.id);
-              onDeleted();
-            }}
-          >
+          <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
             <Trash2 />
             Delete agent
           </Button>
@@ -798,6 +856,34 @@ function AgentSettings({
             Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The agent stops now and disappears from the directory. Its workspace, threads and
+                runs stay recoverable during the organization&apos;s grace period (30 days by
+                default); after that they are purged. Download an export first if you need the
+                definitions and run history.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button variant="outline" onClick={() => void download()} disabled={exporting}>
+                <Download />
+                {exporting ? "Preparing…" : "Download export"}
+              </Button>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => {
+                  void deleteAgent(agent.id).then(onDeleted);
+                }}
+              >
+                Delete agent
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <p className="mt-2 text-[12px] text-muted-foreground">
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>
