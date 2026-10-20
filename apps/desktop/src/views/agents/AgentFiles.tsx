@@ -86,8 +86,8 @@ interface CachedFileView {
   preview?: AgentFileContent;
 }
 
-function fileViewKey(path: string, hidden: boolean): string {
-  return `${hidden ? "1" : "0"}:${path}`;
+function fileViewKey(agentId: string, path: string, hidden: boolean): string {
+  return `${agentId}:${hidden ? "1" : "0"}:${path}`;
 }
 
 function FileIcon({ entry }: { entry: AgentFileEntry }) {
@@ -151,7 +151,7 @@ export function AgentFiles({
   const path = filePath ?? "";
   const previewKind = previewKindOf(path.split("/").pop() ?? "");
   const inlinePreview = previewKind === "image" || previewKind === "pdf";
-  const activeKey = fileViewKey(path, hidden);
+  const activeKey = fileViewKey(agentId, path, hidden);
   const cachedView = cache.current.get(activeKey);
   const shownEntries = cachedView?.entries ?? entries;
   const shownListingDir = cachedView?.listingDir ?? listingDir;
@@ -276,7 +276,7 @@ export function AgentFiles({
     setPendingPath(target === "" ? "/" : target);
     try {
       const rows = await listAgentFiles(agentId, target, hidden);
-      remember(fileViewKey(target, hidden), {
+      remember(fileViewKey(agentId, target, hidden), {
         entries: normalize(rows, target),
         listingDir: target,
         isDirectory: true,
@@ -309,7 +309,7 @@ export function AgentFiles({
           ? Promise.resolve(undefined)
           : getAgentFileContent(agentId, entry.path).catch(() => undefined),
       ]);
-      remember(fileViewKey(entry.path, hidden), {
+      remember(fileViewKey(agentId, entry.path, hidden), {
         entries: normalize(rows, parent),
         listingDir: parent,
         isDirectory: false,
