@@ -91,6 +91,9 @@ export interface AgentRun {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  /** Joined display names for activity and run detail; absent on bare rows. */
+  agent_name?: string | null;
+  routine_name?: string | null;
 }
 
 export interface AgentRoutine {

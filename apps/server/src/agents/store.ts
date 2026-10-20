@@ -129,7 +129,9 @@ const RUN_COLUMNS = `r.id, r.agent_id, r.thread_id, r.routine_id, r.parent_run_i
   r.delegate_agent_id, r.depth, r.trigger, r.status, r.summary,
   r.error_code, r.error_message, r.error_step, r.tokens,
   ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
-  ${TS("r.created_at")} AS created_at`;
+  ${TS("r.created_at")} AS created_at,
+  (SELECT name FROM agents WHERE id = r.agent_id) AS agent_name,
+  (SELECT name FROM agent_routines WHERE id = r.routine_id) AS routine_name`;
 
 const ARTIFACT_COLUMNS = `d.id, d.run_id, d.parent_run_id, d.agent_id, d.path, d.size,
   d.status, d.inbox_path, d.staging_path, ${TS("d.created_at")} AS created_at`;
@@ -206,6 +208,8 @@ function toRun(row: Record<string, unknown>): AgentRun {
     started_at: row.started_at === null || row.started_at === undefined ? null : pgTimestampToRfc3339(row.started_at as string),
     finished_at: row.finished_at === null || row.finished_at === undefined ? null : pgTimestampToRfc3339(row.finished_at as string),
     created_at: pgTimestampToRfc3339(row.created_at as string),
+    agent_name: (row.agent_name as string | null) ?? null,
+    routine_name: (row.routine_name as string | null) ?? null,
   };
 }
 
@@ -806,7 +810,8 @@ export class AgentStore {
   async listArtifacts(runId: string): Promise<AgentDelegationArtifact[]> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${ARTIFACT_COLUMNS} FROM agent_delegation_artifacts d
-       WHERE d.run_id = $1 ORDER BY d.created_at ASC, d.path ASC`,
+       WHERE d.run_id = $1 OR d.parent_run_id = $1
+       ORDER BY d.created_at ASC, d.path ASC`,
       [runId],
     );
     return res.rows.map(toArtifact);
@@ -818,7 +823,7 @@ export class AgentStore {
     const res = await this.pool.query<Record<string, unknown>>(
       `WITH released AS (
          UPDATE agent_delegation_artifacts SET status = 'released'
-         WHERE run_id = $1 AND status = 'staged' RETURNING *)
+         WHERE (run_id = $1 OR parent_run_id = $1) AND status = 'staged' RETURNING *)
        SELECT ${ARTIFACT_COLUMNS} FROM released d ORDER BY d.created_at ASC, d.path ASC`,
       [runId],
     );
