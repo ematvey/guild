@@ -88,7 +88,7 @@ import {
 } from "./agent-ui";
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
-import { AgentRoutines } from "./AgentRoutines";
+import { AgentRoutines, humanSchedule } from "./AgentRoutines";
 import { AgentThreadView, ThreadList } from "./AgentThreadView";
 
 export interface Viewer {
@@ -182,13 +182,18 @@ export function AgentPage({
         "create_routine and show me the human-readable schedule.",
     );
 
-  const editRoutine = (routine: AgentRoutine) =>
-    startRoutineThread(
+  const editRoutine = (routine: AgentRoutine) => {
+    const current =
+      routine.kind === "once"
+        ? `once on ${routine.run_at ? new Date(routine.run_at).toLocaleString() : "an unset date"}`
+        : `${humanSchedule(routine.schedule ?? "")} (${routine.timezone})`;
+    return startRoutineThread(
       `Edit routine: ${routine.name}`,
       `I want to change the routine "${routine.name}" (${routine.id}). Its current schedule is ` +
-        `${routine.schedule ?? routine.run_at ?? "one-shot"} in ${routine.timezone}. Ask me what to ` +
-        "change, then update it with update_routine. If I ask to remove it, use delete_routine.",
+        `${current}. Ask me what to change, then update it with update_routine. If I ask to remove ` +
+        "it, use delete_routine. Describe schedule changes in plain language, not cron.",
     );
+  };
 
   if (error !== null) {
     return (

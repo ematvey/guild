@@ -349,8 +349,8 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         name: "create_routine",
         description:
           "Create a recurring routine for this agent. Pass a five-field cron expression or interval sugar " +
-          "such as 'every 2 hours' or 'every day'. The user sees a human-readable schedule, so translate " +
-          "their wording into the schedule and echo it back in plain language.",
+          "such as 'every 2 hours' or 'every day'. The user sees a human-readable schedule: never show the " +
+          "raw cron expression, describe the result in plain language instead.",
         parameters: Type.Object({
           name: Type.String({ description: "Short routine name" }),
           prompt: Type.String({ description: "The prompt the isolated routine run receives" }),
@@ -387,7 +387,8 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         name: "update_routine",
         description:
           "Change a routine's name, prompt, schedule, timezone or enabled state. Omitted fields stay as they are. " +
-          "Use list_routines first when you need the routine id.",
+          "Use list_routines first when you need the routine id. Describe schedule changes in plain language; " +
+          "do not show the raw cron expression to the user.",
         parameters: Type.Object({
           routine_id: Type.String({ description: "The routine id" }),
           name: Type.Optional(Type.String()),
