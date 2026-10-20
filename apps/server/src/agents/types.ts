@@ -45,6 +45,9 @@ export interface Agent {
   id: string;
   org_id: string;
   owner_user_id: string;
+  owner_label?: string | null;
+  owner_email?: string | null;
+  owner_avatar_url?: string | null;
   name: string;
   instructions: string;
   model: string;
