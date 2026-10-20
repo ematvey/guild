@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
-import { AgentStore } from "../../agents/store.js";
+import { AgentStore, deriveTitleFromMessage } from "../../agents/store.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { M5TestEnv } from "../platform/m5-harness.js";
 
@@ -61,9 +61,20 @@ dbDescribe("AgentStore", () => {
     const threads = await store.listThreads(agent.id);
     expect(threads).toHaveLength(1);
     expect(threads[0]!.kind).toBe("default");
-    expect(threads[0]!.title).toBe("");
-    const chat = await env!.db.query("SELECT user_id FROM chats WHERE id = $1", [threads[0]!.chat_id]);
+    expect(threads[0]!.title).toBe("Main thread");
+    const chat = await env!.db.query("SELECT user_id, title FROM chats WHERE id = $1", [threads[0]!.chat_id]);
     expect(chat.rows[0]!.user_id).toBe(owner.id);
+    expect(chat.rows[0]!.title).toBe("Main thread");
+  });
+
+  it("derives a short, word-bounded title from the first line", () => {
+    expect(deriveTitleFromMessage("  # Plan the launch  ")).toBe("Plan the launch");
+    expect(
+      deriveTitleFromMessage(
+        "Create memories/hello.md with a short note about yourself, then list the workspace and tell me what you wrote.",
+      ),
+    ).toBe("Create memories/hello.md with a short note about yourself…");
+    expect(deriveTitleFromMessage("oneverylongwordwithoutspaces".repeat(3))).toHaveLength(60);
   });
 
   it("filters private agents by owner and explicit grants", async () => {

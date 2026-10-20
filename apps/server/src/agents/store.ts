@@ -268,7 +268,14 @@ export function deriveTitleFromMessage(message: string): string {
     .replace(/\s+/g, " ")
     .trim();
   if (text === "") return "";
-  return text.length <= 60 ? text : text.slice(0, 60).trim();
+  const max = 60;
+  if (text.length <= max) return text;
+  // Cut at a word boundary and mark the cut; a hard 60-character slice
+  // ended titles mid-word with no indication that text was dropped.
+  const cut = text.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  const stem = (space >= max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/, "");
+  return `${stem}…`;
 }
 
 /** Per-organization ceiling on live agents (archived agents still count
@@ -330,10 +337,10 @@ export class AgentStore {
       if (input.team_ids !== undefined && input.team_ids.length > 0) {
         await this.replaceTeamGrants(client, user.org_id, id, input.team_ids);
       }
-      const chat = await this.chats.createChatOn(client, user.org_id, user.id, null, null);
+      const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
       await client.query(
         `INSERT INTO agent_threads (id, agent_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, '', false, 'default')`,
+         VALUES ($1, $2, $3, 'Main thread', false, 'default')`,
         [uuidv7(), id, chat.id],
       );
       await client.query("COMMIT");
