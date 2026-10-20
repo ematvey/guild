@@ -70,14 +70,13 @@ and data semantics stay the same. Restate is dropped.
 | ------------------------------- | --------------------------------------------------------- |
 | chats + thread_events           | pi-durable conversations (durable storage)                |
 | agent loop (guild-core port)    | pi-durable generation/tool tasks, built-in coding tools   |
-| server-side sessions (M6)       | conversations with per-conversation `ExecutionEnv` on `workspaces/<org>/<name>` |
+| server-side sessions (M6)       | replaced by persistent agents (`2026-10-18-persistent-agents.md`) |
 | exec policy + approvals         | `beforeTool` hooks + durable waiting task resolved by the approval API |
 | machine dispatch via hub        | `ExecutionEnv` proxying through the hub WS to the daemon  |
 | SSE turn frames                 | `watchEvents()` → same SSE frame contract                 |
 | routines on Restate             | (deferred) background tasks + request IDs                 |
 | compaction checkpoints          | pi-durable compaction (auto per decision 12)              |
 | usage recording                 | `pi.usage` docs → existing ClickHouse sink                |
-| `agent_sessions` rows           | unchanged metadata rows; run state moves to durable storage |
 
 Forced compat requirements (not decisions): hub WS frames byte-compatible
 (existing daemons never update), JWT session tokens verify/issue identically,

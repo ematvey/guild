@@ -28,7 +28,6 @@ import { TicketStore } from "../hub/tickets.js";
 import { ChatStore } from "./store/chats.js";
 import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
-import { AgentSessionStore } from "./store/agentSessions.js";
 import { ToolArtifactStore } from "./store/toolArtifacts.js";
 import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
@@ -101,8 +100,7 @@ export class PlatformContext {
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
-  /** M4: agent-session metadata rows + the tool-artifact spill store. */
-  readonly agentSessions: AgentSessionStore;
+  /** The tool-artifact spill store. */
   readonly toolArtifacts: ToolArtifactStore;
   /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
    *  guild_events) — one dedicated connection shared by all subscribers. */
@@ -168,7 +166,6 @@ export class PlatformContext {
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
-    this.agentSessions = new AgentSessionStore(this.pool);
     this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
     // Worker-per-chat mode: the server forks one worker per active chat and
