@@ -69,7 +69,9 @@ async function integrationToolCatalog(
       tools.push({
         name: info.spec.name,
         label: raw.replace(/_/g, " "),
-        group: `Integration · ${turn.description || turn.slug}`,
+        group: `Integration · ${turn.slug
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase())}`,
         description: info.spec.description,
         safe: false,
       });

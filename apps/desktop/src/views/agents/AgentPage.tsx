@@ -827,7 +827,7 @@ function AgentSettings({
               size="sm"
               onClick={() => setTools(catalog.map((t) => t.name))}
             >
-              Select all org tools
+              Select all tools
             </Button>
           ) : undefined
         }

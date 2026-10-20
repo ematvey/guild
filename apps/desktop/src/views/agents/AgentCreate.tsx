@@ -316,7 +316,7 @@ export function AgentCreate({
                   size="sm"
                   onClick={() => setTools(allTools.map((t) => t.name))}
                 >
-                  Select all org tools
+                  Select all tools
                 </Button>
                 <Button
                   variant="ghost"
