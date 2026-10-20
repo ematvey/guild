@@ -60,6 +60,11 @@ export interface BridgeDeps {
   /** Spill machinery (M4): oversized tool results become artifacts. Absent
    *  (tests without an object store) = no spill, inline results only. */
   spill?: { artifacts: ToolArtifactStore; objects: ObjectStore };
+  /** Agent-run lifecycle hooks (agent threads only; plain chats no-op). */
+  agentRuns?: {
+    assistantEvent(chatId: string, row: ThreadEventRow): Promise<void>;
+    runEnd(chatId: string, failure: string | null): Promise<void>;
+  };
   log: Logger;
 }
 
@@ -290,6 +295,7 @@ export class ChatBridge {
             await this.deps.turnCommands.finish(command.id, invocationOf(Number(input)), false);
           }
         }
+        await this.deps.agentRuns?.runEnd(state.chatId, state.failure);
         this.finishGeneration(state);
         return;
       }

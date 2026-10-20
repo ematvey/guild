@@ -24,6 +24,7 @@ import { uuidv7 } from "../time.js";
 import { threadEventRowWire, threadEventWire, type MessageAttachment, type ThreadEventRow } from "../domain/thread-events.js";
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
+import type { ChatRow } from "../store/chats.js";
 import { modalityOf } from "../../chats/turn-text.js";
 
 // ---------------------------------------------------------------------------
@@ -493,7 +494,7 @@ export function registerChatsRoutes(
 // Turn submission (the submit_turn core)
 // ---------------------------------------------------------------------------
 
-async function submitTurn(
+export async function submitTurn(
   chats: ChatsCtx,
   gateway: GatewayCtx,
   auth: IdentityCtx,
@@ -504,6 +505,9 @@ async function submitTurn(
   /** The thread API takes the chat from the path; the legacy
    *  /api/v1/gateway/chat alias keeps it in the body. */
   pathChatId?: string,
+  /** Agent turn routes authorize through the agent grant and pass the
+   *  thread's chat row, so the chat's own owner check does not apply. */
+  preloadedChat?: ChatRow,
 ): Promise<string> {
   // Required fields (serde rejection text, line/column = raw body length).
   const rawLength = ((req as never as Record<symbol, string>)[RAW_BODY]?.length as number | undefined) ?? 0;
@@ -534,7 +538,7 @@ async function submitTurn(
   }
 
   // Org scoping: the chat must belong to the caller's org.
-  const chat = await chats.chats.getChat(user.org_id, chatId, user);
+  const chat = preloadedChat ?? (await chats.chats.getChat(user.org_id, chatId, user));
 
   const commandId =
     body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));

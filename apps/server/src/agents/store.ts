@@ -16,6 +16,7 @@ import type {
   AgentRole,
   AgentRun,
   AgentRunStatus,
+  AgentRunStep,
   AgentStatus,
   AgentThread,
   AgentThreadKind,
@@ -72,6 +73,7 @@ export interface CreateRunInput {
   trigger: AgentTrigger;
   status?: AgentRunStatus;
   summary?: string | null;
+  started_at?: string | null;
 }
 
 export interface UpdateRunInput {
@@ -202,6 +204,23 @@ function accessForRole(
   canUse: boolean = role !== null || canManage,
 ): AgentAccess {
   return { role, can_manage: canManage, can_use: canUse };
+}
+
+/** Short, markdown-stripped thread title from the first non-empty line of a
+ *  user message. Never the placeholder "New chat". */
+export function deriveTitleFromMessage(message: string): string {
+  const first = message.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
+  const text = first
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^>\s*/, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text === "") return "";
+  return text.length <= 60 ? text : text.slice(0, 60).trim();
 }
 
 export class AgentStore {
@@ -516,6 +535,34 @@ export class AgentStore {
     );
   }
 
+  /** Fills an empty, unlocked thread title from the first user message and
+   *  mirrors it onto the chat journal row. A manual rename locks the title
+   *  and wins over this path. */
+  async deriveThreadTitle(agentId: string, threadId: string, message: string): Promise<void> {
+    const title = deriveTitleFromMessage(message);
+    if (title === "") return;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query<{ chat_id: string }>(
+        `UPDATE agent_threads SET title = $3
+         WHERE agent_id = $1 AND id = $2 AND title = '' AND title_locked = false
+         RETURNING chat_id`,
+        [agentId, threadId, title],
+      );
+      const row = res.rows[0];
+      if (row !== undefined) {
+        await client.query("UPDATE chats SET title = $2 WHERE id = $1", [row.chat_id, title]);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async fetchThread(agentId: string, threadId: string): Promise<AgentThread> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.agent_id = $1 AND t.id = $2`,
@@ -561,6 +608,70 @@ export class AgentStore {
     return toRun(row);
   }
 
+  /** Derived run-detail steps: transcript tool calls and assistant text in
+   *  the run window, plus files recorded by an agent workspace turn. */
+  async runSteps(run: AgentRun): Promise<AgentRunStep[]> {
+    const steps: AgentRunStep[] = [];
+    if (run.thread_id !== null) {
+      const thread = await this.pool.query<{ chat_id: string }>(
+        "SELECT chat_id FROM agent_threads WHERE id = $1",
+        [run.thread_id],
+      );
+      const chatId = thread.rows[0]?.chat_id;
+      if (chatId !== undefined) {
+        const since = run.started_at ?? run.created_at;
+        const res = await this.pool.query<{
+          seq: string;
+          type: string;
+          payload: Record<string, unknown>;
+          created_at: Date;
+        }>(
+          `SELECT seq, type, payload, created_at FROM thread_events
+           WHERE chat_id = $1 AND created_at >= $2::timestamptz
+             AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
+           ORDER BY seq ASC LIMIT 200`,
+          [chatId, since, run.finished_at],
+        );
+        for (const row of res.rows) {
+          const ts = row.created_at.toISOString();
+          if (row.type === "assistant_message") {
+            const blocks = Array.isArray(row.payload.blocks)
+              ? (row.payload.blocks as { type?: string; text?: string }[])
+              : [];
+            for (const block of blocks) {
+              if (block.type === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+                steps.push({ type: "assistant_text", seq: Number(row.seq), ts, text: block.text.slice(0, 2_000) });
+              }
+            }
+          } else if (row.type === "tool_result") {
+            steps.push({
+              type: "tool_call",
+              seq: Number(row.seq),
+              ts,
+              name: typeof row.payload.name === "string" ? row.payload.name : "tool",
+              call_id: typeof row.payload.call_id === "string" ? row.payload.call_id : undefined,
+              is_error: row.payload.is_error === true,
+              text: typeof row.payload.content === "string" ? row.payload.content.slice(0, 500) : "",
+            });
+          }
+        }
+      }
+    }
+    const files = await this.pool.query<{ paths: string[]; finished_at: Date | null }>(
+      `SELECT paths, finished_at FROM agent_workspace_turns WHERE run_id = $1 ORDER BY started_at ASC`,
+      [run.id],
+    );
+    for (const row of files.rows) {
+      if (row.paths.length === 0) continue;
+      steps.push({
+        type: "file",
+        ts: (row.finished_at ?? new Date()).toISOString(),
+        paths: row.paths,
+      });
+    }
+    return steps;
+  }
+
   /** Creates a run row. A2 calls this before admission; the returned row is
    *  the durable run identity. */
   async createRun(input: CreateRunInput): Promise<AgentRun> {
@@ -568,8 +679,8 @@ export class AgentStore {
     const res = await this.pool.query<Record<string, unknown>>(
       `WITH r AS (
          INSERT INTO agent_runs
-           (id, agent_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           (id, agent_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *)
        SELECT ${RUN_COLUMNS} FROM r`,
       [
@@ -583,6 +694,7 @@ export class AgentStore {
         input.trigger,
         input.status ?? "queued",
         input.summary ?? null,
+        input.started_at ?? null,
       ],
     );
     return toRun(res.rows[0]!);

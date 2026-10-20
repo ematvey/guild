@@ -247,6 +247,19 @@ export class ChatStore {
     return rowToChat(row);
   }
 
+  /** Loads a chat by org + id without an owner check. Callers must have
+   *  authorized the access themselves (agent turn routes resolve the agent
+   *  grant before using the thread's chat journal). */
+  async getChatInOrg(orgId: string, chatId: string): Promise<ChatRow> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2`,
+      [orgId, chatId],
+    );
+    const row = res.rows[0];
+    if (!row) throw new ApiError(404, "not_found", "no such chat");
+    return rowToChat(row);
+  }
+
   /** Renames and/or archives the chat (owner-scoped, admin bypass).
    *  Archiving stamps archived_at and settles every waiting command as
    *  cancelled in the same transaction; the chats row lock is taken BEFORE
