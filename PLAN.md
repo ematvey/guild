@@ -11,6 +11,32 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Persistent agents are live on the local compose stack (2026-10-20).**
+  Agent workspaces are a JuiceFS volume mounted in the **host mount
+  namespace** by the privileged `pid: host` sidecar (`nsenter -t 1 -m -n`),
+  because the Docker daemon and the sandbox runner resolve bind sources on
+  the host. The server keeps a read-only `/workspaces` mount and a
+  read-write `/workspaces-write` used only for delegation artifacts and
+  purge; the runner creates always-on gVisor sandboxes under
+  `agents/<org>/<agent>`. A host-namespace sweep keeps a 50 GiB JuiceFS
+  quota on every agent directory. Restarting the sidecar requires remounting
+  Docker's bind volume (docs/deploy-nuances.md §4b).
+  - Delegation is worker-per-chat: a parent worker cannot admit a child
+    chat, so admission is proxied over the fork IPC (`remote-submit`).
+    Artifacts are written through the read-write mount and surface on the
+    parent run (`run_id OR parent_run_id`).
+  - Team visibility stores explicit `agent_team_grants`; the create wizard
+    and settings both pick teams, and settings clear grants when visibility
+    leaves `team`.
+  - Delete is two-phase: `deleting` + `purge_after` (30-day default), the
+    scheduler purges due agents and removes the workspace directory;
+    archive and deleting agents are both restorable from the directory.
+  - One-shot routines delete stale pending occurrences on disable,
+    reschedule, manual run, or auto-disable. `send_message` dedupes the same
+    agent/title within a minute. The inbox rail badge refreshes when a
+    notice is read.
+  - Limits: 25 agents per org, 1 vCPU / 2 GiB / 256 pids / 50 GiB per agent.
+
 - **Agent workspaces get a JuiceFS volume (2026-10-20).** Compose adds a
   `juicefs` sidecar (foreground mount, `/dev/fuse`, `SYS_ADMIN`, unconfined
   AppArmor, `rshared` host dir, `stat -f` healthcheck) and a one-shot
