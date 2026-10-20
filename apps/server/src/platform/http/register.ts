@@ -145,7 +145,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth);
     registerUserMcpRoutes(scope, auth);
-    registerAgentRoutes(scope, auth, infra);
+    registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
   });
 
   // The script-facing integration tool API accepts ANY content type as raw
