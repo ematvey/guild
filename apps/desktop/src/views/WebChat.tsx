@@ -1845,6 +1845,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Inbox badge: attention items only, never activity. Refreshed on route
   // moves and once a minute while the app is open.
   const [inboxUnread, setInboxUnread] = useState(0);
+  const [inboxRevision, setInboxRevision] = useState(0);
   useEffect(() => {
     let live = true;
     const load = () => {
@@ -1862,7 +1863,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       live = false;
       window.clearInterval(timer);
     };
-  }, [route.agents, route.chatId]);
+  }, [route.agents, route.chatId, inboxRevision]);
   const chatId = route.chatId;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
@@ -3329,6 +3330,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
         }
         onOpenChat={openChat}
+        onInboxChanged={() => setInboxRevision((value) => value + 1)}
       />
     </div>
   ) : null;

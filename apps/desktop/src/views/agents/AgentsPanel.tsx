@@ -12,11 +12,13 @@ export function AgentsPanel({
   viewer,
   onNavigate,
   onOpenChat,
+  onInboxChanged,
 }: {
   route: AgentsRoute;
   viewer: Viewer;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
+  onInboxChanged?: () => void;
 }) {
   switch (route.view) {
     case "directory":
@@ -39,7 +41,13 @@ export function AgentsPanel({
     case "activity":
       return <ActivityPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
     case "inbox":
-      return <InboxPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+      return (
+        <InboxPage
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+          onChanged={onInboxChanged}
+        />
+      );
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
   }

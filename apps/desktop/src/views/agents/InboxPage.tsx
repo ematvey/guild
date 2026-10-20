@@ -41,9 +41,11 @@ export function inboxTone(kind: InboxKind): "danger" | "warning" | "info" | "neu
 export function InboxPage({
   onNavigate,
   onOpenChat,
+  onChanged,
 }: {
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
+  onChanged?: () => void;
 }) {
   const [items, setItems] = useState<AgentNotice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +86,7 @@ export function InboxPage({
     );
     try {
       await markInboxRead(notice.id, read);
+      onChanged?.();
     } catch {
       setTick((t) => t + 1);
     }
