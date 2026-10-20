@@ -66,6 +66,7 @@ export async function buildApp(config: Config) {
   // the durable_* migrations + the chat-conversation mapping idempotently
   // and opens the harness. Turn submission paths reuse it (lazy no-op).
   await platform.runtime.start();
+  platform.startScheduler();
 
   // CORS: the tower-http layer's port — preflights answered before routing,
   // ACAO rides for the allow-listed webview origins.
