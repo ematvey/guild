@@ -30,7 +30,14 @@ interface Fixture {
   machines: Array<{ machine_id: string }>;
   online: Set<string>;
   installs: Array<{ slug: string; pinned_version: string; installed_at: string }>;
-  metas: Map<string, { bundle_sha256: string | null }>;
+  metas: Map<
+    string,
+    {
+      bundle_sha256: string | null;
+      publisher_label?: string | null;
+      published_at?: string | null;
+    }
+  >;
   calls: SyncArgs[];
   behaviors: Map<string, "ok" | "offline" | "reject">;
 }
@@ -106,20 +113,35 @@ describe("skills syncUser", () => {
       { slug: "hello", pinned_version: "v2", installed_at: "2026-10-13T00:00:00Z" },
       { slug: "other", pinned_version: "v1", installed_at: "2026-10-13T00:00:00Z" },
     ];
-    fx.metas.set("hello@v2", { bundle_sha256: "sha-hello" });
+    fx.metas.set("hello@v2", {
+      bundle_sha256: "sha-hello",
+      publisher_label: "Dana Levi",
+      published_at: "2026-05-12T09:00:00Z",
+    });
     fx.metas.set("other@v1", { bundle_sha256: "sha-other" });
 
     await fx.runtime.syncUser(ORG, USER);
 
     expect(fx.calls.map((c) => c.machineId)).toEqual(["m-online-1", "m-online-2"]);
     const payload = fx.calls[0]!.payload as {
-      skills: Array<{ slug: string; version: string; bundle_sha256: string; url: string }>;
+      skills: Array<{
+        slug: string;
+        version: string;
+        bundle_sha256: string;
+        publisher?: string;
+        published_at?: string;
+        url: string;
+      }>;
     };
+    // The version's provenance rides the payload into the machine's
+    // sidecar, so the agent can name the author without the server.
     expect(payload.skills).toEqual([
       {
         slug: "hello",
         version: "v2",
         bundle_sha256: "sha-hello",
+        publisher: "Dana Levi",
+        published_at: "2026-05-12T09:00:00Z",
         url: `${SELF}/api/v1/registry/skill/hello/v2/bundle`,
       },
       {

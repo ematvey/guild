@@ -57,6 +57,41 @@ struct Skill {
     path: PathBuf,
     /// The tree the skill file lives in (its containment root).
     root: PathBuf,
+    /// Guild's provenance sidecar when the dir was installed from the
+    /// registry; `None` for a plain user-authored folder.
+    provenance: Option<crate::registry_client::SkillProvenance>,
+}
+
+/// The one-line provenance tag an index entry carries: where the dir came
+/// from, which version, who published it, and when it landed here. A plain
+/// folder without a sidecar is user-authored: `[local]`.
+fn provenance_tag(p: Option<&crate::registry_client::SkillProvenance>) -> String {
+    let Some(p) = p else {
+        return " [local]".to_string();
+    };
+    let source = if p.source.is_empty() {
+        "registry"
+    } else {
+        p.source.as_str()
+    };
+    let mut bits: Vec<String> = vec![if p.version.is_empty() {
+        source.to_string()
+    } else {
+        format!("{source} {}", p.version)
+    }];
+    if !p.publisher.is_empty() {
+        bits.push(format!("published by {}", p.publisher));
+    } else if p.published_by_me {
+        bits.push("published by you".to_string());
+    }
+    let day = |s: &str| -> Option<String> { (s.len() >= 10).then(|| s.chars().take(10).collect()) };
+    if let Some(day) = day(&p.published_at) {
+        bits.push(format!("on {day}"));
+    }
+    if let Some(day) = day(&p.installed_at) {
+        bits.push(format!("installed {day}"));
+    }
+    format!(" [{}]", bits.join(", "))
 }
 
 pub fn prepare(project: &Path, prompt: &str) -> Result<MachineContext, String> {
@@ -178,11 +213,20 @@ fn assemble_with(
             };
             let fallback = entry.name.trim_end_matches(".md");
             let (name, description) = guild_core::registry::parse_frontmatter(&body, fallback);
+            let dir = if entry.kind == "dir" {
+                dir.join(&entry.name)
+            } else {
+                dir.clone()
+            };
+            let provenance = reader
+                .read(&root, &dir.join(crate::registry_client::SIDECAR_REL))
+                .map(|body| crate::registry_client::parse_sidecar(&body));
             skills.entry(name.clone()).or_insert(Skill {
                 name,
                 description,
                 path,
                 root: root.clone(),
+                provenance,
             });
         }
     }
@@ -211,10 +255,11 @@ fn assemble_with(
         index.push_str("\n# Available skills\nWhen a task matches a skill, read its SKILL.md with read_file and follow it.\n");
         for (i, skill) in enabled.iter().enumerate() {
             let line = format!(
-                "- {}: {} ({})\n",
+                "- {}: {} ({}){}\n",
                 skill.name,
                 clip(&skill.description, 120),
-                skill.path.display()
+                skill.path.display(),
+                provenance_tag(skill.provenance.as_ref())
             );
             if index.len() + line.len() + 64 > INDEX_BUDGET {
                 append(
@@ -252,7 +297,12 @@ fn assemble_with(
         }
         append(
             &mut expansions,
-            &format!("\n### Skill: {} ({})\n", skill.name, skill.path.display()),
+            &format!(
+                "\n### Skill: {} ({}){}\n",
+                skill.name,
+                skill.path.display(),
+                provenance_tag(skill.provenance.as_ref())
+            ),
             MENTION_BUDGET,
         );
         append(&mut expansions, &body, MENTION_BUDGET);
@@ -345,6 +395,47 @@ mod tests {
         assert!(ctx.skill_expansions.len() <= MENTION_BUDGET);
         assert!(ctx.skill_expansions.contains("Skill: demo"));
         assert!(ctx.skills_index.len() <= INDEX_BUDGET);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+    #[test]
+    fn installed_skills_carry_their_provenance_and_plain_dirs_are_local() {
+        let temp =
+            std::env::temp_dir().join(format!("guild-remote-provenance-{}", uuid::Uuid::now_v7()));
+        let config = temp.join("config");
+        let home = temp.join("home");
+        let repo = temp.join("repo");
+        put(&repo, ".git", "gitdir: elsewhere");
+        put(
+            &repo,
+            ".agents/skills/daily-csm/SKILL.md",
+            "---\nname: daily-csm\ndescription: Morning briefing\n---\nBODY",
+        );
+        put(
+            &repo,
+            ".agents/skills/daily-csm/agents/guild.yaml",
+            "source: registry\nslug: daily-csm\nversion: v2\npublisher: Dana Levi\n\
+             published_at: 2026-05-12T09:00:00Z\npublished_by_me: false\n\
+             review_status: approved\ninstalled_at: 2026-05-13T08:00:00Z\nbundle_hash: sha256:abc\n",
+        );
+        put(
+            &repo,
+            ".agents/skills/my-own/SKILL.md",
+            "---\nname: my-own\ndescription: Mine\n---\nMINE",
+        );
+        let ctx = prepare_with(&repo, "/daily-csm", &config, &home).unwrap();
+        assert!(
+            ctx.skills_index.contains(
+                "[registry v2, published by Dana Levi, on 2026-05-12, installed 2026-05-13]"
+            ),
+            "{}",
+            ctx.skills_index
+        );
+        assert!(ctx.skills_index.contains("[local]"), "{}", ctx.skills_index);
+        assert!(
+            ctx.skill_expansions.contains("published by Dana Levi"),
+            "{}",
+            ctx.skill_expansions
+        );
         std::fs::remove_dir_all(temp).unwrap();
     }
     #[test]

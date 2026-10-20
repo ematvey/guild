@@ -101,6 +101,7 @@ fn stamp_publish_sidecar(
         published_by_me: true,
         review_status: "pending".into(),
         installed_at: chrono::Utc::now().to_rfc3339(),
+        published_at: chrono::Utc::now().to_rfc3339(),
         bundle_hash: bundle_hash.into(),
         ..Default::default()
     };
@@ -309,6 +310,10 @@ pub struct SkillProvenance {
     pub version: String,
     #[serde(default)]
     pub publisher: String,
+    /// When the publisher pushed this version (RFC 3339); empty when the
+    /// server did not send it.
+    #[serde(default)]
+    pub published_at: String,
     #[serde(default)]
     pub published_by_me: bool,
     #[serde(default)]
@@ -329,8 +334,16 @@ pub fn write_sidecar(dir: &Path, p: &SkillProvenance) -> anyhow::Result<()> {
     let path = dir.join(SIDECAR_REL);
     std::fs::create_dir_all(path.parent().context("no sidecar parent")?)?;
     let body = format!(
-        "source: {}\nslug: {}\nversion: {}\npublisher: {}\npublished_by_me: {}\nreview_status: {}\ninstalled_at: {}\nbundle_hash: {}\n",
-        p.source, p.slug, p.version, p.publisher, p.published_by_me, p.review_status, p.installed_at, p.bundle_hash,
+        "source: {}\nslug: {}\nversion: {}\npublisher: {}\npublished_at: {}\npublished_by_me: {}\nreview_status: {}\ninstalled_at: {}\nbundle_hash: {}\n",
+        p.source,
+        p.slug,
+        p.version,
+        p.publisher,
+        p.published_at,
+        p.published_by_me,
+        p.review_status,
+        p.installed_at,
+        p.bundle_hash,
     );
     std::fs::write(path, body)?;
     Ok(())
@@ -339,7 +352,13 @@ pub fn write_sidecar(dir: &Path, p: &SkillProvenance) -> anyhow::Result<()> {
 /// Reads the sidecar; `None` when absent or unparsable (a dir without a
 /// sidecar is a plain skill folder — never Guild-managed).
 pub fn read_sidecar(dir: &Path) -> Option<SkillProvenance> {
-    let body = std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?;
+    Some(parse_sidecar(&std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?))
+}
+
+/// Parses sidecar text (the flat `key: value` YAML write_sidecar emits).
+/// Unknown keys are ignored and missing keys default, so a sidecar from an
+/// older or newer machine still reads.
+pub fn parse_sidecar(body: &str) -> SkillProvenance {
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for line in body.lines() {
         let Some((k, v)) = line.split_once(':') else {
@@ -348,16 +367,17 @@ pub fn read_sidecar(dir: &Path) -> Option<SkillProvenance> {
         map.insert(k.trim().to_string(), v.trim().to_string());
     }
     let get = |k: &str| map.get(k).cloned().unwrap_or_default();
-    Some(SkillProvenance {
+    SkillProvenance {
         source: get("source"),
         slug: get("slug"),
         version: get("version"),
         publisher: get("publisher"),
+        published_at: get("published_at"),
         published_by_me: get("published_by_me") == "true",
         review_status: get("review_status"),
         installed_at: get("installed_at"),
         bundle_hash: get("bundle_hash"),
-    })
+    }
 }
 
 // ---------- /name explicit invocation ----------

@@ -28,7 +28,7 @@ import { ApiError } from "../platform/errors.js";
 import { packBundle, parseBundle } from "../platform/bundle.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
-import type { RegistryItemRow } from "../platform/store/registry.js";
+import type { SkillSearchRow } from "../platform/store/registry.js";
 import { nextVersion } from "../platform/store/registry.js";
 import type { SkillReadEvent, SkillReadSink } from "../platform/skillReads.js";
 import type { EventStore } from "../platform/store/events.js";
@@ -119,7 +119,8 @@ const DESCRIPTION_CLIP = 120;
 const SECTION_HEADER = "# Available skills";
 const SECTION_GUIDANCE =
   "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine " +
-  "(their files are readable with read_file); if one shows a newer version, ask the user before updating.";
+  "(their files are readable with read_file); if one shows a newer version, ask the user before updating. " +
+  "Each entry names its publisher; read_skill returns the full provenance.";
 
 /** The client `skills_index`'s skill lines, verbatim: its own `# Available
  *  skills` header, its guidance sentence, and blank lines are stripped. */
@@ -168,6 +169,34 @@ export function skillInvocationDirective(inv: { slug: string; args: string }, lo
 
 function clipDescription(description: string): string {
   return description.length > DESCRIPTION_CLIP ? `${description.slice(0, DESCRIPTION_CLIP)}…` : description;
+}
+
+/** One item's provenance for the agent-facing surfaces: publisher, publish
+ *  date, owner and fork origin, each omitted when the registry does not
+ *  know it. Empty for an item with no version row and no owner. */
+export function provenanceText(item: {
+  publisher?: string | null;
+  published_at?: string | null;
+  owner_kind?: "user" | "team" | null;
+  owner_label?: string | null;
+  forked_from?: string | null;
+}): string {
+  const bits: string[] = [];
+  if (item.publisher != null && item.publisher !== "") bits.push(`published by ${item.publisher}`);
+  if (item.published_at != null && item.published_at !== "") bits.push(`on ${item.published_at.slice(0, 10)}`);
+  if (item.owner_label != null && item.owner_label !== "") {
+    bits.push(`owner ${item.owner_kind === "team" ? "team " : ""}${item.owner_label}`);
+  }
+  if (item.forked_from != null && item.forked_from !== "") bits.push(`forked from ${item.forked_from}`);
+  return bits.join(", ");
+}
+
+/** The short attribution an index line carries: the latest version's
+ *  publisher alone (the index is a one-line-per-skill discovery surface,
+ *  so owner and date stay for search_skills and read_skill). Empty when
+ *  unknown. */
+function publisherOf(item: { publisher?: string | null }): string {
+  return item.publisher != null && item.publisher !== "" ? item.publisher : "";
 }
 
 /** The YAML frontmatter `description` of a SKILL.md, null when the
@@ -374,7 +403,7 @@ export class SkillRuntime {
    *  excluded. */
   private async orgLines(
     orgId: string,
-    items: RegistryItemRow[],
+    items: SkillSearchRow[],
     userId: string,
     exclude: Set<string>,
   ): Promise<string[]> {
@@ -384,14 +413,19 @@ export class SkillRuntime {
     for (const item of items) {
       if (exclude.has(item.slug)) continue;
       const pin = pins.get(item.slug);
+      // The publisher rides every line: the index is where an agent first
+      // meets a skill, and "who wrote this" is not answerable anywhere
+      // else on the machine.
+      const by = publisherOf(item);
+      const attribution = by === "" ? "" : `, by ${by}`;
       if (pin === undefined) {
-        uninstalled.push(`- ${item.slug}: ${clipDescription(item.description)} (org)`);
+        uninstalled.push(`- ${item.slug}: ${clipDescription(item.description)} (org${attribution})`);
       } else {
         const update =
           item.latest_version !== null && item.latest_version !== pin
             ? `, update available: ${item.latest_version}`
             : "";
-        installed.push(`- ${item.slug}: ${item.description} (installed, pinned ${pin}${update})`);
+        installed.push(`- ${item.slug}: ${item.description} (installed, pinned ${pin}${update}${attribution})`);
       }
     }
     return [...installed, ...uninstalled];
@@ -413,23 +447,39 @@ export class SkillRuntime {
   }
 
   /** The desired install list for one user, in the sync wire shape: every
-   *  install becomes `{ slug, version, bundle_sha256, url }` (the bundle
-   *  URL under this server's own base, fetched by the machine with its own
-   *  auth). Shared by the change-trigger pushes (syncUser) and the
-   *  machine's connect-time HTTP pull (`GET /api/v1/skills/sync-payload`).
-   *  A pin with no version row is dropped (logged) — it can never
-   *  materialize. */
+   *  install becomes `{ slug, version, bundle_sha256, url }` plus the
+   *  version's provenance (`publisher`, `published_at`), which the machine
+   *  writes into its sidecar so the agent can name the author. Shared by
+   *  the change-trigger pushes (syncUser) and the machine's connect-time
+   *  HTTP pull (`GET /api/v1/skills/sync-payload`). A pin with no version
+   *  row is dropped (logged) — it can never materialize. */
   async syncPayload(
     orgId: string,
     userId: string,
-  ): Promise<{ skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> }> {
+  ): Promise<{
+    skills: Array<{
+      slug: string;
+      version: string;
+      bundle_sha256: string;
+      publisher?: string;
+      published_at?: string;
+      url?: string;
+    }>;
+  }> {
     let installs: Array<{ slug: string; pinned_version: string }>;
     try {
       installs = await this.deps.skills.listForUser(orgId, userId);
     } catch (error) {
       throw new Error(`install list failed: ${(error as Error).message}`);
     }
-    const skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> = [];
+    const skills: Array<{
+      slug: string;
+      version: string;
+      bundle_sha256: string;
+      publisher?: string;
+      published_at?: string;
+      url?: string;
+    }> = [];
     for (const install of installs) {
       try {
         const meta = await this.deps.registry.getVersionMeta(orgId, "skill", install.slug, install.pinned_version);
@@ -443,6 +493,10 @@ export class SkillRuntime {
           slug: install.slug,
           version: install.pinned_version,
           bundle_sha256: meta.bundle_sha256 ?? "",
+          ...(meta.publisher_label != null && meta.publisher_label !== ""
+            ? { publisher: meta.publisher_label }
+            : {}),
+          ...(meta.published_at != null && meta.published_at !== "" ? { published_at: meta.published_at } : {}),
           ...(this.deps.selfBaseUrl !== undefined
             ? { url: `${this.deps.selfBaseUrl}/api/v1/registry/skill/${install.slug}/${install.pinned_version}/bundle` }
             : {}),
@@ -610,8 +664,14 @@ export class SkillRuntime {
         parts.push(`Additional files (read with read_file):\n${files.map((f) => `- ${f}`).join("\n")}`);
       }
       if (control !== null && !control.tombstoned && control.latest_version !== null) {
+        const prov = provenanceText({
+          owner_label: control.owner_label,
+          owner_kind: control.owner_user_id !== null ? "user" : control.owner_team_id !== null ? "team" : null,
+          forked_from: control.forked_from,
+        });
         parts.push(
-          `Note: the org registry has ${slug} at ${control.latest_version} — pushing publishes your local tree as the next version.`,
+          `Note: the org registry has ${slug} at ${control.latest_version}${prov === "" ? "" : ` (${prov})`} — ` +
+            "pushing publishes your local tree as the next version.",
         );
       }
       return this.textResult(parts.join("\n\n"));
@@ -667,6 +727,17 @@ export class SkillRuntime {
       this.deps.log.warn(`skill read record failed: ${(error as Error).message}`);
     }
     const parts: string[] = [];
+    // Provenance first: who published this version, when, and who owns it —
+    // the answer an agent needs before it acts on a skill's instructions.
+    const prov: string[] = [`version ${version}`];
+    if (meta.publisher_label != null && meta.publisher_label !== "") prov.push(`published by ${meta.publisher_label}`);
+    if (meta.published_at != null && meta.published_at !== "") prov.push(`on ${meta.published_at.slice(0, 10)}`);
+    if (control.owner_label != null && control.owner_label !== "") {
+      prov.push(`owner ${control.owner_user_id !== null ? "" : "team "}${control.owner_label}`);
+    }
+    if (control.forked_from != null && control.forked_from !== "") prov.push(`forked from ${control.forked_from}`);
+    if (meta.bundle_sha256 != null && meta.bundle_sha256 !== "") prov.push(`bundle sha256 ${meta.bundle_sha256}`);
+    parts.push(`Provenance: ${slug} — ${prov.join(", ")}.`);
     if (meta.skill_md_text !== null && meta.skill_md_text !== "") {
       parts.push(meta.skill_md_text);
     } else {
@@ -698,7 +769,11 @@ export class SkillRuntime {
     const q = query.trim();
     const items = await this.deps.registry.searchSkills(id.orgId, q);
     if (items.length === 0) return this.textResult(`No org skills match "${q}".`);
-    const lines = items.map((item) => `- ${item.slug}: ${item.description} (${item.latest_version ?? "no versions"})`);
+    const lines = items.map((item) => {
+      const head = `- ${item.slug}: ${item.description} (${item.latest_version ?? "no versions"})`;
+      const prov = provenanceText(item);
+      return prov === "" ? head : `${head}\n  ${prov}`;
+    });
     return this.textResult(`${lines.join("\n")}\n(use read_skill to read a skill)`);
   }
 

@@ -173,6 +173,8 @@ where
         source: "registry".into(),
         slug: slug.to_string(),
         version,
+        publisher: entry["publisher"].as_str().unwrap_or_default().to_string(),
+        published_at: entry["published_at"].as_str().unwrap_or_default().to_string(),
         installed_at: chrono::Utc::now().to_rfc3339(),
         bundle_hash: format!("sha256:{actual}"),
         ..Default::default()
@@ -254,6 +256,7 @@ mod tests {
         let fetched = Arc::new(Mutex::new(Vec::new()));
         let payload = serde_json::json!({"skills": [
             {"slug": "demo-skill", "version": "v2", "bundle_sha256": sha(&bytes),
+             "publisher": "Dana Levi", "published_at": "2026-05-12T09:00:00Z",
              "url": "http://hub/api/v1/registry/skill/demo-skill/v2/bundle"}
         ]});
         // A previous Guild install (sidecar) must be replaced by v2...
@@ -316,6 +319,11 @@ mod tests {
             sidecar_of(&dir).is_some_and(|s| s.contains("slug: demo-skill")),
             "installed dir carries the provenance sidecar"
         );
+        // The payload's provenance lands in the sidecar, so the agent can
+        // name the publisher from the machine's own index.
+        let sidecar = sidecar_of(&dir).unwrap();
+        assert!(sidecar.contains("publisher: Dana Levi"), "{sidecar}");
+        assert!(sidecar.contains("published_at: 2026-05-12T09:00:00Z"), "{sidecar}");
         assert!(!root.join(".agents/skills/old-skill").exists());
         assert!(user.join("SKILL.md").exists(), "user dir untouched");
         let seen = fetched.lock().unwrap();

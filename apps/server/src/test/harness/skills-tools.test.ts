@@ -38,7 +38,17 @@ interface FakeOptions {
   versions?: Array<{ version: string }>;
   install?: { slug: string; pinned_version: string; installed_at: string } | null;
   gate?: "allow" | "forbidden";
-  search?: Array<{ slug: string; description: string; latest_version: string | null; review_status: string }>;
+  search?: Array<{
+    slug: string;
+    description: string;
+    latest_version: string | null;
+    review_status: string;
+    publisher?: string | null;
+    published_at?: string | null;
+    owner_kind?: "user" | "team" | null;
+    owner_label?: string | null;
+    forked_from?: string | null;
+  }>;
   executor?: "machine" | "server" | null;
 }
 
@@ -49,6 +59,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
       ? {
           owner_user_id: null,
           owner_team_id: "team-1",
+          owner_label: "CSM",
           maintainer_gated: false,
           tombstoned: false,
           latest_version: "v2",
@@ -63,6 +74,8 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
           object_key: "skills/hello/v2/sha",
           bundle_sha256: "cafe",
           publisher: USER,
+          publisher_label: "Dana Levi",
+          published_at: "2026-05-12T09:00:00.000Z",
           skill_md_text: "# Deploy\nRun the deploy checklist.",
           files: [
             { path: "scripts/run.sh", size: 12, sha256: "deadbeef" },
@@ -164,6 +177,9 @@ describe("read_skill", () => {
     );
     expect(result.isError).toBeFalsy();
     const body = text(result);
+    expect(body).toContain(
+      "Provenance: hello — version v1, published by Dana Levi, on 2026-05-12, owner team CSM, bundle sha256 cafe.",
+    );
     expect(body).toContain("# Deploy");
     expect(body).toContain("Additional files (read with read_file):");
     expect(body).toContain("- scripts/run.sh (sha256 deadbeef)");
@@ -267,7 +283,9 @@ describe("read_skill local-first", () => {
       const body = text(result);
       expect(body).toContain("# Local body");
       expect(body).not.toContain("# Deploy");
-      expect(body).toContain("the org registry has hello at v2 — pushing publishes your local tree as the next version");
+      expect(body).toContain(
+        "the org registry has hello at v2 (owner team CSM) — pushing publishes your local tree as the next version",
+      );
       expect(recorded.installs).toHaveLength(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -384,6 +402,32 @@ describe("search_skills", () => {
     const body = text(result);
     expect(body).toContain("- hello-skill: A skill (v2)");
     expect(body).toContain("(use read_skill to read a skill)");
+  });
+
+  it("carries the publisher, date and owner of every hit", async () => {
+    const { deps } = fakeDeps({
+      search: [
+        {
+          slug: "hello-skill",
+          description: "A skill",
+          latest_version: "v2",
+          review_status: "approved",
+          publisher: "Dana Levi",
+          published_at: "2026-05-12T09:00:00.000Z",
+          owner_kind: "team",
+          owner_label: "CSM",
+          forked_from: "ops-base@v1",
+        },
+      ],
+    });
+    const runtime = makeRuntime(deps);
+    const search = runtime.tools().find((t) => t.name === "search_skills")!;
+    const result = await (search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+      { query: "hello" }, API, CTX,
+    );
+    expect(text(result)).toContain(
+      "- hello-skill: A skill (v2)\n  published by Dana Levi, on 2026-05-12, owner team CSM, forked from ops-base@v1",
+    );
   });
 
   it("renders the empty-result line", async () => {
@@ -594,6 +638,36 @@ describe("store surfaces", () => {
     // later), so the index's discovery surface leads with fresh work.
     expect((await registry.searchSkills(orgId, "")).map((r) => r.slug)).toEqual(["log-tailer", "deploy-helper"]);
     expect((await registry.searchSkills(orgId, "nothing-matches-this")).length).toBe(0);
+  });
+
+  it("searchSkills carries the latest version's publisher, date, owner and fork origin", async () => {
+    const item = await env!.db.query<{ id: string }>(
+      `INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version, owner_user_id, forked_from)
+       VALUES (gen_random_uuid(), $1, 'skill', 'provenance-skill', 'Has provenance', 'v2', $2, 'base-skill@v1')
+       RETURNING id`,
+      [orgId, userId],
+    );
+    await env!.db.query(
+      `INSERT INTO registry_versions (id, item_id, version, manifest, object_key, published_by, published_at)
+       VALUES (gen_random_uuid(), $1, 'v2', '{}', 'k', $2, '2026-05-12T09:00:00Z')`,
+      [item.rows[0]!.id, userId],
+    );
+    const [row] = await registry.searchSkills(orgId, "provenance-skill");
+    // The label is the display name, falling back to the email.
+    expect(row).toMatchObject({
+      slug: "provenance-skill",
+      publisher: "skill-tools@example.test",
+      owner_kind: "user",
+      owner_label: "skill-tools@example.test",
+      forked_from: "base-skill@v1",
+    });
+    expect(row!.published_at).toBe("2026-05-12T09:00:00Z");
+    // The agent tools read the same provenance from the item's control row.
+    const control = await registry.itemControl(orgId, "skill", "provenance-skill");
+    expect(control?.owner_label).toBe("skill-tools@example.test");
+    const meta = await registry.getVersionMeta(orgId, "skill", "provenance-skill", "v2");
+    expect(meta?.publisher_label).toBe("skill-tools@example.test");
+    expect(meta?.published_at).toBe("2026-05-12T09:00:00Z");
   });
 
   it("ownerOf resolves the chat's org and owner, null when absent", async () => {
