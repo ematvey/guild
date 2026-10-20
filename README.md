@@ -83,21 +83,10 @@ curl -X POST localhost:8080/openai/v1/chat/completions \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}'
 ```
 
-## Server-side workspace sessions (execution backend, M6)
+## Persistent agents
 
-The server can run the agent loop against a per-org workspace directory
-(`$GUILD_DATA_DIR/workspaces/<org>/<name>`). Its tools run in that
-workspace's gVisor sandbox (the `sandbox-runner` compose service; see
-`docs/deploy-nuances.md` §4a); shell tools are on with a runner unless
-`GUILD_ALLOW_SHELL_TOOLS=0`, and still pass the exec-policy gate:
-
-```bash
-curl -X POST localhost:8080/api/v1/agents/sessions -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' -d '{"workspace_name":"repo-a"}'
-curl -N -X POST localhost:8080/api/v1/agents/sessions/<id>/turns \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"message":"write a hello.py","model":"gpt-4o-mini"}'   # SSE frames
-```
+Named agents own a durable workspace, threads, and routines. The design is in
+`docs/specs/2026-10-18-persistent-agents.md`.
 
 ## Client builds & distribution
 

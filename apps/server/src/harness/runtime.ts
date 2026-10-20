@@ -41,7 +41,6 @@ import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { ThreadStore } from "../platform/store/thread.js";
-import { AgentSessionStore } from "../platform/store/agentSessions.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
@@ -153,7 +152,6 @@ export class GuildRuntime {
   private starting: Promise<void> | undefined;
   private stopped = false;
 
-  private readonly agentSessions: AgentSessionStore;
   readonly toolArtifacts: ToolArtifactStore;
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
@@ -223,7 +221,6 @@ export class GuildRuntime {
     this.chats = new ChatStore(pool);
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
-    this.agentSessions = new AgentSessionStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
     const registryStore = new RegistryStore(pool);
     const events = new EventStore(pool);
@@ -392,26 +389,14 @@ export class GuildRuntime {
     return null;
   }
 
-  /** The conversation's server-side sandbox: an agent session's workspace
-   *  (`workspaces/<org>/<name>`) when one is bound, the per-conversation
-   *  chat dir (`chats/<org>/<conversationId>`) otherwise. `hostDir` is
-   *  where the in-process executor keeps it (tests/dev). */
+  /** Agent workspace resolution lands with the agents runtime. Plain chats
+   *  keep their per-conversation sandbox (`chats/<org>/<conversationId>`);
+   *  `hostDir` is where the in-process executor keeps it (tests/dev). */
   private async sandboxTarget(
     conversationId: number,
     orgId: string,
   ): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
     const chatId = await this.chatOfConversation(conversationId);
-    if (chatId !== null) {
-      const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
-      if (workspace !== null) {
-        return {
-          key: `ws:${orgId}:${workspace}`,
-          subpath: `workspaces/${orgId}/${workspace}`,
-          hostDir: `${this.config.dataDir}/workspaces/${orgId}/${workspace}`,
-          chatId,
-        };
-      }
-    }
     return {
       key: `chat:${orgId}:${conversationId}`,
       subpath: `chats/${orgId}/${conversationId}`,
@@ -467,8 +452,14 @@ export class GuildRuntime {
     const row = chat.rows[0];
     if (!row) return null;
     if (row.machine_id !== null) return "machine";
-    const workspace = await this.agentSessions.workspaceForChat(row.org_id, chatId);
+    const workspace = await this.agentWorkspaceForChat(row.org_id, chatId);
     return workspace !== null ? "server" : null;
+  }
+
+  /** Agent workspace lookup. It lands with the agents runtime; plain chats
+   *  have no agent workspace, so this returns null for now. */
+  private async agentWorkspaceForChat(_orgId: string, _chatId: string | null): Promise<string | null> {
+    return null;
   }
   /** Turn-start skill materialization (spec §3): the chat owner's
    *  installed org skills land under the server-side executor dir before
