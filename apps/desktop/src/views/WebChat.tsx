@@ -91,6 +91,17 @@ import {
   SKILLS_CATALOG,
   type SkillsRoute,
 } from "./skills/skills-route";
+import { AgentsPanel } from "./agents/AgentsPanel";
+import {
+  AGENTS_ACTIVITY,
+  AGENTS_DIRECTORY,
+  AGENTS_INBOX,
+  agentsRoutePath,
+  agentsRailTab,
+  parseAgentsRoute,
+  type AgentsRoute,
+} from "./agents/agents-route";
+import { listInbox } from "./agents/agents-api";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -327,6 +338,8 @@ interface ChatRoute {
   overlay: ChatOverlay;
   /** The skills page route, or null when the URL is not a skills one. */
   skills: SkillsRoute | null;
+  /** The agents surface route, or null when the URL is not an agents one. */
+  agents: AgentsRoute | null;
   /** Which rail panel tab the URL names: /chats, /work or /settings. */
   tab: "chats" | "work" | "settings";
   /** The addressed scratch composer: /chats/new, /work/new or
@@ -371,6 +384,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -379,6 +393,22 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     };
   }
   const parts = decoded as string[];
+  // The agents surface owns its whole address space (/agents, /inbox,
+  // /activity, /runs/<id>): parse it before the chat prefixes.
+  const agents = parseAgentsRoute(pathname);
+  if (agents !== null) {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents,
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+    };
+  }
   // The rail's panel tabs own top-level addresses: /chats (the default),
   // /work, and /settings (bare, or with a deep-linked section). Tab picks
   // navigate, so back/forward and reloads restore the tab like any other
@@ -404,9 +434,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   const newChat = parts[0] === "new" && chatId === null;
   if (newChat) parts.shift();
   if (parts[0] === "device")
-    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat: false };
   if (parts[0] === "onboard" || parts[0] === "help")
-    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat: false };
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -423,6 +453,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       tab: "settings",
       overlay: null,
       skills: null,
+      agents: null,
       settingsSection: section,
       settingsDetail: detail,
       newChat: false,
@@ -432,9 +463,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId: null, projectId: null, overlay: null, skills, agents: null, tab: "chats", settingsSection: null, settingsDetail: null, newChat: false };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null, newChat };
+  return { chatId, projectId, tab, overlay: null, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -460,7 +491,10 @@ export const chatRoutePath = (
   settingsSection: string | null = null,
   settingsDetail: string | null = null,
   newChat = false,
+  agents: AgentsRoute | null = null,
 ): string => {
+  // The agents surface is chat-independent: its route owns the whole URL.
+  if (agents !== null) return agentsRoutePath(agents);
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) {
     if (skills.editor === "new") return "/skills/new";
@@ -1808,6 +1842,27 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   useEffect(() => {
     if (route.invalid) window.history.replaceState(null, "", "/chats");
   }, [route.invalid]);
+  // Inbox badge: attention items only, never activity. Refreshed on route
+  // moves and once a minute while the app is open.
+  const [inboxUnread, setInboxUnread] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      void listInbox()
+        .then((items) => {
+          if (live) setInboxUnread(items.filter((item) => !item.read_at).length);
+        })
+        .catch(() => {
+          // A server without the inbox API leaves the badge at zero.
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [route.agents, route.chatId]);
   const chatId = route.chatId;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
@@ -2143,6 +2198,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     projectId?: string | null;
     overlay?: ChatOverlay;
     skills?: SkillsRoute | null;
+    agents?: AgentsRoute | null;
     tab?: ChatRoute["tab"];
     newChat?: boolean;
     settingsSection?: string | null;
@@ -2162,13 +2218,22 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
           ? null
           : route.skills;
+    // The agents surface is chat-independent too: naming an agents route
+    // replaces the chat/skills page; any chat navigation drops it.
+    const ag =
+      "agents" in next
+        ? (next.agents as AgentsRoute | null)
+        : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
+          ? null
+          : route.agents;
     // The scratch composer is chatless: it drops with any open thread,
-    // overlay or skills page, and never rides on the Settings tab.
+    // overlay, skills page or agents page, and never rides on Settings.
     const newChat =
       ("newChat" in next ? !!next.newChat : route.newChat) &&
       chatId === null &&
       ov === null &&
       sk === null &&
+      ag === null &&
       tab !== "settings";
     // The Settings tab owns its section in the URL: a navigation naming a
     // section/detail carries it, one leaving the tab drops it, and a
@@ -2178,7 +2243,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     const settingsSection =
       "settingsSection" in next
         ? (next.settingsSection as string | null)
-        : tab === "settings" && sk === null
+        : tab === "settings" && sk === null && ag === null
           ? route.settingsSection
           : null;
     const settingsDetail =
@@ -2186,12 +2251,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         ? (next.settingsDetail as string | null)
         : "settingsSection" in next
           ? null
-          : tab === "settings" && sk === null
+          : tab === "settings" && sk === null && ag === null
             ? route.settingsDetail
             : null;
-    const path = chatRoutePath(chatId, projectId, ov, sk, tab, settingsSection, settingsDetail, newChat);
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab, settingsSection, settingsDetail, newChat, ag);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab, newChat, settingsSection, settingsDetail });
+    setRoute({ chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail });
   };
 
   // A bare /settings arrival (deep link, old bookmark, back/forward)
@@ -2199,11 +2264,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // sectioned address. replaceState: the normalization is not a step back.
   useEffect(() => {
     if (route.tab !== "settings" || route.settingsSection !== null) return;
-    if (route.overlay !== null || route.skills !== null) return;
+    if (route.overlay !== null || route.skills !== null || route.agents !== null) return;
     const path = chatRoutePath(null, null, null, null, "settings", "account", null);
     window.history.replaceState(null, "", path);
     setRoute((r) => ({ ...r, settingsSection: "account", settingsDetail: null }));
-  }, [route.tab, route.settingsSection, route.overlay, route.skills]);
+  }, [route.tab, route.settingsSection, route.overlay, route.skills, route.agents]);
 
   // First-run onboarding auto-show: a user the server flags as not yet
   // onboarded is pushed to /onboard, so the wizard owns the URL like any
@@ -3084,20 +3149,37 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // back/forward, reloads and deep links — the URL is the truth.
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(route.tab);
   useEffect(() => setSidebarTab(route.tab), [route.tab]);
-  // The rail's active tab: the skills page raises its own tab while a
-  // /skills... URL is live (rail pick, deep link, reload, back/forward).
-  const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
+  // The rail's active tab: the skills and agents pages raise their own tab
+  // while their URL is live (rail pick, deep link, reload, back/forward).
+  const railTab: SidebarTab =
+    route.skills !== null
+      ? "skills"
+      : route.agents !== null
+        ? agentsRailTab(route.agents)
+        : sidebarTab;
   // Settings tab: the section rendered inline in the main pane (the rail's
   // Settings tab is a persistent surface, not an overlay launcher). The
   // section and its sub-page live in the route — every pick navigates.
   const settingsSection = route.settingsSection;
   const switchTab = (tab: SidebarTab) => {
-    // The skills tab is a URL route, not persisted panel state: entering it
-    // navigates to /skills, leaving it returns to the chat root — so back/
-    // forward crosses between the skills page and the chat like any other
-    // route pair, and a reload lands back on the skills page.
+    // The skills and agents tabs are URL routes, not persisted panel state:
+    // entering them navigates to their root, leaving returns to the chat
+    // root — so back/forward crosses surfaces like any other route pair,
+    // and a reload lands back on the page.
     if (tab === "skills") {
       pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
+      return;
+    }
+    if (tab === "inbox") {
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_INBOX });
+      return;
+    }
+    if (tab === "agents") {
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY });
+      return;
+    }
+    if (tab === "activity") {
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_ACTIVITY });
       return;
     }
     // Panel tabs navigate too: each owns its address, back/forward walks
@@ -3110,6 +3192,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       projectId: null,
       overlay: null,
       skills: null,
+      agents: null,
       tab,
       newChat: false,
       ...(tab === "settings"
@@ -3234,6 +3317,22 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     </div>
   ) : null;
 
+  // The agents surface is another full main-column page. Its route owns the
+  // whole column right of the rail; the chat comes back on any chat route.
+  const agentsRoute = route.agents;
+  const inlineAgents = agentsRoute !== null ? (
+    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+      <AgentsPanel
+        route={agentsRoute}
+        viewer={{ email, displayName, role }}
+        onNavigate={(next) =>
+          pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
+        }
+        onOpenChat={openChat}
+      />
+    </div>
+  ) : null;
+
   // desktop: draggable resize handle. While dragging, the width transition
   // is suspended — an animated width chases the cursor and reads as lag.
   const [resizing, setResizing] = useState(false);
@@ -3280,6 +3379,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
           onSignOut={signOut}
           onAddWorkspace={onAddWorkspace}
+          inboxUnread={inboxUnread}
         />
       )}
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
@@ -3301,7 +3401,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             />
           </SheetContent>
         </Sheet>
-      ) : skillsRoute !== null ? null : (
+      ) : skillsRoute !== null || agentsRoute !== null ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
@@ -3349,7 +3449,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         )}
-        {inlineSkills ? (
+        {inlineAgents ? (
+          inlineAgents
+        ) : inlineSkills ? (
           inlineSkills
         ) : inlineSettings ? (
           inlineSettings
