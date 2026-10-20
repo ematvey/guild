@@ -11,6 +11,24 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Skill provenance reaches the agent (2026-10-20, 0.5.83).** An agent
+  asked "whose skill is that?" and could only answer from the SKILL.md's
+  prose, because the index, `search_skills` and `read_skill` dropped the
+  registry's provenance. Every agent-facing surface now carries it: the
+  machine's index line reads the install sidecar (`agents/guild.yaml`) and
+  appends `[registry v2, published by X, on <date>, installed <date>]`, or
+  `[local]` for a folder Guild never installed; the sync payload carries
+  `publisher` and `published_at` into that sidecar, and
+  `skill_installs`-driven pushes refresh it. Server-side, `searchSkills`
+  returns the latest version's publisher label, publish time, owner label
+  and fork origin (a new `SkillSearchRow`; `listItems` keeps its lean wire
+  shape), the index org lines name the publisher, `search_skills` prints a
+  provenance line per hit, and `read_skill` opens with a `Provenance:`
+  paragraph — version, publisher, date, owner, fork origin, bundle sha.
+  `itemControl` and `getVersionMeta` resolve owner and publisher labels, so
+  the local-tree read names the owner too. Index guidance states the
+  provenance is there.
+
 - **The 2026-10-18 review's criticals are closed (2026-10-19, 0.5.82).**
   Project binding is owner-only: `lockBindableMachine` matches the machine's
   `user_id`, with the org kept as a tenancy filter — a project's folder is the

@@ -23,7 +23,7 @@ const CTX = {} as Context;
 
 const HEADER = "# Available skills";
 const GUIDANCE =
-  "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine (their files are readable with read_file); if one shows a newer version, ask the user before updating.";
+  "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine (their files are readable with read_file); if one shows a newer version, ask the user before updating. Each entry names its publisher; read_skill returns the full provenance.";
 
 const SQL_EXPLORER_DESC = "Run the SQL explorer against the analytics cluster.";
 const BACKUP_DESC = "Verify nightly backups.";
@@ -32,8 +32,29 @@ const RUNBOOK_DESC =
 const TAILER_DESC = "Tail and summarize service logs.";
 
 const SEARCH = [
-  { slug: "sql-explorer", description: SQL_EXPLORER_DESC, latest_version: "v5", review_status: "approved" },
-  { slug: "backup-tool", description: BACKUP_DESC, latest_version: "v2", review_status: "approved" },
+  {
+    slug: "sql-explorer",
+    description: SQL_EXPLORER_DESC,
+    latest_version: "v5",
+    review_status: "approved",
+    publisher: "Dana Levi",
+    published_at: "2026-05-12T09:00:00Z",
+    owner_kind: "team",
+    owner_label: "CSM",
+    forked_from: null,
+  },
+  {
+    slug: "backup-tool",
+    description: BACKUP_DESC,
+    latest_version: "v2",
+    review_status: "approved",
+    publisher: "Isaac Cohen",
+    published_at: "2026-05-10T09:00:00Z",
+    owner_kind: "user",
+    owner_label: "Isaac Cohen",
+    forked_from: null,
+  },
+  // No publisher known: the line carries no attribution at all.
   { slug: "incident-runbook", description: RUNBOOK_DESC, latest_version: "v4", review_status: "draft" },
   { slug: "log-tailer", description: TAILER_DESC, latest_version: "v1", review_status: "draft" },
 ];
@@ -105,8 +126,8 @@ describe("combined skills index section", () => {
         HEADER,
         GUIDANCE,
         "- demo: Local demo skill (/home/u/.agents/skills/demo/SKILL.md)",
-        `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5)`,
-        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2)`,
+        `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5, by Dana Levi)`,
+        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2, by Isaac Cohen)`,
         `- incident-runbook: ${RUNBOOK_DESC} (org)`,
         `- log-tailer: ${TAILER_DESC} (org)`,
       ].join("\n"),
@@ -120,8 +141,8 @@ describe("combined skills index section", () => {
       [
         HEADER,
         GUIDANCE,
-        `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5)`,
-        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2)`,
+        `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5, by Dana Levi)`,
+        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2, by Isaac Cohen)`,
         `- incident-runbook: ${RUNBOOK_DESC} (org)`,
         `- log-tailer: ${TAILER_DESC} (org)`,
       ].join("\n"),
@@ -217,7 +238,7 @@ describe("guild extension skills section", () => {
     const rendered = await section!.render(input, CTX);
     expect(rendered).toContain(HEADER);
     expect(rendered).toContain("- demo: Local demo skill");
-    expect(rendered).toContain("(installed, pinned v3, update available: v5)");
+    expect(rendered).toContain("(installed, pinned v3, update available: v5, by Dana Levi)");
     expect(rendered).toContain("(org)");
   });
 

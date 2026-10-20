@@ -23,6 +23,8 @@ interface MetaRow {
   object_key: string;
   bundle_sha256: string | null;
   publisher: string | null;
+  publisher_label: string | null;
+  published_at: string | null;
   skill_md_text: string | null;
   files: Array<{ path: string; size: number; sha256: string }> | null;
 }
@@ -106,6 +108,8 @@ function seedSkill(fx: Fixture, slug: string, version: string, md: string, extra
     object_key: key,
     bundle_sha256: sha256(bundle),
     publisher: USER,
+    publisher_label: "Dana Levi",
+    published_at: "2026-05-12T09:00:00.000Z",
     skill_md_text: md,
     files: Object.entries(files).map(([p, content]) => ({
       path: p,
@@ -172,6 +176,8 @@ describe("materializeIntoSandbox", () => {
       object_key: "registry/missing/key.tar.gz",
       bundle_sha256: null,
       publisher: null,
+      publisher_label: null,
+      published_at: null,
       skill_md_text: null,
       files: null,
     });
@@ -221,6 +227,8 @@ describe("materializeIntoSandbox", () => {
       object_key: `registry/${ORG}/skill/hello/v1/bundle.tar.gz`,
       bundle_sha256: sha256(fx.objects.get(`registry/${ORG}/skill/hello/v1/bundle.tar.gz`)!),
       publisher: USER,
+      publisher_label: "Dana Levi",
+      published_at: "2026-05-12T09:00:00.000Z",
       skill_md_text: "# V1 body",
       files: null,
     });

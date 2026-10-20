@@ -13,6 +13,17 @@ export interface RegistryItemRow {
   review_status: string;
 }
 
+/** A skill search hit with its provenance: who published the latest
+ *  version, when, who owns the item, and what it was forked from. Null
+ *  when the registry has no version row (no publisher/date) or no owner. */
+export interface SkillSearchRow extends RegistryItemRow {
+  publisher: string | null;
+  published_at: string | null;
+  owner_kind: "user" | "team" | null;
+  owner_label: string | null;
+  forked_from: string | null;
+}
+
 export interface VersionRow {
   version: string;
   published_at: string;
@@ -47,6 +58,44 @@ function itemRow(r: Record<string, unknown>): RegistryItemRow {
     review_status: r.review_status as string,
   };
 }
+
+/** The search row: the item fields plus its provenance. */
+function searchRow(r: Record<string, unknown>): SkillSearchRow {
+  const ownerUserId = (r.owner_user_id as string | null) ?? null;
+  const ownerTeamId = (r.owner_team_id as string | null) ?? null;
+  return {
+    ...itemRow(r),
+    publisher: (r.publisher as string | null) ?? null,
+    published_at:
+      r.published_at === null || r.published_at === undefined
+        ? null
+        : pgTimestampToRfc3339(r.published_at as string),
+    owner_kind: ownerUserId !== null ? "user" : ownerTeamId !== null ? "team" : null,
+    owner_label:
+      (ownerUserId !== null
+        ? (r.owner_user_label as string | null)
+        : (r.owner_team_label as string | null)) ?? null,
+    forked_from: (r.forked_from as string | null) ?? null,
+  };
+}
+
+/** The provenance columns a search row carries, with the latest version's
+ *  publisher label (display name or email) and publish time and the
+ *  owner's display label (user name or team name). */
+const SEARCH_COLUMNS =
+  "i.slug, i.description, i.latest_version, i.review_status, i.forked_from, " +
+  "i.owner_user_id, i.owner_team_id, " +
+  "COALESCE(NULLIF(pu.display_name, ''), pu.email) AS publisher, " +
+  "to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, " +
+  "COALESCE(NULLIF(ou.display_name, ''), ou.email) AS owner_user_label, t.name AS owner_team_label";
+
+/** Joins behind SEARCH_COLUMNS: the latest version row, its publisher, the
+ *  owner user, the owner team. */
+const SEARCH_JOINS =
+  "LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
+  "LEFT JOIN users pu ON pu.id = v.published_by " +
+  "LEFT JOIN users ou ON ou.id = i.owner_user_id " +
+  "LEFT JOIN teams t ON t.id = i.owner_team_id";
 
 /** The next append-only version for an item: the max numeric suffix across
  *  every existing vN row, + 1. Count-based arithmetic (`v${rows.length + 1}`)
@@ -205,16 +254,15 @@ export class RegistryStore {
    *  never appear). An empty q lists the org's skills. Most-recently-
    *  updated first (the latest version's publish time), slug as the tie —
    *  the index's discovery surface leads with fresh work. */
-  async searchSkills(orgId: string, q: string, limit = 12): Promise<RegistryItemRow[]> {
+  async searchSkills(orgId: string, q: string, limit = 12): Promise<SkillSearchRow[]> {
     const res = await this.pool.query(
-      "SELECT i.slug, i.description, i.latest_version, i.review_status FROM registry_items i " +
-      "LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
+      `SELECT ${SEARCH_COLUMNS} FROM registry_items i ${SEARCH_JOINS} ` +
       "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL " +
       "AND (i.slug ILIKE '%' || $2 || '%' OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%') " +
       "ORDER BY v.published_at DESC NULLS LAST, i.slug LIMIT $3",
       [orgId, q, Math.min(Math.max(limit, 1), 500)],
     );
-    return res.rows.map(itemRow);
+    return res.rows.map(searchRow);
   }
 
   async itemVersions(orgId: string, kind: string, slug: string): Promise<VersionRow[]> {
@@ -232,11 +280,14 @@ export class RegistryStore {
     }));
   }
 
-  /** Tombstone state + gate/ownership info for one item (the detail page
-   *  and the gate/unpublish permission checks read this). */
+  /** Tombstone state + gate/ownership info for one item (the detail page,
+   *  the gate/unpublish permission checks, and the agent tools' provenance
+   *  lines read this). `owner_label` is the owner's display label (user
+   *  name or team name), null when the item has no owner. */
   async itemControl(orgId: string, kind: string, slug: string): Promise<{
     owner_user_id: string | null;
     owner_team_id: string | null;
+    owner_label: string | null;
     maintainer_gated: boolean;
     tombstoned: boolean;
     latest_version: string | null;
@@ -244,8 +295,11 @@ export class RegistryStore {
     forked_from: string | null;
   } | null> {
     const res = await this.pool.query(
-      "SELECT owner_user_id, owner_team_id, maintainer_gated, tombstoned_at, latest_version, description, forked_from FROM registry_items " +
-      "WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      "SELECT i.owner_user_id, i.owner_team_id, i.maintainer_gated, i.tombstoned_at, i.latest_version, i.description, i.forked_from, " +
+      "COALESCE(COALESCE(NULLIF(ou.display_name, ''), ou.email), t.name) AS owner_label " +
+      "FROM registry_items i LEFT JOIN users ou ON ou.id = i.owner_user_id " +
+      "LEFT JOIN teams t ON t.id = i.owner_team_id " +
+      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3",
       [orgId, kind, slug],
     );
     const r = res.rows[0];
@@ -253,6 +307,7 @@ export class RegistryStore {
     return {
       owner_user_id: (r.owner_user_id as string | null) ?? null,
       owner_team_id: (r.owner_team_id as string | null) ?? null,
+      owner_label: (r.owner_label as string | null) ?? null,
       maintainer_gated: r.maintainer_gated === true,
       tombstoned: r.tombstoned_at !== null,
       latest_version: (r.latest_version as string | null) ?? null,
@@ -287,7 +342,9 @@ export class RegistryStore {
   }
 
   /** Full version metadata for the skill surface: the SKILL.md projection
-   *  and file list live on the version row; null when absent. */
+   *  and file list live on the version row; `publisher_label` is the
+   *  publisher's display label and `published_at` the publish time. Null
+   *  when absent. */
   async getVersionMeta(
     orgId: string,
     kind: string,
@@ -298,12 +355,17 @@ export class RegistryStore {
     object_key: string;
     bundle_sha256: string | null;
     publisher: string | null;
+    publisher_label: string | null;
+    published_at: string | null;
     skill_md_text: string | null;
     files: Array<{ path: string; size: number; sha256: string }> | null;
   } | null> {
     const res = await this.pool.query(
-      "SELECT v.manifest, v.object_key, v.bundle_sha256, v.published_by, v.skill_md_text, v.files " +
+      "SELECT v.manifest, v.object_key, v.bundle_sha256, v.published_by, v.skill_md_text, v.files, " +
+      "COALESCE(NULLIF(u.display_name, ''), u.email) AS publisher_label, " +
+      "to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at " +
       "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
+      "LEFT JOIN users u ON u.id = v.published_by " +
       "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
       [orgId, kind, slug, version],
     );
@@ -314,6 +376,11 @@ export class RegistryStore {
       object_key: r.object_key,
       bundle_sha256: (r.bundle_sha256 as string | null) ?? null,
       publisher: (r.published_by as string | null) ?? null,
+      publisher_label: (r.publisher_label as string | null) ?? null,
+      published_at:
+        r.published_at === null || r.published_at === undefined
+          ? null
+          : pgTimestampToRfc3339(r.published_at as string),
       skill_md_text: (r.skill_md_text as string | null) ?? null,
       files: (r.files as Array<{ path: string; size: number; sha256: string }> | null) ?? null,
     };
