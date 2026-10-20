@@ -72,6 +72,25 @@ export function humanSchedule(schedule: string): string {
   return "Custom schedule";
 }
 
+/** Future-facing companion to relativeTime: "in 8h" for today, otherwise a
+ *  short date. relativeTime clamps future stamps to "just now", which reads
+ *  wrong next to a schedule. */
+export function nextRunLabel(iso: string, now: number = Date.now()): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const seconds = Math.floor((then - now) / 1000);
+  if (seconds <= 0) return "due now";
+  if (seconds < 3600) return `in ${Math.max(1, Math.floor(seconds / 60))}m`;
+  if (seconds < 86_400) return `in ${Math.floor(seconds / 3600)}h`;
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function scheduleLabel(routine: AgentRoutine): string {
   if (routine.kind === "once") {
     return routine.run_at
@@ -227,7 +246,7 @@ function RoutineList({
                 >
                   {scheduleLabel(routine)}
                   {routine.next_run_at
-                    ? ` · next ${relativeTime(routine.next_run_at)}`
+                    ? ` · next ${nextRunLabel(routine.next_run_at)}`
                     : ""}
                 </span>
               </span>
@@ -356,7 +375,7 @@ function RoutineDetail({
           <div>
             <dt className="text-[12px] font-medium text-muted-foreground">Next run</dt>
             <dd className="mt-0.5 text-muted-foreground">
-              {routine.next_run_at ? relativeTime(routine.next_run_at) : "Not scheduled"}
+              {routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}
             </dd>
           </div>
         </dl>
