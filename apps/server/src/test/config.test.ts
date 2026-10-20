@@ -35,6 +35,7 @@ describe("loadConfig", () => {
       execPolicyRulesPath: null,
       tracePayloads: false,
       workerMode: "off",
+      agentsScheduler: false,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_LOG_LEVEL).toBe("info");
