@@ -242,6 +242,22 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   read-write and creates `agents/<org>/<agent>` subpaths for the sandboxes.
   Both wait for the `juicefs` healthcheck and restart with it (`depends_on:
   restart: true`).
+- Per-agent quota: the sidecar sweeps `/mnt/guild/agents/*/*` in the host
+  mount namespace every `GUILD_AGENT_QUOTA_INTERVAL` seconds (default 300)
+  and runs `juicefs quota set --capacity GUILD_AGENT_WORKSPACE_GIB` (default
+  50) for each directory. The sweep needs the host network namespace too, so
+  `host.docker.internal` resolves to the host's Postgres.
+- Restarting the `juicefs` container leaves Docker's bind volume
+  (`/var/lib/docker/volumes/<project>_guild_workspaces/_data`) pointing at the
+  old FUSE connection. Remount it before starting the dependent services:
+
+  ```bash
+  sudo umount /var/lib/docker/volumes/compose_guild_workspaces/_data
+  sudo mount --bind /mnt/guild /var/lib/docker/volumes/compose_guild_workspaces/_data
+  docker compose up -d server sandbox-runner
+  ```
+
+  A fresh `docker compose up` on a stack that has never run is unaffected.
 - Chat/legacy workspaces stay on `guild_data`; the agent volume is separate.
 - JuiceFS settings come from `deploy/compose/config.env`
   (`GUILD_JUICE_*`, with `GUILD_S3_*` fallbacks). Defaults are in
