@@ -114,6 +114,14 @@ describe("health route (native)", () => {
       // Tool artifacts (the spill surface).
       "/api/v1/tool_artifacts/*",
       "/api/v1/chats/*/tool_artifacts",
+      // Persistent agents (A1).
+      "/api/v1/agents",
+      "/api/v1/agents/*",
+      "/api/v1/runs",
+      "/api/v1/runs/*",
+      "/api/v1/activity",
+      "/api/v1/inbox",
+      "/api/v1/inbox/*",
     ]);
   });
 });
