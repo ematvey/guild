@@ -364,7 +364,13 @@ export async function createAgentThread(
  *  arrive on the member socket. */
 export async function sendAgentTurn(
   id: string,
-  input: { thread_id?: string; message: string },
+  input: {
+    thread_id?: string;
+    message: string;
+    attachment_ids?: string[];
+    user_message_id?: string;
+    send_mode?: "queue" | "steer";
+  },
 ): Promise<void> {
   const res = await fetch(apiUrl(`${agentBase(id)}/turns`), {
     method: "POST",
