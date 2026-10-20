@@ -61,6 +61,8 @@ export interface Agent {
 export interface AgentThread {
   id: string;
   agent_id: string;
+  /** The chat journal row that holds this thread's transcript. */
+  chat_id: string;
   title: string;
   title_locked: boolean;
   kind: AgentThreadKind;
