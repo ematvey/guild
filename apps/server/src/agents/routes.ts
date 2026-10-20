@@ -9,6 +9,8 @@ import { ApiError, sortedJson } from "../platform/errors.js";
 import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.js";
 import { submitTurn } from "../platform/http/chats.js";
 import type { ObjectStore } from "../platform/s3.js";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
@@ -317,6 +319,10 @@ export function registerAgentRoutes(
     const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
     if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
     await store.purge(user, agentId);
+    await rm(path.join(infra.config.agentWorkspaceWriteRoot, "agents", agent.org_id, agentId), {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
     return sendJson(reply, { purged: true });
   });
 
