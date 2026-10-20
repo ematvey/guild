@@ -979,6 +979,22 @@ export class GuildRuntime {
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
+    const agentRef = await agentThreadForChat(this.pool, chatId);
+    const agent = agentRef === null ? null : await this.agents.fetchAgent(agentRef.agent_id);
+    // Integration connector tools are opt-in for agents: the agent's tool
+    // allowlist names the integration tools it may call. The per-integration
+    // discovery pair stays so the model can still ask what an enabled
+    // integration offers. Plain chats keep the full surface.
+    const agentToolNames = new Set<string>(agent?.tools ?? []);
+    const preparedTools =
+      agent === null
+        ? prepared.tools
+        : prepared.tools.filter(
+            (tool) =>
+              tool.name.endsWith("_list_tools") ||
+              tool.name.endsWith("_guide") ||
+              agentToolNames.has(tool.name),
+          );
     const agentTools = await this.agentToolsForChat(chatId);
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
@@ -996,7 +1012,7 @@ export class GuildRuntime {
           ...prepared.extensions,
           ...userPrepared.extensions,
         ],
-        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
+        tools: [...base.tools, ...preparedTools, ...userPrepared.tools, ...agentTools],
       },
       BACKGROUND_CONTEXT,
     );

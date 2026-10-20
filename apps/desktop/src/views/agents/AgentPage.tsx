@@ -832,6 +832,10 @@ function AgentSettings({
           ) : undefined
         }
       >
+        <p className="mb-3 text-[12px] text-muted-foreground">
+          Codemode is always available. Integration tools appear here when the org
+          enables that integration.
+        </p>
         {groups.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
             The org tool catalog did not load. The current allowlist is shown below.

@@ -13,6 +13,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
+import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import type {
   Agent,
@@ -44,8 +45,38 @@ const AGENT_TOOL_CATALOG = [
   { name: "delegate", label: "Delegate", group: "Agents", description: "Delegate a task to another agent and collect its result.", safe: false },
   { name: "release_artifacts", label: "Release artifacts", group: "Agents", description: "Release delegated artifact staging for a run.", safe: false },
   { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
-  { name: "codemode", label: "Codemode", group: "Advanced", description: "Run a JavaScript tool-orchestration script.", safe: false },
 ];
+
+/** The enabled integration tools an agent may be granted. Names are the
+ *  runtime's namespaced tool names (`<slug>_<tool>`), the same strings an
+ *  agent's `tools` array stores. Resolution is live: a broken or unreachable
+ *  integration is skipped rather than failing the catalog. */
+async function integrationToolCatalog(
+  gateway: GatewayCtx,
+  orgId: string,
+): Promise<{ name: string; label: string; group: string; description: string; safe: boolean }[]> {
+  let turns;
+  try {
+    turns = await resolvePlugins(gateway, orgId, () => {});
+  } catch {
+    return [];
+  }
+  const tools: { name: string; label: string; group: string; description: string; safe: boolean }[] = [];
+  for (const turn of turns) {
+    for (const info of turn.tools) {
+      const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
+      if (!toolCurate(turn.rowConfig, turn.executor === "mcp", raw).enabled) continue;
+      tools.push({
+        name: info.spec.name,
+        label: raw.replace(/_/g, " "),
+        group: `Integration · ${turn.description || turn.slug}`,
+        description: info.spec.description,
+        safe: false,
+      });
+    }
+  }
+  return tools;
+}
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
@@ -176,8 +207,10 @@ export function registerAgentRoutes(
    *  and MCP tools are added by the runtime; this endpoint is the stable
    *  built-in surface. */
   app.get("/api/v1/agents/tools", async (req, reply) => {
-    await requireUser(auth, req);
-    return sendJson(reply, { tools: AGENT_TOOL_CATALOG });
+    const user = await requireUser(auth, req);
+    return sendJson(reply, {
+      tools: [...AGENT_TOOL_CATALOG, ...(await integrationToolCatalog(gateway, user.org_id))],
+    });
   });
 
   async function agentTurn(
