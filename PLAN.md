@@ -11,6 +11,25 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Agent surfaces follow the chat product (2026-10-21).**
+  - Agent threads render through the core chat stack: `/agents/<id>/threads/<tid>`
+    resolves the thread's `chat_id` and feeds the normal transcript, tool
+    frames, approvals, attachments and composer. The header keeps the agent
+    identity and thread rename; sends go to `/agents/<id>/turns` with the
+    command id, attachment ids and queue/steer mode, so agent runs still get
+    their `agent_runs` row and the agent's model.
+  - Routines are view-only in the UI. `list_routines`, `create_routine`,
+    `update_routine` and `delete_routine` are agent tools; the Routines page
+    opens a chat prompt for new/edit flows and renders human-readable
+    schedules (cron stays stored, never shown as the primary label).
+  - Codemode is part of the runtime, not an allowlist toggle. It is removed
+    from the agent tool catalog and from existing `agents.tools`; the
+    settings page says it is always available. Integration tools from
+    enabled org integrations are listed in the catalog and selected per
+    agent; the runtime narrows the integration extension and discovery list
+    to the agent's allowlist, so unselected tools are neither declared nor
+    callable.
+
 - **Persistent agents are live on the local compose stack (2026-10-20).**
   Agent workspaces are a JuiceFS volume mounted in the **host mount
   namespace** by the privileged `pid: host` sidecar (`nsenter -t 1 -m -n`),
