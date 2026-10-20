@@ -44,12 +44,26 @@ export interface AgentMessageResult {
  *  thread activity marker and writes the inbox notice. The chat's unread
  *  projection follows from the new assistant event. */
 export async function sendAgentMessage(
-  deps: Pick<AgentToolDeps, "store" | "threads" | "agent">,
+  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
   if (text === "") throw new Error("text must not be empty");
   const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
+  // A model that calls send_message twice with the same content in one run
+  // must not open two threads; the recent identical thread is the result.
+  const existing = await deps.pool.query<{ id: string }>(
+    `SELECT id FROM agent_threads
+     WHERE agent_id = $1 AND title = $2 AND created_at > now() - interval '1 minute'
+     ORDER BY created_at DESC LIMIT 1`,
+    [deps.agent.id, title],
+  );
+  if (existing.rows[0] !== undefined) {
+    return {
+      thread_id: existing.rows[0].id,
+      url: `/agents/${deps.agent.id}/threads/${existing.rows[0].id}`,
+    };
+  }
   const thread = await deps.store.createThread(deps.agent.id, title);
   await deps.threads.appendEvent(
     thread.chat_id,

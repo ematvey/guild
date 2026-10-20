@@ -481,7 +481,23 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const run = await store.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
-    return sendJson(reply, { run, steps: await store.runSteps(run) });
+    const steps = await store.runSteps(run);
+    const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
+    return sendJson(reply, {
+      run: {
+        ...run,
+        steps: steps.map((step) => ({
+          kind: step.type === "assistant_text" ? "assistant" : step.type === "tool_call" ? "tool" : "file",
+          name: step.name ?? null,
+          status: step.is_error === true ? "error" : "ok",
+          detail:
+            step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
+          at: step.ts,
+          is_error: step.is_error ?? null,
+        })),
+        files,
+      },
+    });
   });
 
   app.get("/api/v1/runs/:id/children", async (req, reply) => {
