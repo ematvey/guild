@@ -8,6 +8,7 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import { insertChunks } from "./search.js";
+import type { AgentConflictJournal } from "./conflict.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -30,6 +31,8 @@ interface TurnEvent {
 export interface AgentRunLifecycleDeps {
   pool: PlatformPool;
   log: Logger;
+  /** Finishes the run's workspace-turn journal row at completion. */
+  journal?: AgentConflictJournal;
 }
 
 function blocksOf(payload: Record<string, unknown>): { type?: string; text?: string }[] {
@@ -144,6 +147,7 @@ export class AgentRunLifecycle {
         ],
       );
       if (updated.rowCount === 0) return;
+      await this.deps.journal?.finishRun(run.id);
       await this.indexTurn(run, turnEvents);
     } catch (error) {
       this.deps.log.warn({ err: error, runId: run.id, chatId }, "agent run completion failed");
