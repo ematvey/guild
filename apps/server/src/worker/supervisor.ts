@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { Config } from "../config.js";
 import type { MachineToolOutcome } from "../machines/dispatch.js";
+import type { SubmitTurnWireInput } from "./protocol.js";
 import type { MachineDispatchCall, WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.js";
 import type { GenerationStreamSink, LiveBuffers } from "../chats/bridge.js";
 
@@ -109,8 +110,16 @@ export class ForkSupervisor {
   private readonly maxWorkers = Math.max(1, Number(process.env.GUILD_WORKER_LIMIT) || 16);
   private readonly idleMs = Math.max(1, Number(process.env.GUILD_WORKER_IDLE_MS) || 300_000);
   private streamSink: GenerationStreamSink | null = null;
+  private submitRemote: ((chatId: string, input: SubmitTurnWireInput) => Promise<number>) | null = null;
 
   setStreamSink(sink: GenerationStreamSink | null): void { this.streamSink = sink; }
+
+  /** Worker-initiated admission for another chat (delegation): the server
+   *  runtime owns every worker, so it forwards the turn to the target
+   *  chat's own worker. */
+  setRemoteSubmit(submit: (chatId: string, input: SubmitTurnWireInput) => Promise<number>): void {
+    this.submitRemote = submit;
+  }
 
   liveBuffers(chatId: string): LiveBuffers {
     return { ...(this.handles.get(chatId)?.buffers ?? { text: "", thinking: "" }) };
@@ -330,6 +339,26 @@ export class ForkSupervisor {
     }
     if (message.t === "heartbeat") {
       handle.lastBeat = Date.now();
+      return;
+    }
+    if (message.t === "remote-submit") {
+      const reply = (response: WorkerResponse) => {
+        if (handle.child.connected) handle.child.send(response, () => {});
+      };
+      void (async () => {
+        try {
+          if (!this.submitRemote) throw new Error("remote submit is unavailable");
+          const data = await this.submitRemote(message.chatId, message.input);
+          reply({ t: "result", ref: message.ref, ok: true, data });
+        } catch (error) {
+          reply({
+            t: "result",
+            ref: message.ref,
+            ok: false,
+            error: (error as Error)?.message ?? String(error),
+          });
+        }
+      })();
       return;
     }
     // Worker-initiated machine dispatch (the IPC proxy): the hub-backed

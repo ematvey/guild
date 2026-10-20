@@ -209,6 +209,9 @@ export class GuildRuntime {
        *  worker has no hub, so machine-bound chats proxy dispatch to the
        *  server's hub-backed registry over the fork channel. */
       dispatch?: Pick<import("../machines/dispatch.js").MachineDispatch, "dispatch">;
+      /** Admission for a chat this worker does not own: proxied to the
+       *  server, which owns every chat's worker (delegation). */
+      remoteSubmit?: (chatId: string, orgId: string, input: SubmitTurnInput) => Promise<number>;
     },
   ) {
     this.sandboxes =
@@ -1057,6 +1060,12 @@ export class GuildRuntime {
   }
 
   private async admitTurn(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number> {
+    if (this.workerScope !== undefined && chatId !== this.workerScope.chatId) {
+      if (this.workerScope.remoteSubmit === undefined) {
+        throw new Error("this worker cannot admit turns for another chat");
+      }
+      return this.workerScope.remoteSubmit(chatId, orgId, input);
+    }
     if (this.supervisor) {
       // Worker mode: the full admission path (conversation bootstrap,
       // configure, integrations, submit) runs in the worker; the server

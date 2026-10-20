@@ -9,7 +9,7 @@ import { ObjectStore } from "../platform/s3.js";
 import { createPlatformPool } from "../platform/db.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { loadConfig } from "../config.js";
-import type { BufferUpdate, WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { BufferUpdate, SubmitTurnWireInput, WorkerRequest, WorkerResponse } from "./protocol.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 import { IpcMachineDispatch } from "./dispatch-proxy.js";
 
@@ -24,9 +24,19 @@ const objects = new ObjectStore(config);
 // The worker has no hub connection: machine-tool dispatch proxies to the
 // server over the fork IPC channel (worker/dispatch-proxy.ts).
 const ipcDispatch = new IpcMachineDispatch((message) => send(message));
+const remotePending = new Map<number, { resolve: (value: number) => void; reject: (error: Error) => void }>();
+let remoteSeq = 0;
+const remoteSubmit = (targetChatId: string, _orgId: string, input: SubmitTurnWireInput): Promise<number> => {
+  const ref = 1_000_000 + (remoteSeq += 1);
+  return new Promise<number>((resolve, reject) => {
+    remotePending.set(ref, { resolve, reject });
+    send({ t: "remote-submit", ref, chatId: targetChatId, input });
+  });
+};
 const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, undefined, undefined, {
   chatId,
   dispatch: ipcDispatch,
+  remoteSubmit,
 });
 let mirrored: LiveBuffers = { text: "", thinking: "" };
 const bufferUpdate = (previous: string, current: string): BufferUpdate | undefined =>
@@ -81,6 +91,13 @@ process.on("message", (raw: unknown) => {
   if (!message || typeof message !== "object" || !("t" in message)) return;
   // A dispatch reply (the server answering a worker-initiated proxy call).
   if (message.t === "result") {
+    const pending = remotePending.get(message.ref);
+    if (pending) {
+      remotePending.delete(message.ref);
+      if (message.ok) pending.resolve(Number(message.data));
+      else pending.reject(new Error(message.error));
+      return;
+    }
     ipcDispatch.onResponse(message as WorkerResponse);
     return;
   }
