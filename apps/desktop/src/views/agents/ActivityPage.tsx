@@ -29,7 +29,10 @@ import {
   getRun,
   listActivity,
   listAgents,
+  listRunArtifacts,
+  listRunChildren,
   type Agent,
+  type AgentArtifact,
   type AgentRun,
 } from "./agents-api";
 import {
@@ -263,6 +266,12 @@ export function ActivityPage({
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function RunDetailPage({
   runId,
   onNavigate,
@@ -273,6 +282,8 @@ export function RunDetailPage({
   onOpenChat?: (chatId: string) => void;
 }) {
   const [run, setRun] = useState<AgentRun | null>(null);
+  const [children, setChildren] = useState<AgentRun[]>([]);
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -287,6 +298,16 @@ export function RunDetailPage({
         if (!live) return;
         setError(err instanceof Error ? err.message : "The run did not load.");
       });
+    void listRunChildren(runId)
+      .then((rows) => {
+        if (live) setChildren(rows);
+      })
+      .catch(() => {});
+    void listRunArtifacts(runId)
+      .then((rows) => {
+        if (live) setArtifacts(rows);
+      })
+      .catch(() => {});
     return () => {
       live = false;
     };
@@ -422,6 +443,53 @@ export function RunDetailPage({
                 </ol>
               )}
             </Section>
+
+            {children.length > 0 && (
+              <Section title="Delegated runs" description="Child runs this run spawned.">
+                <ul className="space-y-1.5">
+                  {children.map((child) => (
+                    <li key={child.id}>
+                      <button
+                        type="button"
+                        onClick={() => onNavigate({ view: "run", runId: child.id })}
+                        className="flex w-full items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:bg-muted/50"
+                      >
+                        <span className="mt-0.5">
+                          <RunStatusBadge status={child.status} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">
+                            {child.agent_name ?? "Delegated agent"}
+                          </span>
+                          {child.summary && (
+                            <span className="mt-0.5 block break-words text-muted-foreground">
+                              {child.summary}
+                            </span>
+                          )}
+                        </span>
+                        <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+
+            {artifacts.length > 0 && (
+              <Section title="Artifacts" description="Files the delegated run returned.">
+                <ul className="space-y-1">
+                  {artifacts.map((artifact) => (
+                    <li key={artifact.id} className="flex items-center gap-2 text-[12.5px]">
+                      <FileText className="size-3.5 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 break-all font-mono">{artifact.path}</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {artifact.status} · {formatBytes(artifact.size)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
             <Section title="Files touched">
               {(run.files ?? []).length === 0 ? (
