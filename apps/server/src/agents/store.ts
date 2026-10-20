@@ -351,7 +351,7 @@ export class AgentStore {
     } else if (options.includeArchived !== true) {
       where += ` AND a.status = 'active'`;
     } else {
-      where += ` AND a.status IN ('active', 'archived')`;
+      where += ` AND a.status IN ('active', 'archived', 'deleting')`;
     }
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${AGENT_COLUMNS} FROM agents a WHERE ${where} ORDER BY a.created_at DESC`,

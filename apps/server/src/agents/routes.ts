@@ -516,21 +516,15 @@ export function registerAgentRoutes(
     await store.requireAccess(user, run.agent_id, "use");
     const steps = await store.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
-    return sendJson(reply, {
-      run: {
-        ...run,
-        steps: steps.map((step) => ({
-          kind: step.type === "assistant_text" ? "assistant" : step.type === "tool_call" ? "tool" : "file",
-          name: step.name ?? null,
-          status: step.is_error === true ? "error" : "ok",
-          detail:
-            step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
-          at: step.ts,
-          is_error: step.is_error ?? null,
-        })),
-        files,
-      },
-    });
+    const mapped = steps.map((step) => ({
+      kind: step.type === "assistant_text" ? "assistant" : step.type === "tool_call" ? "tool" : "file",
+      name: step.name ?? null,
+      status: step.is_error === true ? "error" : "ok",
+      detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
+      at: step.ts,
+      is_error: step.is_error ?? null,
+    }));
+    return sendJson(reply, { run: { ...run, steps: mapped, files }, steps });
   });
 
   app.get("/api/v1/runs/:id/children", async (req, reply) => {
