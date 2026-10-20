@@ -55,6 +55,8 @@ export interface Agent {
   visibility: AgentVisibility;
   resources: Record<string, unknown>;
   status: AgentStatus;
+  /** Teams granted use of a `team`-visibility agent. */
+  team_ids?: string[];
   deleted_at: string | null;
   purge_after: string | null;
   created_at: string;

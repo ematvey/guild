@@ -19,8 +19,10 @@ import {
   createAgent,
   groupTools,
   listAgentTools,
+  listMyTeams,
   type Agent,
   type AgentToolInfo,
+  type TeamOption,
 } from "./agents-api";
 import type { AgentVisibility, AgentsRoute } from "./agents-route";
 import { ErrorState, PageBody, PageHeader } from "./agent-ui";
@@ -51,6 +53,7 @@ export function validateAgentStep(
     model: string;
     tools: string[];
     visibility: AgentVisibility;
+    teamIds: string[];
   },
 ): string | null {
   switch (step) {
@@ -65,6 +68,9 @@ export function validateAgentStep(
     case "tools":
       return value.tools.length === 0 ? "Select at least one tool." : null;
     case "visibility":
+      if (value.visibility === "team" && value.teamIds.length === 0) {
+        return "Select at least one team.";
+      }
       return null;
   }
 }
@@ -82,6 +88,8 @@ export function AgentCreate({
   const [model, setModel] = useState("");
   const [tools, setTools] = useState<string[]>(SAFE_BASELINE_NAMES);
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [catalog, setCatalog] = useState<AgentToolInfo[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -96,11 +104,21 @@ export function AgentCreate({
     void listAgentTools()
       .then((rows) => setCatalog(rows.length > 0 ? rows : SAFE_BASELINE_TOOLS))
       .catch(() => setCatalog(SAFE_BASELINE_TOOLS));
+    void listMyTeams()
+      .then(setTeams)
+      .catch(() => setTeams([]));
   }, []);
 
   const groups = useMemo(() => groupTools(catalog ?? SAFE_BASELINE_TOOLS), [catalog]);
   const stepIndex = STEPS.findIndex(([id]) => id === step);
-  const currentError = validateAgentStep(step, { name, instructions, model, tools, visibility });
+  const currentError = validateAgentStep(step, {
+    name,
+    instructions,
+    model,
+    tools,
+    visibility,
+    teamIds,
+  });
 
   const go = (next: Step) => {
     setError(null);
@@ -135,6 +153,7 @@ export function AgentCreate({
         model,
         tools,
         visibility,
+        ...(visibility === "team" ? { team_ids: teamIds } : {}),
       });
       onCreated?.(agent);
       onNavigate({ view: "agent", agentId: agent.id, tab: "overview" });
@@ -347,6 +366,7 @@ export function AgentCreate({
           )}
 
           {step === "visibility" && (
+            <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-3">
               {VISIBILITY_OPTIONS.map(([id, label, body, Icon]) => (
                 <button
@@ -364,6 +384,43 @@ export function AgentCreate({
                   <span className="text-[12px] text-muted-foreground">{body}</span>
                 </button>
               ))}
+            </div>
+            {visibility === "team" && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <p className="text-sm font-medium">Teams</p>
+                {teams.length === 0 ? (
+                  <p className="text-[12.5px] text-muted-foreground">
+                    You are not a member of any team yet. An admin can add you under Settings →
+                    Teams.
+                  </p>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {teams.map((team) => {
+                      const checked = teamIds.includes(team.id);
+                      return (
+                        <label
+                          key={team.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[13px]"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setTeamIds((current) =>
+                                checked
+                                  ? current.filter((id) => id !== team.id)
+                                  : [...current, team.id],
+                              )
+                            }
+                          />
+                          <span className="truncate">{team.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             </div>
           )}
 

@@ -54,12 +54,14 @@ import {
   listAgentRuns,
   listAgentThreads,
   listAgents,
+  listMyTeams,
   restoreAgent,
   updateAgent,
   type Agent,
   type AgentRun,
   type AgentThread,
   type AgentToolInfo,
+  type TeamOption,
 } from "./agents-api";
 import {
   AGENT_TABS,
@@ -610,6 +612,8 @@ function AgentSettings({
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
   const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
+  const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [catalog, setCatalog] = useState<AgentToolInfo[]>([]);
   const [saving, setSaving] = useState(false);
@@ -636,6 +640,7 @@ function AgentSettings({
 
   useEffect(() => {
     void listModels().then((rows) => setModels(rows ?? []));
+    void listMyTeams().then(setTeams).catch(() => setTeams([]));
     void listAgentTools().then(setCatalog).catch(() => setCatalog([]));
   }, []);
 
@@ -652,6 +657,7 @@ function AgentSettings({
         model,
         tools,
         visibility,
+        team_ids: visibility === "team" ? teamIds : [],
       });
       setSaved(true);
       onChanged();
@@ -735,6 +741,41 @@ function AgentSettings({
               </button>
             ))}
           </div>
+          {visibility === "team" && (
+            <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
+              <p className="text-[12.5px] font-medium">Teams</p>
+              {teams.length === 0 ? (
+                <p className="text-[12.5px] text-muted-foreground">
+                  You are not a member of any team yet.
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {teams.map((team) => {
+                    const checked = teamIds.includes(team.id);
+                    return (
+                      <label
+                        key={team.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[13px]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setTeamIds((current) =>
+                              checked
+                                ? current.filter((id) => id !== team.id)
+                                : [...current, team.id],
+                            )
+                          }
+                        />
+                        <span className="truncate">{team.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Section>
 
