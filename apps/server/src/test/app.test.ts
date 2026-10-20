@@ -111,9 +111,7 @@ describe("health route (native)", () => {
       // User-owned MCP servers (CRUD + probe).
       "/api/v1/mcp",
       "/api/v1/mcp/*",
-      // M4: workspace agent sessions + tool artifacts.
-      "/api/v1/agents/sessions",
-      "/api/v1/agents/sessions/*",
+      // Tool artifacts (the spill surface).
       "/api/v1/tool_artifacts/*",
       "/api/v1/chats/*/tool_artifacts",
     ]);

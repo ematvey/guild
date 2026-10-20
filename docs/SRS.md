@@ -85,13 +85,9 @@ gate both run before execution; `execute` additionally requires the server
 shell flag (`allow_shell_tools`).
 
 **SRS-9 — Server-local executor.**
-`ServerLocal { dir }` is the batch workspace backend: the workflow executes
-the tool in-process against an org workspace directory under
-`workspaces/{org}/{name}` (never a client path). Its contract is
-pre-approved: no interactive approval gate, but the static exec-policy gate
-still applies to `execute`, and shell tools require the server flag. History
-is the thread journal; the HTTP surface is submit + poll
-(`/api/v1/agents/sessions`).
+The batch workspace executor is removed. Workspace execution belongs to
+persistent agents (`docs/specs/2026-10-18-persistent-agents.md`); plain chats
+use the per-chat sandbox of SRS-8.
 
 ## 3. Binding model
 
@@ -229,7 +225,8 @@ folder, machine_id), `machines` (SRS-19), `registry_items` +
 `registry_versions` (with `reviewed_version` + `reviewed_bundle_sha256` 
 binding approval to content), `integrations` + `integration_secrets` 
 (AES-256-GCM, masked preview column), `api_keys`, `routines` + 
-`routine_runs`, `events` (org audit log), `agent_sessions`, `releases`, 
+`routine_runs`, `events` (org audit log), `agents` and its grant/thread/run/
+routine/notice tables, `releases`, 
 `org_kv`/`server_kv` (incl. the `tool_dispatch:` claim keys), 
 `tool_artifacts`. Schema changes go through embedded, checksummed
 migrations applied under an advisory lock.
@@ -313,9 +310,6 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
 - Gateway: `GET /api/v1/gateway/models`, `POST /api/v1/gateway/chat`, 
   `POST /api/v1/gateway/chat/{id}/{stop,compact}`, 
   `POST /api/v1/gateway/chat/{id}/approvals/{call_id}`.
-- Workspace sessions (batch backend): `POST|GET /api/v1/agents/sessions`, 
-  `GET /api/v1/agents/sessions/{id}`, 
-  `POST /api/v1/agents/sessions/{id}/turns`.
 - Attachments/artifacts: `GET|POST /api/v1/attachments*`, 
   `GET /api/v1/tool_artifacts/{id}`.
 - Registry: `POST|GET /api/v1/registry/{kind}`, 
