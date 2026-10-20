@@ -10,8 +10,18 @@ import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.
 import { submitTurn } from "../platform/http/chats.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { AgentFiles } from "./files.js";
+import { runRoutineNow } from "./scheduler.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
-import type { Agent, AgentRunStatus, AgentStatus, AgentThread, AgentToolName, AgentTrigger, AgentVisibility } from "./types.js";
+import type {
+  Agent,
+  AgentRoutineKind,
+  AgentRunStatus,
+  AgentStatus,
+  AgentThread,
+  AgentToolName,
+  AgentTrigger,
+  AgentVisibility,
+} from "./types.js";
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
@@ -91,6 +101,24 @@ function limitParam(req: FastifyRequest): number | undefined {
 function showHidden(req: FastifyRequest): boolean {
   const value = queryParam(req, "show_hidden");
   return value === "1" || value === "true";
+}
+
+function booleanField(body: Record<string, unknown>, name: string): boolean | undefined {
+  const value = body[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw ApiError.badRequest(`${name} must be a boolean`);
+  return value;
+}
+
+function routineKindField(body: Record<string, unknown>): AgentRoutineKind | undefined {
+  const value = optionalString(body, "kind");
+  if (value === undefined) return undefined;
+  if (value !== "cron" && value !== "once") throw ApiError.badRequest("kind must be cron or once");
+  return value;
+}
+
+function requireActiveAgent(agent: Agent): void {
+  if (agent.status !== "active") throw ApiError.conflict("agent_not_active", "agent is not active");
 }
 
 export function registerAgentRoutes(
@@ -323,6 +351,91 @@ export function registerAgentRoutes(
       .header("content-length", download.size)
       .header("content-disposition", `attachment; filename="${safeName}"`);
     return reply.send(download.stream);
+  });
+
+  app.get("/api/v1/agents/:id/routines", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "use");
+    return sendJson(reply, { routines: await store.listRoutines(agentId) });
+  });
+
+  app.post("/api/v1/agents/:id/routines", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "manage");
+    const body = jsonBody(req);
+    const kind = routineKindField(body) ?? "cron";
+    const routine = await store.createRoutine(agentId, {
+      name: requiredString(body, "name"),
+      kind,
+      schedule: optionalString(body, "schedule"),
+      timezone: optionalString(body, "timezone"),
+      run_at: optionalString(body, "run_at"),
+      prompt: requiredString(body, "prompt"),
+      enabled: booleanField(body, "enabled"),
+    });
+    return sendJson(reply, { routine });
+  });
+
+  app.get("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "use");
+    return sendJson(reply, { routine: await store.getRoutine(agentId, parseUuidParam(req, "rid")) });
+  });
+
+  app.patch("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "manage");
+    const body = jsonBody(req);
+    const routine = await store.updateRoutine(agentId, parseUuidParam(req, "rid"), {
+      name: optionalString(body, "name"),
+      kind: routineKindField(body),
+      schedule: optionalString(body, "schedule"),
+      timezone: optionalString(body, "timezone"),
+      run_at: optionalString(body, "run_at"),
+      prompt: optionalString(body, "prompt"),
+      enabled: booleanField(body, "enabled"),
+    });
+    return sendJson(reply, { routine });
+  });
+
+  app.delete("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "manage");
+    await store.deleteRoutine(agentId, parseUuidParam(req, "rid"));
+    return sendJson(reply, { deleted: true });
+  });
+
+  app.post("/api/v1/agents/:id/routines/:rid/run", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    requireActiveAgent(agent);
+    const routine = await store.getRoutine(agentId, parseUuidParam(req, "rid"));
+    const run = await runRoutineNow(
+      { pool: infra.pool, store, runtime: chats.runtime },
+      agent,
+      routine,
+    );
+    return sendJson(reply, { run });
+  });
+
+  app.get("/api/v1/agents/:id/routines/:rid/runs", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "use");
+    const routineId = parseUuidParam(req, "rid");
+    await store.getRoutine(agentId, routineId);
+    return sendJson(reply, {
+      runs: await store.listRoutineRuns(agentId, routineId, {
+        limit: limitParam(req),
+        before: queryParam(req, "before"),
+      }),
+    });
   });
 
   app.get("/api/v1/agents/:id/runs", async (req, reply) => {

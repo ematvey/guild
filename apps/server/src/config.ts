@@ -88,6 +88,9 @@ export interface Config {
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
   workerMode: "off" | "on";
+  /** Routine scheduler loop (GUILD_AGENTS_SCHEDULER=off disables it).
+   *  Default: on in the server, off under NODE_ENV=test. */
+  agentsScheduler: boolean;
 }
 
 export type SandboxConfig =
@@ -228,5 +231,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // routes over IPC to a forked worker per active chat (see
     // worker/supervisor.ts). Default off until the rollout completes.
     workerMode: env.GUILD_WORKER_MODE === "on" ? ("on" as const) : ("off" as const),
+    // Routine scheduler: explicit off wins; explicit on wins; tests default
+    // off so a suite never starts a loop unless it asks for one.
+    agentsScheduler:
+      env.GUILD_AGENTS_SCHEDULER === "off"
+        ? false
+        : env.GUILD_AGENTS_SCHEDULER === "on"
+          ? true
+          : (env.NODE_ENV ?? process.env.NODE_ENV) !== "test",
   };
 }

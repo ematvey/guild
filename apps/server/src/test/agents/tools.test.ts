@@ -7,7 +7,12 @@ import type { UserRow } from "../../platform/store/identity.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { AgentStore } from "../../agents/store.js";
-import { readAgentConversation, searchAgentConversations, sendAgentMessage } from "../../agents/tools.js";
+import {
+  createAgentTools,
+  readAgentConversation,
+  searchAgentConversations,
+  sendAgentMessage,
+} from "../../agents/tools.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { M5TestEnv } from "../platform/m5-harness.js";
 
@@ -69,6 +74,11 @@ dbDescribe("agent conversation tools", () => {
       agent_id: agent.id,
       payload: { thread_id: thread.id, url: result.url },
     });
+  });
+
+  it("registers schedule_reminder for agent conversations", () => {
+    const tools = createAgentTools({ pool: env!.db, store, threads, agent });
+    expect(tools.map((tool) => tool.name)).toContain("schedule_reminder");
   });
 
   it("search and read are scoped to the calling agent", async () => {
