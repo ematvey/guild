@@ -51,6 +51,7 @@ export interface CreateAgentInput {
   tools?: AgentToolName[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
+  team_ids?: string[];
 }
 
 export interface UpdateAgentInput {
@@ -60,6 +61,7 @@ export interface UpdateAgentInput {
   tools?: AgentToolName[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
+  team_ids?: string[];
 }
 
 export interface RunFilters {
@@ -119,6 +121,8 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.instructions, 
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
   (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
+  COALESCE((SELECT array_agg(tg.team_id::text ORDER BY tg.team_id)
+            FROM agent_team_grants tg WHERE tg.agent_id = a.id), '{}') AS team_ids,
   ${TS("a.deleted_at")} AS deleted_at, ${TS("a.purge_after")} AS purge_after,
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
@@ -169,6 +173,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,
+    team_ids: (row.team_ids as string[] | null) ?? [],
     deleted_at: row.deleted_at === null || row.deleted_at === undefined ? null : pgTimestampToRfc3339(row.deleted_at as string),
     purge_after: row.purge_after === null || row.purge_after === undefined ? null : pgTimestampToRfc3339(row.purge_after as string),
     created_at: pgTimestampToRfc3339(row.created_at as string),
@@ -322,6 +327,9 @@ export class AgentStore {
           ),
         ],
       );
+      if (input.team_ids !== undefined && input.team_ids.length > 0) {
+        await this.replaceTeamGrants(client, user.org_id, id, input.team_ids);
+      }
       const chat = await this.chats.createChatOn(client, user.org_id, user.id, null, null);
       await client.query(
         `INSERT INTO agent_threads (id, agent_id, chat_id, title, title_locked, kind)
@@ -418,15 +426,46 @@ export class AgentStore {
     if (patch.tools !== undefined) add("tools", JSON.stringify(patch.tools), "::jsonb");
     if (patch.visibility !== undefined) add("visibility", patch.visibility);
     if (patch.resources !== undefined) add("resources", JSON.stringify(patch.resources), "::jsonb");
-    if (sets.length === 0) return agent;
-    sets.push("updated_at = now()");
-    await this.pool.query(
-      `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
-      params,
-    );
+    if (sets.length === 0 && patch.team_ids === undefined) return agent;
+    if (sets.length > 0) {
+      sets.push("updated_at = now()");
+      await this.pool.query(
+        `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
+        params,
+      );
+    }
+    if (patch.team_ids !== undefined) {
+      await this.replaceTeamGrants(this.pool, agent.org_id, agentId, patch.team_ids);
+    }
     const updated = await this.fetchById(agent.org_id, agentId);
     if (updated === null) throw ApiError.notFound("no such agent");
     return updated;
+  }
+
+  /** Replaces an agent's team grants after checking every team belongs to
+   *  the same organization. */
+  private async replaceTeamGrants(
+    db: { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: unknown[] }> },
+    orgId: string,
+    agentId: string,
+    teamIds: string[],
+  ): Promise<void> {
+    const unique = [...new Set(teamIds)];
+    if (unique.length > 0) {
+      const valid = await db.query(
+        "SELECT id FROM teams WHERE org_id = $1 AND id = ANY($2::uuid[])",
+        [orgId, unique],
+      );
+      if (valid.rowCount !== unique.length) throw ApiError.badRequest("unknown team");
+    }
+    await db.query("DELETE FROM agent_team_grants WHERE agent_id = $1", [agentId]);
+    for (const teamId of unique) {
+      await db.query(
+        `INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, 'user')
+         ON CONFLICT (agent_id, team_id) DO NOTHING`,
+        [agentId, teamId],
+      );
+    }
   }
 
   async archive(user: UserRow, agentId: string): Promise<Agent> {

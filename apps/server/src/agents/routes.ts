@@ -85,6 +85,15 @@ function visibilityField(body: Record<string, unknown>): AgentVisibility | undef
   return value as AgentVisibility;
 }
 
+function teamIdsField(body: Record<string, unknown>): string[] | undefined {
+  const value = body["team_ids"];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw ApiError.badRequest("team_ids must be an array of strings");
+  }
+  return value as string[];
+}
+
 function toolsField(body: Record<string, unknown>): AgentToolName[] | undefined {
   const value = body["tools"];
   if (value === undefined) return undefined;
@@ -238,6 +247,7 @@ export function registerAgentRoutes(
       tools: toolsField(body),
       visibility: visibilityField(body),
       resources: resourcesField(body),
+      team_ids: teamIdsField(body),
     });
     return sendJson(reply, { agent, access: await store.access(user, agent) });
   });
@@ -285,6 +295,8 @@ export function registerAgentRoutes(
     if (visibility !== undefined) patch.visibility = visibility;
     const resources = resourcesField(body);
     if (resources !== undefined) patch.resources = resources;
+    const teamIds = teamIdsField(body);
+    if (teamIds !== undefined) patch.team_ids = teamIds;
     const agent = await store.update(user, agentId, patch);
     return sendJson(reply, { agent });
   });

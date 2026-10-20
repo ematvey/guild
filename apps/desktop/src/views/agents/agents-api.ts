@@ -88,6 +88,7 @@ export interface Agent {
   visibility: AgentVisibility;
   resources?: unknown;
   status: AgentStatus;
+  team_ids?: string[];
   deleted_at?: string | null;
   purge_after?: string | null;
   created_at: string;
@@ -209,6 +210,7 @@ export interface CreateAgentInput {
   model: string;
   tools: string[];
   visibility: AgentVisibility;
+  team_ids?: string[];
 }
 
 export interface UpdateAgentInput {
@@ -217,6 +219,7 @@ export interface UpdateAgentInput {
   model?: string;
   tools?: string[];
   visibility?: AgentVisibility;
+  team_ids?: string[];
 }
 
 export interface RoutineInput {
@@ -246,6 +249,16 @@ export async function listAgents(includeArchived = false): Promise<Agent[]> {
 
 export async function getAgent(id: string): Promise<Agent> {
   return oneOf<Agent>(await request<unknown>(agentBase(id)), "agent");
+}
+
+export interface TeamOption {
+  id: string;
+  name: string;
+}
+
+export async function listMyTeams(): Promise<TeamOption[]> {
+  const body = await request<{ teams: TeamOption[] }>("/api/v1/skills/teams");
+  return body.teams;
 }
 
 export async function createAgent(input: CreateAgentInput): Promise<Agent> {
