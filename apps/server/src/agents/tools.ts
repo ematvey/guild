@@ -14,6 +14,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { AgentStore, deriveTitleFromMessage } from "./store.js";
+import { scheduleReminder } from "./routines.js";
 import type { Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -180,6 +181,11 @@ const searchOutput = Type.Object({
   ),
 });
 
+const reminderOutput = Type.Object({
+  routine_id: Type.String(),
+  run_at: Type.String(),
+});
+
 const readOutput = Type.Object({
   thread_id: Type.String(),
   thread_title: Type.String(),
@@ -241,6 +247,36 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           if (query === "") return textErr("query must not be empty");
           const hits = await searchAgentConversations(deps.store, deps.agent.id, query, args.limit);
           return { structuredOutput: { hits } as unknown as JsonValue };
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("schedule_reminder")) {
+    tools.push(
+      defineTool({
+        name: "schedule_reminder",
+        description:
+          "Create a one-shot reminder for this agent. At the given time the agent runs an isolated turn with " +
+          "the prompt and may message the user. Pending reminders are capped per agent.",
+        parameters: Type.Object({
+          at: Type.String({ description: "ISO timestamp when the reminder should run" }),
+          prompt: Type.String({ description: "The reminder prompt and context for the future run" }),
+        }),
+        structuredOutputSchema: reminderOutput,
+        replay: "unsafe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 16 * 1024 },
+        execute: async (args) => {
+          try {
+            const result = await scheduleReminder(deps.pool, deps.agent.id, {
+              at: args.at,
+              prompt: args.prompt,
+            });
+            return { structuredOutput: result as unknown as JsonValue };
+          } catch (error) {
+            return textErr(error instanceof Error ? error.message : String(error));
+          }
         },
       }),
     );

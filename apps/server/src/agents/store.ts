@@ -14,6 +14,8 @@ import type {
   AgentActivityEntry,
   AgentNotice,
   AgentRole,
+  AgentRoutine,
+  AgentRoutineOccurrence,
   AgentRun,
   AgentRunStatus,
   AgentRunStep,
@@ -25,6 +27,17 @@ import type {
   AgentVisibility,
 } from "./types.js";
 import { DEFAULT_AGENT_TOOLS } from "./types.js";
+import {
+  createOccurrence,
+  createRoutine,
+  deleteRoutine,
+  getRoutine,
+  listOccurrences,
+  listRoutines,
+  updateRoutine,
+  type CreateRoutineInput,
+  type UpdateRoutineInput,
+} from "./routines.js";
 import { insertChunks, search, type AgentChunkInput, type AgentSearchHit } from "./search.js";
 
 const DEFAULT_GRACE_DAYS = 30;
@@ -489,13 +502,18 @@ export class AgentStore {
     return this.fetchThread(agentId, id);
   }
 
-  /** Default thread first, then most recent activity. */
-  async listThreads(agentId: string): Promise<AgentThread[]> {
+  /** Default thread first, then most recent activity. Routine-run threads
+   *  are execution transcripts and stay out of the user-facing thread list
+   *  unless explicitly requested. */
+  async listThreads(agentId: string, options: { includeRoutineRuns?: boolean } = {}): Promise<AgentThread[]> {
+    const params: unknown[] = [agentId];
+    let where = "t.agent_id = $1";
+    if (options.includeRoutineRuns !== true) where += " AND t.kind <> 'routine_run'";
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1
+       WHERE ${where}
        ORDER BY (t.kind = 'default') DESC, t.last_activity_at DESC, t.created_at DESC`,
-      [agentId],
+      params,
     );
     return res.rows.map(toThread);
   }
@@ -772,6 +790,55 @@ export class AgentStore {
       params,
     );
     return res.rows.map((row) => ({ ...toRun(row), agent_name: row.agent_name as string }));
+  }
+
+  async listRoutineRuns(
+    agentId: string,
+    routineId: string,
+    filters: { limit?: number; before?: string } = {},
+  ): Promise<AgentRun[]> {
+    const params: unknown[] = [agentId, routineId];
+    let where = "r.agent_id = $1 AND r.routine_id = $2";
+    if (filters.before !== undefined) {
+      params.push(filters.before);
+      where += ` AND r.created_at < $${params.length}::timestamptz`;
+    }
+    const limit = Math.max(1, Math.min(200, filters.limit ?? 50));
+    params.push(limit);
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${RUN_COLUMNS} FROM agent_runs r WHERE ${where}
+       ORDER BY r.created_at DESC, r.id DESC LIMIT $${params.length}`,
+      params,
+    );
+    return res.rows.map(toRun);
+  }
+
+  async listRoutines(agentId: string): Promise<AgentRoutine[]> {
+    return listRoutines(this.pool, agentId);
+  }
+
+  async getRoutine(agentId: string, routineId: string): Promise<AgentRoutine> {
+    return getRoutine(this.pool, agentId, routineId);
+  }
+
+  async createRoutine(agentId: string, input: CreateRoutineInput): Promise<AgentRoutine> {
+    return createRoutine(this.pool, agentId, input);
+  }
+
+  async updateRoutine(agentId: string, routineId: string, patch: UpdateRoutineInput): Promise<AgentRoutine> {
+    return updateRoutine(this.pool, agentId, routineId, patch);
+  }
+
+  async deleteRoutine(agentId: string, routineId: string): Promise<void> {
+    return deleteRoutine(this.pool, agentId, routineId);
+  }
+
+  async createOccurrence(routineId: string, scheduledFor: Date | string): Promise<AgentRoutineOccurrence> {
+    return createOccurrence(this.pool, routineId, scheduledFor);
+  }
+
+  async listOccurrences(routineId: string, limit?: number): Promise<AgentRoutineOccurrence[]> {
+    return listOccurrences(this.pool, routineId, limit);
   }
 
   async listNotices(userId: string, orgId: string): Promise<AgentNotice[]> {
