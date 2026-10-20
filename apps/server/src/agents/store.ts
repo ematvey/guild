@@ -991,6 +991,19 @@ export class AgentStore {
     return toNotice(row);
   }
 
+  async markNoticeUnread(userId: string, noticeId: string): Promise<AgentNotice> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `WITH n AS (
+         UPDATE agent_notices SET read_at = NULL
+         WHERE id = $1 AND user_id = $2 RETURNING *)
+       SELECT ${NOTICE_COLUMNS} FROM n`,
+      [noticeId, userId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) throw ApiError.notFound("no such notice");
+    return toNotice(row);
+  }
+
   async createNotice(input: CreateNoticeInput): Promise<AgentNotice> {
     const res = await this.pool.query<Record<string, unknown>>(
       `WITH n AS (
