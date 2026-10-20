@@ -305,6 +305,12 @@ export async function updateRoutine(
   );
   const row = res.rows[0];
   if (row === undefined) throw ApiError.notFound("no such routine");
+  if (!enabled || (kind === "once" && patch.run_at !== undefined)) {
+    await pool.query(
+      `DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`,
+      [routineId],
+    );
+  }
   return toRoutine(row);
 }
 

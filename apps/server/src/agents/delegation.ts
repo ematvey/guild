@@ -381,7 +381,7 @@ export async function delegate(context: DelegationToolContext, args: DelegateArg
       .updateRun(childRun.id, {
         status: "failed",
         error_code: "delegation_submit_failed",
-        error_message: message,
+        error_message: error instanceof Error && error.stack ? `${message}\n${error.stack}` : message,
         finished_at: new Date().toISOString(),
       })
       .catch(() => {});

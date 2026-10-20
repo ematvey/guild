@@ -257,6 +257,10 @@ export class AgentScheduler {
              WHERE id = $1`,
             [row.routine_id],
           );
+          await this.deps.pool.query(
+            `DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`,
+            [row.routine_id],
+          );
         }
         continue;
       }
@@ -396,6 +400,13 @@ export async function runRoutineNow(
   if (agent.status !== "active") throw new Error("agent is not active");
   const now = new Date();
   const occurrence = await createOccurrence(deps.pool, routine.id, now);
+  if (routine.kind === "once") {
+    await deps.pool.query(
+      `DELETE FROM agent_routine_occurrences
+       WHERE routine_id = $1 AND id <> $2 AND status = 'pending'`,
+      [routine.id, occurrence.id],
+    );
+  }
   await deps.pool.query(
     `UPDATE agent_routine_occurrences
      SET status = 'claimed', attempts = attempts + 1
