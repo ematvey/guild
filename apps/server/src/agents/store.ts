@@ -116,6 +116,9 @@ const TS = (column: string): string =>
 
 const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.instructions, a.model,
   a.tools, a.visibility, a.resources, a.status,
+  (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
+  (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
+  (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
   ${TS("a.deleted_at")} AS deleted_at, ${TS("a.purge_after")} AS purge_after,
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
@@ -154,6 +157,9 @@ function toAgent(row: Record<string, unknown>): Agent {
     id: row.id as string,
     org_id: row.org_id as string,
     owner_user_id: row.owner_user_id as string,
+    owner_label: (row.owner_label as string | null) ?? null,
+    owner_email: (row.owner_email as string | null) ?? null,
+    owner_avatar_url: (row.owner_avatar_url as string | null) ?? null,
     name: row.name as string,
     instructions: (row.instructions as string | null) ?? "",
     model: row.model as string,
