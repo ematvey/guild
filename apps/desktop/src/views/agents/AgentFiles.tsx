@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   Download,
@@ -78,6 +78,18 @@ export function parseCsv(text: string): string[][] {
   return rows.slice(0, 500);
 }
 
+interface CachedFileView {
+  entries: AgentFileEntry[];
+  listingDir: string;
+  isDirectory: boolean;
+  /** Present when a text/CSV file was prefetched with its parent listing. */
+  preview?: AgentFileContent;
+}
+
+function fileViewKey(path: string, hidden: boolean): string {
+  return `${hidden ? "1" : "0"}:${path}`;
+}
+
 function FileIcon({ entry }: { entry: AgentFileEntry }) {
   if (entry.kind === "dir") return <Folder className="size-4 text-muted-foreground" />;
   if (entry.symlink) return <Link2 className="size-4 text-muted-foreground" />;
@@ -132,11 +144,19 @@ export function AgentFiles({
   /** The folder currently listed; for a file deep link this is its parent. */
   const [listingDir, setListingDir] = useState(filePath ?? "");
   const [isDirectory, setIsDirectory] = useState((filePath ?? "") === "");
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const cache = useRef(new Map<string, CachedFileView>());
+  const forceNextFetch = useRef(false);
 
   const path = filePath ?? "";
+  const activeKey = fileViewKey(path, hidden);
+  const cachedView = cache.current.get(activeKey);
+  const shownEntries = cachedView?.entries ?? entries;
+  const shownListingDir = cachedView?.listingDir ?? listingDir;
+  const shownIsDirectory = cachedView?.isDirectory ?? isDirectory;
   const previewKind = previewKindOf(path.split("/").pop() ?? "");
   const inlinePreview = previewKind === "image" || previewKind === "pdf";
-  const blobUrl = useBlobUrl(agentId, path, path !== "" && !isDirectory && inlinePreview);
+  const blobUrl = useBlobUrl(agentId, path, path !== "" && !shownIsDirectory && inlinePreview);
   const breadcrumbs = useMemo(() => fileBreadcrumbs(path), [path]);
   const normalize = (rows: AgentFileEntry[], dir: string): AgentFileEntry[] =>
     rows.map((entry) => ({
@@ -144,8 +164,33 @@ export function AgentFiles({
       path: entry.path || joinPath(dir, entry.name),
     }));
 
+  const remember = (key: string, view: CachedFileView) => {
+    const map = cache.current;
+    map.delete(key);
+    map.set(key, view);
+    while (map.size > 40) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+    }
+  };
+
   useEffect(() => {
     let live = true;
+    if (forceNextFetch.current) {
+      forceNextFetch.current = false;
+    } else {
+      const hit = cache.current.get(activeKey);
+      if (hit) {
+        setError(null);
+        setEntries(hit.entries);
+        setListingDir(hit.listingDir);
+        setIsDirectory(hit.isDirectory);
+        return () => {
+          live = false;
+        };
+      }
+    }
     setError(null);
     setEntries(null);
     void listAgentFiles(agentId, path, hidden)
@@ -176,12 +221,19 @@ export function AgentFiles({
     return () => {
       live = false;
     };
-  }, [agentId, path, hidden, tick]);
+  }, [agentId, path, hidden, tick, activeKey]);
 
   useEffect(() => {
-    if (path === "" || isDirectory || inlinePreview) {
+    if (path === "" || shownIsDirectory || inlinePreview) {
       setPreview(null);
       setPreviewError(null);
+      return;
+    }
+    const cachedPreview = cache.current.get(activeKey)?.preview;
+    if (cachedPreview !== undefined) {
+      setPreview(cachedPreview);
+      setPreviewError(null);
+      setPreviewLoading(false);
       return;
     }
     let live = true;
@@ -202,9 +254,66 @@ export function AgentFiles({
     return () => {
       live = false;
     };
-  }, [agentId, path, inlinePreview, isDirectory]);
+  }, [agentId, path, inlinePreview, shownIsDirectory, activeKey]);
 
-  const openEntry = (entry: AgentFileEntry) => {
+  const refresh = () => {
+    cache.current.delete(activeKey);
+    forceNextFetch.current = true;
+    setTick((t) => t + 1);
+  };
+
+  /** Load the target listing first, then change the URL. The old view stays
+   *  on screen until the data is ready, so the route change never flashes a
+   *  loading state. */
+  const navigateToDir = async (target: string) => {
+    if (target === path) return;
+    setPendingPath(target === "" ? "/" : target);
+    try {
+      const rows = await listAgentFiles(agentId, target, hidden);
+      remember(fileViewKey(target, hidden), {
+        entries: normalize(rows, target),
+        listingDir: target,
+        isDirectory: true,
+      });
+    } catch {
+      // Fall through: the destination can render its own error state.
+    } finally {
+      setPendingPath(null);
+    }
+    onNavigate({
+      view: "agent",
+      agentId,
+      tab: "files",
+      ...(target ? { filePath: target } : {}),
+    });
+  };
+
+  const openEntry = async (entry: AgentFileEntry) => {
+    if (entry.kind === "dir") {
+      await navigateToDir(entry.path);
+      return;
+    }
+    const parent = parentPath(entry.path);
+    setPendingPath(entry.path);
+    try {
+      const kind = previewKindOf(entry.name);
+      const [rows, preview] = await Promise.all([
+        listAgentFiles(agentId, parent, hidden),
+        kind === "image" || kind === "pdf"
+          ? Promise.resolve(undefined)
+          : getAgentFileContent(agentId, entry.path).catch(() => undefined),
+      ]);
+      remember(fileViewKey(entry.path, hidden), {
+        entries: normalize(rows, parent),
+        listingDir: parent,
+        isDirectory: false,
+        ...(preview === undefined ? {} : { preview }),
+      });
+    } catch {
+      // The destination will surface the error.
+    } finally {
+      setPendingPath(null);
+    }
     onNavigate({ view: "agent", agentId, tab: "files", filePath: entry.path });
   };
 
@@ -248,14 +357,7 @@ export function AgentFiles({
                 {i > 0 && <ChevronRight className="size-3 text-muted-foreground" />}
                 <button
                   type="button"
-                  onClick={() =>
-                    onNavigate({
-                      view: "agent",
-                      agentId,
-                      tab: "files",
-                      ...(crumb.path ? { filePath: crumb.path } : {}),
-                    })
-                  }
+                  onClick={() => void navigateToDir(crumb.path)}
                   className={`max-w-40 truncate rounded px-1 py-0.5 outline-none hover:bg-accent ${
                     i === breadcrumbs.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
                   }`}
@@ -281,16 +383,16 @@ export function AgentFiles({
               <ErrorState
                 title="Could not read the workspace"
                 message={error}
-                onRetry={() => setTick((t) => t + 1)}
+                onRetry={refresh}
               />
             </div>
           )}
-          {error === null && entries === null && (
+          {error === null && shownEntries === null && (
             <div className="p-3">
               <InlineLoading label="Loading files" />
             </div>
           )}
-          {error === null && entries !== null && entries.length === 0 && (
+          {error === null && shownEntries !== null && shownEntries.length === 0 && (
             <div className="p-3">
               <EmptyState
                 icon={<Folder className="size-5" />}
@@ -299,20 +401,13 @@ export function AgentFiles({
               />
             </div>
           )}
-          {error === null && entries !== null && entries.length > 0 && (
+          {error === null && shownEntries !== null && shownEntries.length > 0 && (
             <ul>
-              {listingDir !== "" && (
+              {shownListingDir !== "" && (
                 <li>
                   <button
                     type="button"
-                    onClick={() =>
-                      onNavigate({
-                        view: "agent",
-                        agentId,
-                        tab: "files",
-                        ...(parentPath(listingDir) ? { filePath: parentPath(listingDir) } : {}),
-                      })
-                    }
+                    onClick={() => void navigateToDir(parentPath(listingDir))}
                     className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-[13px] text-muted-foreground hover:bg-accent/50"
                   >
                     <Folder className="size-4" />
@@ -320,7 +415,7 @@ export function AgentFiles({
                   </button>
                 </li>
               )}
-              {entries.map((entry) => {
+              {shownEntries.map((entry) => {
                 const selected = entry.path === path;
                 return (
                   <li key={entry.path || entry.name}>
@@ -338,9 +433,13 @@ export function AgentFiles({
                           symlink
                         </span>
                       )}
-                      <span className="hidden shrink-0 text-[11.5px] text-muted-foreground sm:block">
-                        {entry.kind === "dir" ? "—" : formatFileSize(entry.size)}
-                      </span>
+                      {pendingPath === entry.path ? (
+                        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                      ) : (
+                        <span className="hidden shrink-0 text-[11.5px] text-muted-foreground sm:block">
+                          {entry.kind === "dir" ? "—" : formatFileSize(entry.size)}
+                        </span>
+                      )}
                       <span className="hidden w-20 shrink-0 text-right text-[11.5px] text-muted-foreground md:block">
                         {entry.mtime ? relativeTime(entry.mtime) : "—"}
                       </span>
@@ -355,7 +454,7 @@ export function AgentFiles({
 
       {/* preview column */}
       <div className="flex min-h-0 flex-col">
-        {path === "" || isDirectory ? (
+        {path === "" || shownIsDirectory ? (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-[13px] text-muted-foreground">
             Select a file to preview it. The workspace is read-only in the browser.
           </div>
@@ -386,7 +485,7 @@ export function AgentFiles({
                 <ErrorState
                   title="Could not preview this file"
                   message={previewError}
-                  onRetry={() => setTick((t) => t + 1)}
+                  onRetry={refresh}
                 />
               )}
               {previewError === null && previewLoading && <InlineLoading label="Loading preview" />}
