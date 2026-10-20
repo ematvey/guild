@@ -174,14 +174,30 @@ export class IntegrationsRuntime {
   }
 
   /** Resolve the desired tool surface before admission or resume. Empty
-   * selections clear persisted tools; transient resolution failures propagate. */
-  async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
+   * selections clear persisted tools; transient resolution failures propagate.
+   * `allowedToolNames` narrows the surface for agent chats: an integration
+   * with no selected tool disappears entirely, and an integration's
+   * discovery list only shows the tools the agent may call. */
+  async prepareTurn(
+    conversationId: number,
+    chatId: string,
+    orgId: string,
+    allowedToolNames?: ReadonlySet<string>,
+  ): Promise<TurnPreparation> {
     let turns: PluginTurn[] = [];
     try {
       turns = await resolvePlugins(this.deps.gateway, orgId, (m) => this.warn(m));
     } catch (error) {
       this.warn(`integrations resolve failed: ${(error as Error).message}`);
       throw error;
+    }
+    if (allowedToolNames !== undefined) {
+      turns = turns
+        .map((turn) => ({
+          ...turn,
+          tools: turn.tools.filter((info) => allowedToolNames.has(info.spec.name)),
+        }))
+        .filter((turn) => turn.tools.length > 0);
     }
     const caller = await this.chatCaller(chatId);
     this.snapshots.set(conversationId, { orgId, chatId, turns, caller });
