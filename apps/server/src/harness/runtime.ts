@@ -70,6 +70,8 @@ import { createThreadHistoryTools } from "./thread-history.js";
 import { AgentStore } from "../agents/store.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { createAgentTools } from "../agents/tools.js";
+import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
+import { delegationContextForChat } from "../agents/delegation.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
@@ -116,6 +118,7 @@ export class GuildRuntime {
   private readonly threads: ThreadStore;
   private readonly chats: ChatStore;
   private readonly agents: AgentStore;
+  private readonly conflicts: AgentConflictJournal;
   private readonly agentRuns: AgentRunLifecycle;
   private readonly turnCommands: TurnCommandStore;
   private readonly gateway: GatewayStore;
@@ -226,7 +229,8 @@ export class GuildRuntime {
     this.threads = new ThreadStore(pool);
     this.chats = new ChatStore(pool);
     this.agents = new AgentStore(pool);
-    this.agentRuns = new AgentRunLifecycle({ pool, log });
+    this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
+    this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
@@ -377,6 +381,7 @@ export class GuildRuntime {
         },
       },
       skillRuntime: this.skillsRuntime,
+      toolHooks: [createConflictHook(this.conflicts, (id) => this.chatOfConversation(id))],
       trace: this.trace,
       currentModel: async (conversationId) => {
         await this.start();
@@ -988,11 +993,30 @@ export class GuildRuntime {
     const ref = await agentThreadForChat(this.pool, chatId);
     if (ref === null) return [];
     const agent = await this.agents.fetchAgent(ref.agent_id);
+    const delegation = await delegationContextForChat({
+      pool: this.pool,
+      store: this.agents,
+      threads: this.threads,
+      agent,
+      chatId,
+      runtime: {
+        submitTurn: (childChatId, childOrgId, input) =>
+          this.submitTurn(childChatId, childOrgId, {
+            orgId: input.orgId,
+            requestId: input.requestId,
+            content: input.content,
+            images: input.images,
+            model: input.model,
+          }),
+      },
+      workspaceRoot: this.config.agentWorkspaceRoot,
+    });
     return createAgentTools({
       pool: this.pool,
       store: this.agents,
       threads: this.threads,
       agent,
+      ...(delegation === null ? {} : { delegation }),
     });
   }
 
@@ -1001,6 +1025,9 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    void this.conflicts.beginTurn(chatId).catch((error: unknown) => {
+      this.log.warn({ err: error, chatId }, "agent turn journal start failed");
+    });
     return this.admissions
       .run(chatId, (signal) => this.admitTurn(chatId, orgId, input, signal))
       .catch(async (error) => {

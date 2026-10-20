@@ -2,7 +2,13 @@
 // with (the persona/guild section and the combined skills index) and the
 // approval gate hook (the M4 exec-policy + approvals lane).
 
-import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";
+import {
+  defineExtension,
+  type ConversationId,
+  type HookRegistration,
+  type PromptSection,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 import type { IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
@@ -50,6 +56,8 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The skills runtime (read_skill/search_skills/push_skill + the Task 6
    *  prompt index section); absent in tests without one. */
   skillRuntime?: SkillRuntime;
+  /** Extra tool-task hooks (the workspace conflict journal). */
+  toolHooks?: readonly HookRegistration[];
 }
 
 /** Codemode-only exposure: tools the model must not see directly become
@@ -94,6 +102,6 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       toolsOnlyCaller,
     ),
     sections: [section, skillsSection, codemodeNotes],
-    hooks: [createApprovalGate(deps)],
+    hooks: [createApprovalGate(deps), ...(deps.toolHooks ?? [])],
   });
 }

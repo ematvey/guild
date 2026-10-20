@@ -458,6 +458,27 @@ export function registerAgentRoutes(
     return sendJson(reply, { run, steps: await store.runSteps(run) });
   });
 
+  app.get("/api/v1/runs/:id/children", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const run = await store.getRun(parseUuidParam(req, "id"));
+    await store.requireAccess(user, run.agent_id, "use");
+    return sendJson(reply, { children: await store.childRuns(run.id) });
+  });
+
+  app.get("/api/v1/runs/:id/artifacts", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const run = await store.getRun(parseUuidParam(req, "id"));
+    await store.requireAccess(user, run.agent_id, "use");
+    const artifacts = await store.listArtifacts(run.id);
+    return sendJson(reply, {
+      run_id: run.id,
+      artifacts,
+      staged: artifacts.filter((artifact) => artifact.status === "staged").length,
+      inboxed: artifacts.filter((artifact) => artifact.status === "inbox").length,
+      released: artifacts.filter((artifact) => artifact.status === "released").length,
+    });
+  });
+
   app.get("/api/v1/activity", async (req, reply) => {
     const user = await requireUser(auth, req);
     const filters: ActivityFilters = {
