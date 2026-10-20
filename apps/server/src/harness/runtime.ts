@@ -1045,9 +1045,13 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
-    void this.conflicts.beginTurn(chatId).catch((error: unknown) => {
-      this.log.warn({ err: error, chatId }, "agent turn journal start failed");
-    });
+    // A worker admitting another chat's turn (delegation) must not open the
+    // workspace-turn row: the target chat's own worker owns that run.
+    if (!(this.workerScope !== undefined && chatId !== this.workerScope.chatId)) {
+      void this.conflicts.beginTurn(chatId).catch((error: unknown) => {
+        this.log.warn({ err: error, chatId }, "agent turn journal start failed");
+      });
+    }
     return this.admissions
       .run(chatId, (signal) => this.admitTurn(chatId, orgId, input, signal))
       .catch(async (error) => {

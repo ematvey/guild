@@ -370,6 +370,30 @@ export async function getRun(runId: string): Promise<AgentRun> {
   );
 }
 
+export async function listRunChildren(runId: string): Promise<AgentRun[]> {
+  const body = await request<{ children: AgentRun[] }>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/children`,
+  );
+  return body.children;
+}
+
+export interface AgentArtifact {
+  id: string;
+  path: string;
+  size: number;
+  status: "inbox" | "staged" | "released";
+  inbox_path?: string | null;
+  staging_path?: string | null;
+  created_at: string;
+}
+
+export async function listRunArtifacts(runId: string): Promise<AgentArtifact[]> {
+  const body = await request<{ artifacts: AgentArtifact[] }>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/artifacts`,
+  );
+  return body.artifacts;
+}
+
 export interface ActivityFilters {
   agent?: string;
   status?: RunStatus | "all";
