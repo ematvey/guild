@@ -41,7 +41,6 @@ import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { ThreadStore } from "../platform/store/thread.js";
-import { AgentSessionStore } from "../platform/store/agentSessions.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
@@ -68,6 +67,12 @@ import { assertPlatformSchema } from "../platform/migrations.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
+import { AgentStore } from "../agents/store.js";
+import { AgentRunLifecycle } from "../agents/lifecycle.js";
+import { createAgentTools } from "../agents/tools.js";
+import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
+import { delegationContextForChat } from "../agents/delegation.js";
+import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -112,6 +117,9 @@ export class GuildRuntime {
   private readonly registry: Registry;
   private readonly threads: ThreadStore;
   private readonly chats: ChatStore;
+  private readonly agents: AgentStore;
+  private readonly conflicts: AgentConflictJournal;
+  private readonly agentRuns: AgentRunLifecycle;
   private readonly turnCommands: TurnCommandStore;
   private readonly gateway: GatewayStore;
   private readonly bridge: ChatBridge;
@@ -153,7 +161,6 @@ export class GuildRuntime {
   private starting: Promise<void> | undefined;
   private stopped = false;
 
-  private readonly agentSessions: AgentSessionStore;
   readonly toolArtifacts: ToolArtifactStore;
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
@@ -221,9 +228,11 @@ export class GuildRuntime {
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
     this.chats = new ChatStore(pool);
+    this.agents = new AgentStore(pool);
+    this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
+    this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
-    this.agentSessions = new AgentSessionStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
     const registryStore = new RegistryStore(pool);
     const events = new EventStore(pool);
@@ -295,6 +304,10 @@ export class GuildRuntime {
         }
       },
       ...(objects !== undefined ? { spill: { artifacts: this.toolArtifacts, objects } } : {}),
+      agentRuns: {
+        assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
+        runEnd: (chatId, failure) => this.agentRuns.runEnd(chatId, failure),
+      },
       log,
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
@@ -368,6 +381,7 @@ export class GuildRuntime {
         },
       },
       skillRuntime: this.skillsRuntime,
+      toolHooks: [createConflictHook(this.conflicts, (id) => this.chatOfConversation(id))],
       trace: this.trace,
       currentModel: async (conversationId) => {
         await this.start();
@@ -392,31 +406,26 @@ export class GuildRuntime {
     return null;
   }
 
-  /** The conversation's server-side sandbox: an agent session's workspace
-   *  (`workspaces/<org>/<name>`) when one is bound, the per-conversation
-   *  chat dir (`chats/<org>/<conversationId>`) otherwise. `hostDir` is
-   *  where the in-process executor keeps it (tests/dev). */
+  /** Agent workspace resolution lands with the agents runtime. Plain chats
+   *  keep their per-conversation sandbox (`chats/<org>/<conversationId>`);
+   *  `hostDir` is where the in-process executor keeps it (tests/dev). */
   private async sandboxTarget(
     conversationId: number,
     orgId: string,
   ): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
     const chatId = await this.chatOfConversation(conversationId);
-    if (chatId !== null) {
-      const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
-      if (workspace !== null) {
-        return {
-          key: `ws:${orgId}:${workspace}`,
-          subpath: `workspaces/${orgId}/${workspace}`,
-          hostDir: `${this.config.dataDir}/workspaces/${orgId}/${workspace}`,
-          chatId,
-        };
-      }
-    }
-    return {
-      key: `chat:${orgId}:${conversationId}`,
-      subpath: `chats/${orgId}/${conversationId}`,
-      hostDir: `${sandboxRoot()}/${conversationId}`,
+    const target = await resolveConversationWorkspace(this.pool, {
+      conversationId,
+      orgId,
       chatId,
+      agentWorkspaceRoot: this.config.agentWorkspaceRoot,
+      plainHostRoot: sandboxRoot(),
+    });
+    return {
+      key: target.key,
+      subpath: target.subpath,
+      hostDir: target.hostDir,
+      chatId: target.chatId,
     };
   }
 
@@ -467,8 +476,15 @@ export class GuildRuntime {
     const row = chat.rows[0];
     if (!row) return null;
     if (row.machine_id !== null) return "machine";
-    const workspace = await this.agentSessions.workspaceForChat(row.org_id, chatId);
+    const workspace = await this.agentWorkspaceForChat(row.org_id, chatId);
     return workspace !== null ? "server" : null;
+  }
+
+  /** The agent workspace subpath behind a chat, or null for a plain chat. */
+  private async agentWorkspaceForChat(orgId: string, chatId: string | null): Promise<string | null> {
+    if (chatId === null) return null;
+    const agent = await agentThreadForChat(this.pool, chatId);
+    return agent === null ? null : agentWorkspaceSubpath(orgId, agent.agent_id);
   }
   /** Turn-start skill materialization (spec §3): the chat owner's
    *  installed org skills land under the server-side executor dir before
@@ -960,13 +976,48 @@ export class GuildRuntime {
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
+    const agentTools = await this.agentToolsForChat(chatId);
     await conversation.configure(
       {
         extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
-        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
+        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
       },
       BACKGROUND_CONTEXT,
     );
+  }
+
+  /** The conversation tools that exist only for agent threads: send_message,
+   *  conversations_search and conversation_read, filtered by the agent's
+   *  tool allowlist. Plain chats get none. */
+  private async agentToolsForChat(chatId: string): Promise<ToolRegistration[]> {
+    const ref = await agentThreadForChat(this.pool, chatId);
+    if (ref === null) return [];
+    const agent = await this.agents.fetchAgent(ref.agent_id);
+    const delegation = await delegationContextForChat({
+      pool: this.pool,
+      store: this.agents,
+      threads: this.threads,
+      agent,
+      chatId,
+      runtime: {
+        submitTurn: (childChatId, childOrgId, input) =>
+          this.submitTurn(childChatId, childOrgId, {
+            orgId: input.orgId,
+            requestId: input.requestId,
+            content: input.content,
+            images: input.images,
+            model: input.model,
+          }),
+      },
+      workspaceRoot: this.config.agentWorkspaceRoot,
+    });
+    return createAgentTools({
+      pool: this.pool,
+      store: this.agents,
+      threads: this.threads,
+      agent,
+      ...(delegation === null ? {} : { delegation }),
+    });
   }
 
   /** Submits a user turn into the chat's conversation: the model provider
@@ -974,6 +1025,9 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    void this.conflicts.beginTurn(chatId).catch((error: unknown) => {
+      this.log.warn({ err: error, chatId }, "agent turn journal start failed");
+    });
     return this.admissions
       .run(chatId, (signal) => this.admitTurn(chatId, orgId, input, signal))
       .catch(async (error) => {

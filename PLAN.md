@@ -11,6 +11,20 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Agent workspaces get a JuiceFS volume (2026-10-20).** Compose adds a
+  `juicefs` sidecar (foreground mount, `/dev/fuse`, `SYS_ADMIN`, unconfined
+  AppArmor, `rshared` host dir, `stat -f` healthcheck) and a one-shot
+  `juicefs-init` that creates the dedicated `guild_meta` Postgres database.
+  The `guild_workspaces` volume binds `${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}`;
+  the server mounts it read-only at `/workspaces`, the runner read-write.
+  The runner accepts `agents/<org>/<agent>` subpaths, creates their dirs on
+  the agent volume, and never reaps them: agent sandboxes are always-on.
+  `GUILD_AGENT_WORKSPACE_ROOT` is the server's file-browser root. The
+  isolated instance (`scripts/agents-vfs-init.mjs`) is project
+  `guild-agents-vfs`, :18093, db `guild_agents_vfs`, bucket
+  `guild-agents-vfs`, dir `/mnt/guild-agents-vfs`; its only host
+  prerequisite is `sudo mkdir -p /mnt/guild-agents-vfs`.
+
 - **Skill provenance reaches the agent (2026-10-20, 0.5.83).** An agent
   asked "whose skill is that?" and could only answer from the SKILL.md's
   prose, because the index, `search_skills` and `read_skill` dropped the

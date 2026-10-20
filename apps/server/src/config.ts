@@ -57,6 +57,10 @@ export interface Config {
   /** Server-side data dir (GUILD_DATA_DIR, default ./data): the workspace
    *  session root (workspaces/<org>/<name>) lives under it. */
   dataDir: string;
+  /** Root of the agent workspace volume as the server sees it
+   *  (GUILD_AGENT_WORKSPACE_ROOT, default /workspaces): agent subpaths
+   *  resolve under it for the file browser. */
+  agentWorkspaceRoot: string;
   /** Whether server-side executors may run shell tools at all
    *  (GUILD_ALLOW_SHELL_TOOLS; default on with a sandbox runner, off
    *  otherwise — machine `execute` calls ride the exec policy instead). */
@@ -84,6 +88,9 @@ export interface Config {
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
   workerMode: "off" | "on";
+  /** Routine scheduler loop (GUILD_AGENTS_SCHEDULER=off disables it).
+   *  Default: on in the server, off under NODE_ENV=test. */
+  agentsScheduler: boolean;
 }
 
 export type SandboxConfig =
@@ -213,6 +220,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiUrl,
     poolMax,
     dataDir,
+    agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
     allowShellTools,
     sandbox,
     approvalTimeoutMs,
@@ -223,5 +231,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // routes over IPC to a forked worker per active chat (see
     // worker/supervisor.ts). Default off until the rollout completes.
     workerMode: env.GUILD_WORKER_MODE === "on" ? ("on" as const) : ("off" as const),
+    // Routine scheduler: explicit off wins; explicit on wins; tests default
+    // off so a suite never starts a loop unless it asks for one.
+    agentsScheduler:
+      env.GUILD_AGENTS_SCHEDULER === "off"
+        ? false
+        : env.GUILD_AGENTS_SCHEDULER === "on"
+          ? true
+          : (env.NODE_ENV ?? process.env.NODE_ENV) !== "test",
   };
 }

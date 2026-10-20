@@ -2,20 +2,25 @@
 // influence, and the config the runner refuses to start with.
 
 import { describe, expect, it } from "vitest";
+import { pino } from "pino";
 import { containerName, containerSpec, loadRunnerConfig, validKey, validSubpath } from "../../sandbox/runner/spec.js";
+import { SandboxManager } from "../../sandbox/runner/manager.js";
+import type { DockerClient } from "../../sandbox/runner/docker.js";
 import { decodeValue, encodeValue, LineSplitter } from "../../sandbox/protocol.js";
 import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
 
 const ORG = "0194a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+const AGENT = "0194a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
 const env = {
   GUILD_SANDBOX_RUNNER_TOKEN: "x".repeat(32),
   GUILD_SANDBOX_PROXY_URL: "http://10.213.0.2:3128",
 };
 
 describe("subpath and key validation", () => {
-  it("accepts only workspaces/<org>/<name> and chats/<org>/<id>", () => {
+  it("accepts only workspaces/<org>/<name>, chats/<org>/<id> and agents/<org>/<agent>", () => {
     expect(validSubpath(`workspaces/${ORG}/repo-1`)).toBe(true);
     expect(validSubpath(`chats/${ORG}/42`)).toBe(true);
+    expect(validSubpath(`agents/${ORG}/${AGENT}`)).toBe(true);
     for (const bad of [
       "../etc",
       `workspaces/${ORG}/..`,
@@ -27,10 +32,15 @@ describe("subpath and key validation", () => {
       `workspaces/not-a-uuid!/x`,
       `other/${ORG}/x`,
       `workspaces/${ORG}/x\n`,
+      `agents/${ORG}`,
+      `agents/${ORG}/not-a-uuid`,
+      `agents/${ORG}/a/b`,
+      `agents/${ORG}/../${ORG}/x`,
     ]) {
       expect(validSubpath(bad), bad).toBe(false);
     }
     expect(validKey(`ws:${ORG}:repo-1`)).toBe(true);
+    expect(validKey(`agent:${ORG}:${AGENT}`)).toBe(true);
     expect(validKey("bad key")).toBe(false);
   });
 });
@@ -72,6 +82,34 @@ describe("container spec", () => {
     expect(spec.Env.some((e) => /proxy/i.test(e))).toBe(false);
   });
 
+  it("mounts the agent volume for agents/ subpaths", () => {
+    const spec = containerSpec(config, `agent:${ORG}:${AGENT}`, `agents/${ORG}/${AGENT}`) as {
+      Labels: Record<string, string>;
+      HostConfig: { Mounts: Array<Record<string, unknown>> };
+    };
+    expect(spec.HostConfig.Mounts).toEqual([
+      {
+        Type: "volume",
+        Source: "compose_guild_workspaces",
+        Target: "/workspace",
+        VolumeOptions: { Subpath: `agents/${ORG}/${AGENT}`, NoCopy: true },
+      },
+    ]);
+    expect(spec.Labels["guild.sandbox.subpath"]).toBe(`agents/${ORG}/${AGENT}`);
+  });
+
+  it("reads the agent volume and its runner mount from env", () => {
+    const custom = loadRunnerConfig(
+      { ...env, GUILD_SANDBOX_AGENT_VOLUME: "juice_guild_workspaces", GUILD_SANDBOX_AGENT_DIR: "/mnt/agents" },
+      { project: "compose" },
+    );
+    expect(custom.agentVolume).toBe("juice_guild_workspaces");
+    expect(custom.agentDataDir).toBe("/mnt/agents");
+    expect(containerSpec(custom, `agent:${ORG}:${AGENT}`, `agents/${ORG}/${AGENT}`)).toMatchObject({
+      HostConfig: { Mounts: [{ Source: "juice_guild_workspaces" }] },
+    });
+  });
+
   it("names containers per project and key", () => {
     expect(containerName({ project: "compose" }, "a")).toMatch(/^guild-sbx-compose-[0-9a-f]{20}$/);
     expect(containerName({ project: "compose" }, "a")).not.toBe(containerName({ project: "guild-prod" }, "a"));
@@ -81,6 +119,32 @@ describe("container spec", () => {
     expect(() => loadRunnerConfig({}, { project: null })).toThrow(/TOKEN/);
     expect(() => loadRunnerConfig({ ...env, GUILD_SANDBOX_PROXY_URL: "http://egress:3128" }, { project: null })).toThrow(/IP address/);
     expect(() => loadRunnerConfig({ GUILD_SANDBOX_RUNNER_TOKEN: "x".repeat(32) }, { project: null })).toThrow(/PROXY_URL/);
+  });
+});
+
+describe("always-on agent sandboxes", () => {
+  const config = loadRunnerConfig(env, { project: "compose" });
+  const log = pino({ level: "silent" });
+
+  it("reap skips agent sandboxes but still stops idle chats", async () => {
+    const calls: string[] = [];
+    const containers = [
+      { Id: "1", Names: ["/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa"], State: "running", Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` } },
+      { Id: "2", Names: ["/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb"], State: "stopped", Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` } },
+      { Id: "3", Names: ["/guild-sbx-compose-cccccccccccccccccccc"], State: "running", Labels: { "guild.sandbox.subpath": `chats/${ORG}/42` } },
+    ];
+    const docker = {
+      request: async (method: string, path: string) => {
+        calls.push(`${method} ${path}`);
+        if (path.startsWith("/containers/json")) return containers;
+        return {};
+      },
+    } as unknown as DockerClient;
+    const manager = new SandboxManager(config, docker, log);
+    await manager.reap(Date.now() + config.idleRemoveMs * 2);
+    expect(calls.some((c) => c.includes("aaaaaaaaaaaaaaaaaaaa"))).toBe(false);
+    expect(calls.some((c) => c.includes("bbbbbbbbbbbbbbbbbbbb"))).toBe(false);
+    expect(calls.some((c) => c.includes("cccccccccccccccccccc") && c.includes("/stop"))).toBe(true);
   });
 });
 

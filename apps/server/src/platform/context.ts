@@ -28,10 +28,11 @@ import { TicketStore } from "../hub/tickets.js";
 import { ChatStore } from "./store/chats.js";
 import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
-import { AgentSessionStore } from "./store/agentSessions.js";
 import { ToolArtifactStore } from "./store/toolArtifacts.js";
 import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
+import { AgentStore } from "../agents/store.js";
+import { AgentScheduler } from "../agents/scheduler.js";
 import { ForkSupervisor } from "../worker/supervisor.js";
 import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
@@ -101,13 +102,14 @@ export class PlatformContext {
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
-  /** M4: agent-session metadata rows + the tool-artifact spill store. */
-  readonly agentSessions: AgentSessionStore;
+  /** The tool-artifact spill store. */
   readonly toolArtifacts: ToolArtifactStore;
   /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
    *  guild_events) — one dedicated connection shared by all subscribers. */
   readonly notify: NotifyHub;
   readonly runtime: GuildRuntime;
+  /** The routine scheduler loop (started after the runtime opens). */
+  readonly scheduler: AgentScheduler;
   /** Worker-per-chat: the fork supervisor (undefined when worker mode is
    *  off). The runtime routes admission through it and closes it. */
   readonly supervisor: ForkSupervisor | undefined;
@@ -168,7 +170,6 @@ export class PlatformContext {
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
-    this.agentSessions = new AgentSessionStore(this.pool);
     this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
     // Worker-per-chat mode: the server forks one worker per active chat and
@@ -187,6 +188,13 @@ export class PlatformContext {
           )
         : undefined;
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
+    this.scheduler = new AgentScheduler({
+      pool: this.pool,
+      store: new AgentStore(this.pool),
+      runtime: this.runtime,
+      log,
+      enabled: config.agentsScheduler,
+    });
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
@@ -259,7 +267,14 @@ export class PlatformContext {
     throw new ApiError(401, "unauthorized", "invalid api key");
   }
 
+  /** Starts the routine loop after the runtime is open. A no-op when the
+   *  scheduler flag is off. */
+  startScheduler(): void {
+    this.scheduler.start();
+  }
+
   async close(): Promise<void> {
+    this.scheduler.stop();
     this.feed.stop();
     await this.runtime.close();
     await this.notify.close();
