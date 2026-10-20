@@ -40,7 +40,6 @@ import type { UserMcpStore } from "./store/userMcp.js";
 import type { ChatStore } from "./store/chats.js";
 import type { ThreadStore } from "./store/thread.js";
 import type { TurnCommandStore } from "./store/turn_commands.js";
-import type { AgentSessionStore } from "./store/agentSessions.js";
 import type { ToolArtifactStore } from "./store/toolArtifacts.js";
 import type { LiveHub, LiveMember } from "../hub/live.js";
 import type { TicketStore } from "../hub/tickets.js";
@@ -87,9 +86,9 @@ export interface IdentityCtx {
 }
 
 /** The chats lane: chat/thread stores, the turn-command journal, the agent
- *  runtime and session metadata, the live hub (member/machine sockets), the
- *  notify fan-in, the feed forwarder, the machine registry and its tool
- *  dispatch, and the socket seams the lanes wire at startup. */
+ *  runtime, the live hub (member/machine sockets), the notify fan-in, the
+ *  feed forwarder, the machine registry and its tool dispatch, and the
+ *  socket seams the lanes wire at startup. */
 export interface ChatsCtx {
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
@@ -98,7 +97,6 @@ export interface ChatsCtx {
   readonly hub: LiveHub;
   readonly notify: NotifyHub;
   readonly feed: FeedForwarder;
-  readonly agentSessions: AgentSessionStore;
   readonly toolArtifacts: ToolArtifactStore;
   readonly machineDispatch: MachineDispatch;
   readonly machines: MachineStore;
