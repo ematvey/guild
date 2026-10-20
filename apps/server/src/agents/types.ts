@@ -31,7 +31,6 @@ export type AgentToolName =
   | "list"
   | "bash"
   | "web_search"
-  | "codemode"
   | "search_skills"
   | "read_skill"
   | "conversations_search"
