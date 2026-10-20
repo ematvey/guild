@@ -284,7 +284,7 @@ function AgentActions({
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const archived = agent.status === "archived";
+  const archived = agent.status === "archived" || agent.status === "deleting";
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
@@ -879,13 +879,13 @@ function AgentSettings({
             variant="outline"
             size="sm"
             onClick={async () => {
-              if (agent.status === "archived") await restoreAgent(agent.id);
-              else await archiveAgent(agent.id);
+              if (agent.status === "active") await archiveAgent(agent.id);
+              else await restoreAgent(agent.id);
               onChanged();
             }}
           >
-            {agent.status === "archived" ? <ArchiveRestore /> : <Archive />}
-            {agent.status === "archived" ? "Restore agent" : "Archive agent"}
+            {agent.status === "active" ? <Archive /> : <ArchiveRestore />}
+            {agent.status === "active" ? "Archive agent" : "Restore agent"}
           </Button>
           <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
             <Trash2 />
