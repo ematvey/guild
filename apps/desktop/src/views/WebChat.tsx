@@ -21,6 +21,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUp,
+  ArrowLeft,
   ShieldAlert,
   ShieldCheck,
   Brain,
@@ -92,6 +93,7 @@ import {
   type SkillsRoute,
 } from "./skills/skills-route";
 import { AgentsPanel } from "./agents/AgentsPanel";
+import { AgentGlyph } from "./agents/agent-ui";
 import {
   AGENTS_ACTIVITY,
   AGENTS_DIRECTORY,
@@ -101,7 +103,15 @@ import {
   parseAgentsRoute,
   type AgentsRoute,
 } from "./agents/agents-route";
-import { listInbox } from "./agents/agents-api";
+import {
+  getAgent,
+  getAgentThread,
+  listInbox,
+  renameAgentThread,
+  sendAgentTurn,
+  type Agent,
+  type AgentThread,
+} from "./agents/agents-api";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -1842,6 +1852,47 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   useEffect(() => {
     if (route.invalid) window.history.replaceState(null, "", "/chats");
   }, [route.invalid]);
+  // Agent threads are chats: the agent route names the thread, and the
+  // thread row names the chat journal. Loading both lets the normal chat
+  // column render the transcript and composer instead of a bespoke view.
+  const agentThreadRoute =
+    route.agents?.view === "agent" &&
+    route.agents.tab === "threads" &&
+    route.agents.threadId
+      ? { agentId: route.agents.agentId, threadId: route.agents.threadId }
+      : null;
+  const [agentThreadData, setAgentThreadData] = useState<{
+    agent: Agent;
+    thread: AgentThread;
+  } | null>(null);
+  const [agentThreadError, setAgentThreadError] = useState<string | null>(null);
+  const [agentThreadRevision, setAgentThreadRevision] = useState(0);
+  useEffect(() => {
+    if (!agentThreadRoute) {
+      setAgentThreadData(null);
+      setAgentThreadError(null);
+      return;
+    }
+    let live = true;
+    setAgentThreadData(null);
+    setAgentThreadError(null);
+    void Promise.all([
+      getAgent(agentThreadRoute.agentId),
+      getAgentThread(agentThreadRoute.agentId, agentThreadRoute.threadId),
+    ])
+      .then(([agent, thread]) => {
+        if (live) setAgentThreadData({ agent, thread });
+      })
+      .catch((error: unknown) => {
+        if (live) {
+          setAgentThreadError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [agentThreadRoute?.agentId, agentThreadRoute?.threadId, agentThreadRevision]);
+
   // Inbox badge: attention items only, never activity. Refreshed on route
   // moves and once a minute while the app is open.
   const [inboxUnread, setInboxUnread] = useState(0);
@@ -1864,7 +1915,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       window.clearInterval(timer);
     };
   }, [route.agents, route.chatId, inboxRevision]);
-  const chatId = route.chatId;
+  const chatId = route.chatId ?? agentThreadData?.thread.chat_id ?? null;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
     const seq = events[events.length - 1]?.seq ?? 0;
@@ -2889,6 +2940,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         submit: async (cid, id, body) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
           rememberCommand(localStorage, outgoingScope, command);
+          if (agentThreadData !== null && cid === agentThreadData.thread.chat_id) {
+            await sendAgentTurn(agentThreadData.agent.id, {
+              thread_id: agentThreadData.thread.id,
+              message: body.prompt,
+              attachment_ids: body.attachmentIds,
+              user_message_id: id,
+              ...(body.sendMode === undefined ? {} : { send_mode: body.sendMode }),
+            });
+            return;
+          }
           await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
             id, body.sendMode, body.skillsIndex, body.instructions);
         },
@@ -2913,7 +2974,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
     if (!mountedRef.current || !filesReady) return;
     const text = promptRef.current.trim();
-    if ((!text && pendingRef.current.length === 0) || !model) return;
+    if ((!text && pendingRef.current.length === 0) || (!model && agentThreadData === null)) return;
     if (text.toLowerCase() === "/compact") {
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
       if (compacting) { toast.info("Compaction is already running"); return; }
@@ -2939,7 +3000,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     const selected = currentProject ? projects?.find(p => p.id === currentProject.id) : undefined;
     const executor = selected?.machine_id ?? (currentProject ? openRow?.machine_id ?? undefined : undefined);
     const command = captureCommand({
-      id: crypto.randomUUID(), originChatId: chatId, chatId, text, model,
+      id: crypto.randomUUID(), originChatId: chatId, chatId, text,
+      model: agentThreadData?.agent.model ?? model,
       createProjectId: pickedProjectRef.current?.id ?? null,
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
@@ -3077,9 +3139,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const commitRename = useCallback(async () => {
     const v = renameValue.trim();
     setRenameOpen(false);
-    if (!chatId || !v || v === activeChat?.title) return;
+    const current = agentThreadData?.thread.title ?? activeChat?.title;
+    if (!v || v === current) return;
+    if (agentThreadData !== null) {
+      const thread = await renameAgentThread(
+        agentThreadData.agent.id,
+        agentThreadData.thread.id,
+        v,
+      );
+      setAgentThreadData((prev) => (prev === null ? prev : { ...prev, thread }));
+      void refreshChats();
+      return;
+    }
+    if (!chatId) return;
     await renameChat(chatId, v);
-  }, [chatId, renameValue, activeChat, renameChat]);
+  }, [chatId, renameValue, activeChat, agentThreadData, renameChat, refreshChats]);
   // The header menu's archive: the open chat navigates back to the chats
   // list after archiving (an archived thread is a dead end for sending).
   const headerArchive = useCallback(async () => {
@@ -3321,18 +3395,61 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // The agents surface is another full main-column page. Its route owns the
   // whole column right of the rail; the chat comes back on any chat route.
   const agentsRoute = route.agents;
+  // An agent thread is a chat: once the agent and thread rows are loaded the
+  // normal chat column renders it, with the agent identity in the header.
+  // The shell below only covers the fetch (and its failure) so the route
+  // never falls back to the agent directory or a scratch composer.
+  const agentThreadShell =
+    agentThreadRoute !== null && agentThreadData === null ? (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-1.5 size-8"
+            aria-label="Back to threads"
+            onClick={() =>
+              pushRoute({
+                chatId: null,
+                projectId: null,
+                overlay: null,
+                skills: null,
+                agents: { view: "agent", agentId: agentThreadRoute.agentId, tab: "threads" },
+              })
+            }
+          >
+            <ArrowLeft />
+          </Button>
+          <Skeleton className="h-4 w-40 rounded-md" />
+        </header>
+        {agentThreadError !== null ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="text-sm text-muted-foreground">{agentThreadError}</p>
+            <Button variant="outline" size="sm" onClick={() => setAgentThreadRevision((n) => n + 1)}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <ThreadSkeleton />
+        )}
+      </div>
+    ) : null;
   const inlineAgents = agentsRoute !== null ? (
-    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
-      <AgentsPanel
-        route={agentsRoute}
-        viewer={{ email, displayName, role }}
-        onNavigate={(next) =>
-          pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
-        }
-        onOpenChat={openChat}
-        onInboxChanged={() => setInboxRevision((value) => value + 1)}
-      />
-    </div>
+    agentThreadRoute !== null ? (
+      agentThreadShell
+    ) : (
+      <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+        <AgentsPanel
+          route={agentsRoute}
+          viewer={{ email, displayName, role }}
+          onNavigate={(next) =>
+            pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
+          }
+          onOpenChat={openChat}
+          onInboxChanged={() => setInboxRevision((value) => value + 1)}
+        />
+      </div>
+    )
   ) : null;
 
   // desktop: draggable resize handle. While dragging, the width transition
@@ -3481,13 +3598,45 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </DesktopTooltip>
             )
           )}
-          <span className="min-w-0 flex-1 truncate font-medium">
-            {threadLoading && blocks.length === 0 ? (
-              <Skeleton className="h-4 w-28 rounded-md" />
-            ) : (
-              activeTitle
-            )}
-          </span>
+          {agentThreadData !== null ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-ml-1 size-8 shrink-0 text-muted-foreground"
+                aria-label="Back to threads"
+                title="Back to threads"
+                onClick={() =>
+                  pushRoute({
+                    chatId: null,
+                    projectId: null,
+                    overlay: null,
+                    skills: null,
+                    agents: {
+                      view: "agent",
+                      agentId: agentThreadData.agent.id,
+                      tab: "threads",
+                    },
+                  })
+                }
+              >
+                <ArrowLeft />
+              </Button>
+              <AgentGlyph name={agentThreadData.agent.name} className="size-7 rounded-md" />
+              <span className="min-w-0 truncate font-medium">{agentThreadData.agent.name}</span>
+              <span className="hidden min-w-0 truncate text-muted-foreground sm:inline">
+                / {agentThreadData.thread.title}
+              </span>
+            </div>
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {threadLoading && blocks.length === 0 ? (
+                <Skeleton className="h-4 w-28 rounded-md" />
+              ) : (
+                activeTitle
+              )}
+            </span>
+          )}
           {chatId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -3501,14 +3650,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44">
-                <DropdownMenuItem onSelect={() => { setRenameValue(activeChat?.title ?? ""); setRenameOpen(true); }}>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setRenameValue(agentThreadData?.thread.title ?? activeChat?.title ?? "");
+                    setRenameOpen(true);
+                  }}
+                >
                   <Pencil className="size-4" />
                   Rename
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void headerArchive()}>
-                  {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-                  {chatArchived ? "Unarchive" : "Archive"}
-                </DropdownMenuItem>
+                {agentThreadData === null && (
+                  <DropdownMenuItem onSelect={() => void headerArchive()}>
+                    {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                    {chatArchived ? "Unarchive" : "Archive"}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
                   <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
@@ -3529,7 +3685,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
-                <DialogTitle>Rename chat</DialogTitle>
+                <DialogTitle>{agentThreadData ? "Rename thread" : "Rename chat"}</DialogTitle>
               </DialogHeader>
               <input
                 autoFocus
@@ -4020,9 +4176,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <ContextRing chatId={chatId} model={model}
+                <ContextRing chatId={chatId} model={agentThreadData?.agent.model ?? model}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
-                {models !== null && models.length > 0 && (
+                {agentThreadData !== null ? (
+                  <span
+                    className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                    title="This agent's model"
+                  >
+                    {agentThreadData.agent.model}
+                  </span>
+                ) : models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto min-w-0 max-w-28 gap-1 border-none bg-secondary px-2 shadow-none sm:max-w-40">
                       <SelectValue />

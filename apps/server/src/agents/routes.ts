@@ -220,6 +220,12 @@ export function registerAgentRoutes(
           model: agent.model,
           messages: [{ role: "user", content: message }],
           attachment_ids: attachmentIds,
+          ...(typeof body["user_message_id"] === "string"
+            ? { user_message_id: body["user_message_id"] }
+            : {}),
+          ...(body["send_mode"] === "steer" || body["send_mode"] === "queue"
+            ? { send_mode: body["send_mode"] }
+            : {}),
         },
         thread.chat_id,
         chat,
