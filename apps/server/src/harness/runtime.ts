@@ -67,6 +67,10 @@ import { assertPlatformSchema } from "../platform/migrations.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
+import { AgentStore } from "../agents/store.js";
+import { AgentRunLifecycle } from "../agents/lifecycle.js";
+import { createAgentTools } from "../agents/tools.js";
+import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -111,6 +115,8 @@ export class GuildRuntime {
   private readonly registry: Registry;
   private readonly threads: ThreadStore;
   private readonly chats: ChatStore;
+  private readonly agents: AgentStore;
+  private readonly agentRuns: AgentRunLifecycle;
   private readonly turnCommands: TurnCommandStore;
   private readonly gateway: GatewayStore;
   private readonly bridge: ChatBridge;
@@ -219,6 +225,8 @@ export class GuildRuntime {
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
     this.chats = new ChatStore(pool);
+    this.agents = new AgentStore(pool);
+    this.agentRuns = new AgentRunLifecycle({ pool, log });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
@@ -292,6 +300,10 @@ export class GuildRuntime {
         }
       },
       ...(objects !== undefined ? { spill: { artifacts: this.toolArtifacts, objects } } : {}),
+      agentRuns: {
+        assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
+        runEnd: (chatId, failure) => this.agentRuns.runEnd(chatId, failure),
+      },
       log,
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
@@ -397,11 +409,18 @@ export class GuildRuntime {
     orgId: string,
   ): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
     const chatId = await this.chatOfConversation(conversationId);
-    return {
-      key: `chat:${orgId}:${conversationId}`,
-      subpath: `chats/${orgId}/${conversationId}`,
-      hostDir: `${sandboxRoot()}/${conversationId}`,
+    const target = await resolveConversationWorkspace(this.pool, {
+      conversationId,
+      orgId,
       chatId,
+      agentWorkspaceRoot: this.config.agentWorkspaceRoot,
+      plainHostRoot: sandboxRoot(),
+    });
+    return {
+      key: target.key,
+      subpath: target.subpath,
+      hostDir: target.hostDir,
+      chatId: target.chatId,
     };
   }
 
@@ -456,10 +475,11 @@ export class GuildRuntime {
     return workspace !== null ? "server" : null;
   }
 
-  /** Agent workspace lookup. It lands with the agents runtime; plain chats
-   *  have no agent workspace, so this returns null for now. */
-  private async agentWorkspaceForChat(_orgId: string, _chatId: string | null): Promise<string | null> {
-    return null;
+  /** The agent workspace subpath behind a chat, or null for a plain chat. */
+  private async agentWorkspaceForChat(orgId: string, chatId: string | null): Promise<string | null> {
+    if (chatId === null) return null;
+    const agent = await agentThreadForChat(this.pool, chatId);
+    return agent === null ? null : agentWorkspaceSubpath(orgId, agent.agent_id);
   }
   /** Turn-start skill materialization (spec §3): the chat owner's
    *  installed org skills land under the server-side executor dir before
@@ -951,13 +971,29 @@ export class GuildRuntime {
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
+    const agentTools = await this.agentToolsForChat(chatId);
     await conversation.configure(
       {
         extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
-        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
+        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
       },
       BACKGROUND_CONTEXT,
     );
+  }
+
+  /** The conversation tools that exist only for agent threads: send_message,
+   *  conversations_search and conversation_read, filtered by the agent's
+   *  tool allowlist. Plain chats get none. */
+  private async agentToolsForChat(chatId: string): Promise<ToolRegistration[]> {
+    const ref = await agentThreadForChat(this.pool, chatId);
+    if (ref === null) return [];
+    const agent = await this.agents.fetchAgent(ref.agent_id);
+    return createAgentTools({
+      pool: this.pool,
+      store: this.agents,
+      threads: this.threads,
+      agent,
+    });
   }
 
   /** Submits a user turn into the chat's conversation: the model provider
