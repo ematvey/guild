@@ -14,7 +14,13 @@ import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { AgentStore, deriveTitleFromMessage } from "./store.js";
-import { scheduleReminder } from "./routines.js";
+import {
+  createRoutine,
+  deleteRoutine,
+  listRoutines,
+  scheduleReminder,
+  updateRoutine,
+} from "./routines.js";
 import { createDelegateTool, createReleaseArtifactsTool, type DelegationToolContext } from "./delegation.js";
 import type { Agent } from "./types.js";
 
@@ -206,6 +212,21 @@ const reminderOutput = Type.Object({
   run_at: Type.String(),
 });
 
+const routineOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  kind: Type.String(),
+  schedule: Type.Union([Type.String(), Type.Null()]),
+  timezone: Type.String(),
+  prompt: Type.String(),
+  enabled: Type.Boolean(),
+  next_run_at: Type.Union([Type.String(), Type.Null()]),
+});
+
+const routineListOutput = Type.Object({
+  routines: Type.Array(routineOutput),
+});
+
 const readOutput = Type.Object({
   thread_id: Type.String(),
   thread_title: Type.String(),
@@ -294,6 +315,128 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               prompt: args.prompt,
             });
             return { structuredOutput: result as unknown as JsonValue };
+          } catch (error) {
+            return textErr(error instanceof Error ? error.message : String(error));
+          }
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("list_routines")) {
+    tools.push(
+      defineTool({
+        name: "list_routines",
+        description:
+          "List this agent's routines with their stored schedule, timezone, prompt, enabled state and next run. " +
+          "Use this before changing or deleting a routine so you can cite its id.",
+        parameters: Type.Object({}),
+        structuredOutputSchema: routineListOutput,
+        replay: "safe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 32 * 1024 },
+        execute: async () => {
+          const routines = await listRoutines(deps.pool, deps.agent.id);
+          return { structuredOutput: { routines } as unknown as JsonValue };
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("create_routine")) {
+    tools.push(
+      defineTool({
+        name: "create_routine",
+        description:
+          "Create a recurring routine for this agent. Pass a five-field cron expression or interval sugar " +
+          "such as 'every 2 hours' or 'every day'. The user sees a human-readable schedule, so translate " +
+          "their wording into the schedule and echo it back in plain language.",
+        parameters: Type.Object({
+          name: Type.String({ description: "Short routine name" }),
+          prompt: Type.String({ description: "The prompt the isolated routine run receives" }),
+          schedule: Type.String({ description: "Five-field cron or interval such as 'every 2 hours'" }),
+          timezone: Type.Optional(Type.String({ description: "IANA timezone, default UTC" })),
+          enabled: Type.Optional(Type.Boolean({ description: "Start enabled (default true)" })),
+        }),
+        structuredOutputSchema: routineOutput,
+        replay: "unsafe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 16 * 1024 },
+        execute: async (args) => {
+          try {
+            const routine = await createRoutine(deps.pool, deps.agent.id, {
+              name: args.name,
+              prompt: args.prompt,
+              kind: "cron",
+              schedule: args.schedule,
+              timezone: args.timezone ?? "UTC",
+              enabled: args.enabled ?? true,
+            });
+            return { structuredOutput: routine as unknown as JsonValue };
+          } catch (error) {
+            return textErr(error instanceof Error ? error.message : String(error));
+          }
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("update_routine")) {
+    tools.push(
+      defineTool({
+        name: "update_routine",
+        description:
+          "Change a routine's name, prompt, schedule, timezone or enabled state. Omitted fields stay as they are. " +
+          "Use list_routines first when you need the routine id.",
+        parameters: Type.Object({
+          routine_id: Type.String({ description: "The routine id" }),
+          name: Type.Optional(Type.String()),
+          prompt: Type.Optional(Type.String()),
+          schedule: Type.Optional(Type.String({ description: "Five-field cron or interval such as 'every 2 hours'" })),
+          timezone: Type.Optional(Type.String()),
+          enabled: Type.Optional(Type.Boolean()),
+        }),
+        structuredOutputSchema: routineOutput,
+        replay: "unsafe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 16 * 1024 },
+        execute: async (args) => {
+          try {
+            const routine = await updateRoutine(deps.pool, deps.agent.id, args.routine_id, {
+              ...(args.name === undefined ? {} : { name: args.name }),
+              ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
+              ...(args.schedule === undefined ? {} : { schedule: args.schedule }),
+              ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
+              ...(args.enabled === undefined ? {} : { enabled: args.enabled }),
+            });
+            return { structuredOutput: routine as unknown as JsonValue };
+          } catch (error) {
+            return textErr(error instanceof Error ? error.message : String(error));
+          }
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("delete_routine")) {
+    tools.push(
+      defineTool({
+        name: "delete_routine",
+        description:
+          "Delete a routine and stop its schedule. Use only after the user has confirmed the deletion.",
+        parameters: Type.Object({
+          routine_id: Type.String({ description: "The routine id" }),
+        }),
+        structuredOutputSchema: Type.Object({ deleted: Type.Boolean(), routine_id: Type.String() }),
+        replay: "unsafe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 4 * 1024 },
+        execute: async (args) => {
+          try {
+            await deleteRoutine(deps.pool, deps.agent.id, args.routine_id);
+            return {
+              structuredOutput: { deleted: true, routine_id: args.routine_id } as unknown as JsonValue,
+            };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
           }
