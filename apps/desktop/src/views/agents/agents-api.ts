@@ -239,8 +239,9 @@ export interface AgentFileContent {
 
 const agentBase = (id: string) => `/api/v1/agents/${encodeURIComponent(id)}`;
 
-export async function listAgents(): Promise<Agent[]> {
-  return listOf<Agent>(await request<unknown>("/api/v1/agents"), "agents");
+export async function listAgents(includeArchived = false): Promise<Agent[]> {
+  const query = includeArchived ? "?include_archived=1" : "";
+  return listOf<Agent>(await request<unknown>(`/api/v1/agents${query}`), "agents");
 }
 
 export async function getAgent(id: string): Promise<Agent> {

@@ -54,7 +54,7 @@ export function AgentsDirectory({
   useEffect(() => {
     let live = true;
     setError(null);
-    void listAgents()
+    void listAgents(true)
       .then((rows) => {
         if (live) setAgents(rows);
       })
