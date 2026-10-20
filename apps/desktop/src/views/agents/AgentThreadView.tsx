@@ -2,13 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUp,
+  Check,
   Loader2,
   MessageSquare,
+  Pencil,
   SquareTerminal,
+  X,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
@@ -19,6 +23,7 @@ import { relativeTime } from "../../lib/relative-time";
 import {
   getAgentThread,
   listAgentThreads,
+  renameAgentThread,
   sendAgentTurn,
   type Agent,
   type AgentThread,
@@ -57,6 +62,9 @@ export function AgentThreadView({
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [titleSaving, setTitleSaving] = useState(false);
   const chatIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -115,6 +123,21 @@ export function AgentThreadView({
   const blocks = useMemo(() => eventsToBlocks(events), [events]);
   const entries = useMemo(() => viewEntries(blocks, "casual"), [blocks]);
 
+  const saveTitle = async () => {
+    const title = titleDraft.trim();
+    if (title === "" || titleSaving) return;
+    setTitleSaving(true);
+    try {
+      const next = await renameAgentThread(agent.id, threadId, title);
+      setThread(next);
+      setRenaming(false);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "The thread was not renamed.");
+    } finally {
+      setTitleSaving(false);
+    }
+  };
+
   const send = async () => {
     const text = prompt.trim();
     if (text === "" || sending) return;
@@ -145,7 +168,57 @@ export function AgentThreadView({
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <BackToThreads agentId={agent.id} onNavigate={onNavigate} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13.5px] font-medium">{thread.title}</p>
+          {renaming ? (
+            <div className="flex items-center gap-1">
+              <Input
+                value={titleDraft}
+                autoFocus
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveTitle();
+                  if (e.key === "Escape") setRenaming(false);
+                }}
+                className="h-7 max-w-[28rem] text-[13px]"
+                aria-label="Thread title"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                disabled={titleSaving || titleDraft.trim() === ""}
+                onClick={() => void saveTitle()}
+                title="Save title"
+              >
+                {titleSaving ? <Loader2 className="animate-spin" /> : <Check />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={() => setRenaming(false)}
+                title="Cancel rename"
+              >
+                <X />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1">
+              <p className="truncate text-[13.5px] font-medium">
+                {thread.title || "Untitled thread"}
+              </p>
+              <button
+                type="button"
+                className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title="Rename thread"
+                onClick={() => {
+                  setTitleDraft(thread.title);
+                  setRenaming(true);
+                }}
+              >
+                <Pencil className="size-3" />
+              </button>
+            </div>
+          )}
           <p className="truncate text-[11.5px] text-muted-foreground">
             {agent.name} · {thread.kind === "default" ? "Default thread" : "Thread"} · last activity{" "}
             {relativeTime(thread.last_activity_at)}
