@@ -344,6 +344,11 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "use");
+    const requested = optionalString(jsonBody(req), "thread_id");
+    if (requested !== undefined && requested.trim() !== "") {
+      const thread = await store.getThread(agentId, requested);
+      return agentTurn(req, reply, user, agent, thread);
+    }
     const threads = await store.listThreads(agentId);
     const thread = threads.find((item) => item.kind === "default") ?? threads[0];
     if (thread === undefined) throw ApiError.notFound("no such thread");
