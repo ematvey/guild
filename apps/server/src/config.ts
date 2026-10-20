@@ -57,6 +57,10 @@ export interface Config {
   /** Server-side data dir (GUILD_DATA_DIR, default ./data): the workspace
    *  session root (workspaces/<org>/<name>) lives under it. */
   dataDir: string;
+  /** Root of the agent workspace volume as the server sees it
+   *  (GUILD_AGENT_WORKSPACE_ROOT, default /workspaces): agent subpaths
+   *  resolve under it for the file browser. */
+  agentWorkspaceRoot: string;
   /** Whether server-side executors may run shell tools at all
    *  (GUILD_ALLOW_SHELL_TOOLS; default on with a sandbox runner, off
    *  otherwise — machine `execute` calls ride the exec policy instead). */
@@ -213,6 +217,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiUrl,
     poolMax,
     dataDir,
+    agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
     allowShellTools,
     sandbox,
     approvalTimeoutMs,
