@@ -977,9 +977,22 @@ export class GuildRuntime {
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
     const agentTools = await this.agentToolsForChat(chatId);
+    // Tools resolve through installed extensions; configure stores names.
+    // The agent tools are per conversation, so their extension is installed
+    // under a chat-scoped name and listed with the other extensions.
+    const agentExtension =
+      agentTools.length === 0
+        ? null
+        : { name: `guild-agent-tools:${chatId}`, tools: agentTools };
+    if (agentExtension !== null) this.registry.install(agentExtension);
     await conversation.configure(
       {
-        extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
+        extensions: [
+          ...base.extensions,
+          ...(agentExtension === null ? [] : [agentExtension]),
+          ...prepared.extensions,
+          ...userPrepared.extensions,
+        ],
         tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
       },
       BACKGROUND_CONTEXT,
@@ -991,6 +1004,7 @@ export class GuildRuntime {
    *  tool allowlist. Plain chats get none. */
   private async agentToolsForChat(chatId: string): Promise<ToolRegistration[]> {
     const ref = await agentThreadForChat(this.pool, chatId);
+    this.log.info({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
     if (ref === null) return [];
     const agent = await this.agents.fetchAgent(ref.agent_id);
     const delegation = await delegationContextForChat({
@@ -1011,13 +1025,15 @@ export class GuildRuntime {
       },
       workspaceRoot: this.config.agentWorkspaceRoot,
     });
-    return createAgentTools({
+    const tools = createAgentTools({
       pool: this.pool,
       store: this.agents,
       threads: this.threads,
       agent,
       ...(delegation === null ? {} : { delegation }),
     });
+    this.log.info({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
+    return tools;
   }
 
   /** Submits a user turn into the chat's conversation: the model provider
