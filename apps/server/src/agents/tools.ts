@@ -14,6 +14,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { AgentStore, deriveTitleFromMessage } from "./store.js";
+import { createDelegateTool, createReleaseArtifactsTool, type DelegationToolContext } from "./delegation.js";
 import type { Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -26,7 +27,12 @@ export interface AgentToolDeps {
   store: AgentStore;
   threads: ThreadStore;
   agent: Agent;
+  /** Present only when this chat has a running run and the delegation limits
+   *  still allow spawning. */
+  delegation?: DelegationToolContext;
 }
+
+export { createDelegateTool, createReleaseArtifactsTool } from "./delegation.js";
 
 export interface AgentMessageResult {
   thread_id: string;
@@ -244,6 +250,14 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         },
       }),
     );
+  }
+
+  if (allowed.has("delegate") && deps.delegation?.can_spawn === true) {
+    tools.push(createDelegateTool(deps.delegation));
+  }
+
+  if (allowed.has("release_artifacts") && deps.delegation !== undefined) {
+    tools.push(createReleaseArtifactsTool(deps.delegation));
   }
 
   if (allowed.has("conversation_read")) {

@@ -1,0 +1,284 @@
+// Per-turn workspace conflict journal. Tool calls that write files append
+// their paths to agent_workspace_turns; overlapping paths between running
+// turns produce a notice in the other turn's transcript (a system_message)
+// and, for the writer, a warning diagnostic on the tool result. The user is
+// never notified.
+//
+// Shell coverage is deliberately best-effort: simple `>`, `>>`, `&>`, and
+// `tee` targets are parsed. Paths built at runtime, shell functions, and
+// `cd` prefixes are not resolved, so a command can write files the journal
+// does not see.
+
+import { hook, ToolTask, type ConversationId, type HookRegistration } from "@earendil-works/pi-durable";
+import type { ToolCall } from "@earendil-works/pi-ai";
+import type { PlatformPool } from "../platform/db.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import { systemMessageEvent } from "../platform/domain/thread-events.js";
+import { uuidv7 } from "../platform/time.js";
+import { normalizeRelativePath } from "./files.js";
+import type { AgentStore } from "./store.js";
+import type { AgentRun } from "./types.js";
+
+const MAX_NOTICE_PATHS = 8;
+
+export interface ConflictJournalDeps {
+  pool: PlatformPool;
+  store: AgentStore;
+  threads: ThreadStore;
+}
+
+export interface WorkspaceTurnRef {
+  id: string;
+  agent_id: string;
+  thread_id: string;
+  run_id: string;
+  started_at: string;
+}
+
+interface TurnRow {
+  id: string;
+  agent_id: string;
+  thread_id: string;
+  run_id: string;
+  started_at: Date;
+  paths: string[];
+}
+
+function clipPaths(paths: string[]): string {
+  const unique = [...new Set(paths)];
+  const shown = unique.slice(0, MAX_NOTICE_PATHS).map((item) => `\`${item}\``).join(", ");
+  return unique.length > MAX_NOTICE_PATHS ? `${shown} and ${unique.length - MAX_NOTICE_PATHS} more` : shown;
+}
+
+function pathArg(args: Record<string, unknown>): string[] {
+  const value = args["path"];
+  return typeof value === "string" ? [value] : [];
+}
+
+/** Paths named by an apply_patch-style payload. The tool is not part of the
+ *  current coding extension, but the journal accepts its common headers so a
+ *  future or MCP-provided patch tool is covered. */
+function patchPaths(args: Record<string, unknown>): string[] {
+  const out = pathArg(args);
+  const patch = typeof args["patch"] === "string" ? args["patch"] : typeof args["input"] === "string" ? args["input"] : "";
+  for (const line of patch.split(/\r?\n/)) {
+    const match = /^\*\*\* (?:Update|Add|Delete) File:\s*(.+)$/.exec(line) ?? /^(?:\+\+\+|---)\s+[ab]\/(.+)$/.exec(line);
+    if (match?.[1] !== undefined) out.push(match[1].trim());
+  }
+  return out;
+}
+
+/** Simple shell write targets: redirections and tee. See the file header for
+ *  the documented limits. */
+function shellPaths(command: string): string[] {
+  const out: string[] = [];
+  const redirect = /(?:^|[^<>&])(?:[0-9]?>>?|&>)\s*(["']?)([^\s;&|<>"']+)\1/g;
+  for (const match of command.matchAll(redirect)) {
+    if (match[2] !== undefined) out.push(match[2]);
+  }
+  const tee = /(?:^|[;&|]\s*|\s)tee(?:\s+-a)?(?:\s+--)?\s+(["']?)([^\s;&|<>"']+)\1/g;
+  for (const match of command.matchAll(tee)) {
+    if (match[2] !== undefined) out.push(match[2]);
+  }
+  return out;
+}
+
+export function writtenPaths(toolName: string, args: Record<string, unknown>): string[] {
+  const raw =
+    toolName === "write" || toolName === "edit"
+      ? pathArg(args)
+      : toolName === "apply_patch" || toolName === "apply-patch"
+        ? patchPaths(args)
+        : toolName === "bash" && typeof args["command"] === "string"
+          ? shellPaths(args["command"])
+          : [];
+  const normalized: string[] = [];
+  for (const candidate of raw) {
+    if (candidate === "" || candidate === "/dev/null" || candidate.includes("$")) continue;
+    try {
+      const rel = normalizeRelativePath(candidate);
+      if (rel !== "") normalized.push(rel);
+    } catch {
+      // Absolute paths and traversal attempts are outside the journal.
+    }
+  }
+  return [...new Set(normalized)];
+}
+
+export class AgentConflictJournal {
+  constructor(private readonly deps: ConflictJournalDeps) {}
+
+  /** Starts (or returns) the unfinished journal row for the chat's running
+   *  run. Called at turn begin and lazily by the tool hook. */
+  async beginTurn(chatId: string): Promise<WorkspaceTurnRef | null> {
+    const run = await this.deps.store.runningRunForChat(chatId);
+    if (run === null || run.thread_id === null) return null;
+    const existing = await this.deps.pool.query<TurnRow>(
+      `SELECT id, agent_id, thread_id, run_id, started_at, paths
+       FROM agent_workspace_turns
+       WHERE run_id = $1 AND finished_at IS NULL
+       ORDER BY started_at ASC LIMIT 1`,
+      [run.id],
+    );
+    if (existing.rows[0] !== undefined) return this.ref(existing.rows[0]);
+    const id = uuidv7();
+    const inserted = await this.deps.pool.query<TurnRow>(
+      `INSERT INTO agent_workspace_turns (id, agent_id, thread_id, run_id, started_at, paths)
+       VALUES ($1, $2, $3, $4, now(), '{}')
+       RETURNING id, agent_id, thread_id, run_id, started_at, paths`,
+      [id, run.agent_id, run.thread_id, run.id],
+    );
+    return this.ref(inserted.rows[0]!);
+  }
+
+  /** Marks the run's open turn finished. Idempotent; safe when no turn was
+   *  ever started. */
+  async finishRun(runId: string): Promise<void> {
+    await this.deps.pool.query(
+      `UPDATE agent_workspace_turns SET finished_at = now()
+       WHERE run_id = $1 AND finished_at IS NULL`,
+      [runId],
+    );
+  }
+
+  /** Records one tool call's write paths and returns a model-visible notice
+   *  for the writer when another running turn touched an overlapping path
+   *  after this turn's baseline. Also appends reciprocal system messages to
+   *  the other turn's thread. */
+  async recordToolCall(
+    chatId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<string | null> {
+    const paths = writtenPaths(toolName, args);
+    if (paths.length === 0) return null;
+    const turn = await this.beginTurn(chatId);
+    if (turn === null) return null;
+    await this.deps.pool.query(
+      `UPDATE agent_workspace_turns
+       SET paths = (
+         SELECT COALESCE(array_agg(DISTINCT p ORDER BY p), '{}')
+         FROM unnest(paths || $2::text[]) AS p
+       )
+       WHERE id = $1`,
+      [turn.id, paths],
+    );
+    const current = await this.deps.pool.query<TurnRow>(
+      `SELECT id, agent_id, thread_id, run_id, started_at, paths
+       FROM agent_workspace_turns WHERE id = $1`,
+      [turn.id],
+    );
+    const mine = current.rows[0];
+    if (mine === undefined) return null;
+    const others = await this.deps.pool.query<TurnRow>(
+      `SELECT id, agent_id, thread_id, run_id, started_at, paths
+       FROM agent_workspace_turns
+       WHERE agent_id = $1 AND id <> $2 AND finished_at IS NULL
+         AND thread_id <> $3 AND paths && $4::text[]
+       ORDER BY started_at ASC`,
+      [mine.agent_id, mine.id, mine.thread_id, paths],
+    );
+    const writerNotices: string[] = [];
+    for (const other of others.rows) {
+      const otherTitle = await this.threadTitle(other.thread_id);
+      const otherStarted = other.started_at.getTime();
+      const myStarted = mine.started_at.getTime();
+      const overlap = other.paths.filter((item) => paths.includes(item));
+      if (overlap.length === 0) continue;
+      // Paths carry no per-touch timestamp in the journal schema, so an
+      // overlap with another running turn is reported to both sides. The
+      // conservative extra notice is preferable to a missed conflict.
+      writerNotices.push(
+        `Thread ${otherTitle} modified ${clipPaths(overlap)} — re-read before editing.`,
+      );
+      if (otherStarted <= myStarted) {
+        await this.appendNotice(other, mine, paths);
+      }
+    }
+    return writerNotices.length === 0 ? null : writerNotices.join(" ");
+  }
+
+  private ref(row: TurnRow): WorkspaceTurnRef {
+    return {
+      id: row.id,
+      agent_id: row.agent_id,
+      thread_id: row.thread_id,
+      run_id: row.run_id,
+      started_at: row.started_at.toISOString(),
+    };
+  }
+
+  private async threadTitle(threadId: string): Promise<string> {
+    const res = await this.deps.pool.query<{ title: string }>(
+      "SELECT title FROM agent_threads WHERE id = $1",
+      [threadId],
+    );
+    return res.rows[0]?.title?.trim() || threadId;
+  }
+
+  private async appendNotice(other: TurnRow, writer: TurnRow, paths: string[]): Promise<void> {
+    const chat = await this.deps.pool.query<{ chat_id: string }>(
+      "SELECT chat_id FROM agent_threads WHERE id = $1",
+      [other.thread_id],
+    );
+    const chatId = chat.rows[0]?.chat_id;
+    if (chatId === undefined) return;
+    const title = await this.threadTitle(writer.thread_id);
+    const text = `Thread ${title} modified ${clipPaths(paths)} — re-read before editing.`;
+    const duplicate = await this.deps.pool.query(
+      `SELECT 1 FROM thread_events
+       WHERE chat_id = $1 AND type = 'system_message'
+         AND payload->>'content' = $2 AND created_at >= $3::timestamptz
+       LIMIT 1`,
+      [chatId, text, other.started_at.toISOString()],
+    );
+    if ((duplicate.rowCount ?? 0) > 0) return;
+    await this.deps.threads.appendEvent(chatId, systemMessageEvent(text));
+  }
+}
+
+/** The tool-task hook that feeds the journal. Only write-shaped tools are
+ *  inspected; the hook never blocks a call. */
+export function createConflictHook(
+  journal: AgentConflictJournal,
+  chatOfConversation: (conversationId: ConversationId) => Promise<string | null>,
+): HookRegistration {
+  return hook(ToolTask, {
+    afterTool: async (call: ToolCall, result, api) => {
+      try {
+        const chatId = await chatOfConversation(api.conversationId);
+        if (chatId === null) return result;
+        const notice = await journal.recordToolCall(
+          chatId,
+          call.name,
+          call.arguments as Record<string, unknown>,
+        );
+        if (notice === null) return result;
+        return {
+          ...result,
+          diagnostics: [
+            ...(result.diagnostics ?? []),
+            { severity: "warn" as const, message: notice, code: "workspace_conflict" },
+          ],
+        };
+      } catch {
+        return result;
+      }
+    },
+  });
+}
+
+/** Test/support helper: the run's journal row (or null). */
+export async function workspaceTurnForRun(
+  pool: PlatformPool,
+  runId: string,
+): Promise<{ id: string; paths: string[]; finished: boolean } | null> {
+  const res = await pool.query<{ id: string; paths: string[]; finished_at: Date | null }>(
+    "SELECT id, paths, finished_at FROM agent_workspace_turns WHERE run_id = $1 ORDER BY started_at ASC LIMIT 1",
+    [runId],
+  );
+  const row = res.rows[0];
+  return row === undefined ? null : { id: row.id, paths: row.paths, finished: row.finished_at !== null };
+}
+
+export type { AgentRun };
