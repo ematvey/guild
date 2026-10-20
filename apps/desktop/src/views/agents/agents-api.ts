@@ -56,6 +56,13 @@ export async function agentFileResponse(path: string): Promise<Response> {
   return res;
 }
 
+function oneOf<T>(value: unknown, key: string): T {
+  if (value && typeof value === "object" && key in value) {
+    return (value as Record<string, T>)[key]!;
+  }
+  return value as T;
+}
+
 function listOf<T>(value: unknown, ...keys: string[]): T[] {
   if (Array.isArray(value)) return value as T[];
   if (value && typeof value === "object") {
@@ -237,32 +244,44 @@ export async function listAgents(): Promise<Agent[]> {
 }
 
 export async function getAgent(id: string): Promise<Agent> {
-  return request<Agent>(agentBase(id));
+  return oneOf<Agent>(await request<unknown>(agentBase(id)), "agent");
 }
 
 export async function createAgent(input: CreateAgentInput): Promise<Agent> {
-  return request<Agent>("/api/v1/agents", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return oneOf<Agent>(
+    await request<unknown>("/api/v1/agents", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+    "agent",
+  );
 }
 
 export async function updateAgent(
   id: string,
   input: UpdateAgentInput,
 ): Promise<Agent> {
-  return request<Agent>(agentBase(id), {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return oneOf<Agent>(
+    await request<unknown>(agentBase(id), {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+    "agent",
+  );
 }
 
 export async function archiveAgent(id: string): Promise<Agent> {
-  return request<Agent>(`${agentBase(id)}/archive`, { method: "POST" });
+  return oneOf<Agent>(
+    await request<unknown>(`${agentBase(id)}/archive`, { method: "POST" }),
+    "agent",
+  );
 }
 
 export async function restoreAgent(id: string): Promise<Agent> {
-  return request<Agent>(`${agentBase(id)}/restore`, { method: "POST" });
+  return oneOf<Agent>(
+    await request<unknown>(`${agentBase(id)}/restore`, { method: "POST" }),
+    "agent",
+  );
 }
 
 export async function deleteAgent(id: string): Promise<void> {
@@ -280,8 +299,11 @@ export async function getAgentThread(
   id: string,
   threadId: string,
 ): Promise<AgentThread> {
-  return request<AgentThread>(
-    `${agentBase(id)}/threads/${encodeURIComponent(threadId)}`,
+  return oneOf<AgentThread>(
+    await request<unknown>(
+      `${agentBase(id)}/threads/${encodeURIComponent(threadId)}`,
+    ),
+    "thread",
   );
 }
 
@@ -289,10 +311,13 @@ export async function createAgentThread(
   id: string,
   title?: string,
 ): Promise<AgentThread> {
-  return request<AgentThread>(`${agentBase(id)}/threads`, {
-    method: "POST",
-    body: JSON.stringify(title ? { title } : {}),
-  });
+  return oneOf<AgentThread>(
+    await request<unknown>(`${agentBase(id)}/threads`, {
+      method: "POST",
+      body: JSON.stringify(title ? { title } : {}),
+    }),
+    "thread",
+  );
 }
 
 /** Sends one message into an agent thread. The server may stream SSE; this
@@ -339,7 +364,10 @@ export async function listAgentRuns(id: string): Promise<AgentRun[]> {
 }
 
 export async function getRun(runId: string): Promise<AgentRun> {
-  return request<AgentRun>(`/api/v1/runs/${encodeURIComponent(runId)}`);
+  return oneOf<AgentRun>(
+    await request<unknown>(`/api/v1/runs/${encodeURIComponent(runId)}`),
+    "run",
+  );
 }
 
 export interface ActivityFilters {
@@ -376,8 +404,11 @@ export async function getRoutine(
   id: string,
   routineId: string,
 ): Promise<AgentRoutine> {
-  return request<AgentRoutine>(
-    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
+  return oneOf<AgentRoutine>(
+    await request<unknown>(
+      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
+    ),
+    "routine",
   );
 }
 
@@ -385,10 +416,13 @@ export async function createRoutine(
   id: string,
   input: RoutineInput,
 ): Promise<AgentRoutine> {
-  return request<AgentRoutine>(`${agentBase(id)}/routines`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return oneOf<AgentRoutine>(
+    await request<unknown>(`${agentBase(id)}/routines`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+    "routine",
+  );
 }
 
 export async function updateRoutine(
@@ -396,9 +430,12 @@ export async function updateRoutine(
   routineId: string,
   input: Partial<RoutineInput>,
 ): Promise<AgentRoutine> {
-  return request<AgentRoutine>(
-    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-    { method: "PATCH", body: JSON.stringify(input) },
+  return oneOf<AgentRoutine>(
+    await request<unknown>(
+      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+    "routine",
   );
 }
 
@@ -416,10 +453,12 @@ export async function runRoutine(
   id: string,
   routineId: string,
 ): Promise<AgentRun | null> {
-  return request<AgentRun | null>(
+  const value = await request<unknown>(
     `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
     { method: "POST" },
   );
+  if (value === null || value === undefined) return null;
+  return oneOf<AgentRun>(value, "run");
 }
 
 export async function listRoutineRuns(
@@ -491,24 +530,24 @@ export async function listAgentTools(): Promise<AgentToolInfo[]> {
  *  send_message and schedule_reminder. */
 export const SAFE_BASELINE_TOOLS: AgentToolInfo[] = [
   {
-    name: "read_file",
+    name: "read",
     label: "Read file",
     group: "Workspace",
     description: "Read a file from the agent workspace.",
     safe: true,
   },
   {
-    name: "write_file",
+    name: "write",
     label: "Write file",
     group: "Workspace",
     description: "Create or overwrite a workspace file.",
     safe: true,
   },
   {
-    name: "list_files",
-    label: "List files",
+    name: "bash",
+    label: "Shell / list files",
     group: "Workspace",
-    description: "List a workspace directory.",
+    description: "Run shell commands in the workspace (includes listing files).",
     safe: true,
   },
   {

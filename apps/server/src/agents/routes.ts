@@ -23,6 +23,24 @@ import type {
   AgentVisibility,
 } from "./types.js";
 
+
+/** Built-in agent tools, in form order. Names match the runtime's tool
+ *  registrations. */
+const AGENT_TOOL_CATALOG = [
+  { name: "read", label: "Read file", group: "Workspace", description: "Read a file from the agent workspace.", safe: true },
+  { name: "write", label: "Write file", group: "Workspace", description: "Create or overwrite a workspace file.", safe: true },
+  { name: "edit", label: "Edit file", group: "Workspace", description: "Apply a targeted edit to a workspace file.", safe: true },
+  { name: "bash", label: "Shell / list files", group: "Workspace", description: "Run shell commands in the workspace (includes listing files).", safe: true },
+  { name: "conversations_search", label: "Search conversations", group: "Memory", description: "Search this agent's own thread history.", safe: true },
+  { name: "conversation_read", label: "Read conversation", group: "Memory", description: "Read a bounded excerpt from one of the agent's threads.", safe: true },
+  { name: "send_message", label: "Send message", group: "Messaging", description: "Open a new thread with a message to the user.", safe: true },
+  { name: "schedule_reminder", label: "Schedule reminder", group: "Routines", description: "Schedule a one-shot reminder for this agent.", safe: true },
+  { name: "delegate", label: "Delegate", group: "Agents", description: "Delegate a task to another agent and collect its result.", safe: false },
+  { name: "release_artifacts", label: "Release artifacts", group: "Agents", description: "Release delegated artifact staging for a run.", safe: false },
+  { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
+  { name: "codemode", label: "Codemode", group: "Advanced", description: "Run a JavaScript tool-orchestration script.", safe: false },
+];
+
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
 const RUN_STATUSES = new Set<AgentRunStatus>(["queued", "running", "succeeded", "failed", "silent", "skipped"]);
@@ -131,6 +149,14 @@ export function registerAgentRoutes(
 ): void {
   const store = new AgentStore(infra.pool);
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
+
+  /** The built-in tool catalog the creation/settings forms offer. Integration
+   *  and MCP tools are added by the runtime; this endpoint is the stable
+   *  built-in surface. */
+  app.get("/api/v1/agents/tools", async (req, reply) => {
+    await requireUser(auth, req);
+    return sendJson(reply, { tools: AGENT_TOOL_CATALOG });
+  });
 
   async function agentTurn(
     req: FastifyRequest,
@@ -508,6 +534,12 @@ export function registerAgentRoutes(
   app.post("/api/v1/inbox/:id/read", async (req, reply) => {
     const user = await requireUser(auth, req);
     const notice = await store.markNoticeRead(user.id, parseUuidParam(req, "id"));
+    return sendJson(reply, { notice });
+  });
+
+  app.post("/api/v1/inbox/:id/unread", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const notice = await store.markNoticeUnread(user.id, parseUuidParam(req, "id"));
     return sendJson(reply, { notice });
   });
 
