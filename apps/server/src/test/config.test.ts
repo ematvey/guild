@@ -27,6 +27,7 @@ describe("loadConfig", () => {
       webDistDir: path.resolve(process.cwd(), "../desktop/dist"),
       poolMax: 10,
       dataDir: path.resolve("./data"),
+      agentWorkspaceRoot: "/workspaces",
       allowShellTools: false,
       sandbox: { mode: "inprocess-unsafe" },
       approvalTimeoutMs: 300_000,
@@ -61,6 +62,11 @@ describe("loadConfig", () => {
     expect(cfg.bindHost).toBe("127.0.0.1");
     expect(cfg.bindPort).toBe(9090);
     expect(cfg.logLevel).toBe("debug");
+    expect(loadConfig({
+      GUILD_MASTER_KEY_HEX: "11".repeat(32),
+      GUILD_JWT_SECRET: "s",
+      GUILD_AGENT_WORKSPACE_ROOT: "/mnt/agents",
+    }).agentWorkspaceRoot).toBe("/mnt/agents");
   });
 
   it("parses IPv6-style bind addrs ([::]:8080)", () => {
