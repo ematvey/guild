@@ -1027,6 +1027,7 @@ export class GuildRuntime {
           }),
       },
       workspaceRoot: this.config.agentWorkspaceRoot,
+      writeRoot: this.config.agentWorkspaceWriteRoot,
     });
     const tools = createAgentTools({
       pool: this.pool,

@@ -58,6 +58,8 @@ export interface DelegationToolContext {
   requester: UserRow;
   runtime: DelegationRuntime;
   workspaceRoot: string;
+  /** Read-write view of the same volume; parent artifact writes land here. */
+  writeRoot: string;
   stagingRoot: string;
   timeoutMs: number;
   /** False when depth or child count has removed the delegate tool. */
@@ -399,7 +401,7 @@ export async function delegate(context: DelegationToolContext, args: DelegateArg
   }
   const text = await assistantText(context.pool, finished);
   const childRoot = rootFor(context.workspaceRoot, target.org_id, target.id);
-  const parentRoot = rootFor(context.workspaceRoot, context.agent.org_id, context.agent.id);
+  const parentRoot = rootFor(context.writeRoot, context.agent.org_id, context.agent.id);
   const artifacts = await transferArtifacts({
     store: context.store,
     parentAgentId: context.agent.id,
@@ -424,6 +426,7 @@ export async function delegationContextForChat(args: {
   chatId: string;
   runtime: DelegationRuntime;
   workspaceRoot: string;
+  writeRoot?: string;
   stagingRoot?: string;
   timeoutMs?: number;
 }): Promise<DelegationToolContext | null> {
@@ -441,6 +444,7 @@ export async function delegationContextForChat(args: {
     requester,
     runtime: args.runtime,
     workspaceRoot: args.workspaceRoot,
+    writeRoot: args.writeRoot ?? args.workspaceRoot,
     stagingRoot: args.stagingRoot ?? path.join("/tmp", "delegations"),
     timeoutMs: args.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS,
     can_spawn: parentRun.depth < MAX_DELEGATION_DEPTH && children < MAX_CHILDREN_PER_RUN,

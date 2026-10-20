@@ -61,6 +61,9 @@ export interface Config {
    *  (GUILD_AGENT_WORKSPACE_ROOT, default /workspaces): agent subpaths
    *  resolve under it for the file browser. */
   agentWorkspaceRoot: string;
+  /** The same workspace volume mounted read-write, used only for delegation
+   *  artifact transfer (the file browser and runtime reads stay read-only). */
+  agentWorkspaceWriteRoot: string;
   /** Whether server-side executors may run shell tools at all
    *  (GUILD_ALLOW_SHELL_TOOLS; default on with a sandbox runner, off
    *  otherwise — machine `execute` calls ride the exec policy instead). */
@@ -221,6 +224,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     poolMax,
     dataDir,
     agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
+    agentWorkspaceWriteRoot:
+      env.GUILD_AGENT_WORKSPACE_WRITE_ROOT || env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
     allowShellTools,
     sandbox,
     approvalTimeoutMs,
