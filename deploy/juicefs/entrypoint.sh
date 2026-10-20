@@ -121,7 +121,7 @@ done
 quota_gib="${GUILD_AGENT_WORKSPACE_GIB:-50}"
 quota_interval="${GUILD_AGENT_QUOTA_INTERVAL:-300}"
 # The mount lives in the host namespace, so the sweep must run there too.
-nsenter -t 1 -m -- sh -c '
+nsenter -t 1 -m -n -- sh -c '
   while true; do
     for dir in "$1"/agents/*/*; do
       [ -d "$dir" ] || continue
