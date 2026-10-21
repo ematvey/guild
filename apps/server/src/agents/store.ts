@@ -42,6 +42,7 @@ import {
   type UpdateRoutineInput,
 } from "./routines.js";
 import { insertChunks, search, type AgentChunkInput, type AgentSearchHit } from "./search.js";
+import { agentWorkspaceDir, seedAgentWorkspace, writeAgentsFile } from "./workspace-config.js";
 import type { TraceStore } from "../platform/trace.js";
 
 const DEFAULT_GRACE_DAYS = 30;
@@ -308,8 +309,21 @@ export class AgentStore {
     private readonly pool: PlatformPool,
     /** Mirrors run lifecycle rows into ClickHouse (agent_traces). */
     private readonly trace?: TraceStore,
+    /** The server-writable workspace root; absent: no config files seeded. */
+    private readonly workspaceRoot?: string,
   ) {
     this.chats = new ChatStore(pool);
+  }
+
+  /** Seeds the workspace config files for a new agent. Best-effort: a
+   *  missing volume or a permission error must not fail the create. */
+  private async seedWorkspace(agent: { id: string; org_id: string; name: string; instructions: string }): Promise<void> {
+    if (this.workspaceRoot === undefined) return;
+    try {
+      await seedAgentWorkspace(agentWorkspaceDir(this.workspaceRoot, agent.org_id, agent.id), agent);
+    } catch {
+      // The next turn seeds it again through the runtime path.
+    }
   }
 
   /** Creates the agent, its default thread and that thread's chat journal
@@ -360,6 +374,7 @@ export class AgentStore {
     }
     const agent = await this.fetchById(user.org_id, id);
     if (agent === null) throw ApiError.internal("agent insert lost its row");
+    await this.seedWorkspace(agent);
     return agent;
   }
 
@@ -412,7 +427,9 @@ export class AgentStore {
     } catch (error) {
       if ((error as { code?: string }).code !== "23505") throw error;
     }
-    return find();
+    const created = await find();
+    if (created !== null) await this.seedWorkspace(created);
+    return created;
   }
 
   /** Visibility-filtered list. Active agents by default; archived rows are
@@ -516,6 +533,14 @@ export class AgentStore {
     }
     if (patch.team_ids !== undefined) {
       await this.replaceTeamGrants(this.pool, agent.org_id, agentId, patch.team_ids);
+    }
+    // AGENTS.md is the source of truth for the agent's instructions; the
+    // column mirrors it so the directory list and older clients keep working.
+    if (patch.instructions !== undefined && this.workspaceRoot !== undefined) {
+      await writeAgentsFile(
+        agentWorkspaceDir(this.workspaceRoot, agent.org_id, agentId),
+        patch.instructions,
+      ).catch(() => {});
     }
     const updated = await this.fetchById(agent.org_id, agentId);
     if (updated === null) throw ApiError.notFound("no such agent");

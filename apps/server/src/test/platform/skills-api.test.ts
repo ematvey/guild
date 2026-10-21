@@ -167,8 +167,9 @@ describe("skills api", () => {
   it("publish auto-installs unpinned; edits reach unpinned installs; explicit pins hold", async () => {
     await createSkill("auto-install-skill", "# auto");
     const mine = await inject("GET", "/api/v1/skills/installs", e.memberToken);
-    const myRow = (body: { installs: Array<{ slug: string; pinned_version: string | null }> }, slug: string) =>
-      body.installs.find((i) => i.slug === slug);
+    type Installs = { installs: Array<{ slug: string; pinned_version: string | null }> };
+    const myRow = (body: unknown, slug: string) =>
+      (body as Installs).installs.find((i) => i.slug === slug);
     expect(myRow(mine.json(), "auto-install-skill")).toMatchObject({ pinned_version: null });
 
     // A second user's unpinned install follows the next publish too.
