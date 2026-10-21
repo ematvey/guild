@@ -352,7 +352,7 @@ export function registerChatsRoutes(
     return reply.type("application/json").send(
       JSON.stringify({
         agent: await chats.runtime.chatAgent(chatId),
-        switcheable: await chats.runtime.agentSwitchAllowed(chatId, user.id),
+        switcheable: await chats.runtime.agentSwitchAllowed(chatId),
       }),
     );
   });

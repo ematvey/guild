@@ -152,7 +152,7 @@ describe("plain chat adoption", () => {
 });
 
 describe("agent picker", () => {
-  it("keeps a shared agent's thread on that agent", async () => {
+  it("keeps an agent's Main thread on that agent", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/agents",
@@ -161,21 +161,11 @@ describe("agent picker", () => {
     });
     const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
 
-    const chat = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(),
-      payload: { title: "Picker chat" },
-    });
-    const chatId = (JSON.parse(chat.body) as { id: string }).id;
-
-    const bound = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/threads/${chatId}/agent`,
-      headers: auth(),
-      payload: { agent_id: agent.id },
-    });
-    expect(bound.statusCode).toBe(200);
+    const thread = await stack.env.db.query<{ chat_id: string }>(
+      "SELECT chat_id FROM agent_threads WHERE agent_id = $1 AND kind = 'default'",
+      [agent.id],
+    );
+    const chatId = thread.rows[0]!.chat_id;
 
     const read = await stack.env.app.inject({
       method: "GET",
@@ -184,7 +174,6 @@ describe("agent picker", () => {
     });
     expect((JSON.parse(read.body) as { switcheable: boolean }).switcheable).toBe(false);
 
-    // Another agent: the thread refuses to move.
     const other = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/agents",
@@ -201,5 +190,45 @@ describe("agent picker", () => {
     });
     expect(moved.statusCode).toBe(409);
     expect(JSON.parse(moved.body)).toMatchObject({ error: { code: "thread_agent_locked" } });
+
+    // The thread still belongs to its agent.
+    const after = await stack.env.db.query<{ agent_id: string }>(
+      "SELECT agent_id FROM agent_threads WHERE chat_id = $1",
+      [chatId],
+    );
+    expect(after.rows[0]!.agent_id).toBe(agent.id);
+  }, 40_000);
+
+  it("moves an ordinary thread to the chosen agent", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Move target", model: "GLM-Test-Model", visibility: "org" },
+    });
+    const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
+
+    const chat = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "Ordinary chat" },
+    });
+    const chatId = (JSON.parse(chat.body) as { id: string }).id;
+
+    const first = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+      payload: { agent_id: agent.id },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const read = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+    });
+    expect((JSON.parse(read.body) as { switcheable: boolean }).switcheable).toBe(true);
   }, 40_000);
 });
