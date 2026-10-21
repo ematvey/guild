@@ -147,15 +147,19 @@ const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.payload
 /** Visibility predicate over an `agents` alias. Fixed placeholders:
  *  $1 = org id, $2 = caller is admin, $3 = caller user id. */
 function visiblePredicate(alias: string): string {
+  // A personal agent belongs to exactly one user: no admin override, no
+  // org or team visibility. Everything else follows the grant rules.
   return `(${alias}.org_id = $1 AND (
-    $2::boolean
-    OR ${alias}.owner_user_id = $3
-    OR ${alias}.visibility = 'org'
-    OR EXISTS (SELECT 1 FROM agent_grants g WHERE g.agent_id = ${alias}.id AND g.user_id = $3)
-    OR (${alias}.visibility = 'team' AND EXISTS (
-      SELECT 1 FROM agent_team_grants tg
-      JOIN team_members tm ON tm.team_id = tg.team_id
-      WHERE tg.agent_id = ${alias}.id AND tm.user_id = $3))
+    ${alias}.owner_user_id = $3
+    OR (${alias}.is_personal = false AND (
+      $2::boolean
+      OR ${alias}.visibility = 'org'
+      OR EXISTS (SELECT 1 FROM agent_grants g WHERE g.agent_id = ${alias}.id AND g.user_id = $3)
+      OR (${alias}.visibility = 'team' AND EXISTS (
+        SELECT 1 FROM agent_team_grants tg
+        JOIN team_members tm ON tm.team_id = tg.team_id
+        WHERE tg.agent_id = ${alias}.id AND tm.user_id = $3))
+    ))
   ))`;
 }
 

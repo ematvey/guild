@@ -209,6 +209,10 @@ dbDescribe("AgentStore", () => {
     const memberPersonal = await store.ensurePersonalAgent(member);
     expect(memberPersonal!.id).not.toBe(personal!.id);
 
+    // Another user — even an admin — cannot see or use a personal agent.
+    await expect(store.get(admin, personal!.id)).rejects.toMatchObject({ status: 404 });
+    expect((await store.list(admin)).map((a) => a.id)).not.toContain(personal!.id);
+
     await expect(store.archive(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
     await expect(store.markDeleted(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
     await expect(store.update(owner, personal!.id, { visibility: "org" })).rejects.toMatchObject({
