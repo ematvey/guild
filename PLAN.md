@@ -11,6 +11,12 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Coding tools are direct; integrations stay script-only (2026-10-21).**
+  The model calls `read`, `write`, `edit`, `list`, `bash`, `web_search` and
+  the skill tools itself. Integration, MCP and thread-history tools stay
+  behind `codemode` scripts. The agent's tool allowlist narrows the direct
+  surface the same way it narrows integrations, and `codemode` is always
+  present because it is the only path to the script-only tools.
 - **Stop ends the turn even when a tool cannot be cancelled (2026-10-21).**
   The stop route waits for the conversation to go idle, so one hung tool call
   kept the chat generating and the button on "Stopping" for good. Three
