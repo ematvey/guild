@@ -1,6 +1,6 @@
 // Workspace config over HTTP: creating an agent seeds the template files,
-// the identity line rides the payload, and an instructions patch rewrites
-// AGENTS.md (the file is the source of truth).
+// the identity line rides the payload, and the payload has no instructions
+// field at all (AGENTS.md on disk is the source of truth).
 
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,7 +36,7 @@ describe("agent workspace config over HTTP", () => {
       method: "POST",
       url: "/api/v1/agents",
       headers: auth(),
-      payload: { name: "Config agent", model: "GLM-Test-Model", instructions: "Watch the deploy queue." },
+      payload: { name: "Config agent", model: "GLM-Test-Model" },
     });
     expect(created.statusCode).toBe(200);
     const agent = (JSON.parse(created.body) as {
@@ -51,7 +51,7 @@ describe("agent workspace config over HTTP", () => {
     expect(existsSync(path.join(dir, "memories"))).toBe(true);
     // MEMORY.md is optional and not seeded.
     expect(existsSync(path.join(dir, "MEMORY.md"))).toBe(false);
-    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("Watch the deploy queue.");
+    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("# AGENTS.md - Your Workspace");
 
     const detail = await stack.env.app.inject({
       method: "GET",
@@ -64,7 +64,7 @@ describe("agent workspace config over HTTP", () => {
     );
   });
 
-  it("writes an instructions patch into AGENTS.md", async () => {
+  it("ignores an instructions field: the file is the only source", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/agents",
@@ -80,7 +80,8 @@ describe("agent workspace config over HTTP", () => {
     });
     expect(patched.statusCode).toBe(200);
     const dir = agentWorkspaceDir(root, agent.org_id, agent.id);
-    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("Only answer in haiku.");
+    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).not.toContain("Only answer in haiku.");
+    expect(JSON.parse(patched.body).agent).not.toHaveProperty("instructions");
   });
 
   it("reports null identity fields when IDENTITY.md is blank", async () => {

@@ -10,7 +10,6 @@ import {
   parseIdentity,
   readAgentConfig,
   seedAgentWorkspace,
-  writeAgentsFile,
 } from "../../agents/workspace-config.js";
 
 const dirs: string[] = [];
@@ -27,7 +26,7 @@ afterEach(() => {
 describe("seedAgentWorkspace", () => {
   it("writes the template files and an empty memories/ directory", async () => {
     const dir = workspace();
-    const written = await seedAgentWorkspace(dir, { name: "Scout", instructions: "" });
+    const written = await seedAgentWorkspace(dir, { name: "Scout" });
     expect(written.sort()).toEqual(["AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "SOUL.md", "USER.md"]);
     expect(existsSync(path.join(dir, "memories"))).toBe(true);
     expect(readFileSync(path.join(dir, "IDENTITY.md"), "utf8")).toBe("- Name: Scout | Vibe: | Emoji: | Avatar:\n");
@@ -36,24 +35,19 @@ describe("seedAgentWorkspace", () => {
 
   it("never overwrites a file the agent already edited", async () => {
     const dir = workspace();
-    await seedAgentWorkspace(dir, { name: "Scout", instructions: "" });
+    await seedAgentWorkspace(dir, { name: "Scout" });
     writeFileSync(path.join(dir, "SOUL.md"), "# my own soul\n");
-    const written = await seedAgentWorkspace(dir, { name: "Scout", instructions: "" });
+    const written = await seedAgentWorkspace(dir, { name: "Scout" });
     expect(written).toEqual([]);
     expect(readFileSync(path.join(dir, "SOUL.md"), "utf8")).toBe("# my own soul\n");
   });
 
-  it("carries the creation instructions into AGENTS.md", async () => {
-    const dir = workspace();
-    await seedAgentWorkspace(dir, { name: "Scout", instructions: "Watch the deploy queue." });
-    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("Watch the deploy queue.");
-  });
 });
 
 describe("readAgentConfig", () => {
   it("reads the seeded files and reports nothing missing", async () => {
     const dir = workspace();
-    await seedAgentWorkspace(dir, { name: "Scout", instructions: "" });
+    await seedAgentWorkspace(dir, { name: "Scout" });
     const config = await readAgentConfig(dir);
     expect(config.missing).toEqual([]);
     expect([...config.files.keys()]).toEqual(CONFIG_FILES.filter((f) => f.name !== "MEMORY.md").map((f) => f.name));
@@ -90,13 +84,5 @@ describe("parseIdentity", () => {
   it("accepts the multi-line label form", () => {
     const text = "- **Name:** Echo\n- Vibe: warm\n- Emoji: 🌙\n";
     expect(parseIdentity(text)).toMatchObject({ name: "Echo", vibe: "warm", emoji: "🌙" });
-  });
-});
-
-describe("writeAgentsFile", () => {
-  it("replaces AGENTS.md wholesale", async () => {
-    const dir = workspace();
-    await writeAgentsFile(dir, "# AGENTS.md\n\nnew rules\n");
-    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("new rules");
   });
 });

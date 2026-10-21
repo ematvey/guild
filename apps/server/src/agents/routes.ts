@@ -306,7 +306,6 @@ export function registerAgentRoutes(
     const body = jsonBody(req);
     const agent = await store.create(user, {
       name: requiredString(body, "name"),
-      instructions: optionalString(body, "instructions"),
       model: requiredString(body, "model"),
       tools: toolsField(body),
       tools_mode: toolsModeField(body),
@@ -349,8 +348,6 @@ export function registerAgentRoutes(
       if (name.trim() === "") throw ApiError.badRequest("name must not be empty");
       patch.name = name;
     }
-    const instructions = optionalString(body, "instructions");
-    if (instructions !== undefined) patch.instructions = instructions;
     const model = optionalString(body, "model");
     if (model !== undefined) {
       if (model.trim() === "") throw ApiError.badRequest("model must not be empty");

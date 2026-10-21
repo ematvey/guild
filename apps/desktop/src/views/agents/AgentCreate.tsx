@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
-import { Textarea } from "@guild/ui/components/textarea";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { listModels, modelLabel, type ModelOption } from "../../transport";
 import {
@@ -27,11 +26,10 @@ import {
 import type { AgentVisibility, AgentsRoute } from "./agents-route";
 import { ErrorState, PageBody, PageHeader } from "./agent-ui";
 
-type Step = "name" | "instructions" | "model" | "tools" | "visibility";
+type Step = "name" | "model" | "tools" | "visibility";
 
 const STEPS: ReadonlyArray<readonly [Step, string, string]> = [
   ["name", "Name", "Give the agent a short, unique name."],
-  ["instructions", "Instructions", "Tell the agent how to work and what to care about."],
   ["model", "Model", "Pick one model from the organization catalog."],
   ["tools", "Tools", "Choose the tools this agent may use."],
   ["visibility", "Visibility", "Choose who can see and use the agent."],
@@ -49,7 +47,6 @@ export function validateAgentStep(
   step: Step,
   value: {
     name: string;
-    instructions: string;
     model: string;
     tools: string[];
     toolsMode: "selected" | "all";
@@ -62,8 +59,6 @@ export function validateAgentStep(
       if (value.name.trim() === "") return "Enter a name.";
       if (value.name.trim().length > 80) return "Use 80 characters or fewer.";
       return null;
-    case "instructions":
-      return value.instructions.trim() === "" ? "Enter instructions." : null;
     case "model":
       return value.model === "" ? "Pick a model." : null;
     case "tools":
@@ -87,7 +82,6 @@ export function AgentCreate({
 }) {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
-  const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState("");
   const [tools, setTools] = useState<string[]>(SAFE_BASELINE_NAMES);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">("selected");
@@ -117,7 +111,6 @@ export function AgentCreate({
   const stepIndex = STEPS.findIndex(([id]) => id === step);
   const currentError = validateAgentStep(step, {
     name,
-    instructions,
     model,
     tools,
     toolsMode,
@@ -154,7 +147,6 @@ export function AgentCreate({
     try {
       const agent = await createAgent({
         name: name.trim(),
-        instructions: instructions.trim(),
         model,
         tools,
         tools_mode: toolsMode,
@@ -241,25 +233,6 @@ export function AgentCreate({
               />
               <p className="text-xs text-muted-foreground">
                 Agents are user-named and never renamed automatically.
-              </p>
-            </div>
-          )}
-
-          {step === "instructions" && (
-            <div className="space-y-2">
-              <label htmlFor="agent-instructions" className="text-sm font-medium">
-                Instructions
-              </label>
-              <Textarea
-                id="agent-instructions"
-                autoFocus
-                value={instructions}
-                rows={12}
-                placeholder="You keep the weekly research digest. Read from memories/, write short notes, and send one summary each Friday."
-                onChange={(e) => setInstructions(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                These instructions are the agent's standing brief. Threads do not replace them.
               </p>
             </div>
           )}

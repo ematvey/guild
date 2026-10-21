@@ -90,7 +90,6 @@ export interface Agent {
   owner_email?: string | null;
   owner_avatar_url?: string | null;
   name: string;
-  instructions: string;
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;
@@ -223,7 +222,6 @@ export interface AgentToolInfo {
 
 export interface CreateAgentInput {
   name: string;
-  instructions: string;
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;
@@ -236,7 +234,6 @@ export interface CreateAgentInput {
 
 export interface UpdateAgentInput {
   name?: string;
-  instructions?: string;
   model?: string;
   tools?: string[];
   /** `all` follows the org's enabled tools; `selected` uses `tools`. */
