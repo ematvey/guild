@@ -208,7 +208,7 @@ function AgentCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <VisibilityBadge visibility={agent.visibility} />
         <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">
-          <ModelName id={agent.model} />
+          <ModelName id={agent.model} alias={agent.model_alias} />
         </span>
       </div>
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">

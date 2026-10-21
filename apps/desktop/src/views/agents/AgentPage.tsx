@@ -235,7 +235,7 @@ export function AgentPage({
             <span>·</span>
             <VisibilityBadge visibility={agent.visibility} />
             <span>·</span>
-            <ModelName id={agent.model} />
+            <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
             <span>{agent.tools.length} tools</span>
           </span>
@@ -563,7 +563,7 @@ function AgentOverview({
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Model</dt>
               <dd className="truncate text-xs">
-                <ModelName id={agent.model} />
+                <ModelName id={agent.model} alias={agent.model_alias} />
               </dd>
             </div>
             <div className="flex justify-between gap-2">
@@ -1027,7 +1027,7 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Model</dt>
           <dd className="text-xs">
-            <ModelName id={agent.model} />
+            <ModelName id={agent.model} alias={agent.model_alias} />
           </dd>
         </div>
         <div className="flex justify-between gap-2">
