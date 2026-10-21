@@ -414,7 +414,11 @@ describe("durable integration contracts", () => {
         }
       ).provisionTurnTools(c, id, stack.orgId);
       let agent = await c.agent(context);
-      expect(agent.tools.map((t) => t.name)).toEqual(["codemode"]);
+      const direct = agent.tools.map((t) => t.name);
+      expect(direct).toContain("codemode");
+      expect(direct).toContain("read");
+      // The MCP tool is script-only: callable, never declared.
+      expect(direct).not.toContain("mcp7_fixture_echo");
       expect(agent.callable.map((t) => t.name)).toEqual(
         expect.arrayContaining(["mcp7_fixture_echo", "thread_history", "thread_search"]),
       );

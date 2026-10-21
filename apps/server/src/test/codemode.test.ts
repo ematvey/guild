@@ -22,6 +22,9 @@ let port: number;
 let memberToken: string;
 const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-codemode-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-codemode-data-"));
+// Chats are adopted by the caller's personal agent, so the coding tools run
+// in the agent workspace. Point it at a writable test root.
+const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-codemode-agents-"));
 
 const toolCallSse = (name: string, args: string, _id = "call_cm"): string =>
   'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_cm","type":"function","function":{"name":"' +
@@ -46,6 +49,8 @@ beforeAll(async () => {
   // The runtime reads the sandbox root from the process environment at env
   // resolution time (the production env var); point it at the test root.
   process.env.GUILD_SANDBOX_ROOT = sandboxRoot;
+  process.env.GUILD_AGENT_WORKSPACE_ROOT = agentRoot;
+  process.env.GUILD_AGENT_WORKSPACE_WRITE_ROOT = agentRoot;
   probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
@@ -54,6 +59,8 @@ beforeAll(async () => {
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_SANDBOX_ROOT: sandboxRoot,
+      GUILD_AGENT_WORKSPACE_ROOT: agentRoot,
+      GUILD_AGENT_WORKSPACE_WRITE_ROOT: agentRoot,
       GUILD_DATA_DIR: dataDir,
       GUILD_ALLOW_SHELL_TOOLS: "1",
       GUILD_APPROVAL_TIMEOUT_MS: "3000",
@@ -224,12 +231,13 @@ describe("codemode over the chat loop", () => {
       expect(result.content).toContain("alpha");
       expect(result.content).toContain("<console_output>");
       expect(result.content).toContain("writes fulfilled fulfilled");
-      // Both nested writes landed in the conversation's sandbox.
-      const conversationId = runtime().conversationIdForChat(chatId)!;
-      const sandboxDir = path.join(sandboxRoot, String(conversationId));
+      // Both nested writes landed in the agent workspace of the chat.
       const files = await import("node:fs/promises");
-      expect(await files.readFile(path.join(sandboxDir, "cm-a.txt"), "utf8")).toBe("alpha");
-      expect(await files.readFile(path.join(sandboxDir, "cm-b.txt"), "utf8")).toBe("beta");
+      const found = (await files.readdir(agentRoot, { recursive: true }))
+        .map((entry) => path.join(agentRoot, String(entry)))
+        .filter((file) => file.endsWith("cm-a.txt") || file.endsWith("cm-b.txt"));
+      expect(found.some((file) => file.endsWith("cm-a.txt"))).toBe(true);
+      expect(found.some((file) => file.endsWith("cm-b.txt"))).toBe(true);
       // Nested calls do not surface as their own thread cards.
       const nestedCards = toolResults(events).filter((e) => (e.event as { call_id: string }).call_id.includes("/c"));
       expect(nestedCards).toHaveLength(0);
@@ -375,17 +383,21 @@ describe("codemode over the chat loop", () => {
   );
 
   it(
-    "offers only codemode to the model; scripts still reach every tool",
+    "offers the coding tools directly and keeps integrations script-only",
     async () => {
       const chatId = await createChat("codemode-only");
       scriptFor({ body: finalSse });
       await submitTurn(chatId, "hello");
       await turnSettled(chatId);
 
-      // The model request declares exactly one tool: codemode.
+      // The model request declares the coding tools and codemode directly;
+      // integration and thread-history tools stay behind a script.
       const body = await firstRequest();
       const tools = (body["tools"] as { function?: { name: string } }[]).map((t) => t.function?.name);
-      expect(tools).toEqual(["codemode"]);
+      for (const name of ["read", "write", "edit", "bash", "codemode"]) {
+        expect(tools).toContain(name);
+      }
+      expect(tools).not.toContain("thread_history");
 
       // The agent's callable set still carries everything (script reach).
       const conversationId = runtime().conversationIdForChat(chatId) as never;
