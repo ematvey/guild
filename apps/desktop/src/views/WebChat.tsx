@@ -35,6 +35,7 @@ import {
   FileText,
   Hand,
   Globe,
+  Users,
   Menu,
   Film,
   Image as ImageIcon,
@@ -84,7 +85,6 @@ import { DesktopTooltip } from "../components/desktop-tooltip";
 import { ContextRing } from "../components/context-ring";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { ModelName } from "./agents/agent-model";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
 import { SkillsPanel } from "./skills/SkillsPanel";
@@ -4180,11 +4180,20 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 <ContextRing chatId={chatId} model={agentThreadData?.agent.model ?? model}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
                 {agentThreadData !== null ? (
+                  // An agent thread names its agent, not its model: the
+                  // model belongs to the agent and lives in its settings.
                   <span
-                    className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
-                    title="This agent's model"
+                    className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                    title={
+                      agentThreadData.agent.visibility === "private"
+                        ? "Your private agent"
+                        : "Shared agent: your threads are private, its files are shared"
+                    }
                   >
-                    <ModelName id={agentThreadData.agent.model} />
+                    <span className="truncate">{agentThreadData.agent.name}</span>
+                    {agentThreadData.agent.visibility !== "private" && (
+                      <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                    )}
                   </span>
                 ) : models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
