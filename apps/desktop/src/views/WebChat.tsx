@@ -3956,7 +3956,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 >
                   <div
                     className={`mx-auto h-full w-px transition-colors ${
-                      chatResizing ? "bg-ring" : "bg-border/40 group-hover:bg-ring group-focus-visible:bg-ring"
+                      chatResizing ? "bg-ring" : "bg-transparent group-hover:bg-ring group-focus-visible:bg-ring"
                     }`}
                   />
                 </div>
