@@ -30,7 +30,6 @@ export function AgentsPanel({
         <AgentPage
           agentId={route.agentId}
           tab={route.tab}
-          threadId={route.threadId}
           routineId={route.routineId}
           filePath={route.filePath}
           viewer={viewer}

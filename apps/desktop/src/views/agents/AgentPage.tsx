@@ -90,7 +90,7 @@ import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
 import { ModelName } from "./agent-model";
-import { AgentThreadView, ThreadList } from "./AgentThreadView";
+import { ThreadList } from "./AgentThreadList";
 
 export interface Viewer {
   email: string;
@@ -159,7 +159,7 @@ export function AgentPage({
   /** A thread has one canonical address: its chat. */
   const openThread = (thread: { id: string; chat_id: string }) => {
     if (onOpenChat) onOpenChat(thread.chat_id);
-    else onNavigate({ view: "agent", agentId, tab: "threads", threadId: thread.id });
+    else onNavigate({ view: "agent", agentId, tab: "threads" });
   };
 
   const newThread = async (): Promise<AgentThread | null> => {
@@ -272,7 +272,12 @@ export function AgentPage({
         }
       />
       {tab === "threads" && threadId ? (
-        <AgentThreadView agent={agent} threadId={threadId} onNavigate={onNavigate} />
+        <ThreadList
+          agent={agent}
+          onNavigate={onNavigate}
+          onNewThread={newThread}
+          onOpenChat={onOpenChat}
+        />
       ) : tab === "files" ? (
         <AgentFiles
           agentId={agent.id}
@@ -505,12 +510,7 @@ function AgentOverview({
                     onClick={() =>
                       onOpenChat
                         ? onOpenChat(thread.chat_id)
-                        : onNavigate({
-                            view: "agent",
-                            agentId: agent.id,
-                            tab: "threads",
-                            threadId: thread.id,
-                          })
+                        : onNavigate({ view: "agent", agentId: agent.id, tab: "threads" })
                     }
                     className="flex w-full items-center gap-2 py-2 text-left text-sm hover:text-foreground"
                   >

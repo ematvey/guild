@@ -18,7 +18,6 @@ export type AgentsRoute =
       view: "agent";
       agentId: string;
       tab: AgentTab;
-      threadId?: string;
       routineId?: string;
       filePath?: string;
     }
@@ -77,11 +76,9 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
   const rest = parts.slice(2);
   if (rest.length === 0) return { view: "agent", agentId, tab: "overview" };
   const head = rest[0];
-  if (head === "threads") {
-    return rest[1]
-      ? { view: "agent", agentId, tab: "threads", threadId: rest[1] }
-      : { view: "agent", agentId, tab: "threads" };
-  }
+  // Threads have one address: /thread/<chatId>. The tab has no per-thread
+  // sub-route; an old /threads/<tid> link lands on the list.
+  if (head === "threads") return { view: "agent", agentId, tab: "threads" };
   if (head === "routines") {
     return rest[1]
       ? { view: "agent", agentId, tab: "routines", routineId: rest[1] }
@@ -115,8 +112,6 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
-      if (route.tab === "threads" && route.threadId)
-        return `${base}/threads/${segment(route.threadId)}`;
       if (route.tab === "routines" && route.routineId)
         return `${base}/routines/${segment(route.routineId)}`;
       if (route.tab === "files" && route.filePath)
