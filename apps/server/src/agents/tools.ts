@@ -61,8 +61,8 @@ export async function sendAgentMessage(
   const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
   // A model that calls send_message twice with the same content in one run
   // must not open two threads; the recent identical thread is the result.
-  const existing = await deps.pool.query<{ id: string }>(
-    `SELECT id FROM agent_threads
+  const existing = await deps.pool.query<{ id: string; chat_id: string }>(
+    `SELECT id, chat_id FROM agent_threads
      WHERE agent_id = $1 AND title = $2 AND created_at > now() - interval '1 minute'
      ORDER BY created_at DESC LIMIT 1`,
     [deps.agent.id, title],
@@ -70,7 +70,7 @@ export async function sendAgentMessage(
   if (existing.rows[0] !== undefined) {
     return {
       thread_id: existing.rows[0].id,
-      url: `/agents/${deps.agent.id}/threads/${existing.rows[0].id}`,
+      url: `/thread/${existing.rows[0].chat_id}`,
     };
   }
   const thread = await deps.store.createThread(deps.agent.id, deps.userId, title);
@@ -85,7 +85,8 @@ export async function sendAgentMessage(
     ),
   );
   await deps.store.touchThread(deps.agent.id, thread.id);
-  const url = `/agents/${deps.agent.id}/threads/${thread.id}`;
+  // One canonical address per thread: its chat.
+  const url = `/thread/${thread.chat_id}`;
   await deps.store.createNotice({
     org_id: deps.agent.org_id,
     agent_id: deps.agent.id,

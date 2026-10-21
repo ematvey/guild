@@ -156,10 +156,16 @@ export function AgentPage({
     onNavigate({ view: "agent", agentId, tab: next });
   };
 
+  /** A thread has one canonical address: its chat. */
+  const openThread = (thread: { id: string; chat_id: string }) => {
+    if (onOpenChat) onOpenChat(thread.chat_id);
+    else onNavigate({ view: "agent", agentId, tab: "threads", threadId: thread.id });
+  };
+
   const newThread = async (): Promise<AgentThread | null> => {
     try {
       const row = await createAgentThread(agentId);
-      onNavigate({ view: "agent", agentId, tab: "threads", threadId: row.id });
+      openThread(row);
       return row;
     } catch {
       return null;
@@ -172,7 +178,7 @@ export function AgentPage({
   const startRoutineThread = async (title: string, message: string) => {
     const row = await createAgentThread(agentId, title);
     await sendAgentTurn(agentId, { thread_id: row.id, message });
-    onNavigate({ view: "agent", agentId, tab: "threads", threadId: row.id });
+    openThread(row);
   };
 
   const newRoutine = () =>
@@ -268,14 +274,29 @@ export function AgentPage({
       {tab === "threads" && threadId ? (
         <AgentThreadView agent={agent} threadId={threadId} onNavigate={onNavigate} />
       ) : tab === "files" ? (
-        <AgentFiles agentId={agent.id} filePath={filePath} onNavigate={onNavigate} />
+        <AgentFiles
+          agentId={agent.id}
+          filePath={filePath}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
       ) : (
         <PageBody>
           {tab === "overview" && (
-            <AgentOverview agent={agent} onNavigate={onNavigate} onNewThread={newThread} />
+            <AgentOverview
+              agent={agent}
+              onNavigate={onNavigate}
+              onNewThread={newThread}
+              onOpenChat={onOpenChat}
+            />
           )}
           {tab === "threads" && (
-            <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} />
+            <ThreadList
+              agent={agent}
+              onNavigate={onNavigate}
+              onNewThread={newThread}
+              onOpenChat={onOpenChat}
+            />
           )}
           {tab === "routines" && (
             <AgentRoutines
@@ -428,10 +449,12 @@ function AgentOverview({
   agent,
   onNavigate,
   onNewThread,
+  onOpenChat,
 }: {
   agent: Agent;
   onNavigate: (route: AgentsRoute) => void;
   onNewThread: () => Promise<AgentThread | null>;
+  onOpenChat?: (chatId: string) => void;
 }) {
   const [threads, setThreads] = useState<AgentThread[] | null>(null);
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
@@ -480,12 +503,14 @@ function AgentOverview({
                   <button
                     type="button"
                     onClick={() =>
-                      onNavigate({
-                        view: "agent",
-                        agentId: agent.id,
-                        tab: "threads",
-                        threadId: thread.id,
-                      })
+                      onOpenChat
+                        ? onOpenChat(thread.chat_id)
+                        : onNavigate({
+                            view: "agent",
+                            agentId: agent.id,
+                            tab: "threads",
+                            threadId: thread.id,
+                          })
                     }
                     className="flex w-full items-center gap-2 py-2 text-left text-sm hover:text-foreground"
                   >

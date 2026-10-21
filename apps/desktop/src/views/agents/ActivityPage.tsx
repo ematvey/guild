@@ -314,8 +314,11 @@ export function RunDetailPage({
   }, [runId, tick]);
 
   const agent = run?.agent_id;
+  // A thread's canonical address is its chat; the agents route is the
+  // fallback for a run whose chat id is not in the payload.
+  const chatThread = run?.chat_id && onOpenChat !== undefined ? run.chat_id : null;
   const thread =
-    run?.thread_id && agent
+    chatThread === null && run?.thread_id && agent
       ? ({ view: "agent", agentId: agent, tab: "threads", threadId: run.thread_id } as const)
       : null;
 
@@ -383,8 +386,15 @@ export function RunDetailPage({
                 </div>
               </dl>
               <div className="mt-3 flex flex-wrap gap-2">
-                {thread !== null && (
-                  <Button variant="outline" size="sm" onClick={() => onNavigate(thread)}>
+                {(thread !== null || chatThread !== null) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (chatThread !== null) onOpenChat?.(chatThread);
+                      else if (thread !== null) onNavigate(thread);
+                    }}
+                  >
                     <MessageSquare />
                     Open thread
                   </Button>

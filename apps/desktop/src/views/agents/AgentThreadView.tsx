@@ -374,10 +374,13 @@ export function ThreadList({
   agent,
   onNavigate,
   onNewThread,
+  onOpenChat,
 }: {
   agent: Agent;
   onNavigate: (route: AgentsRoute) => void;
   onNewThread: () => Promise<AgentThread | null>;
+  /** A thread has one canonical address: its chat. */
+  onOpenChat?: (chatId: string) => void;
 }) {
   const [threads, setThreads] = useState<AgentThread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -405,7 +408,10 @@ export function ThreadList({
     setCreating(true);
     const row = await onNewThread();
     setCreating(false);
-    if (row) onNavigate({ view: "agent", agentId: agent.id, tab: "threads", threadId: row.id });
+    if (row) {
+      if (onOpenChat) onOpenChat(row.chat_id);
+      else onNavigate({ view: "agent", agentId: agent.id, tab: "threads", threadId: row.id });
+    }
     else setTick((t) => t + 1);
   };
 
@@ -446,12 +452,14 @@ export function ThreadList({
               key={thread.id}
               type="button"
               onClick={() =>
-                onNavigate({
-                  view: "agent",
-                  agentId: agent.id,
-                  tab: "threads",
-                  threadId: thread.id,
-                })
+                onOpenChat
+                  ? onOpenChat(thread.chat_id)
+                  : onNavigate({
+                      view: "agent",
+                      agentId: agent.id,
+                      tab: "threads",
+                      threadId: thread.id,
+                    })
               }
               className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
             >

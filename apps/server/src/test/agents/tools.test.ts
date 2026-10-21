@@ -63,7 +63,7 @@ dbDescribe("agent conversation tools", () => {
     );
     const thread = await store.getThread(agent.id, owner.id, result.thread_id);
     expect(thread.title).toBe("The report is ready.");
-    expect(result.url).toBe(`/agents/${agent.id}/threads/${thread.id}`);
+    expect(result.url).toBe(`/thread/${thread.chat_id}`);
     const events = await threads.listEvents(orgId, thread.chat_id);
     expect(events.some((row) => row.event.type === "assistant_message")).toBe(true);
     const list = await chats.listChats(orgId, owner.id);

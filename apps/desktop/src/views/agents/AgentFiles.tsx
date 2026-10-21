@@ -128,10 +128,12 @@ export function AgentFiles({
   agentId,
   filePath,
   onNavigate,
+  onOpenChat,
 }: {
   agentId: string;
   filePath?: string;
   onNavigate: (route: AgentsRoute) => void;
+  onOpenChat?: (chatId: string) => void;
 }) {
   const [entries, setEntries] = useState<AgentFileEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -345,7 +347,8 @@ export function AgentFiles({
         thread_id: thread.id,
         message: `Please edit the workspace file \`${path}\`. Read it first, then make the change I describe in the next message.`,
       });
-      onNavigate({ view: "agent", agentId, tab: "threads", threadId: thread.id });
+      if (onOpenChat) onOpenChat(thread.chat_id);
+      else onNavigate({ view: "agent", agentId, tab: "threads", threadId: thread.id });
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : "Could not open a thread.");
       setEditBusy(false);
