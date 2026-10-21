@@ -326,6 +326,7 @@ async function handleChatCompletions(
     : {
         sink: gateway.trace,
         requestId,
+        runId: traceHeaders.runId,
         chatId: traceHeaders.chatId,
         conversationId: traceHeaders.conversationId,
         turn: traceHeaders.turn,

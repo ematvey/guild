@@ -11,6 +11,31 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Observability is one Activity surface: traces and spans, not a settings
+  page (2026-10-22).** ClickHouse now owns the agent-observability model.
+  `agent_traces` mirrors `agent_runs` (ReplacingMergeTree, 180-day TTL):
+  trace id, org/user/agent, session (chat), parent trace, trigger, status,
+  summary, error, start/finish. `agent_spans` holds immutable `llm` and
+  `tool` spans (90-day TTL) with trace/span ids, parent span, model,
+  tokens, cost, duration, status, input/output and attributes; the gateway
+  writes LLM spans and the tool-task hook writes tool spans. One id links
+  the story: the runtime resolves the chat's running run and sends
+  `x-guild-run-id`, so every model call inside a turn carries the trace id
+  and a judge call resolves it at settle time. A plain chat call falls back
+  to the chat id as its trace id, and the chat id is always the session.
+  `llm_calls` is retired for reads and writes; `llm_payloads` stays keyed by
+  the request id (= LLM span id) and remains opt-in. API: `/api/v1/activity/
+  {traces,spans,sessions,summary}` plus trace detail and admin-only span
+  payloads; admins see the org, members their own rows. UI: the agents
+  Activity page (and each agent's Activity tab) is now Traces | Calls |
+  Sessions with a period picker, status/trigger/caller/model/search filters
+  in the URL query, summary cards, a trace timeline, a transcript, and a
+  span detail pane (input, output, attributes, payloads). The trace detail
+  keeps `/runs/<id>`; `/settings/observability*` redirects to `/activity`.
+  The settings section, its route contract and its test are removed. The
+  model follows Laminar's trace/span/session vocabulary so the UI reads like
+  modern agent observability rather than an LLM-call table.
+
 - **A long thread reaches the client in pages (2026-10-22).** The member
   socket's ThreadState frame carried every durable event, and a live turn
   republishes that frame on each buffer change — so a long chat paid its

@@ -209,7 +209,7 @@ export function registerAgentRoutes(
   gateway: GatewayCtx,
   objects: ObjectStore,
 ): void {
-  const store = new AgentStore(infra.pool);
+  const store = new AgentStore(infra.pool, infra.trace);
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
 
   /** The built-in tool catalog the creation/settings forms offer. Integration

@@ -128,6 +128,12 @@ function escapedString(src: string): string {
   return `'${escaped}'`;
 }
 
+/** ClickHouse DateTime64(3) rendering (millisecond precision, UTC). */
+export function clickhouseDateTime64(date: Date): string {
+  const ms = String(date.getUTCMilliseconds()).padStart(3, "0");
+  return `${clickhouseDateTime(date)}.${ms}`;
+}
+
 /** ClickHouse DateTime rendering (second precision, UTC). */
 export function clickhouseDateTime(date: Date): string {
   return (
