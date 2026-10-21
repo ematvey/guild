@@ -272,6 +272,7 @@ export function registerAgentRoutes(
         },
         thread.chat_id,
         chat,
+        false,
       );
       await store.deriveThreadTitle(agent.id, thread.id, message);
       await store.touchThread(agent.id, thread.id);

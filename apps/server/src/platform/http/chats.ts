@@ -571,6 +571,9 @@ export async function submitTurn(
   /** Agent turn routes authorize through the agent grant and pass the
    *  thread's chat row, so the chat's own owner check does not apply. */
   preloadedChat?: ChatRow,
+  /** Agent turn routes open their own run row before this call; only the
+   *  chat route asks submitTurn to open one. */
+  beginRun = true,
 ): Promise<string> {
   // Required fields (serde rejection text, line/column = raw body length).
   const rawLength = ((req as never as Record<symbol, string>)[RAW_BODY]?.length as number | undefined) ?? 0;
@@ -719,7 +722,7 @@ export async function submitTurn(
       });
     // The run row exists before the turn is admitted; the lifecycle closes it
     // from the transcript.
-    if (adopted !== null) {
+    if (adopted !== null && beginRun) {
       await chats.runtime.beginChatRun(adopted.agent_id, adopted.thread_id, user.id);
     }
     const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
