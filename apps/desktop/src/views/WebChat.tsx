@@ -3814,7 +3814,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 tabIndex={0}
                 title="Drag to resize · double-click to reset"
                 className="group absolute inset-y-0 z-10 w-2 -translate-x-1/2 cursor-col-resize focus:outline-none"
-                style={{ left: `min(calc(50% + ${chatWidth / 2}px), 100%)` }}
+                style={{ left: `min(calc(50% + ${chatWidth / 2}px), calc(100% - 4px))` }}
                 onMouseDown={startChatDrag}
                 onDoubleClick={resetChatWidth}
                 onKeyDown={(e) => {
