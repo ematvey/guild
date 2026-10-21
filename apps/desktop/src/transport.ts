@@ -1265,8 +1265,9 @@ function orgSkillsApi(): OrgSkillsApi {
       const v = (await get("/api/v1/skills/installs")) as { installs?: unknown } | null;
       const rows = Array.isArray(v?.installs) ? v!.installs : [];
       return rows.filter(
-        (r): r is { slug: string; pinned_version: string } =>
-          typeof (r as any)?.slug === "string" && typeof (r as any)?.pinned_version === "string",
+        (r): r is { slug: string; pinned_version: string | null } =>
+          typeof (r as any)?.slug === "string" &&
+          ((r as any)?.pinned_version == null || typeof (r as any)?.pinned_version === "string"),
       );
     },
     skillBody: async (slug, version) => {

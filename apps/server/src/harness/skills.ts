@@ -434,6 +434,8 @@ export class SkillRuntime {
       const attribution = by === "" ? "" : `, by ${by}`;
       if (pin === undefined) {
         uninstalled.push(`- ${item.slug}: ${clipDescription(item.description)} (org${attribution})`);
+      } else if (pin === null) {
+        installed.push(`- ${item.slug}: ${item.description} (installed, latest${attribution})`);
       } else {
         const update =
           item.latest_version !== null && item.latest_version !== pin
@@ -480,7 +482,7 @@ export class SkillRuntime {
       url?: string;
     }>;
   }> {
-    let installs: Array<{ slug: string; pinned_version: string }>;
+    let installs: Array<{ slug: string; pinned_version: string | null }>;
     try {
       installs = await this.deps.skills.listForUser(orgId, userId);
     } catch (error) {
@@ -496,23 +498,29 @@ export class SkillRuntime {
     }> = [];
     for (const install of installs) {
       try {
-        const meta = await this.deps.registry.getVersionMeta(orgId, "skill", install.slug, install.pinned_version);
+        const version =
+          install.pinned_version ??
+          (await this.deps.registry.itemControl(orgId, "skill", install.slug))?.latest_version ??
+          null;
+        if (version === null) {
+          this.deps.log.warn(`skills sync: ${install.slug} has no published version — entry dropped`);
+          continue;
+        }
+        const meta = await this.deps.registry.getVersionMeta(orgId, "skill", install.slug, version);
         if (meta === null) {
-          this.deps.log.warn(
-            `skills sync: ${install.slug}@${install.pinned_version} has no version row — entry dropped`,
-          );
+          this.deps.log.warn(`skills sync: ${install.slug}@${version} has no version row — entry dropped`);
           continue;
         }
         skills.push({
           slug: install.slug,
-          version: install.pinned_version,
+          version,
           bundle_sha256: meta.bundle_sha256 ?? "",
           ...(meta.publisher_label != null && meta.publisher_label !== ""
             ? { publisher: meta.publisher_label }
             : {}),
           ...(meta.published_at != null && meta.published_at !== "" ? { published_at: meta.published_at } : {}),
           ...(this.deps.selfBaseUrl !== undefined
-            ? { url: `${this.deps.selfBaseUrl}/api/v1/registry/skill/${install.slug}/${install.pinned_version}/bundle` }
+            ? { url: `${this.deps.selfBaseUrl}/api/v1/registry/skill/${install.slug}/${version}/bundle` }
             : {}),
         });
       } catch (error) {
@@ -590,7 +598,7 @@ export class SkillRuntime {
    *  installs, no object store, or a store failure → silent no-op. */
   async materializeIntoSandbox(orgId: string, userId: string, env: ExecutionEnv): Promise<void> {
     if (this.deps.objects?.get === undefined) return;
-    let installs: Array<{ slug: string; pinned_version: string }>;
+    let installs: Array<{ slug: string; pinned_version: string | null }>;
     try {
       installs = await this.deps.skills.listForUser(orgId, userId);
     } catch (error) {
@@ -599,7 +607,12 @@ export class SkillRuntime {
     }
     for (const install of installs) {
       try {
-        await this.materializeSkill(orgId, install.slug, install.pinned_version, env);
+        const version =
+          install.pinned_version ??
+          (await this.deps.registry.itemControl(orgId, "skill", install.slug))?.latest_version ??
+          null;
+        if (version === null) continue;
+        await this.materializeSkill(orgId, install.slug, version, env);
       } catch (error) {
         this.deps.log.warn(`skill ${install.slug} materialization failed: ${(error as Error).message}`);
       }
@@ -698,7 +711,9 @@ export class SkillRuntime {
     if (version === null) return this.errorResult(`skill ${slug} has no published version`);
     let justInstalled = false;
     if (install === null) {
-      await this.deps.skills.install(orgId, userId, slug, version);
+      // An install without a pin follows the latest version, so a later
+      // publish reaches this user without a re-install.
+      await this.deps.skills.install(orgId, userId, slug, null);
       justInstalled = true;
       // Best-effort fan-out: the event feeds the activity feed, syncUser
       // (Task 8) reaches the user's machines, and Task 7's materialization
@@ -911,11 +926,12 @@ export class SkillRuntime {
     } catch (error) {
       return this.errorResult(`object store write failed: ${(error as Error).message}`);
     }
-    // Publishing auto-installs for the pusher (pinned at the pushed
-    // version; a later push re-pins) — the same record a manual install
-    // writes, so the skill is in the caller's chat surface immediately.
+    // Publishing auto-installs for the pusher — unpinned, so the row
+    // follows the latest version like any other install; the same record a
+    // manual install writes, so the skill is in the caller's chat surface
+    // immediately.
     try {
-      await this.deps.skills.install(orgId, userId, slug, version);
+      await this.deps.skills.install(orgId, userId, slug, null);
       await this.deps.events.emit(orgId, "skill.installed", { slug, version, user_id: userId });
     } catch (error) {
       this.deps.log.warn(`push auto-install failed for ${slug}: ${(error as Error).message}`);

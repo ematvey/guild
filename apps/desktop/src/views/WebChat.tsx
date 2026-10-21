@@ -726,7 +726,7 @@ interface ComposerSkill {
 /// its local row. Pure for tests.
 export function composerSkills(
   local: ComposerSkill[] | null,
-  installs: Array<{ slug: string; pinned_version?: string }> | null,
+  installs: Array<{ slug: string; pinned_version?: string | null }> | null,
 ): ComposerSkill[] {
   const out = [...(local ?? [])];
   const names = new Set(out.map((s) => s.name));
@@ -3426,19 +3426,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     [width],
   );
 
-  // Chat column drag handle: the column is centered, so one pixel of cursor
-  // travel moves both edges — the width follows the doubled delta. Dragging
-  // stops at the pane edge, not at the stored maximum, so the handle never
-  // runs away from the column.
+  // Chat column drag handles (one per edge): the column is centered, so one
+  // pixel of cursor travel moves both edges — the width follows the doubled
+  // delta, outward for the handle being dragged. Dragging stops at the pane
+  // edge, not at the stored maximum, so a handle never runs away.
   const startChatDrag = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent, side: "left" | "right") => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = chatWidth;
       const paneW = pane.current?.clientWidth ?? window.innerWidth;
+      const dir = side === "right" ? 1 : -1;
       setChatResizing(true);
       const move = (ev: MouseEvent) => {
-        setChatWidth(clampChatWidth(Math.min(startW + (ev.clientX - startX) * 2, paneW)));
+        const w = startW + (ev.clientX - startX) * 2 * dir;
+        setChatWidth(clampChatWidth(Math.min(w, paneW)));
       };
       const up = () => {
         document.removeEventListener("mousemove", move);
@@ -3457,6 +3459,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const resetChatWidth = useCallback(() => {
     setChatWidth(CHAT_DEFAULT_W);
     saveChatWidth(CHAT_DEFAULT_W);
+  }, []);
+  // Keyboard nudge: the key that moves a handle outward grows the column.
+  const nudgeChatWidth = useCallback((key: string, side: "left" | "right") => {
+    const outward = side === "right" ? key === "ArrowRight" : key === "ArrowLeft";
+    setChatWidth((w) => {
+      const next = clampChatWidth(w + (outward ? 64 : -64));
+      saveChatWidth(next);
+      return next;
+    });
   }, []);
   const scrollToBottom = useCallback(() => {
     const el = pane.current;
@@ -3802,35 +3813,41 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 )}
             </div>
           </div>
-            {/* Column resize handle: it sits on the column's right edge —
-                50% + half the width from the pane's left edge, capped at the
+            {/* Column resize handles: one on each edge, so either side can
+                be dragged. Each sits at 50% ± half the width, capped at the
                 pane edge when the column fills it. */}
-            {!isMobile && (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize conversation column"
-                aria-valuenow={chatWidth}
-                tabIndex={0}
-                title="Drag to resize · double-click to reset"
-                className="group absolute inset-y-0 z-10 w-2 -translate-x-1/2 cursor-col-resize focus:outline-none"
-                style={{ left: `min(calc(50% + ${chatWidth / 2}px), calc(100% - 4px))` }}
-                onMouseDown={startChatDrag}
-                onDoubleClick={resetChatWidth}
-                onKeyDown={(e) => {
-                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                  e.preventDefault();
-                  const step = e.key === "ArrowRight" ? 32 : -32;
-                  setChatWidth((w) => {
-                    const next = clampChatWidth(w + step * 2);
-                    saveChatWidth(next);
-                    return next;
-                  });
-                }}
-              >
-                <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-ring group-focus-visible:bg-ring" />
-              </div>
-            )}
+            {!isMobile &&
+              (["left", "right"] as const).map((side) => (
+                <div
+                  key={side}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize conversation column (${side} edge)`}
+                  aria-valuenow={chatWidth}
+                  tabIndex={0}
+                  title="Drag to resize · double-click to reset"
+                  className="group absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize focus:outline-none"
+                  style={{
+                    left:
+                      side === "right"
+                        ? `min(calc(50% + ${chatWidth / 2}px), calc(100% - 4px))`
+                        : `max(calc(50% - ${chatWidth / 2}px), 4px)`,
+                  }}
+                  onMouseDown={(e) => startChatDrag(e, side)}
+                  onDoubleClick={resetChatWidth}
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                    e.preventDefault();
+                    nudgeChatWidth(e.key, side);
+                  }}
+                >
+                  <div
+                    className={`mx-auto h-full w-px transition-colors ${
+                      chatResizing ? "bg-ring" : "bg-border/40 group-hover:bg-ring group-focus-visible:bg-ring"
+                    }`}
+                  />
+                </div>
+              ))}
             {/* Floating jump-to-bottom: only while the user reads above the
                 tail, above the composer so it never covers it. */}
             {!atBottom && (

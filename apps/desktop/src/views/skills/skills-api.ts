@@ -44,7 +44,8 @@ export interface SkillVersion {
 /** The current user's install record, when installed. */
 export interface SkillInstall {
   slug: string;
-  pinned_version: string;
+  /** The pinned version, or null to follow the latest published version. */
+  pinned_version: string | null;
   installed_at: string;
 }
 

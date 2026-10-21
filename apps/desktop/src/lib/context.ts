@@ -93,7 +93,8 @@ const emptyFs: BridgeFs = {
 /** One row of GET /api/v1/skills/installs (the fields the assembly uses). */
 export interface OrgInstall {
   slug: string;
-  pinned_version: string;
+  /** The pinned version, or null when the install follows the latest. */
+  pinned_version: string | null;
 }
 
 /**
@@ -128,7 +129,7 @@ export async function installedOrgSkills(
     out.push(
       home !== null
         ? { name: install.slug, description: "", path: `${home}/.agents/skills/${install.slug}/SKILL.md` }
-        : { name: install.slug, description: "", path: "", org: { version: String(install.pinned_version ?? "") } },
+        : { name: install.slug, description: "", path: "", org: { version: install.pinned_version ?? "latest" } },
     );
   }
   return out;

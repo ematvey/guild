@@ -164,30 +164,30 @@ describe("skills api", () => {
     expect((detail.json() as { description: string }).description).toBe("line one line two line three");
   });
 
-  it("publish auto-installs for the publisher; edits re-pin; other installs keep theirs", async () => {
+  it("publish auto-installs unpinned; edits reach unpinned installs; explicit pins hold", async () => {
     await createSkill("auto-install-skill", "# auto");
     const mine = await inject("GET", "/api/v1/skills/installs", e.memberToken);
-    expect(
-      (mine.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
-        (i) => i.slug === "auto-install-skill",
-      ),
-    ).toMatchObject({ pinned_version: "v1" });
+    const myRow = (body: { installs: Array<{ slug: string; pinned_version: string | null }> }, slug: string) =>
+      body.installs.find((i) => i.slug === slug);
+    expect(myRow(mine.json(), "auto-install-skill")).toMatchObject({ pinned_version: null });
 
-    // A second user's manual install stays at v1 when the publisher edits.
+    // A second user's unpinned install follows the next publish too.
     await inject("POST", "/api/v1/skills/auto-install-skill/install", e.member2Token, {});
     await editSkill("auto-install-skill", "# auto v2");
-    const afterEdit = await inject("GET", "/api/v1/skills/installs", e.memberToken);
-    expect(
-      (afterEdit.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
-        (i) => i.slug === "auto-install-skill",
-      ),
-    ).toMatchObject({ pinned_version: "v2" });
-    const others = await inject("GET", "/api/v1/skills/installs", e.member2Token);
-    expect(
-      (others.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
-        (i) => i.slug === "auto-install-skill",
-      ),
-    ).toMatchObject({ pinned_version: "v1" });
+    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"))
+      .toMatchObject({ pinned_version: null });
+    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"))
+      .toMatchObject({ pinned_version: null });
+
+    // An explicit pin keeps the version across publishes.
+    const pinned = await inject("POST", "/api/v1/skills/auto-install-skill/pin", e.member2Token, { version: "v1" });
+    expect(pinned.statusCode).toBe(200);
+    await editSkill("auto-install-skill", "# auto v3");
+    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"))
+      .toMatchObject({ pinned_version: "v1" });
+    // The unpinned publisher still reads the latest.
+    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"))
+      .toMatchObject({ pinned_version: null });
   });
 
   it("editor save after a version gap publishes max+1, never an overwrite", async () => {
@@ -216,10 +216,11 @@ describe("skills api", () => {
     await createSkill("install-skill", "# install me");
     const res = await inject("POST", "/api/v1/skills/install-skill/install", e.memberToken, {});
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ install: { slug: "install-skill", pinned_version: "v1" } });
+    // No version in the body: the install follows the latest.
+    expect(res.json()).toMatchObject({ install: { slug: "install-skill", pinned_version: null } });
 
     const detail = await inject("GET", "/api/v1/skills/install-skill", e.memberToken);
-    expect((detail.json() as { my_install: { pinned_version: string } }).my_install.pinned_version).toBe("v1");
+    expect((detail.json() as { my_install: { pinned_version: string | null } }).my_install.pinned_version).toBeNull();
     expect((detail.json() as { installs: number }).installs).toBe(1);
 
     const activity = await inject("GET", "/api/v1/skills/activity?filter=all", e.memberToken);
@@ -232,16 +233,16 @@ describe("skills api", () => {
     expect(changeKinds).not.toContain("skill.installed");
   });
 
-  it("GET /api/v1/skills/installs lists the caller's installs with their pins", async () => {
+  it("GET /api/v1/skills/installs lists the caller's installs and their pins", async () => {
     await createSkill("installs-list-skill", "# installs list");
     await inject("POST", "/api/v1/skills/installs-list-skill/install", e.memberToken, {});
     const res = await inject("GET", "/api/v1/skills/installs", e.memberToken);
     expect(res.statusCode).toBe(200);
     const installs = (
-      res.json() as { installs: Array<{ slug: string; pinned_version: string; installed_at: string }> }
+      res.json() as { installs: Array<{ slug: string; pinned_version: string | null; installed_at: string }> }
     ).installs;
     const row = installs.find((i) => i.slug === "installs-list-skill");
-    expect(row).toMatchObject({ slug: "installs-list-skill", pinned_version: "v1" });
+    expect(row).toMatchObject({ slug: "installs-list-skill", pinned_version: null });
     expect(typeof row?.installed_at).toBe("string");
     // another member's list does not include it
     const other = await inject("GET", "/api/v1/skills/installs", e.member2Token);
