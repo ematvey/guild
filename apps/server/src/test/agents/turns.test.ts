@@ -2,26 +2,36 @@
 // canonical chat path, derives the thread title from the first message, and
 // the run completes through the transcript projection.
 
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { agentWorkspaceSubpath } from "../../agents/workspace.js";
 
 let stack: M2Stack;
 let port: number;
+/** Agent workspaces land here, so the test can inspect what a turn wrote. */
+const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-agent-root-"));
 
 beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` });
+  stack = await setupM2Stack({
+    GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
+    GUILD_AGENT_WORKSPACE_ROOT: agentRoot,
+  });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   await stack.routeModel("GLM-Test-Model");
 }, 60_000);
 
 afterAll(async () => {
   await stack.close();
+  rmSync(agentRoot, { recursive: true, force: true });
 }, 30_000);
 
 const auth = (): Record<string, string> => ({
@@ -96,6 +106,48 @@ describe("agent turns", () => {
     const body = JSON.parse(detail.body) as { run: { status: string }; steps: { type: string }[] };
     expect(body.run.status).toBe("succeeded");
     expect(body.steps.some((step) => step.type === "assistant_text")).toBe(true);
+  }, 40_000);
+});
+
+describe("skills stay out of the agent workspace", () => {
+  it("publishing and installing a skill copies nothing into the agent workspace", async () => {
+    const published = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/skills",
+      headers: auth(),
+      payload: { slug: "workspace-isolation", description: "Isolation probe", body: "# Probe\nDo nothing." },
+    });
+    expect(published.statusCode).toBe(200);
+
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Isolation agent", model: "GLM-Test-Model" },
+    });
+    expect(created.statusCode).toBe(200);
+    const agent = (JSON.parse(created.body) as { agent: { id: string; org_id: string } }).agent;
+
+    const turn = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${agent.id}/turns`,
+      headers: auth(),
+      payload: { message: "hello" },
+    });
+    expect(turn.statusCode).toBe(200);
+    await waitFor(async () => {
+      const res = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE agent_id = $1", [
+        agent.id,
+      ]);
+      return res.rows[0]?.status === "succeeded";
+    });
+
+    // The install exists for the caller, so the materialization loop had
+    // work to do; the agent workspace must still hold no skill files.
+    const install = await stack.env.db.query("SELECT 1 FROM skill_installs WHERE slug = 'workspace-isolation'");
+    expect(install.rows).toHaveLength(1);
+    const workspace = path.join(agentRoot, agentWorkspaceSubpath(agent.org_id, agent.id));
+    expect(existsSync(path.join(workspace, "skills"))).toBe(false);
   }, 40_000);
 });
 

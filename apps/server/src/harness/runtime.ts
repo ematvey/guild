@@ -534,29 +534,36 @@ export class GuildRuntime {
     const agent = await agentThreadForChat(this.pool, chatId);
     return agent === null ? null : agentWorkspaceSubpath(orgId, agent.agent_id);
   }
-  /** Turn-start skill materialization (spec §3): the chat owner's
-   *  installed org skills land under the server-side executor dir before
-   *  the turn's tools run. Never throws — a broken bundle or a store
-   *  failure is logged and the turn proceeds without the skill files. */
+  /** Turn-start skill materialization: the chat owner's installed org
+   *  skills land under the sandbox root before the turn's tools run, so a
+   *  plain chat's agent can read a skill's extra files with read_file.
+   *  An agent workspace outlives the conversation and belongs to the agent,
+   *  so no skill files are copied into it — read_skill serves the registry
+   *  bundle instead. Never throws: a broken bundle or a store failure is
+   *  logged and the turn proceeds without the skill files. */
   private async materializeSandboxSkills(chatId: string, env: ExecutionEnv): Promise<void> {
     try {
       const owner = await this.chats.ownerOf(chatId);
       if (owner === null) return;
+      if ((await this.agentWorkspaceForChat(owner.org_id, chatId)) !== null) return;
       await this.skillsRuntime.materializeIntoSandbox(owner.org_id, owner.user_id, env);
     } catch (error) {
       this.log.warn({ err: error, chatId }, "skill materialization failed");
     }
   }
 
-  /** The read_skill install-on-use dep (Task 5's hook): one freshly
-   *  installed skill into the conversation's dir; the caller in
-   *  harness/skills.ts catches and logs, so errors must not escape here. */
+  /** The read_skill install-on-use dep: one freshly installed skill into a
+   *  plain chat's dir; the caller in harness/skills.ts catches and logs, so
+   *  errors must not escape here. An agent workspace gets nothing. */
   private async materializeInstalledSkill(args: {
     conversationId: number;
     orgId: string;
     slug: string;
     version: string;
   }): Promise<void> {
+    const chatId = await this.chatOfConversation(args.conversationId);
+    if (chatId === null) return;
+    if ((await this.agentWorkspaceForChat(args.orgId, chatId)) !== null) return;
     const env = await this.envForConversation(args.conversationId, args.orgId);
     await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, env);
   }

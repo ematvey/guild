@@ -11,6 +11,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Context } from "@earendil-works/chord";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 import { SkillRuntime, descriptionFromSkillMd, type SkillRuntimeDeps } from "../../harness/skills.js";
+import { packBundle } from "../../platform/bundle.js";
 import { ApiError } from "../../platform/errors.js";
 import { RegistryStore } from "../../platform/store/registry.js";
 import { ChatStore } from "../../platform/store/chats.js";
@@ -50,6 +51,8 @@ interface FakeOptions {
     forked_from?: string | null;
   }>;
   executor?: "machine" | "server" | null;
+  /** Extra files served from the object store on a registry read. */
+  bundleFiles?: Record<string, string>;
 }
 
 function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Recorded } {
@@ -116,6 +119,16 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
       put: async (key, bytes) => {
         recorded.puts.push({ key, bytes });
       },
+      ...(options.bundleFiles === undefined
+        ? {}
+        : {
+            get: async () =>
+              await packBundle(
+                Object.fromEntries(
+                  Object.entries(options.bundleFiles!).map(([file, body]) => [file, Buffer.from(body, "utf8")]),
+                ),
+              ),
+          }),
     },
     skillReads: {
       record: async (event) => {
@@ -181,7 +194,8 @@ describe("read_skill", () => {
       "Provenance: hello — version v1, published by Dana Levi, on 2026-05-12, owner team CSM, bundle sha256 cafe.",
     );
     expect(body).toContain("# Deploy");
-    expect(body).toContain("Additional files (read with read_file):");
+    // No object-store read here, so the extra file stays a name + hash.
+    expect(body).toContain("Additional files not shown inline (binary, or over the output budget):");
     expect(body).toContain("- scripts/run.sh (sha256 deadbeef)");
     // manifest.json is bundle metadata installs never materialize — agents
     // must not be pointed at a file that cannot exist locally.
@@ -191,6 +205,28 @@ describe("read_skill", () => {
     expect(recorded.reads).toEqual([
       expect.objectContaining({ slug: "hello", chat_id: CHAT, user_id: USER, org_id: ORG, bundle_sha256: "cafe" }),
     ]);
+  });
+
+  it("serves a registry skill's extra files inline, so no copy is needed on disk", async () => {
+    const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
+    const { deps } = fakeDeps({
+      install,
+      executor: "server",
+      bundleFiles: {
+        "manifest.json": '{"kind":"skill","slug":"hello","version":"v1","description":"A skill"}',
+        "SKILL.md": "# Deploy\nRun the deploy checklist.",
+        "scripts/run.sh": "echo deploy\n",
+      },
+    });
+    const runtime = makeRuntime(deps);
+    const read = runtime.tools().find((t) => t.name === "read_skill")!;
+    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+      { slug: "hello" }, API, CTX,
+    );
+    const body = text(result);
+    expect(body).toContain("--- scripts/run.sh ---");
+    expect(body).toContain("echo deploy");
+    expect(body).not.toContain("not shown inline");
   });
 
   it("installs on first use, emits skill.installed, materializes into the server sandbox", async () => {

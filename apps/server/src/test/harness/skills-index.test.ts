@@ -23,7 +23,7 @@ const CTX = {} as Context;
 
 const HEADER = "# Available skills";
 const GUIDANCE =
-  "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine (their files are readable with read_file); if one shows a newer version, ask the user before updating. Each entry names its publisher; read_skill returns the full provenance.";
+  "When a task matches a skill, read it with read_skill and follow it. read_skill returns the SKILL.md and the additional files the skill ships; if one shows a newer version, ask the user before updating. Each entry names its publisher; read_skill returns the full provenance.";
 
 const SQL_EXPLORER_DESC = "Run the SQL explorer against the analytics cluster.";
 const BACKUP_DESC = "Verify nightly backups.";
