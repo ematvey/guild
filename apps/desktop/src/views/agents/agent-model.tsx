@@ -14,9 +14,10 @@ function loadModels(): Promise<ModelOption[]> {
   return inflight;
 }
 
-export function useModelOptions(): ModelOption[] | null {
+export function useModelOptions(enabled = true): ModelOption[] | null {
   const [models, setModels] = useState<ModelOption[] | null>(cached);
   useEffect(() => {
+    if (!enabled) return;
     if (cached !== null) {
       setModels(cached);
       return;
@@ -28,7 +29,7 @@ export function useModelOptions(): ModelOption[] | null {
     return () => {
       live = false;
     };
-  }, []);
+  }, [enabled]);
   return models;
 }
 
@@ -42,7 +43,23 @@ export function agentModelLabel(id: string, models: ModelOption[] | null): strin
   return option === undefined ? id : modelLabel(option);
 }
 
-export function ModelName({ id, className }: { id: string; className?: string }) {
-  const models = useModelOptions();
+/** The model's display name. `alias` comes with the agent payload, so the
+ *  label is correct on first paint; the fetched list is the fallback for
+ *  callers that have only an id. */
+export function ModelName({
+  id,
+  alias,
+  className,
+}: {
+  id: string;
+  alias?: string | null;
+  className?: string;
+}) {
+  const hasAlias = alias !== undefined && alias !== null && alias !== "";
+  // The payload carries the label: no catalog request on that path.
+  const models = useModelOptions(!hasAlias);
+  if (hasAlias) {
+    return <span className={className}>{alias}</span>;
+  }
   return <span className={className}>{agentModelLabel(id, models)}</span>;
 }

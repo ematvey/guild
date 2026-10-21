@@ -81,6 +81,8 @@ export interface Agent {
   name: string;
   instructions: string;
   model: string;
+  /** The org's display name for the model ("Auto"); the id is the fallback. */
+  model_alias?: string | null;
   tools: AgentToolName[];
   /** `all` follows the org's enabled tools; `selected` uses `tools`. */
   tools_mode: AgentToolsMode;
