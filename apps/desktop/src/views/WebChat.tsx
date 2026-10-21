@@ -1090,9 +1090,12 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
   );
 }
 
-/// Hover-revealed message timestamp: always mounted (absolute within the
-/// inter-message gap, hidden via opacity) so showing it never reflows the
-/// thread. Locale-aware shortest unambiguous form: time only for today,
+/// Hover-revealed message timestamp: always mounted (absolute below the
+/// message, hidden via opacity) so showing it never reflows the thread. It
+/// sits `mt-3` under the message box — the same step the transcript uses
+/// between paragraphs (`space-y-3`), so the stamp reads as the next line of
+/// the message rather than a separate element.
+/// Locale-aware shortest unambiguous form: time only for today,
 /// + month/day within the year, + year for older messages.
 function prettyStamp(iso: string): string {
   const d = new Date(iso);
@@ -1112,7 +1115,7 @@ function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
   return (
     <div
       aria-hidden
-      className={`pointer-events-none absolute -bottom-4 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
+      className={`pointer-events-none absolute top-full mt-3 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
     >
       {text}
     </div>
