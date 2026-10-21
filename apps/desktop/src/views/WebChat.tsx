@@ -316,7 +316,9 @@ export function tabPaneLayout(
 ///   /chats[/new]               — the Chats tab (default; "/" aliases);
 ///                                /new is the addressed scratch composer
 ///   /work[/new]                — the Work tab, with its scratch composer
-///   /thread/<id>               — open thread
+///   /thread/<id>               — open thread (the only thread address; an
+///                                agent thread's /agents/<id>/threads/<tid>
+///                                form redirects here)
 ///   /project/<id>              — sidebar filtered to one project (Work tab)
 ///   /project/<id>/new          — scratch composer pre-picked to the project
 ///   /project/<id>/thread/<cid> — open thread within its project view
@@ -1892,7 +1894,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       getAgentThread(agentThreadRoute.agentId, agentThreadRoute.threadId),
     ])
       .then(([agent, thread]) => {
-        if (live) setAgentThreadData({ agent, thread });
+        if (!live) return;
+        // One canonical address per thread: an agent-thread URL moves to the
+        // thread's chat URL. replaceState keeps it out of history.
+        window.history.replaceState(null, "", `/thread/${encodeURIComponent(thread.chat_id)}`);
+        setRoute((current) => ({
+          ...current,
+          chatId: thread.chat_id,
+          agents: null,
+          tab: "chats",
+          newChat: false,
+        }));
+        setAgentThreadData({ agent, thread });
       })
       .catch((error: unknown) => {
         if (live) {
