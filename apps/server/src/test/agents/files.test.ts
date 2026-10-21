@@ -93,8 +93,11 @@ describe("AgentFiles", () => {
     await expect(files.readText(orgId, agentId, "../secret.txt")).rejects.toMatchObject({ status: 400 });
     await expect(files.listDir(orgId, agentId, "/etc")).rejects.toMatchObject({ status: 400 });
     await expect(files.readText(orgId, agentId, "missing.txt")).rejects.toMatchObject({ status: 404 });
-    await expect(files.listDir("33333333-3333-7333-8333-333333333333", agentId)).rejects.toMatchObject({
-      status: 404,
+    // An untouched agent has no directory yet: the browser shows an empty
+    // workspace, and the route's access check rejects an unknown agent.
+    await expect(files.listDir("33333333-3333-7333-8333-333333333333", agentId)).resolves.toEqual({
+      path: "",
+      entries: [],
     });
   });
 
