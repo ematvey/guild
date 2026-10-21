@@ -48,6 +48,11 @@ you.
   publish client releases to dev so the dev-paired desktop sees them).
   The prod stack (`:18081`, `~/guild-prod`, db `guild_prod`) is only
   touched when the user explicitly asks for a prod deploy/release.
+- **Type sizes come from the theme scale.** `packages/ui/src/theme.css`
+  declares the only steps (`text-3xs` … `text-2xl`). Views use those names;
+  no raw `text-[Npx]`/`text-[Nrem]` sizes. Resize text by editing the token.
+  Do not scale the interface with `html { font-size }` or `zoom`: both move
+  layout and spacing, not just text.
 - `PLAN.md` is the changelog of decisions. Code comments describe what code
   is and does now — no history narration in comments.
 

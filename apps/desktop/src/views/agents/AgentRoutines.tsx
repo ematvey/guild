@@ -181,7 +181,7 @@ function RoutineList({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[0.8125rem] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Routines run on a schedule in an isolated context. Ask the agent to create or change one.
         </p>
         <div className="flex-1" />
@@ -234,14 +234,14 @@ function RoutineList({
               <Clock className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-[0.84375rem] font-medium">{routine.name}</span>
+                  <span className="truncate text-sm font-medium">{routine.name}</span>
                   <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
                     {routine.enabled ? "Enabled" : "Paused"}
                   </ToneBadge>
                   {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
                 </span>
                 <span
-                  className="mt-0.5 block truncate text-[0.75rem] text-muted-foreground"
+                  className="mt-0.5 block truncate text-xs text-muted-foreground"
                   title={routine.schedule ?? undefined}
                 >
                   {scheduleLabel(routine)}
@@ -353,13 +353,13 @@ function RoutineDetail({
       </div>
 
       <Section title="Routine" description="Schedules and prompts are managed in chat.">
-        <dl className="grid gap-3 text-[0.8125rem] sm:grid-cols-2">
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-[0.75rem] font-medium text-muted-foreground">Name</dt>
+            <dt className="text-xs font-medium text-muted-foreground">Name</dt>
             <dd className="mt-0.5">{routine.name}</dd>
           </div>
           <div>
-            <dt className="text-[0.75rem] font-medium text-muted-foreground">Status</dt>
+            <dt className="text-xs font-medium text-muted-foreground">Status</dt>
             <dd className="mt-0.5">
               <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
                 {routine.enabled ? "Enabled" : "Paused"}
@@ -367,31 +367,31 @@ function RoutineDetail({
             </dd>
           </div>
           <div>
-            <dt className="text-[0.75rem] font-medium text-muted-foreground">Schedule</dt>
+            <dt className="text-xs font-medium text-muted-foreground">Schedule</dt>
             <dd className="mt-0.5" title={routine.schedule ?? undefined}>
               {scheduleLabel(routine)}
             </dd>
           </div>
           <div>
-            <dt className="text-[0.75rem] font-medium text-muted-foreground">Next run</dt>
+            <dt className="text-xs font-medium text-muted-foreground">Next run</dt>
             <dd className="mt-0.5 text-muted-foreground">
               {routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}
             </dd>
           </div>
         </dl>
         <div className="mt-4">
-          <p className="text-[0.75rem] font-medium text-muted-foreground">Prompt</p>
-          <p className="mt-1 whitespace-pre-wrap rounded-lg border border-border bg-muted/30 px-3 py-2 text-[0.8125rem] leading-relaxed">
+          <p className="text-xs font-medium text-muted-foreground">Prompt</p>
+          <p className="mt-1 whitespace-pre-wrap rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm leading-relaxed">
             {routine.prompt}
           </p>
         </div>
-        <p className="mt-3 text-[0.71875rem] text-muted-foreground">
+        <p className="mt-3 text-2xs text-muted-foreground">
           The run gets these instructions, this prompt and the workspace. It does not see the default thread.
         </p>
       </Section>
 
       {actionError !== null && (
-        <p role="alert" className="text-[0.8125rem] text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {actionError}
         </p>
       )}
@@ -400,11 +400,11 @@ function RoutineDetail({
         {runs === null ? (
           <InlineLoading label="Loading runs" />
         ) : runs.length === 0 ? (
-          <p className="text-[0.8125rem] text-muted-foreground">This routine has not run yet.</p>
+          <p className="text-sm text-muted-foreground">This routine has not run yet.</p>
         ) : (
           <ul className="divide-y divide-border">
             {runs.map((run) => (
-              <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-[0.78125rem]">
+              <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-xs">
                 <RunStatusBadge status={run.status} />
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">
                   {run.summary?.trim() || "No summary"}
