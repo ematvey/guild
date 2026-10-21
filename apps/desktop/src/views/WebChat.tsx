@@ -17,9 +17,11 @@ import { highlightJs } from "./js-highlight";
 import { WorkedForBlock, viewEntries } from "./worked-for-block";
 export { workRunLabel, viewEntries } from "./worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
+import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../lib/chat-width";
 import {
   Archive,
   ArchiveRestore,
+  ArrowDown,
   ArrowUp,
   ShieldAlert,
   ShieldCheck,
@@ -767,10 +769,10 @@ export function mentionCandidates(
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
 /// new-thread hero would flash for the whole fetch duration.
-function ThreadSkeleton() {
+function ThreadSkeleton({ width }: { width: number }) {
   return (
     <div role="status" aria-label="Loading conversation" className="min-h-0 flex-1 overflow-hidden">
-      <div className="mx-auto max-w-3xl space-y-8 px-5 py-6">
+      <div className="mx-auto w-full space-y-8 px-5 py-6" style={{ maxWidth: width }}>
         <div className="flex justify-end"><Skeleton className="h-4 w-2/5" /></div>
         <SkeletonText lines={4} />
       </div>
@@ -1842,6 +1844,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setComposerH(composerEl.offsetHeight);
     return () => ro.disconnect();
   }, [composerEl]);
+  // Central column width (drag handle on its right edge) and whether the
+  // pane sits at the bottom (the floating scroll-to-bottom button hides there).
+  const [chatWidth, setChatWidth] = useState<number>(() => storedChatWidth());
+  const [chatResizing, setChatResizing] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  useEffect(() => {
+    const resync = () => setChatWidth(storedChatWidth());
+    window.addEventListener("guild:chat-width-changed", resync);
+    return () => window.removeEventListener("guild:chat-width-changed", resync);
+  }, []);
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
@@ -2588,6 +2600,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (chatId !== null && justCreatedBusyRef.current === chatId) justCreatedBusyRef.current = null;
     else setBusy(false);
     stick.current = true;
+    setAtBottom(true);
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
@@ -3413,6 +3426,46 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     [width],
   );
 
+  // Chat column drag handle: the column is centered, so one pixel of cursor
+  // travel moves both edges — the width follows the doubled delta. Dragging
+  // stops at the pane edge, not at the stored maximum, so the handle never
+  // runs away from the column.
+  const startChatDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = chatWidth;
+      const paneW = pane.current?.clientWidth ?? window.innerWidth;
+      setChatResizing(true);
+      const move = (ev: MouseEvent) => {
+        setChatWidth(clampChatWidth(Math.min(startW + (ev.clientX - startX) * 2, paneW)));
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        setChatResizing(false);
+        setChatWidth((w) => {
+          saveChatWidth(w);
+          return w;
+        });
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    },
+    [chatWidth],
+  );
+  const resetChatWidth = useCallback(() => {
+    setChatWidth(CHAT_DEFAULT_W);
+    saveChatWidth(CHAT_DEFAULT_W);
+  }, []);
+  const scrollToBottom = useCallback(() => {
+    const el = pane.current;
+    if (!el) return;
+    stick.current = true;
+    setAtBottom(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, []);
+
   return (
     <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
       {/* icon rail: desktop only, always visible — it switches the sidebar
@@ -3616,7 +3669,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
         {blocks.length === 0 ? (
           threadLoading ? (
-            <ThreadSkeleton />
+            <ThreadSkeleton width={chatWidth} />
           ) : !chatId ? (
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
             {models !== null && models.length === 0 && (
@@ -3631,6 +3684,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           )
         ) : (
+          <div className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={pane}
             data-scrollable
@@ -3639,12 +3693,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               const el = pane.current;
               if (!el) return;
               // near-bottom counts as bottom (sub-pixel/rounding slack)
-              stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+              const near = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+              stick.current = near;
+              setAtBottom(near);
             }}
           >
             <div
-              className="mx-auto w-full max-w-3xl space-y-5 px-4 pt-6 text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground"
-              style={{ paddingBottom: composerH + 20 }}
+              className={`mx-auto w-full space-y-5 px-4 pt-6 text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
+                chatResizing ? "" : "transition-[max-width] duration-150"
+              }`}
+              style={{ paddingBottom: composerH + 20, maxWidth: chatWidth }}
             >
               {displayEntries.map((e, i) =>
                 e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
@@ -3744,6 +3802,54 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 )}
             </div>
           </div>
+            {/* Column resize handle: it sits on the column's right edge —
+                50% + half the width from the pane's left edge, capped at the
+                pane edge when the column fills it. */}
+            {!isMobile && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize conversation column"
+                aria-valuenow={chatWidth}
+                tabIndex={0}
+                title="Drag to resize · double-click to reset"
+                className="group absolute inset-y-0 z-10 w-2 -translate-x-1/2 cursor-col-resize focus:outline-none"
+                style={{ left: `min(calc(50% + ${chatWidth / 2}px), 100%)` }}
+                onMouseDown={startChatDrag}
+                onDoubleClick={resetChatWidth}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                  e.preventDefault();
+                  const step = e.key === "ArrowRight" ? 32 : -32;
+                  setChatWidth((w) => {
+                    const next = clampChatWidth(w + step * 2);
+                    saveChatWidth(next);
+                    return next;
+                  });
+                }}
+              >
+                <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-ring group-focus-visible:bg-ring" />
+              </div>
+            )}
+            {/* Floating jump-to-bottom: only while the user reads above the
+                tail, above the composer so it never covers it. */}
+            {!atBottom && (
+              <div
+                className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
+                style={{ bottom: composerH + 12 }}
+              >
+                <button
+                  type="button"
+                  onClick={scrollToBottom}
+                  aria-label="Scroll to the bottom"
+                  title="Scroll to the bottom"
+                  className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <ArrowDown className="size-4" />
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* composer: floats over the chat content; the scroll pane runs
@@ -3752,7 +3858,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
-          <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
+          <div
+            className={`pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm ${
+              chatResizing ? "" : "transition-[max-width] duration-150"
+            }`}
+            style={{ maxWidth: chatWidth }}
+          >
             <input
               ref={fileInput}
               type="file"
