@@ -220,24 +220,24 @@ export function ActivityPage({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-[13.5px] font-medium">
+                  <span className="truncate text-[0.84375rem] font-medium">
                     {run.summary?.trim() || `${RUN_TRIGGER_LABEL[run.trigger]} run`}
                   </span>
                   {!agentId && run.agent_name && (
-                    <span className="truncate text-[12px] text-muted-foreground">
+                    <span className="truncate text-[0.75rem] text-muted-foreground">
                       · {run.agent_name}
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 block truncate text-[12px] text-muted-foreground">
+                <span className="mt-0.5 block truncate text-[0.75rem] text-muted-foreground">
                   {activitySubtitle(run)}
                 </span>
               </span>
-              <span className="hidden shrink-0 text-[12px] text-muted-foreground sm:block">
+              <span className="hidden shrink-0 text-[0.75rem] text-muted-foreground sm:block">
                 {runDuration(run)}
               </span>
               <RunStatusBadge status={run.status} />
-              <span className="hidden shrink-0 text-[12px] text-muted-foreground md:block">
+              <span className="hidden shrink-0 text-[0.75rem] text-muted-foreground md:block">
                 {relativeTime(run.started_at ?? run.created_at)}
               </span>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -246,7 +246,7 @@ export function ActivityPage({
         </div>
       )}
       {onOpenChat !== undefined && agentId === undefined && (
-        <p className="mt-3 text-[12px] text-muted-foreground">
+        <p className="mt-3 text-[0.75rem] text-muted-foreground">
           Activity records every run, including silent runs that did not open a thread.
         </p>
       )}
@@ -343,28 +343,28 @@ export function RunDetailPage({
             <div className="rounded-xl border border-border bg-card p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <RunStatusBadge status={run.status} />
-                <span className="text-[13px] text-muted-foreground">
+                <span className="text-[0.8125rem] text-muted-foreground">
                   {RUN_TRIGGER_LABEL[run.trigger]}
                 </span>
                 {run.agent_name && agent && (
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-[12px] hover:bg-accent"
+                    className="flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-[0.75rem] hover:bg-accent"
                     onClick={() => onNavigate({ view: "agent", agentId: agent, tab: "overview" })}
                   >
-                    <AgentGlyph name={run.agent_name} className="size-4 rounded text-[8px]" />
+                    <AgentGlyph name={run.agent_name} className="size-4 rounded text-[0.5rem]" />
                     {run.agent_name}
                   </button>
                 )}
                 <span className="flex-1" />
-                <span className="text-[12px] text-muted-foreground">
+                <span className="text-[0.75rem] text-muted-foreground">
                   {relativeTime(run.started_at ?? run.created_at)}
                 </span>
               </div>
               <p className="mt-3 text-sm font-medium">
                 {run.summary?.trim() || "No summary was recorded."}
               </p>
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12.5px] sm:grid-cols-4">
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[0.78125rem] sm:grid-cols-4">
                 <div>
                   <dt className="text-muted-foreground">Started</dt>
                   <dd>{run.started_at ? new Date(run.started_at).toLocaleString() : "—"}</dd>
@@ -399,9 +399,9 @@ export function RunDetailPage({
 
             {run.error_message && (
               <Section title="Error">
-                <p className="text-[13px] text-destructive">{run.error_message}</p>
+                <p className="text-[0.8125rem] text-destructive">{run.error_message}</p>
                 {(run.error_code || run.error_step) && (
-                  <p className="mt-1 font-mono text-[11.5px] text-muted-foreground">
+                  <p className="mt-1 font-mono text-[0.71875rem] text-muted-foreground">
                     {[run.error_code, run.error_step].filter(Boolean).join(" · ")}
                   </p>
                 )}
@@ -410,15 +410,15 @@ export function RunDetailPage({
 
             <Section title="Steps" description="Model turns and tool calls in order.">
               {(run.steps ?? []).length === 0 ? (
-                <p className="text-[13px] text-muted-foreground">No steps were recorded.</p>
+                <p className="text-[0.8125rem] text-muted-foreground">No steps were recorded.</p>
               ) : (
                 <ol className="space-y-1.5">
                   {run.steps!.map((step, i) => (
                     <li
                       key={`${step.kind}-${i}`}
-                      className="flex items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-[12.5px]"
+                      className="flex items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-[0.78125rem]"
                     >
-                      <span className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                      <span className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">
                         {String(i + 1).padStart(2, "0")}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -431,7 +431,7 @@ export function RunDetailPage({
                       </span>
                       {step.status && (
                         <span
-                          className={`shrink-0 text-[11px] ${
+                          className={`shrink-0 text-[0.6875rem] ${
                             step.is_error ? "text-destructive" : "text-muted-foreground"
                           }`}
                         >
@@ -452,7 +452,7 @@ export function RunDetailPage({
                       <button
                         type="button"
                         onClick={() => onNavigate({ view: "run", runId: child.id })}
-                        className="flex w-full items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:bg-muted/50"
+                        className="flex w-full items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-left text-[0.78125rem] transition-colors hover:bg-muted/50"
                       >
                         <span className="mt-0.5">
                           <RunStatusBadge status={child.status} />
@@ -479,10 +479,10 @@ export function RunDetailPage({
               <Section title="Artifacts" description="Files the delegated run returned.">
                 <ul className="space-y-1">
                   {artifacts.map((artifact) => (
-                    <li key={artifact.id} className="flex items-center gap-2 text-[12.5px]">
+                    <li key={artifact.id} className="flex items-center gap-2 text-[0.78125rem]">
                       <FileText className="size-3.5 text-muted-foreground" />
                       <span className="min-w-0 flex-1 break-all font-mono">{artifact.path}</span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                      <span className="shrink-0 text-[0.6875rem] text-muted-foreground">
                         {artifact.status} · {formatBytes(artifact.size)}
                       </span>
                     </li>
@@ -493,11 +493,11 @@ export function RunDetailPage({
 
             <Section title="Files touched">
               {(run.files ?? []).length === 0 ? (
-                <p className="text-[13px] text-muted-foreground">No files were touched.</p>
+                <p className="text-[0.8125rem] text-muted-foreground">No files were touched.</p>
               ) : (
                 <ul className="space-y-1">
                   {run.files!.map((path) => (
-                    <li key={path} className="flex items-center gap-2 text-[12.5px]">
+                    <li key={path} className="flex items-center gap-2 text-[0.78125rem]">
                       <FileText className="size-3.5 text-muted-foreground" />
                       <span className="break-all font-mono">{path}</span>
                     </li>
@@ -510,7 +510,7 @@ export function RunDetailPage({
               <Section title="Parent run">
                 <button
                   type="button"
-                  className="text-[13px] text-primary underline-offset-4 hover:underline"
+                  className="text-[0.8125rem] text-primary underline-offset-4 hover:underline"
                   onClick={() => onNavigate({ view: "run", runId: run.parent_run_id! })}
                 >
                   Open parent run {run.parent_run_id}

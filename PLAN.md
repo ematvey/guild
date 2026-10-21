@@ -11,6 +11,12 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **One type-size knob at the root (2026-10-21).** The type scale and every
+  layout step are rem-based, so `html { font-size: 112.5% }` in
+  `packages/ui/src/theme.css` scales the whole interface and keeps
+  proportions. Arbitrary `text-[Npx]` utilities are gone: they are rem now,
+  so they follow the same knob. Tune the size there, never per view.
+
 - **Agent surfaces follow the chat product (2026-10-21).**
   - Agent threads render through the core chat stack: `/agents/<id>/threads/<tid>`
     resolves the thread's `chat_id` and feeds the normal transcript, tool

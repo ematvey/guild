@@ -189,19 +189,19 @@ export function InboxPage({
                       {INBOX_KIND_LABEL[notice.kind]}
                     </ToneBadge>
                     {notice.agent_name && (
-                      <span className="text-[12px] text-muted-foreground">
+                      <span className="text-[0.75rem] text-muted-foreground">
                         {notice.agent_name}
                       </span>
                     )}
-                    <span className="text-[12px] text-muted-foreground">
+                    <span className="text-[0.75rem] text-muted-foreground">
                       · {relativeTime(notice.created_at)}
                     </span>
                   </span>
-                  <span className="mt-1 block whitespace-pre-wrap text-[13.5px]">
+                  <span className="mt-1 block whitespace-pre-wrap text-[0.84375rem]">
                     {noticeText(notice)}
                   </span>
                   {notice.thread_id && (
-                    <span className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
+                    <span className="mt-1 flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                       <MessageSquare className="size-3" />
                       Open thread
                     </span>

@@ -350,7 +350,7 @@ export function SkillsPanel({
                 aria-selected={tab === value}
                 aria-label={`${label} tab`}
                 onClick={() => onNavigate({ view: value, slug: null, editor: null })}
-                className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-[13.5px] outline-none transition-colors ${
+                className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-[0.84375rem] outline-none transition-colors ${
                   tab === value
                     ? "border-foreground text-foreground"
                     : "border-transparent text-muted-foreground hover:text-foreground"
@@ -406,7 +406,7 @@ export function SkillsPanel({
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
                   <div>
                     <p className="text-sm font-medium">Could not load the skill catalog</p>
-                    <p className="mt-0.5 text-[13px] text-muted-foreground">
+                    <p className="mt-0.5 text-[0.8125rem] text-muted-foreground">
                       The paired server may be older than this app and lack the skills API.
                     </p>
                   </div>
@@ -453,7 +453,7 @@ export function SkillsPanel({
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[13.5px] font-semibold">{row.slug}</span>
+                            <span className="text-[0.84375rem] font-semibold">{row.slug}</span>
                             {row.gated && (
                               <Badge
                                 variant="outline"
@@ -478,7 +478,7 @@ export function SkillsPanel({
                               </Badge>
                             )}
                           </div>
-                          <p className="mt-0.5 line-clamp-3 text-[13px] text-muted-foreground">{row.description}</p>
+                          <p className="mt-0.5 line-clamp-3 text-[0.8125rem] text-muted-foreground">{row.description}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
                           {row.ownerLabel !== "" && (
@@ -487,7 +487,7 @@ export function SkillsPanel({
                                 src={row.ownerAvatar}
                                 fallback={ownerInitials(row.ownerLabel)}
                                 className="size-5 border border-border"
-                                fallbackClassName="bg-secondary text-[8.5px] font-semibold"
+                                fallbackClassName="bg-secondary text-[0.53125rem] font-semibold"
                               />
                               <span className="hidden max-w-32 truncate md:inline">{row.ownerLabel}</span>
                             </span>

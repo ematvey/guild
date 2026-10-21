@@ -74,7 +74,7 @@ function RailButton({
           {badge !== undefined && badge > 0 && (
             <span
               aria-label={`${badge} unread`}
-              className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-semibold leading-4 text-black"
+              className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[0.5625rem] font-semibold leading-4 text-black"
             >
               {badge > 99 ? "99+" : badge}
             </span>
