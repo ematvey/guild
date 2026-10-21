@@ -33,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Input } from "@guild/ui/components/input";
-import { Textarea } from "@guild/ui/components/textarea";
 import {
   Select,
   SelectContent,
@@ -491,20 +490,22 @@ function AgentOverview({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <div className="space-y-4">
         <Section
-          title="Instructions"
+          title="Configuration files"
+          description="IDENTITY.md, SOUL.md, AGENTS.md, USER.md and MEMORY.md live in the workspace and load into every thread."
           action={
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "settings" })}
+              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "files" })}
             >
               <Pencil />
-              Edit
+              Edit files
             </Button>
           }
         >
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">
-            {agent.instructions || "No instructions yet."}
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            The agent reads these files at the start of each thread and can edit them itself. Changes apply on the
+            next turn.
           </p>
         </Section>
 
@@ -686,7 +687,6 @@ function AgentSettings({
   onDeleted: () => void;
 }) {
   const [name, setName] = useState(agent.name);
-  const [instructions, setInstructions] = useState(agent.instructions);
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
@@ -732,7 +732,6 @@ function AgentSettings({
     try {
       await updateAgent(agent.id, {
         name: name.trim(),
-        instructions,
         model,
         tools,
         tools_mode: toolsMode,
@@ -788,14 +787,6 @@ function AgentSettings({
             </Select>
           </label>
         </div>
-        <label className="mt-3 block space-y-1.5">
-          <span className="text-xs font-medium">Instructions</span>
-          <Textarea
-            value={instructions}
-            rows={10}
-            onChange={(e) => setInstructions(e.target.value)}
-          />
-        </label>
         <div className="mt-3 space-y-1.5">
           <span className="text-xs font-medium">Visibility</span>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -1076,10 +1067,6 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Visibility</dt>
           <dd>{VISIBILITY_LABEL[agent.visibility]}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Instructions</dt>
-          <dd className="mt-1 whitespace-pre-wrap">{agent.instructions}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Tools</dt>

@@ -216,13 +216,11 @@ it is not recreated.
 `;
 
 /** Files seeded into a new agent workspace, in prompt order. */
-export function seedFiles(name: string, instructions: string): Array<{ path: string; text: string }> {
-  const own = instructions.trim();
-  const agents = own === "" ? AGENTS_TEMPLATE : `${AGENTS_TEMPLATE}\n## Your Instructions\n\n${own}\n`;
+export function seedFiles(name: string): Array<{ path: string; text: string }> {
   return [
     { path: "IDENTITY.md", text: identityTemplate(name) },
     { path: "SOUL.md", text: SOUL_TEMPLATE },
-    { path: "AGENTS.md", text: agents },
+    { path: "AGENTS.md", text: AGENTS_TEMPLATE },
     { path: "USER.md", text: USER_TEMPLATE },
     { path: "BOOTSTRAP.md", text: BOOTSTRAP_TEMPLATE },
   ];

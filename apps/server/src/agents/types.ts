@@ -79,7 +79,6 @@ export interface Agent {
   owner_email?: string | null;
   owner_avatar_url?: string | null;
   name: string;
-  instructions: string;
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;

@@ -77,14 +77,11 @@ export function parseIdentity(text: string): AgentIdentity {
 /** Seeds the workspace with the template files it does not have yet. An
  *  existing file is never overwritten — the agent may have edited it. The
  *  `memories/` directory is created empty. Returns the names it wrote. */
-export async function seedAgentWorkspace(
-  dir: string,
-  agent: { name: string; instructions: string },
-): Promise<string[]> {
+export async function seedAgentWorkspace(dir: string, agent: { name: string }): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   await mkdir(path.join(dir, "memories"), { recursive: true });
   const written: string[] = [];
-  for (const file of seedFiles(agent.name, agent.instructions)) {
+  for (const file of seedFiles(agent.name)) {
     const target = path.join(dir, file.path);
     try {
       await readFile(target);
@@ -142,9 +139,3 @@ export function renderFileBlock(name: string, text: string, budget: number): str
   );
 }
 
-/** The AGENTS.md text for a patch of the agent's instructions: the file is
- *  the source of truth, so a write replaces it wholesale. */
-export async function writeAgentsFile(dir: string, text: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, "AGENTS.md"), text, "utf8");
-}

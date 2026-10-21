@@ -52,7 +52,7 @@ dbDescribe("AgentStore", () => {
   });
 
   it("creates the agent, its default thread and the thread's chat", async () => {
-    const agent = await store.create(owner, { name: "Writer", model: "GLM-Test", instructions: "be brief" });
+    const agent = await store.create(owner, { name: "Writer", model: "GLM-Test" });
     expect(agent.owner_user_id).toBe(owner.id);
     expect(agent.visibility).toBe("private");
     expect(agent.status).toBe("active");
@@ -115,11 +115,9 @@ dbDescribe("AgentStore", () => {
   it("updates config, archives, restores and marks deletion with the grace window", async () => {
     const agent = await store.create(owner, { name: "Lifecycle", model: "GLM-Test" });
     const updated = await store.update(owner, agent.id, {
-      instructions: "new instructions",
       tools: ["read", "conversations_search"],
       visibility: "org",
     });
-    expect(updated.instructions).toBe("new instructions");
     expect(updated.tools).toEqual(["read", "conversations_search"]);
     expect(updated.visibility).toBe("org");
 
