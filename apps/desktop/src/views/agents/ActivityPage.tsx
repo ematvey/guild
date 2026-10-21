@@ -362,7 +362,7 @@ export function ActivityPage({
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
           </span>
@@ -604,7 +604,7 @@ function CallsTable({
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div className="hidden grid-cols-[9rem_9rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[9rem_11rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
         <span>Time</span>
         <span>Model</span>
         <span>Trace</span>
@@ -619,7 +619,7 @@ function CallsTable({
           key={span.span_id}
           type="button"
           onClick={() => onOpen(span)}
-          className="grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50 lg:grid-cols-[9rem_9rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem]"
+          className="grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50 lg:grid-cols-[9rem_11rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem]"
         >
           <span className="min-w-0 lg:hidden">
             <span className="flex items-center gap-1.5">
