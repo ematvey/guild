@@ -841,7 +841,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
     expect(older.blocks.filter(b => b.kind === "text").map(b => b.text)).toEqual(["step"]);
   });
 
-  it("a reconnect state keeps already-loaded older pages", () => {
+  it("a reconnect re-derives from the state's tail window", () => {
     const r = createThreadReducer();
     r.open("chat");
     r.applyState({ ...state("chat", 100, [user(51, "a"), user(52, "b")]), has_more_events: true });
@@ -849,11 +849,9 @@ describe("older-page loading (bounded tail + prepend)", () => {
 
     r.invalidate();
     const after = r.applyState({ ...state("chat", 101, [user(51, "a"), user(52, "b")]), has_more_events: true });
-    expect(after.oldestSeq).toBe(49);
-    expect(after.hasMore).toBe(false);
-    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual([
-      "old-1", "old-2", "a", "b",
-    ]);
+    expect(after.oldestSeq).toBe(51);
+    expect(after.hasMore).toBe(true);
+    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["a", "b"]);
   });
 
   it("incremental fan-out rows append to the loaded window", () => {

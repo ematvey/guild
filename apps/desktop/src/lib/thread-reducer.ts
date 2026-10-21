@@ -929,13 +929,14 @@ export function createThreadReducer(): ThreadReducer {
       const tailOldest = state.events[0]?.seq ?? Number.POSITIVE_INFINITY;
       const windowIsTail = v.events.length === 0 || (v.events[0]?.seq ?? 0) >= tailOldest;
       if (v.watermark < 0) {
-        // Older pages the reader already loaded survive a reconnect: the
-        // state carries only the tail window, so merge it onto them.
-        const kept = v.events.filter((r) => r.seq < tailOldest);
-        v.events = [...kept, ...state.events];
-        v.hasMore = kept.length > 0 ? v.hasMore : (state.has_more_events ?? false);
+        // A sync re-derives the view from its own window: pages loaded
+        // before a reconnect are dropped, because the state's tail may no
+        // longer be contiguous with them and a silent gap is worse than
+        // re-reading from the tail.
+        v.events = state.events;
+        v.hasMore = state.has_more_events ?? false;
         rebuild(v);
-        v.lastEventSeq = v.events.reduce((max, r) => Math.max(max, r.seq), -1);
+        v.lastEventSeq = state.events.reduce((max, r) => Math.max(max, r.seq), -1);
       } else {
         const fresh = state.events
           .filter((r) => r.seq > v.lastEventSeq)
