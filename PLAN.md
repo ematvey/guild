@@ -11,6 +11,27 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Threads are private; agents are shared (2026-10-21).** Design:
+  `docs/specs/2026-10-21-unified-threads.md`. Every conversation is a thread of
+  an agent; a thread carries the user on whose behalf it exists (caller for a
+  message, routine creator for a cron run, parent's user for a delegation).
+  Sharing an agent shares its workspace, never its threads.
+  - `agent_threads.user_id` scopes every thread read, rename and turn; a
+    second user of a shared agent gets their own default thread
+    (`UNIQUE (agent_id, user_id) WHERE kind = 'default'`) and cannot see,
+    rename or post into another user's thread. Verified live: a member of an
+    org-visible agent reads the owner's thread as 404.
+  - `agent_routines.created_by_user_id` and `agent_runs.user_id` record the
+    run's user, so routine threads and inbox notices land in the creator's
+    private list.
+  - `agents.is_personal` marks the one personal agent per user (default name
+    `Assistant`), created lazily on first use, always private, exempt from
+    archive and delete. `MAX_AGENTS_PER_ORG` is gone: agent count is
+    unbounded; limits are workspace quota and storage budget.
+  - Agent list shows `owner / name`; names are unique per owner among live
+    agents. Model labels always use the app alias (`Auto`), never the
+    provider id.
+
 - **Type sizes come from the theme scale (2026-10-21).** `packages/ui/src/theme.css`
   declares the only text steps: `text-3xs`, `text-2xs`, `text-xs`, `text-sm`,
   `text-base`, `text-lg`, `text-xl`, `text-2xl`, with unitless line-height
