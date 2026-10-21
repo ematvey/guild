@@ -358,7 +358,7 @@ export function ActivityPage({
           <input
             value={state.q}
             onChange={(e) => set({ q: e.target.value })}
-            placeholder="Search summary or agent"
+            placeholder={state.tab === "traces" ? "Search summary or agent" : "Search"}
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
@@ -621,9 +621,33 @@ function CallsTable({
           onClick={() => onOpen(span)}
           className="grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50 lg:grid-cols-[9rem_9rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem]"
         >
-          <span className="text-xs text-muted-foreground">{time(span.start_time)}</span>
-          <span className="truncate font-mono text-xs">{span.model || span.name}</span>
-          <span className="min-w-0">
+          <span className="min-w-0 lg:hidden">
+            <span className="flex items-center gap-1.5">
+              <span className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`} />
+              <span className="truncate font-mono text-xs">{span.model || span.name}</span>
+              <ToneBadge tone={span.caller === "judge" ? "info" : "neutral"}>{span.caller || "model"}</ToneBadge>
+            </span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <span>{time(span.start_time)}</span>
+              <span>·</span>
+              <span className="truncate">
+                {span.run_id !== null ? `run ${span.run_id.slice(0, 8)}` : span.chat_id !== null ? `chat ${span.chat_id.slice(0, 8)}` : "—"}
+              </span>
+              <span>·</span>
+              <span className="tabular-nums">{compact(span.tokens_in)}→{compact(span.tokens_out)} tok</span>
+              <span>·</span>
+              <span className="tabular-nums">{ms(span.duration_ms)}</span>
+              {admin && (
+                <>
+                  <span>·</span>
+                  <span className="tabular-nums">{money(span.cost_usd)}</span>
+                </>
+              )}
+            </span>
+          </span>
+          <span className="hidden text-xs text-muted-foreground lg:block">{time(span.start_time)}</span>
+          <span className="hidden truncate font-mono text-xs lg:block">{span.model || span.name}</span>
+          <span className="hidden min-w-0 lg:block">
             <span className="flex items-center gap-1.5">
               <span className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`} />
               <span className="truncate text-xs text-muted-foreground">
