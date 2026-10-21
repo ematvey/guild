@@ -25,6 +25,12 @@ export interface ThreadStateCapture {
   hasMoreEvents: boolean;
 }
 
+/** Events carried by one ThreadState frame: the newest window of the log.
+ *  Older rows load on demand through GET /threads/:id/events. Every frame
+ *  carries this window, and a live turn republishes it on each buffer
+ *  change, so the window bounds the per-frame cost of a long thread. */
+export const THREAD_STATE_EVENT_LIMIT = 120;
+
 /** One atomic capture: history + the unpersisted model buffers + the chat
  *  status, with the watermark reserved AFTER the event read (seq is always
  *  newer than every row it carries). `caller` omitted = the notify-driven
@@ -32,7 +38,8 @@ export interface ThreadStateCapture {
  *  — no per-user gate; the payload is org-gated by construction). */
 export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
   if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
-  const events = await chats.threads.listEvents(orgId, chatId);
+  const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });
+  const events = page.rows;
   const seq = await chats.threads.watermark();
   const buffers = chats.runtime.liveBuffers(chatId);
   const generatingRow = await pool.query<{ generating: boolean }>(
@@ -51,7 +58,7 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
     projectId: project?.id,
     projectName: project?.name,
     projectMachineLabel: project?.label ?? undefined,
-    hasMoreEvents: false,
+    hasMoreEvents: page.hasMore,
   };
 }
 

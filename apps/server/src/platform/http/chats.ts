@@ -196,6 +196,30 @@ export function registerChatsRoutes(
   app.get("/api/v1/chats/:id/thread", threadRead);
   app.get("/api/v1/threads/:id", threadRead);
 
+  // One older page of the durable log: the client renders the ThreadState
+  // tail window and prepends earlier pages as the reader scrolls up.
+  const threadEventsPage = async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const rawBefore = queryParam(req, "before");
+    const beforeSeq = rawBefore === undefined ? undefined : Number(rawBefore);
+    if (beforeSeq !== undefined && (!Number.isSafeInteger(beforeSeq) || beforeSeq < 0)) {
+      throw ApiError.badRequest("invalid before");
+    }
+    const rawLimit = queryParam(req, "limit");
+    const limit = rawLimit === undefined ? 100 : Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw ApiError.badRequest("invalid limit");
+    }
+    const page = await chats.threads.listEventPage(user.org_id, chatId, { beforeSeq, limit });
+    return reply.status(200).type("application/json").send(
+      `{"events":[${page.rows.map(threadEventRowWire).join(",")}],"has_more":${page.hasMore}}`,
+    );
+  };
+  app.get("/api/v1/threads/:id/events", threadEventsPage);
+  app.get("/api/v1/chats/:id/events", threadEventsPage);
+
   app.get("/api/v1/threads/:id/context", async (req) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");

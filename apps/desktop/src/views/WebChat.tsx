@@ -128,6 +128,7 @@ import {
   apiOnboarded,
   createChat,
   fetchChatViewMode,
+  fetchThreadEventsPage,
   getChatApproval,
   listArchivedChats,
   listChats,
@@ -745,6 +746,10 @@ const BUILTIN_COMMANDS: { name: string; description: string }[] = [
     description: "Compact this thread — summarize older messages to free context",
   },
 ];
+
+/// Events per older-page fetch when the reader scrolls to the top. Matches
+/// the server's ThreadState tail window, so one page doubles the view.
+const EARLIER_PAGE_SIZE = 120;
 
 /// The `/` autocomplete pool: built-in commands first, then enabled skills;
 /// prefix-matched on the typed fragment. Pure for tests.
@@ -2046,6 +2051,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ]);
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
+  // Older-page loader: the server sends a bounded tail of the durable log in
+  // each ThreadState frame, and scrolling to the top prepends the page
+  // before the loaded window.
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const hasMoreRef = useRef(false);
+  const loadingEarlierRef = useRef(false);
+  const oldestSeqRef = useRef(-1);
+  /** Scroll geometry captured before a prepend; the layout effect below
+   *  restores the reader's position (the prepended blocks would otherwise
+   *  push the view down by their height). */
+  const earlierAnchor = useRef<{ height: number; top: number } | null>(null);
   // The thread reducer: per-chat views (blocks + watermark + pending send +
   // compaction keys) advanced incrementally by the transitions below.
   const reducerRef = useRef<ThreadReducer>(createThreadReducer());
@@ -2354,6 +2371,50 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (el) el.scrollTop = el.scrollHeight;
   }, [blocks, composerH]);
 
+  // Scroll anchor for the older-page prepend: keep the reader on the same
+  // content after blocks are inserted above the viewport.
+  useLayoutEffect(() => {
+    const anchor = earlierAnchor.current;
+    const el = pane.current;
+    if (!anchor || !el) return;
+    earlierAnchor.current = null;
+    el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
+  }, [blocks]);
+
+  /** Loads the page before the view's oldest loaded event. */
+  const earlierController = useRef<AbortController | null>(null);
+  const loadEarlier = useCallback(async () => {
+    const cid = openChatIdRef.current;
+    if (!cid || loadingEarlierRef.current || !hasMoreRef.current) return;
+    const before = oldestSeqRef.current;
+    if (before < 0) return;
+    const el = pane.current;
+    const anchor = el ? { height: el.scrollHeight, top: el.scrollTop } : null;
+    loadingEarlierRef.current = true;
+    setLoadingEarlier(true);
+    const controller = new AbortController();
+    earlierController.current = controller;
+    try {
+      const page = await fetchThreadEventsPage(cid, before, EARLIER_PAGE_SIZE, controller.signal);
+      if (cid !== openChatIdRef.current || controller.signal.aborted) return;
+      earlierAnchor.current = anchor;
+      const applied = reducerRef.current.prependEvents(cid, page.events, page.has_more);
+      hasMoreRef.current = applied.hasMore;
+      oldestSeqRef.current = applied.oldestSeq;
+      setHasMore(applied.hasMore);
+      setBlocks(applied.blocks);
+    } catch {
+      if (!controller.signal.aborted) toast.error("Could not load earlier messages");
+    } finally {
+      if (earlierController.current === controller) {
+        earlierController.current = null;
+        loadingEarlierRef.current = false;
+        setLoadingEarlier(false);
+      }
+    }
+  }, []);
+  useEffect(() => () => earlierController.current?.abort(), []);
+
   const refreshChats = async () => {
     const c = await listChats();
     if (c === null) {
@@ -2560,6 +2621,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     updateContextRevision(cid, state.events);
     setBusy(state.generating);
     setBlocks(applied.blocks);
+    hasMoreRef.current = applied.hasMore;
+    oldestSeqRef.current = applied.oldestSeq;
+    setHasMore(applied.hasMore);
     setCompacting(applied.compacting);
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
       const lastEventId = state.events[state.events.length - 1]?.id;
@@ -2604,6 +2668,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
+      hasMoreRef.current = false;
+      oldestSeqRef.current = -1;
+      setHasMore(false);
       setThreadLoading(false);
     } else {
       // The reducer's per-chat cache: a switch-back renders its last content
@@ -2614,6 +2681,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
+      hasMoreRef.current = opened.hasMore;
+      oldestSeqRef.current = opened.oldestSeq;
+      setHasMore(opened.hasMore);
     }
     socketRef.current?.resync();
   }, [chatId]);
@@ -2762,6 +2832,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         if (cid === openChatIdRef.current) {
           updateContextRevision(cid, events);
           setBlocks(applied.blocks);
+          hasMoreRef.current = applied.hasMore;
+          oldestSeqRef.current = applied.oldestSeq;
+          setHasMore(applied.hasMore);
         }
       },
       onSync: (cid, phase) => {
@@ -3707,6 +3780,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               const near = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
               stick.current = near;
               setAtBottom(near);
+              // Scroll-to-top loads the page before the loaded window.
+              if (el.scrollTop < 120 && hasMoreRef.current && !loadingEarlierRef.current) {
+                void loadEarlier();
+              }
             }}
           >
             <div
@@ -3715,6 +3792,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               }`}
               style={{ paddingBottom: composerH + 20, maxWidth: chatWidth }}
             >
+              {hasMore && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    disabled={loadingEarlier}
+                    onClick={() => void loadEarlier()}
+                  >
+                    {loadingEarlier ? "Loading earlier messages…" : "Load earlier messages"}
+                  </Button>
+                </div>
+              )}
               {displayEntries.map((e, i) =>
                 e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
                 e.kind === "work" ? (
