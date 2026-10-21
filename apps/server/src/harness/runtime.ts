@@ -85,6 +85,14 @@ import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
+/** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
+export class ThreadAgentLocked extends Error {
+  constructor() {
+    super("This thread belongs to its agent. Start a new chat to use another agent.");
+    this.name = "ThreadAgentLocked";
+  }
+}
+
 /** The system instructions of an agent thread: who the agent is, where its
  *  files live, and what its threads and workspace share. The agent's own
  *  instructions follow. */
@@ -1089,6 +1097,9 @@ export class GuildRuntime {
     const { agent } = await this.agents.requireAccess(user, agentId, "use");
     const existing = await agentThreadForChat(this.pool, chatId);
     if (existing !== null) {
+      if (existing.agent_id !== agent.id && !(await this.agentSwitchAllowed(chatId, userId))) {
+        throw new ThreadAgentLocked();
+      }
       if (existing.agent_id !== agent.id) {
         await this.pool.query(
           `UPDATE agent_threads SET agent_id = $2, kind = 'thread', last_activity_at = now()
@@ -1118,6 +1129,21 @@ export class GuildRuntime {
   async chatAgent(chatId: string): Promise<Agent | null> {
     const ref = await agentThreadForChat(this.pool, chatId);
     return ref === null ? null : this.agents.fetchAgent(ref.agent_id);
+  }
+
+  /** A thread belongs to its agent: a shared agent's thread, or an agent's
+   *  Main thread, keeps that agent. Only the caller's own personal-agent
+   *  side threads move. */
+  async agentSwitchAllowed(chatId: string, userId: string): Promise<boolean> {
+    const res = await this.pool.query<{ agent_id: string; kind: string }>(
+      `SELECT agent_id, kind FROM agent_threads WHERE chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return true;
+    if (row.kind === "default") return false;
+    const agent = await this.agents.fetchAgent(row.agent_id);
+    return agent.is_personal && agent.owner_user_id === userId;
   }
 
   /** Opens the run row for an adopted chat turn; the run lifecycle closes it

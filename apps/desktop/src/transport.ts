@@ -1327,12 +1327,20 @@ export async function setChatProject(
 
 /** The agent bound to a chat (the composer's agent picker). */
 export async function chatAgent(chatId: string): Promise<unknown | null> {
+  return (await chatAgentBinding(chatId)).agent;
+}
+
+/** The chat's agent and whether the picker may move it. A thread belongs to
+ *  its agent: shared agents and Main threads keep theirs. */
+export async function chatAgentBinding(
+  chatId: string,
+): Promise<{ agent: unknown | null; switcheable: boolean }> {
   const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/agent`), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
-  if (!res.ok) return null;
-  const body = (await res.json().catch(() => ({}))) as { agent?: unknown };
-  return body.agent ?? null;
+  if (!res.ok) return { agent: null, switcheable: true };
+  const body = (await res.json().catch(() => ({}))) as { agent?: unknown; switcheable?: boolean };
+  return { agent: body.agent ?? null, switcheable: body.switcheable !== false };
 }
 
 /** Binds a chat to an agent. A chat with a thread keeps its transcript. */

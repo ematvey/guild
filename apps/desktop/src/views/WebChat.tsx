@@ -117,7 +117,7 @@ import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
   bindChatAgent,
-  chatAgent,
+  chatAgentBinding,
   attachmentBlobUrl,
   toolArtifactBlobUrl,
   rpcCall,
@@ -1805,6 +1805,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // composer picks which, and the choice binds the chat.
   const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
   const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
+  const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);
   const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
   // Sign-out hygiene: drafts can hold sensitive composer text, so they are
@@ -2244,14 +2245,20 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     pickedAgentRef.current = pickedAgent;
   }, [pickedAgent]);
 
-  // A bound chat shows its own agent; a new chat keeps the pick.
+  // A bound chat shows its own agent; a new chat keeps the pick. A thread
+  // that belongs to its agent is not switchable.
   useEffect(() => {
-    if (chatId === null) return;
+    if (chatId === null) {
+      setAgentLocked(false);
+      return;
+    }
     let live = true;
-    void chatAgent(chatId)
-      .then((row) => {
-        if (!live || row === null) return;
-        setPickedAgent(row as Agent);
+    void chatAgentBinding(chatId)
+      .then(({ agent, switcheable }) => {
+        if (!live) return;
+        setAgentLocked(!switcheable);
+        if (agent === null) return;
+        setPickedAgent(agent as Agent);
       })
       .catch(() => {});
     return () => {
@@ -4214,19 +4221,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               <div className="flex shrink-0 items-center gap-2">
                 <ContextRing chatId={chatId} model={agentThreadData?.agent.model ?? model}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
-                {agentThreadData !== null ? (
-                  // An agent thread names its agent, not its model: the
-                  // model belongs to the agent and lives in its settings.
+                {(() => {
+                  const chipAgent = agentThreadData?.agent ?? pickedAgent;
+                  return agentThreadData !== null || agentLocked ? (
+                  // An agent thread, or a chat whose thread belongs to a
+                  // shared agent, names its agent and keeps it.
                   <span
                     className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
                     title={
-                      agentThreadData.agent.visibility === "private"
+                      chipAgent?.visibility === "private"
                         ? "Your private agent"
                         : "Shared agent: your threads are private, its files are shared"
                     }
                   >
-                    <span className="truncate">{agentThreadData.agent.name}</span>
-                    {agentThreadData.agent.visibility !== "private" && (
+                    <span className="truncate">{chipAgent?.name ?? "Assistant"}</span>
+                    {chipAgent !== null && chipAgent !== undefined && chipAgent.visibility !== "private" && (
                       <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
                     )}
                   </span>
@@ -4285,7 +4294,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                )}
+                  );
+                })()}
                 {(() => {
                   // While a turn generates the composer stays usable: with
                   // content the send queues (Ctrl/Cmd+Enter steers); empty,
