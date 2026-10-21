@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **A long thread reaches the client in pages (2026-10-22).** The member
+  socket's ThreadState frame carried every durable event, and a live turn
+  republishes that frame on each buffer change — so a long chat paid its
+  whole history on every publish. The frame now carries the newest 120
+  events and sets `has_more_events`; `GET /api/v1/threads/:id/events?
+  before=&limit=` serves the page before a cursor. The client prepends a
+  page when the reader scrolls to the top (or presses the top button),
+  keeps the scroll anchor, and re-derives the merged window so cross-page
+  tool results and approval decisions still join their blocks. A reconnect
+  re-derives from the frame's own window: merging a loaded page onto a
+  possibly non-contiguous tail could hide the rows between them. The full
+  log stays on `GET /threads/:id` for the engine's turn assembly.
+
 - **A skill pin is optional; an install follows the latest by default
   (2026-10-21).** `skill_installs.pinned_version` is nullable and NULL means
   "follow the latest published version". Every install path — the install
