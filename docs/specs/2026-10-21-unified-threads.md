@@ -53,6 +53,11 @@ Every conversation is a thread of an agent. There is no plain-chat runtime.
    access).
 8. **Model on the agent.** The model is an agent property. There is no
    per-chat model override in this phase.
+   - **Model labels follow the app's naming.** The stored value is the
+     provider id (`deepseek-v4.1-flash`); every surface shows the org's alias
+     from `/api/v1/models` (`Auto`). The raw id never appears in the UI.
+   - A blank label holds until the model list loads, so a provider id never
+     flashes on screen.
 9. **Every run carries the user on whose behalf it happens.** For a user
    message that is the caller; for a routine or reminder it is the routine's
    creator; for a delegated child run it is the user who started the parent.
