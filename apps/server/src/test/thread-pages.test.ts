@@ -110,6 +110,6 @@ describe("thread event pages", () => {
     expect(capture.hasMoreEvents).toBe(true);
     expect(capture.events.at(-1)!.event.type).toBe("user_message");
     // The window is the tail: its oldest row is past the first 30 events.
-    expect(capture.events[0]!.event.content).toBe("30");
+    expect((capture.events[0]!.event as { content?: string }).content).toBe("30");
   });
 });

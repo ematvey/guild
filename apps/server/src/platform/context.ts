@@ -192,7 +192,7 @@ export class PlatformContext {
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.scheduler = new AgentScheduler({
       pool: this.pool,
-      store: new AgentStore(this.pool, this.trace),
+      store: new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot),
       runtime: this.runtime,
       log,
       enabled: config.agentsScheduler,

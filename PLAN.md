@@ -11,6 +11,21 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Agent config lives in the workspace, OpenClaw-style (2026-10-21).** The
+  agent's identity, persona and operating rules moved out of the `agents`
+  row into root files that the agent itself can edit: `IDENTITY.md` (one
+  line: name, vibe, emoji, avatar), `SOUL.md`, `AGENTS.md`, `USER.md`,
+  `MEMORY.md`, `BOOTSTRAP.md`, plus an empty `memories/`. Every new agent is
+  seeded from the templates in `apps/server/src/agents/templates.ts` (never
+  overwriting an existing file), and the thread's instructions are composed
+  from the files on each turn (8 KiB per file, 24 KiB total, truncation and
+  missing-file markers). `BOOTSTRAP.md` is a first-run ritual the agent
+  deletes. `agents.instructions` is now a mirror of `AGENTS.md`: a create
+  writes the file, a patch rewrites it, and the UI reads the identity line
+  (`identity` on the agent payload). Spec:
+  `docs/specs/2026-10-21-workspace-agent-config.md`; re-seed a dev install
+  with `npx tsx scripts/agents-reinit.ts`.
+
 - **Observability is one Activity surface: traces and spans, not a settings
   page (2026-10-22).** ClickHouse now owns the agent-observability model.
   `agent_traces` mirrors `agent_runs` (ReplacingMergeTree, 180-day TTL):

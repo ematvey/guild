@@ -230,8 +230,14 @@ export function AgentPage({
       <PageHeader
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
-            <span className="truncate">{agent.name}</span>
+            {agent.identity?.emoji ? (
+              <span className="text-lg leading-none" aria-hidden>
+                {agent.identity.emoji}
+              </span>
+            ) : (
+              <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
+            )}
+            <span className="truncate">{agent.identity?.name ?? agent.name}</span>
             <AgentStatusBadge status={agent.status} />
           </span>
         }
@@ -244,6 +250,12 @@ export function AgentPage({
             <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
             <span>{agent.tools.length} tools</span>
+            {agent.identity?.vibe ? (
+              <>
+                <span>·</span>
+                <span className="italic">{agent.identity.vibe}</span>
+              </>
+            ) : null}
           </span>
         }
         actions={
@@ -1047,8 +1059,14 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
       <dl className="space-y-2 text-sm">
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Name</dt>
-          <dd>{agent.name}</dd>
+          <dd>{agent.identity?.name ?? agent.name}</dd>
         </div>
+        {agent.identity?.vibe ? (
+          <div className="flex justify-between gap-2">
+            <dt className="text-muted-foreground">Vibe</dt>
+            <dd className="text-right">{agent.identity.vibe}</dd>
+          </div>
+        ) : null}
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Model</dt>
           <dd className="text-xs">

@@ -76,6 +76,15 @@ import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js"
 import { createTraceHook } from "../agents/trace-hook.js";
 import { delegationContextForChat } from "../agents/delegation.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
+import {
+  CONFIG_FILES,
+  TOTAL_MAX_CHARS,
+  agentWorkspaceDir,
+  readAgentConfig,
+  renderFileBlock,
+  seedAgentWorkspace,
+  type AgentConfigFiles,
+} from "../agents/workspace-config.js";
 import { uuidv7 } from "../platform/time.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
@@ -107,26 +116,40 @@ export class ThreadAgentLocked extends Error {
 }
 
 /** The system instructions of an agent thread: who the agent is, where its
- *  files live, and what its threads and workspace share. The agent's own
- *  instructions follow. */
-export function agentInstructions(agent: {
-  name: string;
-  instructions: string;
-  is_personal: boolean;
-}): string {
+ *  files live, what its threads and workspace share, and the workspace
+ *  config files themselves (OpenClaw-style: IDENTITY, SOUL, AGENTS, USER,
+ *  MEMORY, BOOTSTRAP). The agent edits those files; the next turn reads
+ *  them back. Pure over the files it is given. */
+export function composeAgentInstructions(
+  agent: { name: string; is_personal: boolean },
+  config: AgentConfigFiles,
+): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
     : "Every thread is private to the user you are talking to. The workspace is shared with everyone who can use this agent.";
-  const own = agent.instructions.trim();
-  return [
+  const parts: string[] = [
     `You are ${agent.name}, a persistent agent in Guild.`,
-    `Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.`,
+    "Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.",
     sharing,
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
-    own === "" ? "" : `Your instructions:\n${own}`,
-  ]
-    .filter((part) => part !== "")
-    .join("\n\n");
+  ];
+  let budget = TOTAL_MAX_CHARS;
+  for (const entry of CONFIG_FILES) {
+    const text = config.files.get(entry.name);
+    if (text === undefined) {
+      if (entry.required) parts.push(`## ${entry.name}\n\n(missing: ${entry.name})`);
+      continue;
+    }
+    if (budget <= 0) break;
+    const block = renderFileBlock(entry.name, text, budget);
+    budget -= block.length;
+    parts.push(block);
+  }
+  parts.push(
+    "These files are your configuration: edit them with write/edit and the change applies on your next turn. " +
+      "If BOOTSTRAP.md exists, follow it and then delete it.",
+  );
+  return parts.join("\n\n");
 }
 
 /** Guild-side chat ↔ durable-conversation mapping (spec decision 6). Kept
@@ -280,7 +303,7 @@ export class GuildRuntime {
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
     this.chats = new ChatStore(pool);
-    this.agents = new AgentStore(pool, this.trace);
+    this.agents = new AgentStore(pool, this.trace, this.config.agentWorkspaceWriteRoot);
     this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
     this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts, trace: this.trace });
     this.turnCommands = new TurnCommandStore(pool);
@@ -1029,6 +1052,22 @@ export class GuildRuntime {
    *  runs it before admission; resume runs it before the re-driven run —
    *  a resumed run must see the same tool surface a submitted one gets
    *  (the fresh process's registry carries only the base extensions). */
+  /** Seeds the workspace config files when absent, reads them, and builds
+   *  the thread's instructions. A broken volume never fails a turn: the
+   *  prompt falls back to the runtime block alone. */
+  private async agentInstructionsFor(agent: Agent): Promise<string> {
+    const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
+    let config: AgentConfigFiles;
+    try {
+      await seedAgentWorkspace(dir, agent);
+      config = await readAgentConfig(dir);
+    } catch (error) {
+      this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
+      config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name), identity: { name: null, vibe: null, emoji: null, avatar: null } };
+    }
+    return composeAgentInstructions(agent, config);
+  }
+
   private async provisionTurnTools(
     conversation: Conversation,
     chatId: string,
@@ -1073,7 +1112,7 @@ export class GuildRuntime {
           ...userPrepared.extensions,
         ],
         tools: [...baseTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
-        ...(agent === null ? {} : { instructions: agentInstructions(agent) }),
+        ...(agent === null ? {} : { instructions: await this.agentInstructionsFor(agent) }),
       },
       BACKGROUND_CONTEXT,
     );
