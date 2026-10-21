@@ -1189,6 +1189,10 @@ function TimelineView({
           </button>
         );
       })}
+      <div className="flex justify-between pl-[10.5rem] pr-[5.5rem] text-2xs tabular-nums text-muted-foreground">
+        <span>0</span>
+        <span>{ms(bounds.end - bounds.start)}</span>
+      </div>
     </div>
   );
 }
@@ -1349,9 +1353,9 @@ function TranscriptView({
                   </ToneBadge>
                   {span !== null && <span>· {ms(span.duration_ms)}</span>}
                 </span>
-                {step.detail !== null && step.detail !== undefined && step.detail !== "" && (
+                {(span !== null && span.input.trim() !== "" ? span.input : step.detail ?? "") !== "" && (
                   <span className="mt-1 block max-h-24 overflow-hidden whitespace-pre-wrap break-words font-mono text-2xs text-muted-foreground">
-                    {step.detail}
+                    {span !== null && span.input.trim() !== "" ? span.input : step.detail}
                   </span>
                 )}
               </button>

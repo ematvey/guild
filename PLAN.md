@@ -54,8 +54,12 @@ not kept here — it lives in git.
   second one for adopted chats (each turn used to produce two runs and two
   traces). The surface keeps its status, duration, model and token data at
   the 900px desktop width, the timeline uses the trace's millisecond axis,
-  and counts use singular forms. Desktop 0.5.94 carries it to installed
-  clients.
+  and counts use singular forms. The trace detail now has Transcript, Tree
+  and Timeline views: the transcript renders the run's user, assistant and
+  tool steps and links each step to its span, and the tree nests tool spans
+  under the model call that preceded them. Sessions get their own
+  `/sessions/<id>` page with the session totals and its traces. Desktop
+  0.5.95 carries it to installed clients.
 
 - **A long thread reaches the client in pages (2026-10-22).** The member
   socket's ThreadState frame carried every durable event, and a live turn
