@@ -11,6 +11,14 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **The chat column resizes; the tail has a jump button (2026-10-21).** The
+  central column was pinned to `max-w-3xl`. A drag handle on its right edge
+  now sets one width for the message list, the composer and the loading
+  skeleton; it persists in localStorage (`guild.chatWidth`), resets on
+  double-click and nudges with ArrowLeft/ArrowRight. A floating button
+  appears above the composer when the pane is scrolled away from the bottom
+  and smooth-scrolls back to the tail.
+
 - **Skill files never enter an agent workspace (2026-10-21).** A workspace
   belongs to the agent and outlives the conversation, so the turn-start
   materialization loop now skips agent-backed chats; a plain chat's
