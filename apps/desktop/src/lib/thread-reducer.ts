@@ -196,7 +196,14 @@ function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
  *  was withdrawn (trash / stop / archive) — it leaves the transcript. The
  *  authoritative ThreadState carries the full log, so this runs on every
  *  state application; the fan-out lane cannot see deletions. */
-function reconcileQueuedSends(blocks: Block[], rows: ThreadEventRow[]): Block[] {
+function reconcileQueuedSends(
+  blocks: Block[],
+  rows: ThreadEventRow[],
+  /// Seq of the authoritative window's oldest row: a block older than this
+  /// came from a loaded earlier page, and a queued row can never be that
+  /// old, so it is neither withdrawn nor re-stamped.
+  windowOldest = Number.NEGATIVE_INFINITY,
+): Block[] {
   const byId = new Map<string, ThreadEventRow>();
   for (const r of rows) {
     const prev = byId.get(r.id);
@@ -204,6 +211,8 @@ function reconcileQueuedSends(blocks: Block[], rows: ThreadEventRow[]): Block[] 
   }
   return blocks.flatMap((b) => {
     if (b.kind !== "user" || b.eventId === undefined) return [b];
+    const seq = /^(\d+):/.exec(b.key);
+    if (seq !== null && Number(seq[1]) < windowOldest) return [b];
     const row = byId.get(b.eventId);
     if (!row) return b.pending ? [b] : []; // withdrawn; an in-flight optimistic send keeps waiting for its echo
     if (row.event.type !== "user_message") return [b];
@@ -538,6 +547,11 @@ export interface ApplyResult {
   /// renders immediately — no loading skeleton over known blocks). Always
   /// true on the other transitions.
   restored: boolean;
+  /// An older page exists before the view's oldest loaded event.
+  hasMore: boolean;
+  /// Oldest loaded event seq (-1 = nothing loaded): the cursor for the
+  /// next older-page fetch.
+  oldestSeq: number;
 }
 
 /// One chat's visible-thread state. `watermark` is the last applied
@@ -545,10 +559,14 @@ export interface ApplyResult {
 /// `lastEventSeq` is the last applied event row's seq — a state can advance
 /// the log watermark without carrying new events, so event application keys
 /// off this, not the watermark.
+/// `events` is the loaded window of the durable log (ascending): the state's
+/// tail plus any older pages the reader scrolled up to load.
 interface ChatView {
   blocks: Block[];
   watermark: number;
   lastEventSeq: number;
+  events: ThreadEventRow[];
+  hasMore: boolean;
   toolsByCall: Map<string, ToolBlock>;
   approvalsByCall: Map<string, ApprovalBlock>;
   /// Compaction block keys present when /compact was sent: a sync adding a
@@ -579,6 +597,10 @@ export interface ThreadReducer {
    * feed frames today; the transition exists for stream consumers built on
    * the same merge rules. */
   applyFrame(frame: StreamFrame): ApplyResult;
+  /** Prepends one older page of the durable log (the scroll-to-top loader):
+   *  the view re-derives from the merged window, so cross-page tool results
+   *  and approval decisions still join their blocks. */
+  prependEvents(chatId: string, rows: ThreadEventRow[], hasMore: boolean): ApplyResult;
   /** Forces the next applyState per view to re-derive the full event log
    * (socket reconnect: the fresh sync's events replace the view wholesale,
    * same as a first load). */
@@ -633,6 +655,8 @@ export function createThreadReducer(): ThreadReducer {
     blocks: [],
     watermark: -1,
     lastEventSeq: -1,
+    events: [],
+    hasMore: false,
     toolsByCall: new Map(),
     approvalsByCall: new Map(),
     compactKeys: [],
@@ -652,7 +676,32 @@ export function createThreadReducer(): ThreadReducer {
     stale,
     compacting: compactingChat !== null && current !== LOOSE && compactingChat === current,
     restored,
+    hasMore: v.hasMore,
+    oldestSeq: v.events[0]?.seq ?? -1,
   });
+
+  /** Re-derives a view from its loaded event window, carrying the stream
+   *  buffers (no durable row yet) and optimistic sends across the rebuild. */
+  function rebuild(v: ChatView): void {
+    const d = deriveThread(v.events);
+    const live: Block[] = [];
+    for (const b of v.blocks) {
+      if (b.key.startsWith("unpersisted-") || b.key.startsWith("live-")) {
+        live.push(b);
+      } else if (b.kind === "tool" && b.tool && b.key.startsWith("frame-") && !d.blocks.some(
+        (x) => x.kind === "tool" && x.tool?.callId === b.tool?.callId,
+      )) {
+        live.push(b);
+        d.toolsByCall.set(b.tool.callId, b.tool);
+      }
+    }
+    const pending = v.blocks.filter(
+      (b) => b.kind === "user" && b.pending && !d.blocks.some((x) => x.key === b.key),
+    );
+    v.blocks = [...d.blocks, ...live, ...pending];
+    v.toolsByCall = d.toolsByCall;
+    v.approvalsByCall = d.approvalsByCall;
+  }
 
   function applyEvent(v: ChatView, row: ThreadEventRow): void {
     const ev = row.event;
@@ -877,12 +926,16 @@ export function createThreadReducer(): ThreadReducer {
       const cid = state.chat_id;
       const v = viewOf(cid);
       if (state.seq <= v.watermark) return result(v, true);
+      const tailOldest = state.events[0]?.seq ?? Number.POSITIVE_INFINITY;
+      const windowIsTail = v.events.length === 0 || (v.events[0]?.seq ?? 0) >= tailOldest;
       if (v.watermark < 0) {
-        const d = deriveThread(state.events);
-        v.blocks = d.blocks;
-        v.toolsByCall = d.toolsByCall;
-        v.approvalsByCall = d.approvalsByCall;
-        v.lastEventSeq = state.events.reduce((max, r) => Math.max(max, r.seq), -1);
+        // Older pages the reader already loaded survive a reconnect: the
+        // state carries only the tail window, so merge it onto them.
+        const kept = v.events.filter((r) => r.seq < tailOldest);
+        v.events = [...kept, ...state.events];
+        v.hasMore = kept.length > 0 ? v.hasMore : (state.has_more_events ?? false);
+        rebuild(v);
+        v.lastEventSeq = v.events.reduce((max, r) => Math.max(max, r.seq), -1);
       } else {
         const fresh = state.events
           .filter((r) => r.seq > v.lastEventSeq)
@@ -891,6 +944,8 @@ export function createThreadReducer(): ThreadReducer {
           applyEvent(v, row);
           v.lastEventSeq = Math.max(v.lastEventSeq, row.seq);
         }
+        if (fresh.length > 0) v.events = [...v.events, ...fresh];
+        if (windowIsTail) v.hasMore = state.has_more_events ?? false;
       }
       v.watermark = state.seq;
       // The model buffers are authoritative and server-side (commit clears
@@ -931,7 +986,7 @@ export function createThreadReducer(): ThreadReducer {
       // Queued sends reconcile against the authoritative log: withdrawal
       // deletes the echo (no fan-out row exists to announce it) and
       // delivery moves it — both land here via the state republish.
-      v.blocks = reconcileQueuedSends(v.blocks, state.events);
+      v.blocks = reconcileQueuedSends(v.blocks, state.events, state.events[0]?.seq);
       // A summary entry can settle the indicator before the task poll returns.
       // Agent generation state is independent of compaction completion.
       if (compactingChat === cid) {
@@ -951,7 +1006,20 @@ export function createThreadReducer(): ThreadReducer {
         applyEvent(v, row);
         v.lastEventSeq = Math.max(v.lastEventSeq, row.seq);
       }
+      if (fresh.length > 0) v.events = [...v.events, ...fresh];
       v.watermark = Math.max(v.watermark, seq);
+      return result(v);
+    },
+
+    prependEvents(chatId, rows, hasMore) {
+      const v = viewOf(chatId);
+      const oldest = v.events[0]?.seq ?? Number.POSITIVE_INFINITY;
+      const older = rows.filter((r) => r.seq < oldest).sort((a, b) => a.seq - b.seq);
+      if (older.length > 0) {
+        v.events = [...older, ...v.events];
+        rebuild(v);
+      }
+      v.hasMore = hasMore;
       return result(v);
     },
 

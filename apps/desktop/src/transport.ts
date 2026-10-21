@@ -190,18 +190,41 @@ export async function watchMachinePresence(update: (presence: MachinePresence) =
   return unlisten;
 }
 
-export type ThreadState = {
+export interface ThreadState {
   chat_id: string;
   seq: number;
   events: ThreadEventRow[];
   text: string;
   thinking: string;
   generating: boolean;
+  /** An older page exists before `events[0]`. */
+  has_more_events?: boolean;
   /** The chat's project, for the sidebar's grouping. */
   project_id?: string;
   project_name?: string;
   project_machine_label?: string;
 };
+
+export interface ThreadEventsPage {
+  events: ThreadEventRow[];
+  has_more: boolean;
+}
+
+/** One older page of a thread's durable log, for the scroll-to-top loader. */
+export async function fetchThreadEventsPage(
+  chatId: string,
+  beforeSeq: number,
+  limit: number,
+  signal: AbortSignal,
+): Promise<ThreadEventsPage> {
+  const query = new URLSearchParams({ before: String(beforeSeq), limit: String(limit) });
+  const response = await fetch(
+    apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/events?${query}`),
+    { headers: { authorization: `Bearer ${getToken()}` }, signal },
+  );
+  if (!response.ok) throw new Error("Could not load earlier messages");
+  return response.json();
+}
 
 export interface ThreadContextUsage {
   tokens: number | null;

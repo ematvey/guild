@@ -791,3 +791,78 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
     expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(false);
   });
 });
+
+describe("older-page loading (bounded tail + prepend)", () => {
+  const user = (seq: number, content: string) =>
+    row(seq, { type: "user_message", content });
+
+  it("a tail state reports has_more and the oldest loaded seq", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    const applied = r.applyState({ ...state("chat", 100, [user(51, "a"), user(52, "b")]), has_more_events: true });
+    expect(applied.hasMore).toBe(true);
+    expect(applied.oldestSeq).toBe(51);
+    expect(applied.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["a", "b"]);
+  });
+
+  it("prepending an older page keeps the reader's content and re-derives in order", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState({ ...state("chat", 100, [user(51, "a"), user(52, "b")]), has_more_events: true });
+
+    const older = r.prependEvents("chat", [user(49, "old-1"), user(50, "old-2")], false);
+    expect(older.oldestSeq).toBe(49);
+    expect(older.hasMore).toBe(false);
+    expect(older.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual([
+      "old-1", "old-2", "a", "b",
+    ]);
+  });
+
+  it("prepended rows join their cross-page tool result and keep the live buffers", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState({ ...state("chat", 100, [user(51, "a")]), has_more_events: true });
+    // A live frame provisions a tool block with no durable row yet.
+    r.applyFrame({
+      type: "tool_started",
+      call_id: "call-1",
+      name: "bash",
+      arguments: "{}",
+      executor: "server",
+    });
+
+    const older = r.prependEvents("chat", [
+      row(40, assistantText("step", 0)),
+      row(41, { type: "tool_result", call_id: "call-1", name: "bash", content: "ok", is_error: false }),
+    ], false);
+    const tools = older.blocks.filter(b => b.kind === "tool");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]!.tool?.content).toBe("ok");
+    expect(older.blocks.filter(b => b.kind === "text").map(b => b.text)).toEqual(["step"]);
+  });
+
+  it("a reconnect state keeps already-loaded older pages", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState({ ...state("chat", 100, [user(51, "a"), user(52, "b")]), has_more_events: true });
+    r.prependEvents("chat", [user(49, "old-1"), user(50, "old-2")], false);
+
+    r.invalidate();
+    const after = r.applyState({ ...state("chat", 101, [user(51, "a"), user(52, "b")]), has_more_events: true });
+    expect(after.oldestSeq).toBe(49);
+    expect(after.hasMore).toBe(false);
+    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual([
+      "old-1", "old-2", "a", "b",
+    ]);
+  });
+
+  it("incremental fan-out rows append to the loaded window", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState({ ...state("chat", 100, [user(51, "a")]), has_more_events: true });
+    r.prependEvents("chat", [user(49, "old")], false);
+    const after = r.applyThreadEvents("chat", 102, [user(53, "new")]);
+    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["old", "a", "new"]);
+    expect(after.hasMore).toBe(false);
+  });
+});

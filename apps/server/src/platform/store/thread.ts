@@ -310,6 +310,33 @@ export class ThreadStore {
     return res.rows.map(toRow).filter((row): row is ThreadEventRow => row !== undefined);
   }
 
+  /** One page of a chat's events, newest-first window: rows with seq below
+   *  `beforeSeq` (absent = the newest page), oldest-to-newest in the result.
+   *  `hasMore` says an older page exists. The client renders a bounded tail
+   *  and loads earlier pages on demand. */
+  async listEventPage(
+    orgId: string,
+    chatId: string,
+    opts: { beforeSeq?: number; limit: number },
+  ): Promise<{ rows: ThreadEventRow[]; hasMore: boolean }> {
+    const before = opts.beforeSeq ?? null;
+    const res = await this.pool.query<EventRowDb>(
+      `SELECT e.id, e.chat_id, e.seq, e.payload,
+              to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM thread_events e JOIN chats c ON c.id = e.chat_id
+       WHERE c.org_id = $1 AND e.chat_id = $2 AND ($3::bigint IS NULL OR e.seq < $3::bigint)
+       ORDER BY e.seq DESC LIMIT $4`,
+      [orgId, chatId, before, opts.limit + 1],
+    );
+    const hasMore = res.rows.length > opts.limit;
+    const page = hasMore ? res.rows.slice(0, opts.limit) : res.rows;
+    const rows = page
+      .map(toRow)
+      .filter((row): row is ThreadEventRow => row !== undefined)
+      .reverse();
+    return { rows, hasMore };
+  }
+
   /** Events appended after `sinceSeq` (the incremental fan-out lane):
    *  chat-scoped, no org join — the feed calls this only for chats whose
    *  owner it already resolved. */
