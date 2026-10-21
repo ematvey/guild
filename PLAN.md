@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Skill files never enter an agent workspace (2026-10-21).** A workspace
+  belongs to the agent and outlives the conversation, so the turn-start
+  materialization loop now skips agent-backed chats; a plain chat's
+  throwaway sandbox still receives the pinned bundle. `read_skill` serves
+  the registry bundle instead: the SKILL.md plus the additional files
+  inline (binary files and files past a 160 KiB budget stay listed by name
+  and sha256). An agent that wants to edit a skill writes its own
+  `skills/<slug>` tree; a present local tree still wins over the registry
+  and `push_skill` publishes it. Copies that earlier turns left in agent
+  workspaces were removed.
+
 - **Coding tools are direct; integrations stay script-only (2026-10-21).**
   The model calls `read`, `write`, `edit`, `list`, `bash`, `web_search` and
   the skill tools itself. Integration, MCP and thread-history tools stay

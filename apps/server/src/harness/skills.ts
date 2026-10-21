@@ -25,7 +25,7 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { ApiError } from "../platform/errors.js";
-import { packBundle, parseBundle } from "../platform/bundle.js";
+import { packBundle, parseBundle, readBundleFile, type ParsedBundle } from "../platform/bundle.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillSearchRow } from "../platform/store/registry.js";
@@ -115,11 +115,14 @@ const SECTION_BUDGET = 8192;
 const OVERFLOW_RESERVE = 96;
 /** Uninstalled org descriptions clip at this many chars (client parity). */
 const DESCRIPTION_CLIP = 120;
+/** Inline budget for a registry skill's extra files in a read_skill result
+ *  (the tool's own output limit is 256 KiB). */
+const INLINE_FILES_BUDGET = 160 * 1024;
 
 const SECTION_HEADER = "# Available skills";
 const SECTION_GUIDANCE =
-  "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine " +
-  "(their files are readable with read_file); if one shows a newer version, ask the user before updating. " +
+  "When a task matches a skill, read it with read_skill and follow it. read_skill returns the SKILL.md and the " +
+  "additional files the skill ships; if one shows a newer version, ask the user before updating. " +
   "Each entry names its publisher; read_skill returns the full provenance.";
 
 /** The client `skills_index`'s skill lines, verbatim: its own `# Available
@@ -267,6 +270,17 @@ function foldPlain(body: string[]): string | null {
   return parts.join("").trim();
 }
 
+/** A bundle file's text, or null when it is binary or missing. */
+function textOf(bundle: ParsedBundle, path: string): string | null {
+  const bytes = readBundleFile(bundle, path);
+  if (bytes === null) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 /** Strips one level of matching quotes ("…" or '…'). */
 function unquote(value: string): string {
   return value.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
@@ -310,7 +324,7 @@ export class SkillRuntime {
       name: "read_skill",
       description:
         "Read an available skill by name. Reads the conversation's local skills/<slug> tree when present, otherwise " +
-        "the org skill (installing it on first use). Returns the SKILL.md and the list of additional files it ships.",
+        "the org skill (installing it on first use). Returns the SKILL.md and the additional files it ships.",
       parameters: Type.Object({ slug: Type.String({ description: "The skill's slug" }) }),
       replay: "safe",
       outputLimits: { maxBytes: 256 * 1024 },
@@ -748,9 +762,26 @@ export class SkillRuntime {
     // never write it — the agent-facing list must not advertise it.
     const files = (meta.files ?? []).filter((f) => f.path !== "manifest.json");
     if (files.length > 0) {
-      parts.push(
-        `Additional files (read with read_file):\n${files.map((f) => `- ${f.path} (sha256 ${f.sha256})`).join("\n")}`,
-      );
+      // Extra files are served inline: an agent workspace holds no skill
+      // files, so read_file cannot reach them there. Binary files and files
+      // past the output budget stay listed by name and sha256.
+      const bundle = await this.bundleFor(meta.object_key);
+      const inline: string[] = [];
+      const listed: string[] = [];
+      let budget = INLINE_FILES_BUDGET;
+      for (const file of files) {
+        const text = bundle === null ? null : textOf(bundle, file.path);
+        if (text !== null && text.length <= budget) {
+          budget -= text.length;
+          inline.push(`--- ${file.path} ---\n${text}`);
+        } else {
+          listed.push(`- ${file.path} (sha256 ${file.sha256})`);
+        }
+      }
+      if (inline.length > 0) parts.push(`Additional files:\n\n${inline.join("\n\n")}`);
+      if (listed.length > 0) {
+        parts.push(`Additional files not shown inline (binary, or over the output budget):\n${listed.join("\n")}`);
+      }
     }
     if (justInstalled && (await this.deps.executorKind(Number(api.conversationId))) === "machine") {
       parts.push(
@@ -761,6 +792,18 @@ export class SkillRuntime {
       parts.push(`Note: a newer version (${control.latest_version}) exists — ask the user before updating.`);
     }
     return this.textResult(parts.join("\n\n"));
+  }
+
+  /** The parsed bundle for a version's object key, or null when the store
+   *  is absent or the read fails: the caller falls back to the file list. */
+  private async bundleFor(objectKey: string): Promise<ParsedBundle | null> {
+    if (this.deps.objects?.get === undefined) return null;
+    try {
+      return await parseBundle(await this.deps.objects.get(objectKey));
+    } catch (error) {
+      this.deps.log.warn(`skill bundle read failed: ${(error as Error).message}`);
+      return null;
+    }
   }
 
   private async search(query: string, api: ToolExecutionApi): Promise<ToolExecutionResult> {
