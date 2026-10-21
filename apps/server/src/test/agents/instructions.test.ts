@@ -10,6 +10,7 @@ describe("agentInstructions", () => {
     expect(text).toContain("You are Echo, a persistent agent in Guild.");
     expect(text).toContain("/workspace");
     expect(text).toContain("Every thread is private to the user you are talking to.");
+    expect(text).toContain("Do not mention workspace paths");
   });
 
   it("calls a personal agent's workspace private", () => {
