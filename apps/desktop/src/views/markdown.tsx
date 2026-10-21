@@ -54,5 +54,9 @@ export const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
 /// GFM tables: block-level so wide tables scroll horizontally inside the
 /// chat column instead of squishing; cell padding keeps adjacent columns
 /// visually separated (the old rendering had none, so columns merged).
+/// MD_CLASS sets `overflow-wrap:anywhere`, which drops every cell's minimum
+/// width to one character and lets the auto layout crush short columns into
+/// vertical letters; tables take `break-word` instead, so a column never
+/// gets narrower than its longest word.
 export const MD_TABLE_CLASS =
-  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:text-[0.92em] [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
+  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:[overflow-wrap:break-word] [&_table]:text-[0.92em] [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
