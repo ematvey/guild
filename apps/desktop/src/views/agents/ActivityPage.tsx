@@ -363,7 +363,7 @@ export function ActivityPage({
           />
         </div>
         <div className="flex-1" />
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
           </span>
