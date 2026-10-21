@@ -52,6 +52,7 @@ export function validateAgentStep(
     instructions: string;
     model: string;
     tools: string[];
+    toolsMode: "selected" | "all";
     visibility: AgentVisibility;
     teamIds: string[];
   },
@@ -66,7 +67,9 @@ export function validateAgentStep(
     case "model":
       return value.model === "" ? "Pick a model." : null;
     case "tools":
-      return value.tools.length === 0 ? "Select at least one tool." : null;
+      return value.toolsMode === "selected" && value.tools.length === 0
+        ? "Select at least one tool."
+        : null;
     case "visibility":
       if (value.visibility === "team" && value.teamIds.length === 0) {
         return "Select at least one team.";
@@ -87,6 +90,7 @@ export function AgentCreate({
   const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState("");
   const [tools, setTools] = useState<string[]>(SAFE_BASELINE_NAMES);
+  const [toolsMode, setToolsMode] = useState<"selected" | "all">("selected");
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -116,6 +120,7 @@ export function AgentCreate({
     instructions,
     model,
     tools,
+    toolsMode,
     visibility,
     teamIds,
   });
@@ -152,6 +157,7 @@ export function AgentCreate({
         instructions: instructions.trim(),
         model,
         tools,
+        tools_mode: toolsMode,
         visibility,
         ...(visibility === "team" ? { team_ids: teamIds } : {}),
       });
@@ -305,10 +311,42 @@ export function AgentCreate({
 
           {step === "tools" && (
             <div className="space-y-4">
+              <div className="grid gap-1.5">
+                <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+                  <input
+                    type="radio"
+                    name="create-tools-mode"
+                    className="mt-0.5 size-4 accent-foreground"
+                    checked={toolsMode === "all"}
+                    onChange={() => setToolsMode("all")}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">All available tools</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Includes every integration the org enables now and later.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+                  <input
+                    type="radio"
+                    name="create-tools-mode"
+                    className="mt-0.5 size-4 accent-foreground"
+                    checked={toolsMode === "selected"}
+                    onChange={() => setToolsMode("selected")}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">Choose tools</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Only the tools selected below.
+                    </span>
+                  </span>
+                </label>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-medium">Tools</p>
                 <span className="text-xs text-muted-foreground">
-                  {tools.length} selected
+                  {toolsMode === "all" ? "All available" : `${tools.length} selected`}
                 </span>
                 <div className="flex-1" />
                 <Button

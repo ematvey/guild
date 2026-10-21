@@ -202,6 +202,8 @@ dbDescribe("AgentStore", () => {
     expect(personal!.name).toBe("Assistant");
     expect(personal!.is_personal).toBe(true);
     expect(personal!.visibility).toBe("private");
+    // The personal agent follows every tool the org enables.
+    expect(personal!.tools_mode).toBe("all");
     expect(personal!.model).toBe("personal-model");
     // Idempotent.
     expect((await store.ensurePersonalAgent(owner))!.id).toBe(personal!.id);

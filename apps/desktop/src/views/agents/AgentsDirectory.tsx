@@ -6,6 +6,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
 import { listAgents, type Agent } from "./agents-api";
+import { ModelName } from "./agent-model";
 import {
   AgentGlyph,
   AgentStatusBadge,
@@ -206,12 +207,16 @@ function AgentCard({
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <VisibilityBadge visibility={agent.visibility} />
-        <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-2xs text-muted-foreground">
-          {agent.model || "No model"}
+        <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">
+          <ModelName id={agent.model} />
         </span>
       </div>
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{agent.tools.length} tool{agent.tools.length === 1 ? "" : "s"}</span>
+        <span>
+          {agent.tools_mode === "all"
+            ? "All tools"
+            : `${agent.tools.length} tool${agent.tools.length === 1 ? "" : "s"}`}
+        </span>
         <span title={last}>{relativeTime(last)}</span>
       </div>
     </button>

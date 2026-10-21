@@ -140,6 +140,13 @@ function toolsField(body: Record<string, unknown>): AgentToolName[] | undefined 
   return value as AgentToolName[];
 }
 
+function toolsModeField(body: Record<string, unknown>): "selected" | "all" | undefined {
+  const value = body["tools_mode"];
+  if (value === undefined) return undefined;
+  if (value !== "selected" && value !== "all") throw ApiError.badRequest("invalid tools_mode");
+  return value;
+}
+
 function resourcesField(body: Record<string, unknown>): Record<string, unknown> | undefined {
   const value = body["resources"];
   if (value === undefined) return undefined;
@@ -291,6 +298,7 @@ export function registerAgentRoutes(
       instructions: optionalString(body, "instructions"),
       model: requiredString(body, "model"),
       tools: toolsField(body),
+      tools_mode: toolsModeField(body),
       visibility: visibilityField(body),
       resources: resourcesField(body),
       team_ids: teamIdsField(body),
@@ -339,6 +347,8 @@ export function registerAgentRoutes(
     }
     const tools = toolsField(body);
     if (tools !== undefined) patch.tools = tools;
+    const toolsMode = toolsModeField(body);
+    if (toolsMode !== undefined) patch.tools_mode = toolsMode;
     const visibility = visibilityField(body);
     if (visibility !== undefined) patch.visibility = visibility;
     const resources = resourcesField(body);

@@ -44,6 +44,33 @@ export type AgentToolName =
   | "delegate"
   | "release_artifacts";
 
+/** Every tool an agent can be given. `tools_mode = 'all'` means this set,
+ *  plus every integration tool the org enables (resolved at turn time, so a
+ *  new integration reaches the agent without an edit). */
+export const ALL_AGENT_TOOLS: AgentToolName[] = [
+  "read",
+  "write",
+  "edit",
+  "list",
+  "bash",
+  "web_search",
+  "search_skills",
+  "read_skill",
+  "conversations_search",
+  "conversation_read",
+  "send_message",
+  "schedule_reminder",
+  "list_routines",
+  "create_routine",
+  "update_routine",
+  "delete_routine",
+  "delegate",
+  "release_artifacts",
+];
+
+/** How an agent's tool allowlist is resolved. */
+export type AgentToolsMode = "selected" | "all";
+
 export interface Agent {
   id: string;
   org_id: string;
@@ -55,6 +82,8 @@ export interface Agent {
   instructions: string;
   model: string;
   tools: AgentToolName[];
+  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
+  tools_mode: AgentToolsMode;
   visibility: AgentVisibility;
   resources: Record<string, unknown>;
   status: AgentStatus;
