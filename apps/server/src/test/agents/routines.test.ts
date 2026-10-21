@@ -86,6 +86,7 @@ dbDescribe("routine store", () => {
 
   it("creates, updates, disables and deletes a routine with next_run_at", async () => {
     const routine = await store.createRoutine(agentId, {
+    created_by_user_id: owner.id,
       name: "Quarter hour",
       kind: "cron",
       schedule: "every 15m",
@@ -119,6 +120,7 @@ dbDescribe("routine store", () => {
   it("creates a once routine whose next run is its run_at", async () => {
     const runAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const routine = await store.createRoutine(agentId, {
+    created_by_user_id: owner.id,
       name: "One shot",
       kind: "once",
       run_at: runAt,
@@ -132,6 +134,7 @@ dbDescribe("routine store", () => {
 
   it("creates occurrences idempotently on (routine_id, scheduled_for)", async () => {
     const routine = await store.createRoutine(agentId, {
+    created_by_user_id: owner.id,
       name: "Occurrence",
       kind: "cron",
       schedule: "0 * * * *",
@@ -153,12 +156,14 @@ dbDescribe("routine store", () => {
     const base = Date.now() + 60_000;
     for (let index = 0; index < MAX_PENDING_REMINDERS; index++) {
       await scheduleReminder(env!.db, reminderAgent.id, {
+        created_by_user_id: owner.id,
         at: new Date(base + index * 60_000).toISOString(),
         prompt: `Reminder ${index}`,
       });
     }
     await expect(
       scheduleReminder(env!.db, reminderAgent.id, {
+        created_by_user_id: owner.id,
         at: new Date(base + 60 * 60_000).toISOString(),
         prompt: "One too many",
       }),

@@ -82,6 +82,7 @@ export interface ActivityFilters {
 
 export interface CreateRunInput {
   agent_id: string;
+  user_id?: string | null;
   thread_id?: string | null;
   routine_id?: string | null;
   parent_run_id?: string | null;
@@ -117,7 +118,7 @@ const TS = (column: string): string =>
   `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.instructions, a.model,
-  a.tools, a.visibility, a.resources, a.status,
+  a.tools, a.visibility, a.resources, a.status, a.is_personal,
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
   (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
@@ -126,10 +127,10 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.instructions, 
   ${TS("a.deleted_at")} AS deleted_at, ${TS("a.purge_after")} AS purge_after,
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
-const THREAD_COLUMNS = `t.id, t.agent_id, t.chat_id, t.title, t.title_locked, t.kind,
+const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.kind,
   ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
 
-const RUN_COLUMNS = `r.id, r.agent_id, r.thread_id, r.routine_id, r.parent_run_id,
+const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
   r.delegate_agent_id, r.depth, r.trigger, r.status, r.summary,
   r.error_code, r.error_message, r.error_step, r.tokens,
   ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
@@ -173,6 +174,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,
+    is_personal: Boolean(row.is_personal),
     team_ids: (row.team_ids as string[] | null) ?? [],
     deleted_at: row.deleted_at === null || row.deleted_at === undefined ? null : pgTimestampToRfc3339(row.deleted_at as string),
     purge_after: row.purge_after === null || row.purge_after === undefined ? null : pgTimestampToRfc3339(row.purge_after as string),
@@ -185,6 +187,7 @@ function toThread(row: Record<string, unknown>): AgentThread {
   return {
     id: row.id as string,
     agent_id: row.agent_id as string,
+    user_id: row.user_id as string,
     chat_id: row.chat_id as string,
     title: (row.title as string | null) ?? "",
     title_locked: Boolean(row.title_locked),
@@ -198,6 +201,7 @@ function toRun(row: Record<string, unknown>): AgentRun {
   return {
     id: row.id as string,
     agent_id: row.agent_id as string,
+    user_id: (row.user_id as string | null) ?? null,
     thread_id: (row.thread_id as string | null) ?? null,
     routine_id: (row.routine_id as string | null) ?? null,
     parent_run_id: (row.parent_run_id as string | null) ?? null,
@@ -278,10 +282,6 @@ export function deriveTitleFromMessage(message: string): string {
   return `${stem}…`;
 }
 
-/** Per-organization ceiling on live agents (archived agents still count
- *  until they are deleted). */
-export const MAX_AGENTS_PER_ORG = 25;
-
 /** Default per-agent sandbox budget recorded with every new agent. */
 export const DEFAULT_AGENT_RESOURCES = {
   vcpu: 1,
@@ -304,17 +304,6 @@ export class AgentStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [user.org_id]);
-      const live = await client.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM agents
-         WHERE org_id = $1 AND status IN ('active', 'archived')`,
-        [user.org_id],
-      );
-      if (Number(live.rows[0]?.count ?? "0") >= MAX_AGENTS_PER_ORG) {
-        throw ApiError.badRequest(
-          `agent limit reached: ${MAX_AGENTS_PER_ORG} agents per organization`,
-        );
-      }
       await client.query(
         `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, visibility, resources)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)`,
@@ -339,13 +328,16 @@ export class AgentStore {
       }
       const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
       await client.query(
-        `INSERT INTO agent_threads (id, agent_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, 'Main thread', false, 'default')`,
-        [uuidv7(), id, chat.id],
+        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
+         VALUES ($1, $2, $3, $4, 'Main thread', false, 'default')`,
+        [uuidv7(), id, user.id, chat.id],
       );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
+      if ((error as { code?: string }).code === "23505") {
+        throw ApiError.conflict("name_taken", "you already have an agent with this name");
+      }
       throw error;
     } finally {
       client.release();
@@ -353,6 +345,52 @@ export class AgentStore {
     const agent = await this.fetchById(user.org_id, id);
     if (agent === null) throw ApiError.internal("agent insert lost its row");
     return agent;
+  }
+
+  /** The org's first enabled model — the default for a personal agent. */
+  private async defaultModel(orgId: string): Promise<string | null> {
+    const res = await this.pool.query<{ model: string }>(
+      "SELECT model FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model LIMIT 1",
+      [orgId],
+    );
+    return res.rows[0]?.model ?? null;
+  }
+
+  /** The caller's personal agent, created on first use. One per user, always
+   *  private, and exempt from deletion. Returns null when the org has no
+   *  enabled model to give it. */
+  async ensurePersonalAgent(user: UserRow): Promise<Agent | null> {
+    const find = async (): Promise<Agent | null> => {
+      const res = await this.pool.query<Record<string, unknown>>(
+        `SELECT ${AGENT_COLUMNS} FROM agents a
+         WHERE a.owner_user_id = $1 AND a.is_personal AND a.status <> 'deleted' LIMIT 1`,
+        [user.id],
+      );
+      const row = res.rows[0];
+      return row === undefined ? null : toAgent(row);
+    };
+    const existing = await find();
+    if (existing !== null) return existing;
+
+    const model = await this.defaultModel(user.org_id);
+    if (model === null) return null;
+    try {
+      await this.pool.query(
+        `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, visibility, resources, is_personal)
+         VALUES ($1, $2, $3, 'Assistant', '', $4, $5::jsonb, 'private', $6::jsonb, true)`,
+        [
+          uuidv7(),
+          user.org_id,
+          user.id,
+          model,
+          JSON.stringify(DEFAULT_AGENT_TOOLS),
+          JSON.stringify(DEFAULT_AGENT_RESOURCES),
+        ],
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code !== "23505") throw error;
+    }
+    return find();
   }
 
   /** Visibility-filtered list. Active agents by default; archived rows are
@@ -431,15 +469,27 @@ export class AgentStore {
     if (patch.instructions !== undefined) add("instructions", patch.instructions);
     if (patch.model !== undefined) add("model", patch.model);
     if (patch.tools !== undefined) add("tools", JSON.stringify(patch.tools), "::jsonb");
-    if (patch.visibility !== undefined) add("visibility", patch.visibility);
+    if (patch.visibility !== undefined) {
+      if (agent.is_personal && patch.visibility !== "private") {
+        throw ApiError.badRequest("the personal agent is always private");
+      }
+      add("visibility", patch.visibility);
+    }
     if (patch.resources !== undefined) add("resources", JSON.stringify(patch.resources), "::jsonb");
     if (sets.length === 0 && patch.team_ids === undefined) return agent;
     if (sets.length > 0) {
       sets.push("updated_at = now()");
-      await this.pool.query(
-        `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
-        params,
-      );
+      try {
+        await this.pool.query(
+          `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
+          params,
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") {
+          throw ApiError.conflict("name_taken", "you already have an agent with this name");
+        }
+        throw error;
+      }
     }
     if (patch.team_ids !== undefined) {
       await this.replaceTeamGrants(this.pool, agent.org_id, agentId, patch.team_ids);
@@ -477,6 +527,7 @@ export class AgentStore {
 
   async archive(user: UserRow, agentId: string): Promise<Agent> {
     const { agent } = await this.requireAccess(user, agentId, "manage");
+    if (agent.is_personal) throw ApiError.badRequest("the personal agent cannot be archived");
     await this.pool.query(
       "UPDATE agents SET status = 'archived', updated_at = now() WHERE org_id = $1 AND id = $2",
       [agent.org_id, agentId],
@@ -498,6 +549,7 @@ export class AgentStore {
    *  Rows stay until purge. */
   async markDeleted(user: UserRow, agentId: string): Promise<Agent> {
     const { agent } = await this.requireAccess(user, agentId, "manage");
+    if (agent.is_personal) throw ApiError.badRequest("the personal agent cannot be deleted");
     const days = await this.graceDays(agent.org_id);
     await this.pool.query(
       `UPDATE agents
@@ -554,7 +606,7 @@ export class AgentStore {
   async export(orgId: string, agentId: string): Promise<Record<string, unknown>> {
     const agent = await this.fetchOrThrow(orgId, agentId);
     const [threads, routines, runs] = await Promise.all([
-      this.listThreads(agentId, { includeRoutineRuns: true }),
+      this.listThreads(agentId, agent.owner_user_id, { includeRoutineRuns: true }),
       this.listRoutines(agentId),
       this.listRuns(agentId, { limit: 200 }),
     ]);
@@ -610,8 +662,14 @@ export class AgentStore {
   }
 
   /** Creates a chat journal row plus its agent_threads row in one
-   *  transaction. The chat is owned by the agent's owner. */
-  async createThread(agentId: string, title: string, kind: AgentThreadKind = "thread"): Promise<AgentThread> {
+   *  transaction. The thread is private to `userId`; the chat journal row is
+   *  owned by that user too. */
+  async createThread(
+    agentId: string,
+    userId: string,
+    title: string,
+    kind: AgentThreadKind = "thread",
+  ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
     const client = await this.pool.connect();
@@ -620,14 +678,14 @@ export class AgentStore {
       const chat = await this.chats.createChatOn(
         client,
         agent.org_id,
-        agent.owner_user_id,
+        userId,
         title.trim() === "" ? null : title,
         null,
       );
       await client.query(
-        `INSERT INTO agent_threads (id, agent_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, $4, false, $5)`,
-        [id, agentId, chat.id, title, kind],
+        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
+         VALUES ($1, $2, $3, $4, $5, false, $6)`,
+        [id, agentId, userId, chat.id, title, kind],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -636,38 +694,66 @@ export class AgentStore {
     } finally {
       client.release();
     }
-    return this.fetchThread(agentId, id);
+    return this.fetchThread(agentId, userId, id);
   }
 
-  /** Default thread first, then most recent activity. Routine-run threads
-   *  are execution transcripts and stay out of the user-facing thread list
-   *  unless explicitly requested. */
-  async listThreads(agentId: string, options: { includeRoutineRuns?: boolean } = {}): Promise<AgentThread[]> {
-    const params: unknown[] = [agentId];
-    let where = "t.agent_id = $1";
+  /** The user's default thread with this agent, created on first use. A
+   *  shared agent therefore gives each user their own default thread. */
+  async ensureDefaultThread(agentId: string, userId: string): Promise<AgentThread> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.kind = 'default'`,
+      [agentId, userId],
+    );
+    const row = res.rows[0];
+    if (row !== undefined) return toThread(row);
+    try {
+      return await this.createThread(agentId, userId, "Main thread", "default");
+    } catch (error) {
+      // A concurrent first turn may have created it between the two queries.
+      const again = await this.pool.query<Record<string, unknown>>(
+        `SELECT ${THREAD_COLUMNS} FROM agent_threads t
+         WHERE t.agent_id = $1 AND t.user_id = $2 AND t.kind = 'default'`,
+        [agentId, userId],
+      );
+      const raced = again.rows[0];
+      if (raced !== undefined) return toThread(raced);
+      throw error;
+    }
+  }
+
+  /** The caller's threads with this agent: default first, then most recent
+   *  activity. Routine-run threads are execution transcripts and stay out of
+   *  the user-facing list unless explicitly requested. */
+  async listThreads(
+    agentId: string,
+    userId: string,
+    options: { includeRoutineRuns?: boolean } = {},
+  ): Promise<AgentThread[]> {
+    let where = "t.agent_id = $1 AND t.user_id = $2";
     if (options.includeRoutineRuns !== true) where += " AND t.kind <> 'routine_run'";
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
        WHERE ${where}
        ORDER BY (t.kind = 'default') DESC, t.last_activity_at DESC, t.created_at DESC`,
-      params,
+      [agentId, userId],
     );
     return res.rows.map(toThread);
   }
 
-  async getThread(agentId: string, threadId: string): Promise<AgentThread> {
-    return this.fetchThread(agentId, threadId);
+  async getThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {
+    return this.fetchThread(agentId, userId, threadId);
   }
 
   /** Renames a thread and locks the title against regeneration. */
-  async renameThread(agentId: string, threadId: string, title: string): Promise<AgentThread> {
+  async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const res = await client.query<{ chat_id: string }>(
-        `UPDATE agent_threads SET title = $3, title_locked = true
-         WHERE agent_id = $1 AND id = $2 RETURNING chat_id`,
-        [agentId, threadId, title],
+        `UPDATE agent_threads SET title = $4, title_locked = true
+         WHERE agent_id = $1 AND user_id = $2 AND id = $3 RETURNING chat_id`,
+        [agentId, userId, threadId, title],
       );
       const row = res.rows[0];
       if (row === undefined) throw ApiError.notFound("no such thread");
@@ -679,7 +765,7 @@ export class AgentStore {
     } finally {
       client.release();
     }
-    return this.fetchThread(agentId, threadId);
+    return this.fetchThread(agentId, userId, threadId);
   }
 
   /** Moves the thread's activity marker (called when a turn commits). */
@@ -718,10 +804,11 @@ export class AgentStore {
     }
   }
 
-  private async fetchThread(agentId: string, threadId: string): Promise<AgentThread> {
+  private async fetchThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.agent_id = $1 AND t.id = $2`,
-      [agentId, threadId],
+      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3`,
+      [agentId, userId, threadId],
     );
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such thread");
@@ -942,13 +1029,14 @@ export class AgentStore {
     const res = await this.pool.query<Record<string, unknown>>(
       `WITH r AS (
          INSERT INTO agent_runs
-           (id, agent_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary, started_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           (id, agent_id, user_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *)
        SELECT ${RUN_COLUMNS} FROM r`,
       [
         id,
         input.agent_id,
+        input.user_id ?? null,
         input.thread_id ?? null,
         input.routine_id ?? null,
         input.parent_run_id ?? null,

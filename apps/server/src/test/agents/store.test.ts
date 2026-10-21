@@ -58,7 +58,7 @@ dbDescribe("AgentStore", () => {
     expect(agent.status).toBe("active");
     expect(agent.tools).toContain("send_message");
 
-    const threads = await store.listThreads(agent.id);
+    const threads = await store.listThreads(agent.id, owner.id);
     expect(threads).toHaveLength(1);
     expect(threads[0]!.kind).toBe("default");
     expect(threads[0]!.title).toBe("Main thread");
@@ -139,7 +139,7 @@ dbDescribe("AgentStore", () => {
     expect(days).toBeLessThan(31);
 
     await expect(store.purge(member, agent.id)).rejects.toMatchObject({ status: 403 });
-    const threads = await store.listThreads(agent.id);
+    const threads = await store.listThreads(agent.id, owner.id);
     await store.purge(owner, agent.id);
     await expect(store.fetchAgent(agent.id)).rejects.toMatchObject({ status: 404 });
     const leftover = await env!.db.query("SELECT id FROM chats WHERE id = $1", [threads[0]!.chat_id]);
@@ -148,15 +148,15 @@ dbDescribe("AgentStore", () => {
 
   it("creates, lists, renames and touches threads", async () => {
     const agent = await store.create(owner, { name: "Threads", model: "GLM-Test" });
-    const extra = await store.createThread(agent.id, "Second conversation");
+    const extra = await store.createThread(agent.id, owner.id, "Second conversation");
     expect(extra.kind).toBe("thread");
     expect(extra.title).toBe("Second conversation");
     expect(extra.chat_id).toBeTruthy();
 
-    const threads = await store.listThreads(agent.id);
+    const threads = await store.listThreads(agent.id, owner.id);
     expect(threads[0]!.kind).toBe("default");
 
-    const renamed = await store.renameThread(agent.id, extra.id, "Renamed");
+    const renamed = await store.renameThread(agent.id, owner.id, extra.id, "Renamed");
     expect(renamed.title).toBe("Renamed");
     expect(renamed.title_locked).toBe(true);
     const chat = await env!.db.query("SELECT title FROM chats WHERE id = $1", [extra.chat_id]);
@@ -165,12 +165,68 @@ dbDescribe("AgentStore", () => {
     const before = renamed.last_activity_at;
     await new Promise((resolve) => setTimeout(resolve, 10));
     await store.touchThread(agent.id, extra.id);
-    expect((await store.getThread(agent.id, extra.id)).last_activity_at >= before).toBe(true);
+    expect((await store.getThread(agent.id, owner.id, extra.id)).last_activity_at >= before).toBe(true);
+  });
+
+  it("keeps each user's threads private inside a shared agent", async () => {
+    const agent = await store.create(owner, { name: "Shared", model: "GLM-Test", visibility: "org" });
+    const mine = await store.createThread(agent.id, owner.id, "Owner thread");
+    const theirs = await store.createThread(agent.id, member.id, "Member thread");
+
+    expect((await store.listThreads(agent.id, owner.id)).map((t) => t.id)).not.toContain(theirs.id);
+    expect((await store.listThreads(agent.id, member.id)).map((t) => t.id)).not.toContain(mine.id);
+    await expect(store.getThread(agent.id, member.id, mine.id)).rejects.toMatchObject({ status: 404 });
+    await expect(store.renameThread(agent.id, member.id, mine.id, "Hijack")).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+
+  it("gives every user of a shared agent their own default thread", async () => {
+    const agent = await store.create(owner, { name: "Defaults", model: "GLM-Test", visibility: "org" });
+    const ownerDefault = await store.ensureDefaultThread(agent.id, owner.id);
+    const memberDefault = await store.ensureDefaultThread(agent.id, member.id);
+    expect(ownerDefault.id).not.toBe(memberDefault.id);
+    expect(ownerDefault.user_id).toBe(owner.id);
+    expect(memberDefault.user_id).toBe(member.id);
+    // Idempotent: the second call returns the same row.
+    expect((await store.ensureDefaultThread(agent.id, member.id)).id).toBe(memberDefault.id);
+  });
+
+  it("creates one personal agent per user and refuses to archive or delete it", async () => {
+    await env!.db.query(
+      "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd) VALUES ($1, 'personal-model', 'guild', true, 0, 0)",
+      [orgId],
+    );
+    const personal = await store.ensurePersonalAgent(owner);
+    expect(personal).not.toBeNull();
+    expect(personal!.name).toBe("Assistant");
+    expect(personal!.is_personal).toBe(true);
+    expect(personal!.visibility).toBe("private");
+    expect(personal!.model).toBe("personal-model");
+    // Idempotent.
+    expect((await store.ensurePersonalAgent(owner))!.id).toBe(personal!.id);
+    // One per user.
+    const memberPersonal = await store.ensurePersonalAgent(member);
+    expect(memberPersonal!.id).not.toBe(personal!.id);
+
+    await expect(store.archive(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
+    await expect(store.markDeleted(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
+    await expect(store.update(owner, personal!.id, { visibility: "org" })).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+
+  it("does not cap the number of agents in an organization", async () => {
+    const created = [];
+    for (let i = 0; i < 30; i += 1) {
+      created.push(await store.create(owner, { name: `Bulk ${i}`, model: "GLM-Test" }));
+    }
+    expect(created).toHaveLength(30);
   });
 
   it("records runs, activity, notices and chunk search rows", async () => {
     const agent = await store.create(owner, { name: "Runs", model: "GLM-Test" });
-    const thread = (await store.listThreads(agent.id))[0]!;
+    const thread = (await store.listThreads(agent.id, owner.id))[0]!;
     const run = await store.createRun({ agent_id: agent.id, thread_id: thread.id, trigger: "message" });
     expect(run.status).toBe("queued");
     const finished = await store.updateRun(run.id, {

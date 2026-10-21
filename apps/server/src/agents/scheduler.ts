@@ -51,6 +51,7 @@ interface ClaimedOccurrence {
   agent_id: string;
   org_id: string;
   owner_user_id: string;
+  created_by_user_id: string | null;
   model: string;
   routine_name: string;
   prompt: string;
@@ -192,7 +193,7 @@ export class AgentScheduler {
     try {
       await client.query("BEGIN");
       const res = await client.query<ClaimedOccurrence>(
-        `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, a.model,
+        `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
                 r.name AS routine_name, r.prompt, r.kind,
                 ${TS("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
                 run.status AS run_status, run.error_message AS run_error,
@@ -249,7 +250,7 @@ export class AgentScheduler {
    *  failed occurrence with an owner notice. */
   async reconcileClaimed(): Promise<void> {
     const res = await this.deps.pool.query<ClaimedOccurrence>(
-      `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, a.model,
+      `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
               r.name AS routine_name, r.prompt, r.kind,
               ${TS("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
               run.status AS run_status, run.error_message AS run_error,
@@ -321,9 +322,11 @@ export class AgentScheduler {
     let runId: string | null = null;
     try {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
-      const thread = await this.deps.store.createThread(row.agent_id, title, "routine_run");
+      const userId = row.created_by_user_id ?? row.owner_user_id;
+      const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine_run");
       const run = await this.deps.store.createRun({
         agent_id: row.agent_id,
+        user_id: userId,
         thread_id: thread.id,
         routine_id: row.routine_id,
         trigger: "routine",
@@ -438,9 +441,11 @@ export async function runRoutineNow(
     [occurrence.id],
   );
   const title = `${routine.name} — ${now.toISOString()}`;
-  const thread = await deps.store.createThread(agent.id, title, "routine_run");
+  const userId = routine.created_by_user_id ?? agent.owner_user_id;
+  const thread = await deps.store.createThread(agent.id, userId, title, "routine_run");
   const run = await deps.store.createRun({
     agent_id: agent.id,
+    user_id: userId,
     thread_id: thread.id,
     routine_id: routine.id,
     trigger: "manual",

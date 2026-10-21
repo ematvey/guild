@@ -38,6 +38,9 @@ Every conversation is a thread of an agent. There is no plain-chat runtime.
      `UNIQUE (owner_user_id, lower(name)) WHERE status <> 'deleted'`.
 3. **No agent cap.** `MAX_AGENTS_PER_ORG` is removed. Limits are per-agent
    workspace quota and an org storage budget, not a count.
+   - **Sandbox lifecycle**: an agent's sandbox suspends after 15 minutes idle
+     and is never deleted. Any message, routine firing, delegation, or tool
+     execution wakes it. Suspension keeps the container; it only stops it.
 4. **Thread privacy.** A thread is visible only to its `user_id`. Other users
    of a shared agent cannot list, read, or post into it. Admins cannot either.
    There is no per-thread share.

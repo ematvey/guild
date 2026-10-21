@@ -20,6 +20,7 @@ export const MIN_INTERVAL_MS = 60_000;
 export const MAX_PENDING_REMINDERS = 20;
 
 export interface CreateRoutineInput {
+  created_by_user_id: string;
   name: string;
   kind: AgentRoutineKind;
   schedule?: string | null;
@@ -40,6 +41,7 @@ export interface UpdateRoutineInput {
 }
 
 export interface ReminderInput {
+  created_by_user_id: string;
   at: string;
   prompt: string;
 }
@@ -52,7 +54,7 @@ export interface ReminderResult {
 const TS = (column: string): string =>
   `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
-const ROUTINE_COLUMNS = `r.id, r.agent_id, r.name, r.kind, r.schedule, r.timezone,
+const ROUTINE_COLUMNS = `r.id, r.agent_id, r.created_by_user_id, r.name, r.kind, r.schedule, r.timezone,
   ${TS("r.run_at")} AS run_at, r.prompt, r.context, r.enabled,
   ${TS("r.next_run_at")} AS next_run_at,
   ${TS("r.created_at")} AS created_at, ${TS("r.updated_at")} AS updated_at`;
@@ -64,6 +66,7 @@ function toRoutine(row: Record<string, unknown>): AgentRoutine {
   return {
     id: row.id as string,
     agent_id: row.agent_id as string,
+    created_by_user_id: (row.created_by_user_id as string | null) ?? null,
     name: row.name as string,
     kind: row.kind as AgentRoutineKind,
     schedule: (row.schedule as string | null) ?? null,
@@ -253,11 +256,11 @@ export async function createRoutine(
   const res = await pool.query<Record<string, unknown>>(
     `WITH r AS (
        INSERT INTO agent_routines
-         (id, agent_id, name, kind, schedule, timezone, run_at, prompt, context, enabled, next_run_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8, 'isolated', $9, $10::timestamptz)
+         (id, agent_id, created_by_user_id, name, kind, schedule, timezone, run_at, prompt, context, enabled, next_run_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, 'isolated', $10, $11::timestamptz)
        RETURNING *)
      SELECT ${ROUTINE_COLUMNS} FROM r`,
-    [id, agentId, name, kind, schedule, timezone, runAt, prompt, enabled, next],
+    [id, agentId, input.created_by_user_id, name, kind, schedule, timezone, runAt, prompt, enabled, next],
   );
   return toRoutine(res.rows[0]!);
 }
@@ -389,6 +392,7 @@ export async function scheduleReminder(
   const firstLine = prompt.split(/\r?\n/).find((line) => line.trim() !== "") ?? "Reminder";
   const name = firstLine.length <= 60 ? firstLine : firstLine.slice(0, 60).trim();
   const routine = await createRoutine(pool, agentId, {
+    created_by_user_id: input.created_by_user_id,
     name,
     kind: "once",
     run_at: at.toISOString(),

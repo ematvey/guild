@@ -34,6 +34,9 @@ export interface AgentToolDeps {
   store: AgentStore;
   threads: ThreadStore;
   agent: Agent;
+  /** The user whose private thread this run serves: a thread this tool
+   *  creates belongs to them. */
+  userId: string;
   /** Present only when this chat has a running run and the delegation limits
    *  still allow spawning. */
   delegation?: DelegationToolContext;
@@ -50,7 +53,7 @@ export interface AgentMessageResult {
  *  thread activity marker and writes the inbox notice. The chat's unread
  *  projection follows from the new assistant event. */
 export async function sendAgentMessage(
-  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent">,
+  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent" | "userId">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
@@ -70,7 +73,7 @@ export async function sendAgentMessage(
       url: `/agents/${deps.agent.id}/threads/${existing.rows[0].id}`,
     };
   }
-  const thread = await deps.store.createThread(deps.agent.id, title);
+  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title);
   await deps.threads.appendEvent(
     thread.chat_id,
     assistantMessageEvent(
@@ -86,7 +89,7 @@ export async function sendAgentMessage(
   await deps.store.createNotice({
     org_id: deps.agent.org_id,
     agent_id: deps.agent.id,
-    user_id: deps.agent.owner_user_id,
+    user_id: deps.userId,
     kind: "agent_message",
     payload: { thread_id: thread.id, url, title: thread.title },
   });
@@ -311,6 +314,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         execute: async (args) => {
           try {
             const result = await scheduleReminder(deps.pool, deps.agent.id, {
+              created_by_user_id: deps.userId,
               at: args.at,
               prompt: args.prompt,
             });
@@ -365,6 +369,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         execute: async (args) => {
           try {
             const routine = await createRoutine(deps.pool, deps.agent.id, {
+              created_by_user_id: deps.userId,
               name: args.name,
               prompt: args.prompt,
               kind: "cron",

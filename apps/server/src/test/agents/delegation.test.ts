@@ -87,7 +87,7 @@ dbDescribe("agent delegation", () => {
   });
 
   it("rejects self-delegation, depth, child count and cycles", async () => {
-    const thread = (await store.listThreads(parentAgent.id))[0]!;
+    const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const base = { pool: env!.db, store, agent: parentAgent, parentRun: run, requester: owner };
 
@@ -121,7 +121,7 @@ dbDescribe("agent delegation", () => {
   });
 
   it("requires the requester to be able to use the target", async () => {
-    const thread = (await store.listThreads(parentAgent.id))[0]!;
+    const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const base = { pool: env!.db, store, agent: parentAgent, parentRun: run, requester: owner };
     await expect(
@@ -136,7 +136,7 @@ dbDescribe("agent delegation", () => {
   });
 
   it("runs the child in a routine_run thread and copies declared artifacts to the inbox", async () => {
-    const thread = await store.createThread(parentAgent.id, "Delegation flow");
+    const thread = await store.createThread(parentAgent.id, owner.id, "Delegation flow");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const targetRoot = path.join(root, "agents", orgId, targetAgent.id);
     await mkdir(targetRoot, { recursive: true });
@@ -177,7 +177,7 @@ dbDescribe("agent delegation", () => {
     expect(child.depth).toBe(1);
     expect(child.parent_run_id).toBe(parentRun.id);
     expect(child.delegate_agent_id).toBe(targetAgent.id);
-    const childThread = await store.getThread(targetAgent.id, child.thread_id!);
+    const childThread = await store.getThread(targetAgent.id, owner.id, child.thread_id!);
     expect(childThread.kind).toBe("routine_run");
     expect(result.text).toBe("The report is ready.");
     expect(result.artifacts).toHaveLength(1);
@@ -190,7 +190,7 @@ dbDescribe("agent delegation", () => {
   });
 
   it("stages files over the threshold and release_artifacts deletes the staging dir", async () => {
-    const thread = (await store.listThreads(parentAgent.id))[0]!;
+    const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const childRun = await makeRun({
       agentId: targetAgent.id,
@@ -230,7 +230,7 @@ dbDescribe("agent delegation", () => {
   });
 
   it("exposes a structured error when the child run times out", async () => {
-    const thread = await store.createThread(parentAgent.id, "Delegation timeout");
+    const thread = await store.createThread(parentAgent.id, owner.id, "Delegation timeout");
     await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const context = await delegationContextForChat({
       pool: env!.db,

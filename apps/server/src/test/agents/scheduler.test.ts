@@ -48,6 +48,7 @@ dbDescribe("agent scheduler", () => {
 
   async function makeRoutine(name: string): Promise<AgentRoutine> {
     return store.createRoutine(agent.id, {
+    created_by_user_id: owner.id,
       name,
       kind: "cron",
       schedule: "0 0 1 1 *",
@@ -107,6 +108,7 @@ dbDescribe("agent scheduler", () => {
   it("materializes missed occurrences and coalesces to the latest one", async () => {
     scheduler = makeScheduler();
     const routine = await store.createRoutine(agent.id, {
+    created_by_user_id: owner.id,
       name: "Coalesce",
       kind: "cron",
       schedule: "* * * * *",
@@ -140,7 +142,7 @@ dbDescribe("agent scheduler", () => {
       runs[0]!.thread_id,
     ]);
     expect(threads.rows[0]!.kind).toBe("routine_run");
-    expect((await store.listThreads(agent.id)).some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    expect((await store.listThreads(agent.id, owner.id)).some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
   });
 
   it("retries an occurrence three times and then fails it with a notice", async () => {
@@ -199,6 +201,7 @@ dbDescribe("agent scheduler", () => {
   it("runs a routine manually and refuses an archived agent", async () => {
     scheduler = makeScheduler();
     const routine = await store.createRoutine(agent.id, {
+    created_by_user_id: owner.id,
       name: "Manual",
       kind: "once",
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
@@ -213,6 +216,7 @@ dbDescribe("agent scheduler", () => {
 
     const archived = await store.create(owner, { name: "Archived", model: "GLM-Test" });
     const archivedRoutine = await store.createRoutine(archived.id, {
+    created_by_user_id: owner.id,
       name: "Archived routine",
       kind: "once",
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),

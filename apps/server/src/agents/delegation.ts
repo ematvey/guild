@@ -133,6 +133,7 @@ export async function resolveDelegationTarget(
     name: row.name as string,
     instructions: (row.instructions as string | null) ?? "",
     model: row.model as string,
+    is_personal: Boolean(row.is_personal),
     tools: (row.tools as Agent["tools"] | null) ?? [],
     visibility: row.visibility as Agent["visibility"],
     resources: (row.resources as Record<string, unknown> | null) ?? {},
@@ -358,9 +359,11 @@ export async function delegate(context: DelegationToolContext, args: DelegateArg
     targetRef: args.agent,
   });
   const title = `Delegated: ${task.split(/\r?\n/)[0]!.slice(0, 80)}`;
-  const thread = await context.store.createThread(target.id, title, "routine_run");
+  const userId = context.parentRun.user_id ?? context.requester.id;
+  const thread = await context.store.createThread(target.id, userId, title, "routine_run");
   const childRun = await context.store.createRun({
     agent_id: target.id,
+    user_id: userId,
     thread_id: thread.id,
     parent_run_id: context.parentRun.id,
     delegate_agent_id: target.id,

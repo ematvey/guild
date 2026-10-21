@@ -1045,6 +1045,7 @@ export class GuildRuntime {
       store: this.agents,
       threads: this.threads,
       agent,
+      userId: ref.user_id,
       ...(delegation === null ? {} : { delegation }),
     });
     this.log.info({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
