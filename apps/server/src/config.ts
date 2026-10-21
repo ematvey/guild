@@ -84,9 +84,9 @@ export interface Config {
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
-  /** LLM trace payload capture (GUILD_TRACE_PAYLOADS=1, default off): the
+  /** Trace payload capture (GUILD_TRACE_PAYLOADS=1, default off): the
    *  llm_payloads request/response bodies are a deliberate choice — the
-   *  metadata table (llm_calls) is always on. */
+   *  span metadata (agent_spans) is always on. */
   tracePayloads: boolean;
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */

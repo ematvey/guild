@@ -698,3 +698,182 @@ export function groupTools(
   }
   return groups;
 }
+
+// Activity over ClickHouse: traces (agent runs), spans (LLM and tool
+// calls), sessions (chats) and the summary. One shape for the whole
+// observability surface; the server owns the wire truth.
+
+export type ActivityTab = "traces" | "calls" | "sessions";
+export type ActivityPeriod = "24h" | "7d" | "30d";
+
+export interface TraceRow {
+  trace_id: string;
+  org_id: string;
+  user_id: string | null;
+  agent_id: string | null;
+  agent_name: string;
+  session_id: string | null;
+  thread_id: string | null;
+  parent_trace_id: string | null;
+  routine_id: string | null;
+  trigger: string;
+  status: string;
+  name: string;
+  summary: string;
+  error: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number;
+  span_count: number;
+  call_count: number;
+  tool_count: number;
+  error_count: number;
+  tokens_in: number;
+  tokens_out: number;
+  reasoning_tokens: number;
+  cost_usd: number;
+  longest_ms: number;
+}
+
+export interface SpanRow {
+  span_id: string;
+  trace_id: string;
+  run_id: string | null;
+  parent_span_id: string | null;
+  name: string;
+  span_type: "llm" | "tool" | "run";
+  status: "ok" | "error" | "running";
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  model: string;
+  provider: string;
+  tokens_in: number;
+  tokens_out: number;
+  reasoning_tokens: number;
+  cost_usd: number;
+  error: string;
+  input: string;
+  output: string;
+  request_id: string | null;
+  caller: string;
+  session_id: string | null;
+  chat_id: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface SessionRow {
+  session_id: string;
+  traces: number;
+  calls: number;
+  tool_calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  errors: number;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number;
+}
+
+export interface ActivityTotals {
+  traces: number;
+  failed_traces: number;
+  calls: number;
+  tool_calls: number;
+  errors: number;
+  tokens_in: number;
+  tokens_out: number;
+  reasoning_tokens: number;
+  cost_usd: number;
+  p50_ms: number;
+  p95_ms: number;
+}
+
+export interface ActivitySummary {
+  totals: ActivityTotals;
+  by_day: {
+    day: string;
+    calls: number;
+    tokens_in: number;
+    tokens_out: number;
+    cost_usd: number;
+    p95_ms: number;
+  }[];
+}
+
+export interface ActivityQuery {
+  from?: string;
+  to?: string;
+  agent?: string;
+  status?: string;
+  trigger?: string;
+  q?: string;
+  type?: "llm" | "tool";
+  caller?: "model" | "judge";
+  model?: string;
+  session?: string;
+  trace?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function activityQuery(filters: ActivityQuery): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === "" || value === "all") continue;
+    query.set(key, String(value));
+  }
+  return query.toString() ? `?${query}` : "";
+}
+
+export async function listTraces(
+  filters: ActivityQuery = {},
+): Promise<{ traces: TraceRow[]; total: number }> {
+  return request<{ traces: TraceRow[]; total: number }>(
+    `/api/v1/activity/traces${activityQuery(filters)}`,
+  );
+}
+
+export async function getTrace(traceId: string): Promise<{
+  trace: TraceRow;
+  spans: SpanRow[];
+  children: TraceRow[];
+}> {
+  return request<{ trace: TraceRow; spans: SpanRow[]; children: TraceRow[] }>(
+    `/api/v1/activity/traces/${encodeURIComponent(traceId)}`,
+  );
+}
+
+export async function listSpans(
+  filters: ActivityQuery = {},
+): Promise<{ spans: SpanRow[]; total: number }> {
+  return request<{ spans: SpanRow[]; total: number }>(
+    `/api/v1/activity/spans${activityQuery(filters)}`,
+  );
+}
+
+export async function listSessions(
+  filters: ActivityQuery = {},
+): Promise<{ sessions: SessionRow[]; total: number }> {
+  return request<{ sessions: SessionRow[]; total: number }>(
+    `/api/v1/activity/sessions${activityQuery(filters)}`,
+  );
+}
+
+export async function getActivitySummary(
+  filters: ActivityQuery = {},
+): Promise<ActivitySummary> {
+  return request<ActivitySummary>(
+    `/api/v1/activity/summary${activityQuery(filters)}`,
+  );
+}
+
+export async function getSpanPayloads(
+  spanId: string,
+): Promise<{ kind: string; body: string }[]> {
+  const body = await request<{ payloads: { kind: string; body: string }[] }>(
+    `/api/v1/activity/spans/${encodeURIComponent(spanId)}/payloads`,
+  );
+  return body.payloads;
+}

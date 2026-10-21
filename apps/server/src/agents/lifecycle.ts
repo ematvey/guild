@@ -9,6 +9,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import { insertChunks } from "./search.js";
 import type { AgentConflictJournal } from "./conflict.js";
+import type { TraceStore } from "../platform/trace.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -33,6 +34,8 @@ export interface AgentRunLifecycleDeps {
   log: Logger;
   /** Finishes the run's workspace-turn journal row at completion. */
   journal?: AgentConflictJournal;
+  /** Mirrors the terminal run row into ClickHouse. */
+  trace?: TraceStore;
 }
 
 function blocksOf(payload: Record<string, unknown>): { type?: string; text?: string }[] {
@@ -148,10 +151,51 @@ export class AgentRunLifecycle {
       );
       if (updated.rowCount === 0) return;
       await this.deps.journal?.finishRun(run.id);
+      this.mirrorFinishedRun(run.id);
       await this.indexTurn(run, turnEvents);
     } catch (error) {
       this.deps.log.warn({ err: error, runId: run.id, chatId }, "agent run completion failed");
     }
+  }
+
+  /** Writes the terminal run row to ClickHouse (agent_traces). */
+  private mirrorFinishedRun(runId: string): void {
+    if (this.deps.trace === undefined) return;
+    void this.deps.pool
+      .query<Record<string, unknown>>(
+        `SELECT r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
+                r.trigger, r.status, r.summary, r.error_message, r.tokens,
+                r.started_at, r.finished_at, r.created_at,
+                a.org_id, a.name AS agent_name, t.chat_id
+         FROM agent_runs r
+         JOIN agents a ON a.id = r.agent_id
+         LEFT JOIN agent_threads t ON t.id = r.thread_id
+         WHERE r.id = $1`,
+        [runId],
+      )
+      .then((res) => {
+        const row = res.rows[0];
+        if (row === undefined) return;
+        return this.deps.trace!.recordTrace({
+          trace_id: String(row["id"]),
+          org_id: String(row["org_id"]),
+          user_id: row["user_id"] === null ? null : String(row["user_id"]),
+          agent_id: String(row["agent_id"]),
+          agent_name: String(row["agent_name"] ?? ""),
+          session_id: row["chat_id"] === null ? null : String(row["chat_id"]),
+          thread_id: row["thread_id"] === null ? null : String(row["thread_id"]),
+          parent_trace_id: row["parent_run_id"] === null ? null : String(row["parent_run_id"]),
+          routine_id: row["routine_id"] === null ? null : String(row["routine_id"]),
+          trigger: String(row["trigger"]),
+          status: String(row["status"]),
+          name: String(row["agent_name"] ?? ""),
+          summary: String(row["summary"] ?? ""),
+          error: String(row["error_message"] ?? ""),
+          started_at: new Date(String(row["started_at"] ?? row["created_at"])),
+          finished_at: row["finished_at"] === null ? null : new Date(String(row["finished_at"])),
+        });
+      })
+      .catch(() => {});
   }
 
   private async runningRun(chatId: string): Promise<RunningRun | null> {

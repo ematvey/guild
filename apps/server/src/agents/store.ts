@@ -42,6 +42,7 @@ import {
   type UpdateRoutineInput,
 } from "./routines.js";
 import { insertChunks, search, type AgentChunkInput, type AgentSearchHit } from "./search.js";
+import type { TraceStore } from "../platform/trace.js";
 
 const DEFAULT_GRACE_DAYS = 30;
 
@@ -303,7 +304,11 @@ export const DEFAULT_AGENT_RESOURCES = {
 export class AgentStore {
   private readonly chats: ChatStore;
 
-  constructor(private readonly pool: PlatformPool) {
+  constructor(
+    private readonly pool: PlatformPool,
+    /** Mirrors run lifecycle rows into ClickHouse (agent_traces). */
+    private readonly trace?: TraceStore,
+  ) {
     this.chats = new ChatStore(pool);
   }
 
@@ -1066,7 +1071,9 @@ export class AgentStore {
         input.started_at ?? null,
       ],
     );
-    return toRun(res.rows[0]!);
+    const run = toRun(res.rows[0]!);
+    this.mirrorRun(run);
+    return run;
   }
 
   async updateRun(runId: string, patch: UpdateRunInput): Promise<AgentRun> {
@@ -1097,7 +1104,78 @@ export class AgentStore {
     );
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such run");
-    return toRun(row);
+    const run = toRun(row);
+    this.mirrorRun(run);
+    return run;
+  }
+
+  /** Mirrors one run row into ClickHouse; best-effort and never blocking. */
+  private mirrorRun(run: AgentRun): void {
+    if (this.trace === undefined) return;
+    void this.runTraceContext(run.agent_id, run.thread_id)
+      .then((ctx) => {
+        if (ctx === null) return;
+        return this.trace!.recordTrace({
+          trace_id: run.id,
+          org_id: ctx.org_id,
+          user_id: run.user_id,
+          agent_id: run.agent_id,
+          agent_name: ctx.agent_name,
+          session_id: ctx.chat_id,
+          thread_id: run.thread_id,
+          parent_trace_id: run.parent_run_id,
+          routine_id: run.routine_id,
+          trigger: run.trigger,
+          status: run.status,
+          name: ctx.agent_name,
+          summary: run.summary ?? "",
+          error: run.error_message ?? "",
+          started_at: new Date(run.started_at ?? run.created_at),
+          finished_at: run.finished_at === null ? null : new Date(run.finished_at),
+        });
+      })
+      .catch(() => {});
+  }
+
+  private async runTraceContext(
+    agentId: string,
+    threadId: string | null,
+  ): Promise<{ org_id: string; agent_name: string; chat_id: string | null } | null> {
+    const res = await this.pool.query<{ org_id: string; agent_name: string; chat_id: string | null }>(
+      `SELECT a.org_id, a.name AS agent_name, t.chat_id
+       FROM agents a LEFT JOIN agent_threads t ON t.id = $2
+       WHERE a.id = $1`,
+      [agentId, threadId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /** The chat's running run with the trace context the tool hook needs. */
+  async runningRunTraceForChat(chatId: string): Promise<{
+    run_id: string;
+    org_id: string;
+    user_id: string | null;
+    session_id: string;
+    agent_id: string;
+    agent_name: string;
+  } | null> {
+    const res = await this.pool.query<{
+      run_id: string;
+      org_id: string;
+      user_id: string | null;
+      session_id: string;
+      agent_id: string;
+      agent_name: string;
+    }>(
+      `SELECT r.id AS run_id, a.org_id, r.user_id, t.chat_id AS session_id, r.agent_id, a.name AS agent_name
+       FROM agent_runs r
+       JOIN agent_threads t ON t.id = r.thread_id
+       JOIN agents a ON a.id = r.agent_id
+       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+       ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
+      [chatId],
+    );
+    return res.rows[0] ?? null;
   }
 
   /** Org activity log with the agent name. When a viewer is supplied the

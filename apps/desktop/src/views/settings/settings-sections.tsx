@@ -6,7 +6,6 @@
 import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { useEffect, useState } from "react";
 import {
-  Activity,
   Bot,
   Building2,
   Cpu,
@@ -41,7 +40,6 @@ type SectionId =
   | "approvals"
   | "general"
   | "usage"
-  | "observability"
   | "assistant"
   | "users"
   | "teams"
@@ -78,12 +76,6 @@ export const SETTINGS_SECTIONS: SectionDef[] = [
   { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
   { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace", admin: true },
   { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace", admin: true },
-  {
-    id: "observability",
-    label: "Observability",
-    icon: <Activity className="size-4" />,
-    group: "workspace",
-  },
   { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace", admin: true },
   { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace", admin: true },
   { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace", admin: true },
@@ -180,15 +172,6 @@ function SectionBody({
         <LazySection
           load={() => import("./sections/UsageSection")}
           name="UsageSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
-    case "observability":
-      return (
-        <LazySection
-          load={() => import("./sections/ObservabilitySection")}
-          name="ObservabilitySection"
           detail={detail}
           onDetailChange={onDetailChange}
         />

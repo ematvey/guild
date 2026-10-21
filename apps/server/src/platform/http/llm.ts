@@ -8,7 +8,7 @@ import { ApiError } from "../errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
 import { serializeRustJson } from "../provider/sse.js";
-import type { LlmTraceSink } from "../trace.js";
+import type { TraceStore } from "../trace.js";
 import type { GatewayStore } from "../store/gateway.js";
 
 /** The gateway pipeline's slice of the platform context. */
@@ -16,7 +16,7 @@ export interface GatewayContext {
   masterKey(): Buffer;
   gatewayStore: GatewayStore;
   usage: UsageSink;
-  trace: LlmTraceSink;
+  trace: TraceStore;
 }
 
 /** The trace-context request headers the internal callers set:
@@ -27,6 +27,8 @@ export interface GatewayContext {
 export interface GatewayTraceHeaders {
   internalCaller: boolean;
   requestId: string | null;
+  /** The agent run the call belongs to (set by the in-app harness). */
+  runId: string | null;
   chatId: string | null;
   conversationId: number | null;
   turn: number | null;
@@ -46,6 +48,7 @@ export function readTraceHeaders(headers: Record<string, unknown>): GatewayTrace
   return {
     internalCaller: headerOr(headers, "x-guild-internal-caller") !== null,
     requestId: headerOr(headers, "x-guild-request-id"),
+    runId: headerOr(headers, "x-guild-run-id"),
     chatId: headerOr(headers, "x-guild-chat-id"),
     conversationId: conversation !== null && /^\d+$/.test(conversation) ? Number(conversation) : null,
     turn: turn !== null && /^-?\d+$/.test(turn) ? Number(turn) : null,
@@ -314,8 +317,9 @@ export function gatewayFinishReason(reported: string | null, hasCalls: boolean):
  *  also the usage event's), and the outcome details the stream loop knows
  *  at settle time. */
 export interface GatewayTraceEmission {
-  sink: LlmTraceSink;
+  sink: TraceStore;
   requestId: string;
+  runId: string | null;
   chatId: string | null;
   conversationId: number | null;
   turn: number | null;
@@ -358,6 +362,7 @@ async function emitTrace(
     org_id: credential.orgId,
     user_id: credential.userId,
     session_id: credential.sessionId,
+    run_id: t.runId,
     chat_id: t.chatId,
     conversation_id: t.conversationId,
     turn: t.turn,

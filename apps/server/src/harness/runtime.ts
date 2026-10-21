@@ -73,6 +73,7 @@ import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
+import { createTraceHook } from "../agents/trace-hook.js";
 import { delegationContextForChat } from "../agents/delegation.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import { uuidv7 } from "../platform/time.js";
@@ -80,7 +81,7 @@ import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
-import type { LlmTraceSink } from "../platform/trace.js";
+import type { TraceStore } from "../platform/trace.js";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
@@ -178,6 +179,9 @@ export class GuildRuntime {
   }
   private readonly directory: ConversationDirectory;
   private readonly providerChats = new Map<string, { chatId: string; conversationId: number }>();
+  /** Short-lived chat → running run id cache: one lookup per model call is
+   *  too much, and a run id only matters while the turn is live. */
+  private readonly runIdCache = new Map<string, { id: string | null; at: number }>();
   private readonly chatToConversation = new Map<string, number>();
   private get harness() {
     return this.host.value?.harness;
@@ -243,7 +247,7 @@ export class GuildRuntime {
     private readonly hub?: MachineDispatchHost,
     private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
     /** The LLM trace sink: the approval judge self-reports through it. */
-    private readonly trace?: LlmTraceSink,
+    private readonly trace?: TraceStore,
     /** Worker-per-chat: the server's forker (worker mode only). When set,
      *  admission routes over IPC and the server opens no harness. */
     private readonly supervisor?: ForkSupervisor,
@@ -276,9 +280,9 @@ export class GuildRuntime {
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
     this.chats = new ChatStore(pool);
-    this.agents = new AgentStore(pool);
+    this.agents = new AgentStore(pool, this.trace);
     this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
-    this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts });
+    this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts, trace: this.trace });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
@@ -429,7 +433,12 @@ export class GuildRuntime {
         },
       },
       skillRuntime: this.skillsRuntime,
-      toolHooks: [createConflictHook(this.conflicts, (id) => this.chatOfConversation(id))],
+      toolHooks: [
+        createConflictHook(this.conflicts, (id) => this.chatOfConversation(id)),
+        ...(this.trace !== undefined
+          ? [createTraceHook(this.trace, this.agents, (id) => this.chatOfConversation(id))]
+          : []),
+      ],
       trace: this.trace,
       currentModel: async (conversationId) => {
         await this.start();
@@ -1164,6 +1173,18 @@ export class GuildRuntime {
     return kind === undefined || (kind !== "default" && kind !== "routine_run");
   }
 
+  /** The chat's running agent run id, cached briefly: every model call in
+   *  the turn carries it as the trace id. Null for plain chats. */
+  private async runningRunId(chatId: string): Promise<string | null> {
+    const cached = this.runIdCache.get(chatId);
+    const now = Date.now();
+    if (cached !== undefined && now - cached.at < 2_000) return cached.id;
+    const run = await this.agents.runningRunForChat(chatId).catch(() => null);
+    const id = run?.id ?? null;
+    this.runIdCache.set(chatId, { id, at: now });
+    return id;
+  }
+
   /** Opens the run row for an adopted chat turn; the run lifecycle closes it
    *  from the transcript like any other agent turn. */
   async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
@@ -1222,6 +1243,9 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    // A fresh turn starts a new run (the caller creates it before this
+    // call), so the cached run id from the previous turn is stale.
+    this.runIdCache.delete(chatId);
     // A worker admitting another chat's turn (delegation) must not open the
     // workspace-turn row: the target chat's own worker owns that run.
     if (!(this.workerScope !== undefined && chatId !== this.workerScope.chatId)) {
@@ -1387,10 +1411,12 @@ export class GuildRuntime {
           const source = sessionId === undefined ? undefined : this.providerChats.get(sessionId);
           if (!source) return {};
           const owner = await this.chats.ownerOf(source.chatId);
+          const runId = await this.runningRunId(source.chatId);
           return {
             "x-guild-chat-id": source.chatId,
             "x-guild-conversation-id": String(source.conversationId),
             "x-guild-cause": "conversation-request",
+            ...(runId !== null ? { "x-guild-run-id": runId } : {}),
             ...(owner ? { "x-guild-user-id": owner.user_id } : {}),
           };
         },

@@ -68,11 +68,6 @@ describe("health route (native)", () => {
       "/api/v1/admin/api-keys/*",
       "/api/v1/usage",
       "/api/v1/usage/*",
-      // LLM observability (llm_calls queries; payloads admin-only).
-      "/api/v1/observability",
-      "/api/v1/observability/*",
-      "/api/v1/admin/observability",
-      "/api/v1/admin/observability/*",
       "/openai/v1/*",
       "/anthropic/v1/*",
       // M5 hub core (the ws upgrade itself is a server-level 'upgrade'
@@ -120,6 +115,7 @@ describe("health route (native)", () => {
       "/api/v1/runs",
       "/api/v1/runs/*",
       "/api/v1/activity",
+      "/api/v1/activity/*",
       "/api/v1/inbox",
       "/api/v1/inbox/*",
     ]);

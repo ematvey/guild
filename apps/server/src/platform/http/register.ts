@@ -17,7 +17,7 @@ import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
-import { registerObservabilityRoutes } from "./observability.js";
+import { registerActivityRoutes } from "./activity.js";
 import { registerChatsRoutes } from "./chats.js";
 import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerThreadStreamRoute } from "./thread-stream.js";
@@ -52,7 +52,6 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "gateway-admin", paths: ["/api/v1/gateway/models", "/api/v1/admin/gateway/*"] },
   { name: "api-keys", paths: ["/api/v1/api-keys", "/api/v1/api-keys/*", "/api/v1/admin/api-keys", "/api/v1/admin/api-keys/*"] },
   { name: "usage", paths: ["/api/v1/usage", "/api/v1/usage/*"] },
-  { name: "observability", paths: ["/api/v1/observability", "/api/v1/observability/*", "/api/v1/admin/observability", "/api/v1/admin/observability/*"] },
   { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
   { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
   { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
@@ -76,7 +75,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
   // Persistent agents: CRUD/lifecycle, threads, files, runs, activity, inbox,
   // conversation search.
-  { name: "agents", paths: ["/api/v1/agents", "/api/v1/agents/*", "/api/v1/runs", "/api/v1/runs/*", "/api/v1/activity", "/api/v1/inbox", "/api/v1/inbox/*"] },
+  { name: "agents", paths: ["/api/v1/agents", "/api/v1/agents/*", "/api/v1/runs", "/api/v1/runs/*", "/api/v1/activity", "/api/v1/activity/*", "/api/v1/inbox", "/api/v1/inbox/*"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -124,7 +123,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerGatewayAdminRoutes(scope, gateway, auth);
     registerApiKeyRoutes(scope, auth);
     registerUsageRoutes(scope, auth, infra);
-    registerObservabilityRoutes(scope, auth, infra);
+    registerActivityRoutes(scope, auth, infra);
     // M5 hub core: machine registry routes + the ws-ticket mint (the /api/v1/ws
     // upgrade itself is a server-level 'upgrade' listener, not an HTTP route).
     registerMachineRoutes(scope, chats, auth);

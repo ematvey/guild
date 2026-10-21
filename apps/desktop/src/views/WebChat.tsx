@@ -399,6 +399,21 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     };
   }
   const parts = decoded as string[];
+  // Settings → Observability folded into Activity: old deep links (and the
+  // period/filter query they carried) land on the Activity page.
+  if (parts[0] === "settings" && parts[1] === "observability") {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents: AGENTS_ACTIVITY,
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+    };
+  }
   // The agents surface owns its whole address space (/agents, /inbox,
   // /activity, /runs/<id>): parse it before the chat prefixes.
   const agents = parseAgentsRoute(pathname);
@@ -2335,6 +2350,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
     setRoute({ chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail });
   };
+
+  // The folded Observability deep link is served as Activity; make the URL
+  // say so (replaceState: the redirect is not a step back).
+  useEffect(() => {
+    if (route.agents === null) return;
+    if (!window.location.pathname.startsWith("/settings/observability")) return;
+    window.history.replaceState(null, "", `/activity${window.location.search}`);
+  }, [route.agents]);
 
   // A bare /settings arrival (deep link, old bookmark, back/forward)
   // normalizes to the default section — the Settings tab always has a

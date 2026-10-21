@@ -35,7 +35,7 @@ import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "
 import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
-import type { LlmTraceSink } from "../platform/trace.js";
+import type { TraceStore } from "../platform/trace.js";
 
 export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 
@@ -103,7 +103,7 @@ export interface ApprovalGateDeps {
   /** The LLM trace sink: the judge self-reports its calls (caller='judge',
    *  verdict, cause carrying the tool call). A missing sink disables only
    *  the tracing, never the gate. */
-  trace?: LlmTraceSink | null;
+  trace?: TraceStore | null;
   /** Server-side shell allowlist (GUILD_ALLOW_SHELL_TOOLS). */
   allowShellTools: boolean;
 }
@@ -286,13 +286,23 @@ async function judgeVerdict(
     // call — verdict, cause, usage, error text. Failures are logged and
     // dropped; the gate must never depend on the trace sink.
     if (attempted && deps.trace) {
-      void deps.trace
-        .record({
+      const sink = deps.trace;
+      void (async () => {
+        const run = await deps.pool
+          .query<{ id: string }>(
+            `SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
+             WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+             ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
+            [chatId],
+          )
+          .catch(() => null);
+        await sink.record({
           ts: new Date(),
           request_id: requestId,
           org_id: orgId,
           user_id: userId ?? INTERNAL_JUDGE_USER_UUID,
           session_id: INTERNAL_JUDGE_SESSION_UUID,
+          run_id: run?.rows[0]?.id ?? null,
           chat_id: chatId,
           conversation_id: null,
           turn: null,
@@ -312,11 +322,10 @@ async function judgeVerdict(
           verdict_reason: done.reason ?? "",
           prompt_chars: requestPayload?.length ?? 0,
           completion_chars: responsePayload?.length ?? 0,
-        })
-        .then(async () => {
-          if (requestPayload !== null) await deps.trace!.recordPayload(requestId, orgId, "request", requestPayload!);
-          if (responsePayload !== null) await deps.trace!.recordPayload(requestId, orgId, "response", responsePayload!);
         });
+        if (requestPayload !== null) await sink.recordPayload(requestId, orgId, "request", requestPayload);
+        if (responsePayload !== null) await sink.recordPayload(requestId, orgId, "response", responsePayload);
+      })();
     }
   }
 }

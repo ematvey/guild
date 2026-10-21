@@ -12,6 +12,8 @@ import { loadConfig } from "../config.js";
 import type { BufferUpdate, SubmitTurnWireInput, WorkerRequest, WorkerResponse } from "./protocol.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 import { IpcMachineDispatch } from "./dispatch-proxy.js";
+import { ClickhouseClient } from "../platform/clickhouse.js";
+import { TraceStore } from "../platform/trace.js";
 
 const config = loadConfig(process.env);
 const log = pino({ level: config.logLevel });
@@ -33,7 +35,16 @@ const remoteSubmit = (targetChatId: string, _orgId: string, input: SubmitTurnWir
     send({ t: "remote-submit", ref, chatId: targetChatId, input });
   });
 };
-const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, undefined, undefined, {
+// The worker owns its chat's run lifecycle and tool calls, so it writes the
+// same traces and spans the server does (the gateway writes the LLM spans).
+const clickhouse = new ClickhouseClient({
+  url: config.clickhouseUrl,
+  database: config.clickhouseDatabase,
+  user: config.clickhouseUser,
+  password: config.clickhousePassword,
+});
+const trace = new TraceStore(clickhouse, config.tracePayloads);
+const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, trace, undefined, {
   chatId,
   dispatch: ipcDispatch,
   remoteSubmit,
