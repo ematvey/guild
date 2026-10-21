@@ -362,7 +362,6 @@ export function ActivityPage({
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
-        <div className="flex-1" />
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
