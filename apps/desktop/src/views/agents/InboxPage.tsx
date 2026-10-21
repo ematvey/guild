@@ -103,13 +103,13 @@ export function InboxPage({
       onNavigate({ view: "run", runId });
       return;
     }
+    if (typeof notice.payload?.chat_id === "string" && onOpenChat) {
+      onOpenChat(notice.payload.chat_id);
+      return;
+    }
     if (notice.agent_id && threadId) {
-      onNavigate({
-        view: "agent",
-        agentId: notice.agent_id,
-        tab: "threads",
-        threadId,
-      });
+      // The notice names a thread but not its chat: open the agent's list.
+      onNavigate({ view: "agent", agentId: notice.agent_id, tab: "threads" });
       return;
     }
     if (notice.agent_id) {

@@ -348,7 +348,7 @@ export function AgentFiles({
         message: `Please edit the workspace file \`${path}\`. Read it first, then make the change I describe in the next message.`,
       });
       if (onOpenChat) onOpenChat(thread.chat_id);
-      else onNavigate({ view: "agent", agentId, tab: "threads", threadId: thread.id });
+      else onNavigate({ view: "agent", agentId, tab: "threads" });
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : "Could not open a thread.");
       setEditBusy(false);

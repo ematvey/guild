@@ -19,7 +19,6 @@ const routes: AgentsRoute[] = [
   { view: "new" },
   { view: "agent", agentId: "a1", tab: "overview" },
   { view: "agent", agentId: "a1", tab: "threads" },
-  { view: "agent", agentId: "a1", tab: "threads", threadId: "t1" },
   { view: "agent", agentId: "a1", tab: "routines" },
   { view: "agent", agentId: "a1", tab: "routines", routineId: "r1" },
   { view: "agent", agentId: "a1", tab: "files" },
@@ -119,5 +118,15 @@ describe("file path helpers", () => {
     expect(formatFileSize(1536)).toBe("1.5 KB");
     expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0 MB");
     expect(formatFileSize(null)).toBe("—");
+  });
+});
+
+describe("thread routes", () => {
+  it("has no per-thread sub-route under the agent", () => {
+    expect(parseAgentsRoute("/agents/a1/threads/t1")).toEqual({
+      view: "agent",
+      agentId: "a1",
+      tab: "threads",
+    });
   });
 });

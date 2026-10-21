@@ -21,7 +21,6 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUp,
-  ArrowLeft,
   ShieldAlert,
   ShieldCheck,
   Brain,
@@ -102,16 +101,7 @@ import {
   parseAgentsRoute,
   type AgentsRoute,
 } from "./agents/agents-route";
-import {
-  getAgent,
-  getAgentThread,
-  listAgents,
-  listInbox,
-  renameAgentThread,
-  sendAgentTurn,
-  type Agent,
-  type AgentThread,
-} from "./agents/agents-api";
+import { listAgents, listInbox, type Agent } from "./agents/agents-api";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -1865,58 +1855,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   useEffect(() => {
     if (route.invalid) window.history.replaceState(null, "", "/chats");
   }, [route.invalid]);
-  // Agent threads are chats: the agent route names the thread, and the
-  // thread row names the chat journal. Loading both lets the normal chat
-  // column render the transcript and composer instead of a bespoke view.
-  const agentThreadRoute =
-    route.agents?.view === "agent" &&
-    route.agents.tab === "threads" &&
-    route.agents.threadId
-      ? { agentId: route.agents.agentId, threadId: route.agents.threadId }
-      : null;
-  const [agentThreadData, setAgentThreadData] = useState<{
-    agent: Agent;
-    thread: AgentThread;
-  } | null>(null);
-  const [agentThreadError, setAgentThreadError] = useState<string | null>(null);
-  const [agentThreadRevision, setAgentThreadRevision] = useState(0);
-  useEffect(() => {
-    if (!agentThreadRoute) {
-      setAgentThreadData(null);
-      setAgentThreadError(null);
-      return;
-    }
-    let live = true;
-    setAgentThreadData(null);
-    setAgentThreadError(null);
-    void Promise.all([
-      getAgent(agentThreadRoute.agentId),
-      getAgentThread(agentThreadRoute.agentId, agentThreadRoute.threadId),
-    ])
-      .then(([agent, thread]) => {
-        if (!live) return;
-        // One canonical address per thread: an agent-thread URL moves to the
-        // thread's chat URL. replaceState keeps it out of history.
-        window.history.replaceState(null, "", `/thread/${encodeURIComponent(thread.chat_id)}`);
-        setRoute((current) => ({
-          ...current,
-          chatId: thread.chat_id,
-          agents: null,
-          tab: "chats",
-          newChat: false,
-        }));
-        setAgentThreadData({ agent, thread });
-      })
-      .catch((error: unknown) => {
-        if (live) {
-          setAgentThreadError(error instanceof Error ? error.message : String(error));
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [agentThreadRoute?.agentId, agentThreadRoute?.threadId, agentThreadRevision]);
-
   // Inbox badge: attention items only, never activity. Refreshed on route
   // moves and once a minute while the app is open.
   const [inboxUnread, setInboxUnread] = useState(0);
@@ -1939,7 +1877,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       window.clearInterval(timer);
     };
   }, [route.agents, route.chatId, inboxRevision]);
-  const chatId = route.chatId ?? agentThreadData?.thread.chat_id ?? null;
+  const chatId = route.chatId;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
     const seq = events[events.length - 1]?.seq ?? 0;
@@ -2998,16 +2936,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         submit: async (cid, id, body) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
           rememberCommand(localStorage, outgoingScope, command);
-          if (agentThreadData !== null && cid === agentThreadData.thread.chat_id) {
-            await sendAgentTurn(agentThreadData.agent.id, {
-              thread_id: agentThreadData.thread.id,
-              message: body.prompt,
-              attachment_ids: body.attachmentIds,
-              user_message_id: id,
-              ...(body.sendMode === undefined ? {} : { send_mode: body.sendMode }),
-            });
-            return;
-          }
           await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
             id, body.sendMode, body.skillsIndex, body.instructions, pickedAgentRef.current?.id);
         },
@@ -3032,7 +2960,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
     if (!mountedRef.current || !filesReady) return;
     const text = promptRef.current.trim();
-    if ((!text && pendingRef.current.length === 0) || (!model && agentThreadData === null)) return;
+    if ((!text && pendingRef.current.length === 0) || !model) return;
     if (text.toLowerCase() === "/compact") {
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
       if (compacting) { toast.info("Compaction is already running"); return; }
@@ -3059,7 +2987,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     const executor = selected?.machine_id ?? (currentProject ? openRow?.machine_id ?? undefined : undefined);
     const command = captureCommand({
       id: crypto.randomUUID(), originChatId: chatId, chatId, text,
-      model: agentThreadData?.agent.model ?? model,
+      model,
       createProjectId: pickedProjectRef.current?.id ?? null,
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
@@ -3186,9 +3114,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [chats, chatStatus]);
 
   const activeChat = chats?.find((c) => c.id === chatId);
-  // An agent thread route may not have its chat in the list yet; the thread
-  // row carries the same title.
-  const activeTitle = activeChat?.title ?? agentThreadData?.thread.title ?? "New chat";
+  const activeTitle = activeChat?.title ?? "New chat";
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
   const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
@@ -3199,21 +3125,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const commitRename = useCallback(async () => {
     const v = renameValue.trim();
     setRenameOpen(false);
-    const current = agentThreadData?.thread.title ?? activeChat?.title;
+    const current = activeChat?.title;
     if (!v || v === current) return;
-    if (agentThreadData !== null) {
-      const thread = await renameAgentThread(
-        agentThreadData.agent.id,
-        agentThreadData.thread.id,
-        v,
-      );
-      setAgentThreadData((prev) => (prev === null ? prev : { ...prev, thread }));
-      void refreshChats();
-      return;
-    }
     if (!chatId) return;
     await renameChat(chatId, v);
-  }, [chatId, renameValue, activeChat, agentThreadData, renameChat, refreshChats]);
+  }, [chatId, renameValue, activeChat, renameChat]);
   // The header menu's archive: the open chat navigates back to the chats
   // list after archiving (an archived thread is a dead end for sending).
   const headerArchive = useCallback(async () => {
@@ -3455,61 +3371,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // The agents surface is another full main-column page. Its route owns the
   // whole column right of the rail; the chat comes back on any chat route.
   const agentsRoute = route.agents;
-  // An agent thread is a chat: once the agent and thread rows are loaded the
-  // normal chat column renders it, with the agent identity in the header.
-  // The shell below only covers the fetch (and its failure) so the route
-  // never falls back to the agent directory or a scratch composer.
-  const agentThreadShell =
-    agentThreadRoute !== null && agentThreadData === null ? (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="-ml-1.5 size-8"
-            aria-label="Back to threads"
-            onClick={() =>
-              pushRoute({
-                chatId: null,
-                projectId: null,
-                overlay: null,
-                skills: null,
-                agents: { view: "agent", agentId: agentThreadRoute.agentId, tab: "threads" },
-              })
-            }
-          >
-            <ArrowLeft />
-          </Button>
-          <Skeleton className="h-4 w-40 rounded-md" />
-        </header>
-        {agentThreadError !== null ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-            <p className="text-sm text-muted-foreground">{agentThreadError}</p>
-            <Button variant="outline" size="sm" onClick={() => setAgentThreadRevision((n) => n + 1)}>
-              Retry
-            </Button>
-          </div>
-        ) : (
-          <ThreadSkeleton />
-        )}
-      </div>
-    ) : null;
   const inlineAgents = agentsRoute !== null ? (
-    agentThreadRoute !== null ? (
-      agentThreadShell
-    ) : (
-      <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
-        <AgentsPanel
-          route={agentsRoute}
-          viewer={{ email, displayName, role }}
-          onNavigate={(next) =>
-            pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
-          }
-          onOpenChat={openChat}
-          onInboxChanged={() => setInboxRevision((value) => value + 1)}
-        />
-      </div>
-    )
+    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+      <AgentsPanel
+        route={agentsRoute}
+        viewer={{ email, displayName, role }}
+        onNavigate={(next) =>
+          pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
+        }
+        onOpenChat={openChat}
+        onInboxChanged={() => setInboxRevision((value) => value + 1)}
+      />
+    </div>
   ) : null;
 
   // desktop: draggable resize handle. While dragging, the width transition
@@ -3580,8 +3453,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             />
           </SheetContent>
         </Sheet>
-      ) : skillsRoute !== null ||
-        (agentsRoute !== null && !(agentsRoute.view === "agent" && agentsRoute.threadId !== undefined)) ? null : (
+      ) : skillsRoute !== null || agentsRoute !== null ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
@@ -3681,19 +3553,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               <DropdownMenuContent align="end" className="min-w-44">
                 <DropdownMenuItem
                   onSelect={() => {
-                    setRenameValue(agentThreadData?.thread.title ?? activeChat?.title ?? "");
+                    setRenameValue(activeChat?.title ?? "");
                     setRenameOpen(true);
                   }}
                 >
                   <Pencil className="size-4" />
                   Rename
                 </DropdownMenuItem>
-                {agentThreadData === null && (
-                  <DropdownMenuItem onSelect={() => void headerArchive()}>
-                    {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-                    {chatArchived ? "Unarchive" : "Archive"}
-                  </DropdownMenuItem>
-                )}
+                <DropdownMenuItem onSelect={() => void headerArchive()}>
+                  {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                  {chatArchived ? "Unarchive" : "Archive"}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
                   <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
@@ -3714,7 +3584,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
-                <DialogTitle>{agentThreadData ? "Rename thread" : "Rename chat"}</DialogTitle>
+                <DialogTitle>Rename chat</DialogTitle>
               </DialogHeader>
               <input
                 autoFocus
@@ -4205,11 +4075,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <ContextRing chatId={chatId} model={agentThreadData?.agent.model ?? model}
+                <ContextRing chatId={chatId} model={model}
                   revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
                 {(() => {
-                  const chipAgent = agentThreadData?.agent ?? pickedAgent;
-                  return agentThreadData !== null || agentLocked ? (
+                  const chipAgent = pickedAgent;
+                  return agentLocked ? (
                   // An agent thread, or a chat whose thread belongs to a
                   // shared agent, names its agent and keeps it.
                   <span
