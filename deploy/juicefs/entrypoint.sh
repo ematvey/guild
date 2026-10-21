@@ -91,8 +91,16 @@ if nsenter -t 1 -m -- findmnt -n -o FSTYPE "$mountpoint" 2>/dev/null | grep -q '
     true
 fi
 
-log "mounting $meta_url at $mountpoint (host namespace)"
-nsenter -t 1 -m -n -- env LD_LIBRARY_PATH="$host_lib" "$host_bin" mount "$meta_url" "$mountpoint" &
+# Write-back caching keeps writes in the local cache and uploads them in the
+# background. Git repos do many small, short-lived writes (status, checkout,
+# index updates); without it every close() waits for an object-storage PUT.
+# Unflushed cache is lost if the client crashes, so this trades durability
+# window for write latency and API call count.
+mount_opts="${GUILD_JUICE_MOUNT_OPTS:---writeback}"
+
+log "mounting $meta_url at $mountpoint (host namespace, opts: $mount_opts)"
+# shellcheck disable=SC2086 # mount_opts is a whitespace-separated flag list
+nsenter -t 1 -m -n -- env LD_LIBRARY_PATH="$host_lib" "$host_bin" mount $mount_opts "$meta_url" "$mountpoint" &
 mount_pid=$!
 
 cleanup() {
