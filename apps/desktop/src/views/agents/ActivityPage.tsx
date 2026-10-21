@@ -353,13 +353,13 @@ export function ActivityPage({
             />
           </>
         )}
-        <div className="relative">
+        <div className="relative min-w-32 max-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             value={state.q}
             onChange={(e) => set({ q: e.target.value })}
             placeholder="Search summary or agent"
-            className="w-40 rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60 lg:w-56"
+            className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
         <div className="flex-1" />
@@ -918,9 +918,11 @@ export function RunDetailPage({
                               )}
                               {span.status === "error" && <ToneBadge tone="danger">error</ToneBadge>}
                             </span>
-                            <span className="mt-0.5 block truncate text-muted-foreground">
-                              {spanPreview(span)}
-                            </span>
+                            {spanPreview(span) !== "" && (
+                              <span className="mt-0.5 block truncate text-muted-foreground">
+                                {spanPreview(span)}
+                              </span>
+                            )}
                           </span>
                           <span className="shrink-0 text-right text-2xs text-muted-foreground">
                             {span.tokens_in + span.tokens_out > 0 && (
@@ -1019,7 +1021,7 @@ function Meta({ label, value, mono = false }: { label: string; value: string; mo
 function spanPreview(span: SpanRow): string {
   const source = span.span_type === "llm" ? span.output : span.input;
   const text = source.replace(/\s+/g, " ").trim();
-  return text === "" ? span.error || "—" : text.slice(0, 180);
+  return text === "" ? span.error : text.slice(0, 180);
 }
 
 function SpanDetail({ span, admin }: { span: SpanRow; admin: boolean }) {
