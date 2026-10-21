@@ -116,6 +116,8 @@ import {
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
+  bindChatAgent,
+  chatAgent,
   attachmentBlobUrl,
   toolArtifactBlobUrl,
   rpcCall,
@@ -1799,9 +1801,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     void fileStore.saveDraft(target, files).catch(storageFailure);
   };
   const [models, setModels] = useState<ModelOption[] | null>(null);
-  // The caller's personal agent. Every plain chat is adopted by it on the
-  // first turn, so the composer names the agent, not a model.
-  const [personalAgent, setPersonalAgent] = useState<Agent | null>(null);
+  // The agents the caller can use. Every chat runs with one of them; the
+  // composer picks which, and the choice binds the chat.
+  const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
+  const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
+  const pickedAgentRef = useRef<Agent | null>(null);
+  const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
   // Sign-out hygiene: drafts can hold sensitive composer text, so they are
   // cleared with the session — a shared browser's next account must not
   // inherit them. Every sign-out path in this view goes through here.
@@ -2228,9 +2233,31 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   useEffect(() => {
     void listAgents()
-      .then((rows) => setPersonalAgent(rows.find((a) => a.is_personal) ?? null))
-      .catch(() => setPersonalAgent(null));
+      .then((rows) => {
+        setAgentsList(rows);
+        setPickedAgent((cur) => cur ?? rows.find((a) => a.is_personal) ?? rows[0] ?? null);
+      })
+      .catch(() => setAgentsList([]));
   }, []);
+
+  useEffect(() => {
+    pickedAgentRef.current = pickedAgent;
+  }, [pickedAgent]);
+
+  // A bound chat shows its own agent; a new chat keeps the pick.
+  useEffect(() => {
+    if (chatId === null) return;
+    let live = true;
+    void chatAgent(chatId)
+      .then((row) => {
+        if (!live || row === null) return;
+        setPickedAgent(row as Agent);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [chatId]);
 
   useEffect(() => {
     listModels().then((m) => {
@@ -2960,7 +2987,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             return;
           }
           await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
-            id, body.sendMode, body.skillsIndex, body.instructions);
+            id, body.sendMode, body.skillsIndex, body.instructions, pickedAgentRef.current?.id);
         },
       });
       settleOutgoing(command);
@@ -4204,12 +4231,59 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     )}
                   </span>
                 ) : (
-                  <span
-                    className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
-                    title="Every chat runs with your personal agent"
-                  >
-                    <span className="truncate">{personalAgent?.name ?? "Assistant"}</span>
-                  </span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                        title="Choose the agent for this chat"
+                      >
+                        <span className="truncate">{pickedAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
+                        {pickedAgent !== null && pickedAgent.visibility !== "private" && (
+                          <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                        )}
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Agent</DropdownMenuLabel>
+                      {(agentsList ?? []).map((agent) => (
+                        <DropdownMenuItem
+                          key={agent.id}
+                          onSelect={() => {
+                            setPickedAgent(agent);
+                            pickedAgentRef.current = agent;
+                            if (chatId !== null) {
+                              void bindChatAgent(chatId, agent.id).then((ok) => {
+                                if (!ok) toast.error("Could not switch the agent for this chat");
+                              });
+                            }
+                          }}
+                        >
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span className="truncate">{agent.name}</span>
+                            {agent.visibility !== "private" && (
+                              <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                            )}
+                          </span>
+                          {agent.id === pickedAgent?.id && <Check className="size-3.5" />}
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          pushRoute({
+                            chatId: null,
+                            projectId: null,
+                            overlay: null,
+                            skills: null,
+                            agents: AGENTS_DIRECTORY,
+                          })
+                        }
+                      >
+                        Manage agents
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
                 {(() => {
                   // While a turn generates the composer stays usable: with

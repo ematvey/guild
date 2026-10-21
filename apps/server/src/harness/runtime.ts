@@ -68,6 +68,8 @@ import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
 import { AgentStore } from "../agents/store.js";
+import type { Agent } from "../agents/types.js";
+import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
@@ -1048,6 +1050,50 @@ export class GuildRuntime {
       return { agent_id: agent.id, thread_id: again.thread_id, model: agent.model };
     }
     return { agent_id: personal.id, thread_id: id, model: personal.model };
+  }
+
+  /** Binds a chat to a chosen agent (the composer's agent picker). A chat
+   *  that already has a thread keeps its transcript and changes agent; a
+   *  plain chat gets a thread on the chosen agent. */
+  async bindChatAgent(
+    chatId: string,
+    userId: string,
+    agentId: string,
+    title: string,
+    user: UserRow,
+  ): Promise<{ agent_id: string; thread_id: string; model: string }> {
+    const { agent } = await this.agents.requireAccess(user, agentId, "use");
+    const existing = await agentThreadForChat(this.pool, chatId);
+    if (existing !== null) {
+      if (existing.agent_id !== agent.id) {
+        await this.pool.query(
+          `UPDATE agent_threads SET agent_id = $2, kind = 'thread', last_activity_at = now()
+           WHERE chat_id = $1`,
+          [chatId, agent.id],
+        );
+      }
+      return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
+    }
+    const threadId = uuidv7();
+    const inserted = await this.pool.query<{ id: string }>(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
+       VALUES ($1, $2, $3, $4, $5, false, 'thread')
+       ON CONFLICT (chat_id) DO NOTHING
+       RETURNING id`,
+      [threadId, agent.id, userId, chatId, title],
+    );
+    if (inserted.rows[0] === undefined) {
+      const again = await agentThreadForChat(this.pool, chatId);
+      if (again === null) throw new Error("agent binding lost its thread");
+      return { agent_id: again.agent_id, thread_id: again.thread_id, model: agent.model };
+    }
+    return { agent_id: agent.id, thread_id: threadId, model: agent.model };
+  }
+
+  /** The agent bound to a chat, for the composer's chip. */
+  async chatAgent(chatId: string): Promise<Agent | null> {
+    const ref = await agentThreadForChat(this.pool, chatId);
+    return ref === null ? null : this.agents.fetchAgent(ref.agent_id);
   }
 
   /** Opens the run row for an adopted chat turn; the run lifecycle closes it

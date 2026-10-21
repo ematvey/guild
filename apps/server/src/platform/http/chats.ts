@@ -341,6 +341,31 @@ export function registerChatsRoutes(
     const body = requireJsonBody(req);
     return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, req, body));
   });
+  // The composer's agent picker: reads and sets the chat's agent. Setting it
+  // before the first turn binds the chat; afterwards it moves the existing
+  // thread (and its transcript) to the chosen agent.
+  app.get("/api/v1/threads/:chatId/agent", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "chatId");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    return reply.type("application/json").send(JSON.stringify({ agent: await chats.runtime.chatAgent(chatId) }));
+  });
+
+  app.post("/api/v1/threads/:chatId/agent", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "chatId");
+    const body = requireJsonBody(req);
+    const agentId = body["agent_id"];
+    if (typeof agentId !== "string" || agentId.trim() === "") {
+      throw ApiError.badRequest("agent_id is required");
+    }
+    const chat = await chats.chats.getChat(user.org_id, chatId, user);
+    const bound = await chats.runtime.bindChatAgent(chatId, user.id, agentId, chat.title ?? "", user);
+    return reply
+      .type("application/json")
+      .send(JSON.stringify({ agent: await chats.runtime.chatAgent(chatId), thread_id: bound.thread_id }));
+  });
+
   app.post("/api/v1/threads/:chatId/turns", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
@@ -532,12 +557,11 @@ export async function submitTurn(
   // caller's personal agent on its first turn; from then on the turn runs
   // with the agent's model and tools, and the run lifecycle closes the run.
   const chatRow = preloadedChat ?? (await chats.chats.getChat(user.org_id, chatId, user));
-  const adopted = await chats.runtime.adoptChatAgent(
-    chatId,
-    user.org_id,
-    user.id,
-    chatRow.title ?? "",
-  );
+  const requestedAgent = typeof body["agent_id"] === "string" ? body["agent_id"] : null;
+  const adopted =
+    requestedAgent === null
+      ? await chats.runtime.adoptChatAgent(chatId, user.org_id, user.id, chatRow.title ?? "")
+      : await chats.runtime.bindChatAgent(chatId, user.id, requestedAgent, chatRow.title ?? "", user);
   const model = await resolveTurnModel(
     gateway,
     user.org_id,
