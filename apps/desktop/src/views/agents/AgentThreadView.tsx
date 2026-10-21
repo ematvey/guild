@@ -178,7 +178,7 @@ export function AgentThreadView({
                   if (e.key === "Enter") void saveTitle();
                   if (e.key === "Escape") setRenaming(false);
                 }}
-                className="h-7 max-w-[28rem] text-[0.8125rem]"
+                className="h-7 max-w-[28rem] text-sm"
                 aria-label="Thread title"
               />
               <Button
@@ -203,7 +203,7 @@ export function AgentThreadView({
             </div>
           ) : (
             <div className="flex min-w-0 items-center gap-1">
-              <p className="truncate text-[0.84375rem] font-medium">
+              <p className="truncate text-sm font-medium">
                 {thread.title || "Untitled thread"}
               </p>
               <button
@@ -219,7 +219,7 @@ export function AgentThreadView({
               </button>
             </div>
           )}
-          <p className="truncate text-[0.71875rem] text-muted-foreground">
+          <p className="truncate text-2xs text-muted-foreground">
             {agent.name} · {thread.kind === "default" ? "Default thread" : "Thread"} · last activity{" "}
             {relativeTime(thread.last_activity_at)}
           </p>
@@ -239,7 +239,7 @@ export function AgentThreadView({
             <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
               <MessageSquare className="mb-2 size-6" />
               <p className="text-sm">No messages in this thread yet.</p>
-              <p className="mt-1 text-[0.78125rem]">Send the first message below.</p>
+              <p className="mt-1 text-xs">Send the first message below.</p>
             </div>
           )}
           {entries.map((entry) =>
@@ -279,7 +279,7 @@ export function AgentThreadView({
             ) : entry.b.kind === "tool" && entry.b.tool ? (
               <div
                 key={entry.b.key}
-                className="rounded-lg border border-border bg-card px-3 py-2 text-[0.78125rem]"
+                className="rounded-lg border border-border bg-card px-3 py-2 text-xs"
               >
                 <div className="flex items-center gap-2">
                   <SquareTerminal className="size-3.5 text-muted-foreground" />
@@ -287,7 +287,7 @@ export function AgentThreadView({
                   <span className="text-muted-foreground">{entry.b.tool.status}</span>
                 </div>
                 {entry.b.tool.content && (
-                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.71875rem] text-muted-foreground">
+                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-muted-foreground">
                     {entry.b.tool.content}
                   </pre>
                 )}
@@ -295,7 +295,7 @@ export function AgentThreadView({
             ) : null,
           )}
           {sending && (
-            <div className="flex items-center gap-2 text-[0.78125rem] text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               Sending
             </div>
@@ -305,7 +305,7 @@ export function AgentThreadView({
 
       <div className="border-t border-border px-3 py-2.5">
         {sendError !== null && (
-          <p role="alert" className="mb-2 text-[0.78125rem] text-destructive">
+          <p role="alert" className="mb-2 text-xs text-destructive">
             {sendError}
           </p>
         )}
@@ -333,7 +333,7 @@ export function AgentThreadView({
             {sending ? <Loader2 className="animate-spin" /> : <ArrowUp />}
           </Button>
         </div>
-        <p className="mx-auto mt-1 w-full max-w-3xl text-[0.6875rem] text-muted-foreground">
+        <p className="mx-auto mt-1 w-full max-w-3xl text-2xs text-muted-foreground">
           Runs in the agent workspace. Enter sends, Shift+Enter adds a line.
         </p>
       </div>
@@ -414,7 +414,7 @@ export function ThreadList({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <p className="text-[0.8125rem] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Threads are independent conversations over one shared workspace.
         </p>
         <div className="flex-1" />
@@ -434,7 +434,7 @@ export function ThreadList({
       {error === null && sorted !== null && sorted.length === 0 && (
         <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
           <p className="text-sm font-medium">No threads yet</p>
-          <p className="mt-1 text-[0.8125rem] text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             The default thread appears after the first message.
           </p>
         </div>
@@ -458,11 +458,11 @@ export function ThreadList({
               <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
-                  <span className="truncate text-[0.84375rem] font-medium">{thread.title}</span>
+                  <span className="truncate text-sm font-medium">{thread.title}</span>
                   {thread.kind === "default" && <ToneBadge tone="info">Default</ToneBadge>}
                   {thread.kind === "routine_run" && <ToneBadge tone="neutral">Routine</ToneBadge>}
                 </span>
-                <span className="mt-0.5 block text-[0.75rem] text-muted-foreground">
+                <span className="mt-0.5 block text-xs text-muted-foreground">
                   Last activity {relativeTime(thread.last_activity_at)}
                 </span>
               </span>

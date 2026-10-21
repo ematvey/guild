@@ -11,11 +11,13 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
-- **One type-size knob at the root (2026-10-21).** The type scale and every
-  layout step are rem-based, so `html { font-size: 112.5% }` in
-  `packages/ui/src/theme.css` scales the whole interface and keeps
-  proportions. Arbitrary `text-[Npx]` utilities are gone: they are rem now,
-  so they follow the same knob. Tune the size there, never per view.
+- **Type sizes come from the theme scale (2026-10-21).** `packages/ui/src/theme.css`
+  declares the only text steps: `text-3xs`, `text-2xs`, `text-xs`, `text-sm`,
+  `text-base`, `text-lg`, `text-xl`, `text-2xl`, with unitless line-height
+  ratios. Views use those names and never a raw `text-[Npx]`/`text-[Nrem]`
+  size. To resize text, change the token — one value, every use.
+  `html { font-size }` scaling is not a size control: it moves layout and
+  spacing too, and it is banned.
 
 - **Agent surfaces follow the chat product (2026-10-21).**
   - Agent threads render through the core chat stack: `/agents/<id>/threads/<tid>`

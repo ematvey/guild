@@ -357,7 +357,7 @@ export function AgentFiles({
       {/* listing column */}
       <div className="flex min-h-0 flex-col border-b border-border lg:border-b-0 lg:border-r">
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-          <nav aria-label="File path" className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-[0.78125rem]">
+          <nav aria-label="File path" className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs">
             {breadcrumbs.map((crumb, i) => (
               <span key={crumb.path || "root"} className="flex items-center gap-0.5">
                 {i > 0 && <ChevronRight className="size-3 text-muted-foreground" />}
@@ -414,7 +414,7 @@ export function AgentFiles({
                   <button
                     type="button"
                     onClick={() => void navigateToDir(parentPath(listingDir))}
-                    className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-[0.8125rem] text-muted-foreground hover:bg-accent/50"
+                    className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50"
                   >
                     <Folder className="size-4" />
                     ..
@@ -433,20 +433,20 @@ export function AgentFiles({
                       }`}
                     >
                       <FileIcon entry={entry} />
-                      <span className="min-w-0 flex-1 truncate text-[0.8125rem]">{entry.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
                       {entry.symlink && (
-                        <span className="rounded border border-border px-1 py-0.5 text-[0.625rem] text-muted-foreground">
+                        <span className="rounded border border-border px-1 py-0.5 text-3xs text-muted-foreground">
                           symlink
                         </span>
                       )}
                       {pendingPath === entry.path ? (
                         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                       ) : (
-                        <span className="hidden shrink-0 text-[0.71875rem] text-muted-foreground sm:block">
+                        <span className="hidden shrink-0 text-2xs text-muted-foreground sm:block">
                           {entry.kind === "dir" ? "—" : formatFileSize(entry.size)}
                         </span>
                       )}
-                      <span className="hidden w-20 shrink-0 text-right text-[0.71875rem] text-muted-foreground md:block">
+                      <span className="hidden w-20 shrink-0 text-right text-2xs text-muted-foreground md:block">
                         {entry.mtime ? relativeTime(entry.mtime) : "—"}
                       </span>
                     </button>
@@ -461,15 +461,15 @@ export function AgentFiles({
       {/* preview column */}
       <div className="flex min-h-0 flex-col">
         {path === "" || shownIsDirectory ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-center text-[0.8125rem] text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
             Select a file to preview it. The workspace is read-only in the browser.
           </div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[0.8125rem] font-medium">{path.split("/").pop()}</p>
-                <p className="truncate font-mono text-[0.6875rem] text-muted-foreground">{path}</p>
+                <p className="truncate text-sm font-medium">{path.split("/").pop()}</p>
+                <p className="truncate font-mono text-2xs text-muted-foreground">{path}</p>
               </div>
               <Button variant="outline" size="sm" onClick={download}>
                 <Download />
@@ -543,7 +543,7 @@ function FilePreview({ content, path }: { content: AgentFileContent; path: strin
     const header = rows[0] ?? [];
     return (
       <div className="overflow-auto rounded-lg border border-border">
-        <table className="w-full border-collapse text-[0.78125rem]">
+        <table className="w-full border-collapse text-xs">
           <thead>
             <tr>
               {header.map((cell, i) => (
@@ -576,11 +576,11 @@ function FilePreview({ content, path }: { content: AgentFileContent; path: strin
     const highlighted = ["js", "jsx", "ts", "tsx", "javascript", "typescript"].includes(language);
     return (
       <div className="space-y-2">
-        <pre className="overflow-auto rounded-lg border border-border bg-card p-3 font-mono text-[0.75rem] leading-relaxed">
+        <pre className="overflow-auto rounded-lg border border-border bg-card p-3 font-mono text-xs leading-relaxed">
           <code>{highlighted ? highlightJs(text) : text}</code>
         </pre>
         {content.truncated && (
-          <p className="text-[0.75rem] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Preview cut at the server limit. Download the file for the full content.
           </p>
         )}
@@ -589,7 +589,7 @@ function FilePreview({ content, path }: { content: AgentFileContent; path: strin
   }
   return (
     <Section title="Binary file" description="This file has no inline preview.">
-      <div className="flex items-center gap-2 text-[0.8125rem] text-muted-foreground">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <File className="size-4" />
         <Mono>{path}</Mono>
         <span>· {formatFileSize(content.size)}</span>

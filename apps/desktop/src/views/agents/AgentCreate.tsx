@@ -197,7 +197,7 @@ export function AgentCreate({
                     if (i <= stepIndex) go(id);
                   }}
                   disabled={i > stepIndex}
-                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.75rem] transition-colors ${
+                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
                     current
                       ? "border-foreground bg-foreground text-background"
                       : done
@@ -215,7 +215,7 @@ export function AgentCreate({
         </ol>
 
         <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
-          <p className="mb-4 text-[0.8125rem] text-muted-foreground">{STEPS[stepIndex]![2]}</p>
+          <p className="mb-4 text-sm text-muted-foreground">{STEPS[stepIndex]![2]}</p>
 
           {step === "name" && (
             <div className="max-w-lg space-y-2">
@@ -233,7 +233,7 @@ export function AgentCreate({
                   if (e.key === "Enter") next();
                 }}
               />
-              <p className="text-[0.75rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Agents are user-named and never renamed automatically.
               </p>
             </div>
@@ -252,7 +252,7 @@ export function AgentCreate({
                 placeholder="You keep the weekly research digest. Read from memories/, write short notes, and send one summary each Friday."
                 onChange={(e) => setInstructions(e.target.value)}
               />
-              <p className="text-[0.75rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 These instructions are the agent's standing brief. Threads do not replace them.
               </p>
             </div>
@@ -291,7 +291,7 @@ export function AgentCreate({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium">{modelLabel(option)}</span>
                         {option.alias !== "" && (
-                          <span className="block truncate font-mono text-[0.71875rem] text-muted-foreground">
+                          <span className="block truncate font-mono text-2xs text-muted-foreground">
                             {option.id}
                           </span>
                         )}
@@ -307,7 +307,7 @@ export function AgentCreate({
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-medium">Tools</p>
-                <span className="text-[0.75rem] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {tools.length} selected
                 </span>
                 <div className="flex-1" />
@@ -329,7 +329,7 @@ export function AgentCreate({
               {catalogError !== null && <ErrorState message={catalogError} />}
               {groups.map((group) => (
                 <div key={group.group} className="space-y-1.5">
-                  <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {group.group}
                   </p>
                   <div className="grid gap-1.5 sm:grid-cols-2">
@@ -349,10 +349,10 @@ export function AgentCreate({
                             onChange={() => toggleTool(tool.name)}
                           />
                           <span className="min-w-0">
-                            <span className="block text-[0.8125rem] font-medium">
+                            <span className="block text-sm font-medium">
                               {tool.label || tool.name}
                             </span>
-                            <span className="block text-[0.75rem] text-muted-foreground">
+                            <span className="block text-xs text-muted-foreground">
                               {tool.description}
                             </span>
                           </span>
@@ -381,7 +381,7 @@ export function AgentCreate({
                 >
                   <Icon className="size-4 text-muted-foreground" />
                   <span className="text-sm font-medium">{label}</span>
-                  <span className="text-[0.75rem] text-muted-foreground">{body}</span>
+                  <span className="text-xs text-muted-foreground">{body}</span>
                 </button>
               ))}
             </div>
@@ -389,7 +389,7 @@ export function AgentCreate({
               <div className="space-y-2 rounded-lg border border-border p-3">
                 <p className="text-sm font-medium">Teams</p>
                 {teams.length === 0 ? (
-                  <p className="text-[0.78125rem] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     You are not a member of any team yet. An admin can add you under Settings →
                     Teams.
                   </p>
@@ -400,7 +400,7 @@ export function AgentCreate({
                       return (
                         <label
                           key={team.id}
-                          className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[0.8125rem]"
+                          className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm"
                         >
                           <input
                             type="checkbox"
@@ -425,7 +425,7 @@ export function AgentCreate({
           )}
 
           {error !== null && (
-            <p role="alert" className="mt-4 text-[0.8125rem] text-destructive">
+            <p role="alert" className="mt-4 text-sm text-destructive">
               {error}
             </p>
           )}

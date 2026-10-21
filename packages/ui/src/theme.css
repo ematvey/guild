@@ -23,6 +23,25 @@
   --font-weight-bold: 600;
   --font-weight-extrabold: 700;
   --font-weight-black: 800;
+  /* The type scale. Every text size in the product is one of these steps;
+     views never set a raw font size. Change a value here to resize that tier
+     everywhere. Line heights are unitless ratios, so they follow the size. */
+  --text-3xs: 10px;
+  --text-3xs--line-height: 1.4;
+  --text-2xs: 12px;
+  --text-2xs--line-height: 1.35;
+  --text-xs: 13px;
+  --text-xs--line-height: 1.3333;
+  --text-sm: 15px;
+  --text-sm--line-height: 1.4286;
+  --text-base: 17px;
+  --text-base--line-height: 1.5;
+  --text-lg: 19px;
+  --text-lg--line-height: 1.5556;
+  --text-xl: 22px;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 26px;
+  --text-2xl--line-height: 1.3333;
 }
 
 :root {
@@ -80,14 +99,6 @@
    makes 375 a real weight, and utilities override where emphasis is set. */
 body {
   font-weight: 375;
-}
-
-/* Global type size knob. The type scale and every layout step are rem-based,
-   so this one value scales the whole interface: text, spacing and controls
-   keep their proportions. 112.5% of the 16px browser default is 18px.
-   Percent (not px) keeps a user's own browser font-size preference in play. */
-html {
-  font-size: 112.5%;
 }
 
 /* Markdown **bold** renders <strong>/<b>; Tailwind's preflight pins it to

@@ -223,7 +223,7 @@ export function AgentPage({
       <PageHeader
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <AgentGlyph name={agent.name} className="size-7 rounded-md text-[0.625rem]" />
+            <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
             <span className="truncate">{agent.name}</span>
             <AgentStatusBadge status={agent.status} />
           </span>
@@ -462,7 +462,7 @@ function AgentOverview({
             </Button>
           }
         >
-          <p className="whitespace-pre-wrap text-[0.84375rem] leading-relaxed">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">
             {agent.instructions || "No instructions yet."}
           </p>
         </Section>
@@ -471,7 +471,7 @@ function AgentOverview({
           {threads === null ? (
             <InlineLoading label="Loading threads" />
           ) : recent.length === 0 ? (
-            <p className="text-[0.8125rem] text-muted-foreground">No threads yet.</p>
+            <p className="text-sm text-muted-foreground">No threads yet.</p>
           ) : (
             <ul className="divide-y divide-border">
               {recent.map((thread) => (
@@ -486,12 +486,12 @@ function AgentOverview({
                         threadId: thread.id,
                       })
                     }
-                    className="flex w-full items-center gap-2 py-2 text-left text-[0.8125rem] hover:text-foreground"
+                    className="flex w-full items-center gap-2 py-2 text-left text-sm hover:text-foreground"
                   >
                     <MessageSquare className="size-3.5 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{thread.title}</span>
                     {thread.kind === "default" && <ToneBadge tone="info">Default</ToneBadge>}
-                    <span className="text-[0.75rem] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {relativeTime(thread.last_activity_at)}
                     </span>
                   </button>
@@ -533,7 +533,7 @@ function AgentOverview({
           {runs === null ? (
             <InlineLoading label="Loading activity" />
           ) : recentRuns.length === 0 ? (
-            <p className="text-[0.8125rem] text-muted-foreground">No runs yet.</p>
+            <p className="text-sm text-muted-foreground">No runs yet.</p>
           ) : (
             <ul className="divide-y divide-border">
               {recentRuns.map((run) => (
@@ -541,13 +541,13 @@ function AgentOverview({
                   <button
                     type="button"
                     onClick={() => onNavigate({ view: "run", runId: run.id })}
-                    className="flex w-full items-center gap-2 py-2 text-left text-[0.8125rem]"
+                    className="flex w-full items-center gap-2 py-2 text-left text-sm"
                   >
                     <RunStatusBadge status={run.status} />
                     <span className="min-w-0 flex-1 truncate text-muted-foreground">
                       {run.summary?.trim() || "No summary"}
                     </span>
-                    <span className="shrink-0 text-[0.75rem] text-muted-foreground">
+                    <span className="shrink-0 text-xs text-muted-foreground">
                       {relativeTime(run.started_at ?? run.created_at)}
                     </span>
                   </button>
@@ -558,10 +558,10 @@ function AgentOverview({
         </Section>
 
         <Section title="Configuration">
-          <dl className="space-y-2 text-[0.8125rem]">
+          <dl className="space-y-2 text-sm">
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Model</dt>
-              <dd className="truncate font-mono text-[0.75rem]">{agent.model}</dd>
+              <dd className="truncate font-mono text-xs">{agent.model}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Visibility</dt>
@@ -592,13 +592,13 @@ function AgentOverview({
           }
         >
           {agent.tools.length === 0 ? (
-            <p className="text-[0.8125rem] text-muted-foreground">No tools selected.</p>
+            <p className="text-sm text-muted-foreground">No tools selected.</p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {agent.tools.map((tool) => (
                 <span
                   key={tool}
-                  className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[0.71875rem] text-muted-foreground"
+                  className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-2xs text-muted-foreground"
                 >
                   {tool}
                 </span>
@@ -710,7 +710,7 @@ function AgentSettings({
     return (
       <div className="space-y-4">
         <Section title="Settings">
-          <p className="text-[0.8125rem] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Only the owner or an admin can change this agent.
           </p>
         </Section>
@@ -724,11 +724,11 @@ function AgentSettings({
       <Section title="Agent configuration">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1.5">
-            <span className="text-[0.78125rem] font-medium">Name</span>
+            <span className="text-xs font-medium">Name</span>
             <Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="space-y-1.5">
-            <span className="text-[0.78125rem] font-medium">Model</span>
+            <span className="text-xs font-medium">Model</span>
             <Select value={model} onValueChange={setModel}>
               <SelectTrigger>
                 <SelectValue />
@@ -747,7 +747,7 @@ function AgentSettings({
           </label>
         </div>
         <label className="mt-3 block space-y-1.5">
-          <span className="text-[0.78125rem] font-medium">Instructions</span>
+          <span className="text-xs font-medium">Instructions</span>
           <Textarea
             value={instructions}
             rows={10}
@@ -755,14 +755,14 @@ function AgentSettings({
           />
         </label>
         <div className="mt-3 space-y-1.5">
-          <span className="text-[0.78125rem] font-medium">Visibility</span>
+          <span className="text-xs font-medium">Visibility</span>
           <div className="grid gap-2 sm:grid-cols-3">
             {(["private", "team", "org"] as AgentVisibility[]).map((value) => (
               <button
                 key={value}
                 type="button"
                 onClick={() => setVisibility(value)}
-                className={`rounded-lg border px-3 py-2 text-left text-[0.78125rem] outline-none transition-colors ${
+                className={`rounded-lg border px-3 py-2 text-left text-xs outline-none transition-colors ${
                   visibility === value
                     ? "border-foreground bg-accent"
                     : "border-border hover:bg-accent/50"
@@ -781,9 +781,9 @@ function AgentSettings({
           </div>
           {visibility === "team" && (
             <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
-              <p className="text-[0.78125rem] font-medium">Teams</p>
+              <p className="text-xs font-medium">Teams</p>
               {teams.length === 0 ? (
-                <p className="text-[0.78125rem] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   You are not a member of any team yet.
                 </p>
               ) : (
@@ -793,7 +793,7 @@ function AgentSettings({
                     return (
                       <label
                         key={team.id}
-                        className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[0.8125rem]"
+                        className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm"
                       >
                         <input
                           type="checkbox"
@@ -832,19 +832,19 @@ function AgentSettings({
           ) : undefined
         }
       >
-        <p className="mb-3 text-[0.75rem] text-muted-foreground">
+        <p className="mb-3 text-xs text-muted-foreground">
           Codemode is always available. Integration tools appear here when the org
           enables that integration.
         </p>
         {groups.length === 0 ? (
-          <p className="text-[0.8125rem] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             The org tool catalog did not load. The current allowlist is shown below.
           </p>
         ) : (
           <div className="space-y-3">
             {groups.map((group) => (
               <div key={group.group} className="space-y-1.5">
-                <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {group.group}
                 </p>
                 <div className="grid gap-1.5 sm:grid-cols-2">
@@ -870,10 +870,10 @@ function AgentSettings({
                           }
                         />
                         <span className="min-w-0">
-                          <span className="block text-[0.8125rem] font-medium">
+                          <span className="block text-sm font-medium">
                             {tool.label || tool.name}
                           </span>
-                          <span className="block text-[0.75rem] text-muted-foreground">
+                          <span className="block text-xs text-muted-foreground">
                             {tool.description}
                           </span>
                         </span>
@@ -890,7 +890,7 @@ function AgentSettings({
             {tools.map((tool) => (
               <span
                 key={tool}
-                className="rounded-md border border-border px-2 py-0.5 font-mono text-[0.71875rem]"
+                className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs"
               >
                 {tool}
               </span>
@@ -900,12 +900,12 @@ function AgentSettings({
       </Section>
 
       {error !== null && (
-        <p role="alert" className="text-[0.8125rem] text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
       <div className="flex items-center justify-end gap-2">
-        {saved && <span className="text-[0.78125rem] text-muted-foreground">Saved.</span>}
+        {saved && <span className="text-xs text-muted-foreground">Saved.</span>}
         <Button size="sm" onClick={() => void save()} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           Save changes
@@ -935,7 +935,7 @@ function AgentSettings({
           </Button>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
-          <p className="mt-2 text-[0.78125rem] text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
@@ -967,7 +967,7 @@ function AgentSettings({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <p className="mt-2 text-[0.75rem] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>
       </Section>
@@ -978,14 +978,14 @@ function AgentSettings({
 function ReadOnlyConfig({ agent }: { agent: Agent }) {
   return (
     <Section title="Configuration">
-      <dl className="space-y-2 text-[0.8125rem]">
+      <dl className="space-y-2 text-sm">
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Name</dt>
           <dd>{agent.name}</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Model</dt>
-          <dd className="font-mono text-[0.75rem]">{agent.model}</dd>
+          <dd className="font-mono text-xs">{agent.model}</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Visibility</dt>

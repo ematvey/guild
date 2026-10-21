@@ -398,7 +398,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
       node.kind === "dir" ? (
         <div key={node.path}>
           <div
-            className="flex items-center gap-1.5 rounded-md py-1 pr-2 text-[0.8125rem] text-muted-foreground"
+            className="flex items-center gap-1.5 rounded-md py-1 pr-2 text-sm text-muted-foreground"
             style={{ paddingLeft: `${8 + depth * 14}px` }}
           >
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
@@ -413,7 +413,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           aria-current={currentPath === node.path ? "true" : undefined}
           onClick={() => setSelectedFile(node.path)}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
-          className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[0.8125rem] outline-none hover:bg-accent ${
+          className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm outline-none hover:bg-accent ${
             currentPath === node.path ? "bg-secondary" : ""
           }`}
         >
@@ -430,21 +430,21 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
       : `${selectedSourceFile?.size ?? 0} bytes`;
   const viewerBody =
     sourceLoading ? <SkeletonText lines={6} className="p-4" /> : source === null ? (
-      <p className="p-10 text-center text-[0.8125rem] text-muted-foreground">
+      <p className="p-10 text-center text-sm text-muted-foreground">
         File contents unavailable — the bundle manifest could not be loaded.
       </p>
     ) : currentPath !== "SKILL.md" ? (
-      <p className="p-10 text-center text-[0.8125rem] text-muted-foreground">
+      <p className="p-10 text-center text-sm text-muted-foreground">
         Content not inlined in the bundle manifest.
       </p>
     ) : currentPath === "SKILL.md" && !rawSkillMd ? (
-      <div className={`px-4 py-3 text-[0.84375rem] leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+      <div className={`px-4 py-3 text-sm leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {skillMdPreviewBody(source.skill_md)}
         </Markdown>
       </div>
     ) : (
-      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-[0.75rem] leading-[1.55] text-foreground">
+      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs leading-[1.55] text-foreground">
         {source.skill_md}
       </pre>
     );
@@ -576,7 +576,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
         <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
           {/* title block */}
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-[1.3125rem] font-semibold leading-tight">{detail.slug}</h1>
+            <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>
             {detail.maintainer_gated && (
               <Badge variant="secondary" className="gap-1">
                 <Lock className="size-3" /> {editAccessLabel(editAccess(detail), detail.owner?.label)}
@@ -604,14 +604,14 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>
           )}
           {detail.owner !== null && (
-            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[0.8125rem] text-muted-foreground">
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
               owned by
               <Avatar
                 src={detail.owner.avatar_url}
                 alt={detail.owner.label}
                 fallback={initialsOf(detail.owner.label)}
                 className="size-5 border border-border"
-                fallbackClassName="bg-secondary text-[0.53125rem] font-semibold text-foreground"
+                fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
               />
               <span className="font-medium text-foreground">{detail.owner.label}</span>
               {detail.owner.kind === "team" && <span>(team)</span>}
@@ -620,7 +620,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
 
           {/* publish-gate notice */}
           {detail.maintainer_gated && (
-            <div className="mt-3.5 flex items-start gap-2.5 rounded-lg border border-border bg-secondary px-3.5 py-2.5 text-[0.8125rem] text-secondary-foreground">
+            <div className="mt-3.5 flex items-start gap-2.5 rounded-lg border border-border bg-secondary px-3.5 py-2.5 text-sm text-secondary-foreground">
               <Info className="mt-0.5 size-[15px] shrink-0 text-muted-foreground" />
               <span>
                 <span className="font-semibold">{editAccessLabel(editAccess(detail), detail.owner?.label)}.</span> Anyone in the org can
@@ -646,7 +646,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           {/* Versions: full-width table */}
           <SectionHeading label="Versions" count={detail.versions.length} />
           <div className="overflow-x-auto rounded-lg border border-border bg-card">
-            <table className="w-full border-collapse text-[0.8125rem]">
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs font-medium text-muted-foreground">
                   <th className="border-b border-border px-2.5 py-1.5">Version</th>
@@ -677,7 +677,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                             <Avatar
                               fallback={initialsOf(v.publisher)}
                               className="size-5 border border-border"
-                              fallbackClassName="bg-secondary text-[0.53125rem] font-semibold text-foreground"
+                              fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
                             />
                             <span className="truncate">{v.publisher}</span>
                           </span>
@@ -686,7 +686,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                         )}
                       </td>
                       <td
-                        className="px-2.5 py-2 text-[0.71875rem] text-muted-foreground"
+                        className="px-2.5 py-2 text-2xs text-muted-foreground"
                         title={v.bundle_sha256 ?? undefined}
                       >
                         {shaPrefix(v.bundle_sha256)}
