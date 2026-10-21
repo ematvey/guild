@@ -652,6 +652,7 @@ function AgentSettings({
   const [instructions, setInstructions] = useState(agent.instructions);
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
+  const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
   const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
   const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -697,6 +698,7 @@ function AgentSettings({
         instructions,
         model,
         tools,
+        tools_mode: toolsMode,
         visibility,
         team_ids: visibility === "team" ? teamIds : [],
       });
@@ -822,9 +824,9 @@ function AgentSettings({
 
       <Section
         title="Tools"
-        description={`${tools.length} selected`}
+        description={toolsMode === "all" ? "All available tools" : `${tools.length} selected`}
         action={
-          catalog.length > 0 ? (
+          toolsMode === "selected" && catalog.length > 0 ? (
             <Button
               variant="outline"
               size="sm"
@@ -835,11 +837,47 @@ function AgentSettings({
           ) : undefined
         }
       >
+        <div className="mb-3 space-y-1.5">
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+            <input
+              type="radio"
+              name="tools-mode"
+              className="mt-0.5 size-4 accent-foreground"
+              checked={toolsMode === "all"}
+              onChange={() => setToolsMode("all")}
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">All available tools</span>
+              <span className="block text-xs text-muted-foreground">
+                Includes every integration the org enables now and later, without editing this agent.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+            <input
+              type="radio"
+              name="tools-mode"
+              className="mt-0.5 size-4 accent-foreground"
+              checked={toolsMode === "selected"}
+              onChange={() => setToolsMode("selected")}
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Choose tools</span>
+              <span className="block text-xs text-muted-foreground">
+                Only the tools selected below.
+              </span>
+            </span>
+          </label>
+        </div>
         <p className="mb-3 text-xs text-muted-foreground">
           Codemode is always available. Integration tools appear here when the org
           enables that integration.
         </p>
-        {groups.length === 0 ? (
+        {toolsMode === "all" ? (
+          <p className="text-sm text-muted-foreground">
+            This agent uses every tool the org enables, including integrations added later.
+          </p>
+        ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             The org tool catalog did not load. The current allowlist is shown below.
           </p>

@@ -22,7 +22,7 @@ import {
   updateRoutine,
 } from "./routines.js";
 import { createDelegateTool, createReleaseArtifactsTool, type DelegationToolContext } from "./delegation.js";
-import type { Agent } from "./types.js";
+import { ALL_AGENT_TOOLS, type Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
 const MAX_READ_EVENTS = 200;
@@ -245,7 +245,9 @@ const readOutput = Type.Object({
 });
 
 export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
-  const allowed = new Set(deps.agent.tools);
+  // `all` follows the catalog, so a tool added in a later release reaches
+  // the agent without an edit.
+  const allowed = new Set(deps.agent.tools_mode === "all" ? ALL_AGENT_TOOLS : deps.agent.tools);
   const tools: ToolRegistration[] = [];
 
   if (allowed.has("send_message")) {

@@ -113,7 +113,7 @@ export async function resolveDelegationTarget(
     ? "a.org_id = $1 AND a.id = $2"
     : "a.org_id = $1 AND lower(a.name) = lower($2)";
   const res = await pool.query<Record<string, unknown>>(
-    `SELECT a.id, a.org_id, a.owner_user_id, a.name, a.instructions, a.model,
+    `SELECT a.id, a.org_id, a.owner_user_id, a.name, a.instructions, a.model, a.tools_mode,
             a.tools, a.visibility, a.resources, a.status,
             to_char(a.deleted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS deleted_at,
             to_char(a.purge_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS purge_after,
@@ -135,6 +135,7 @@ export async function resolveDelegationTarget(
     model: row.model as string,
     is_personal: Boolean(row.is_personal),
     tools: (row.tools as Agent["tools"] | null) ?? [],
+    tools_mode: (row.tools_mode as Agent["tools_mode"] | null) ?? "selected",
     visibility: row.visibility as Agent["visibility"],
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as Agent["status"],

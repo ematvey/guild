@@ -25,6 +25,7 @@ import type {
   AgentThread,
   AgentThreadKind,
   AgentToolName,
+  AgentToolsMode,
   AgentTrigger,
   AgentVisibility,
 } from "./types.js";
@@ -45,6 +46,7 @@ import { insertChunks, search, type AgentChunkInput, type AgentSearchHit } from 
 const DEFAULT_GRACE_DAYS = 30;
 
 export interface CreateAgentInput {
+  tools_mode?: AgentToolsMode;
   name: string;
   instructions?: string;
   model: string;
@@ -55,6 +57,7 @@ export interface CreateAgentInput {
 }
 
 export interface UpdateAgentInput {
+  tools_mode?: AgentToolsMode;
   name?: string;
   instructions?: string;
   model?: string;
@@ -118,7 +121,7 @@ const TS = (column: string): string =>
   `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.instructions, a.model,
-  a.tools, a.visibility, a.resources, a.status, a.is_personal,
+  a.tools, a.tools_mode, a.visibility, a.resources, a.status, a.is_personal,
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
   (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
@@ -175,6 +178,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     instructions: (row.instructions as string | null) ?? "",
     model: row.model as string,
     tools: (row.tools as AgentToolName[] | null) ?? [],
+    tools_mode: (row.tools_mode as AgentToolsMode | null) ?? "selected",
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,
@@ -309,8 +313,8 @@ export class AgentStore {
     try {
       await client.query("BEGIN");
       await client.query(
-        `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, visibility, resources)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)`,
+        `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, tools_mode, visibility, resources)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)`,
         [
           id,
           user.org_id,
@@ -319,6 +323,7 @@ export class AgentStore {
           input.instructions ?? "",
           input.model,
           JSON.stringify(input.tools ?? DEFAULT_AGENT_TOOLS),
+          input.tools_mode ?? "selected",
           input.visibility ?? "private",
           JSON.stringify(
             input.resources === undefined || Object.keys(input.resources).length === 0
@@ -386,8 +391,8 @@ export class AgentStore {
     if (model === null) return null;
     try {
       await this.pool.query(
-        `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, visibility, resources, is_personal)
-         VALUES ($1, $2, $3, 'Assistant', '', $4, $5::jsonb, 'private', $6::jsonb, true)`,
+        `INSERT INTO agents (id, org_id, owner_user_id, name, instructions, model, tools, tools_mode, visibility, resources, is_personal)
+         VALUES ($1, $2, $3, 'Assistant', '', $4, $5::jsonb, 'all', 'private', $6::jsonb, true)`,
         [
           uuidv7(),
           orgId,
@@ -477,6 +482,7 @@ export class AgentStore {
     };
     if (patch.name !== undefined) add("name", patch.name);
     if (patch.instructions !== undefined) add("instructions", patch.instructions);
+    if (patch.tools_mode !== undefined) add("tools_mode", patch.tools_mode);
     if (patch.model !== undefined) add("model", patch.model);
     if (patch.tools !== undefined) add("tools", JSON.stringify(patch.tools), "::jsonb");
     if (patch.visibility !== undefined) {

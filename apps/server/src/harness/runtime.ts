@@ -1010,7 +1010,7 @@ export class GuildRuntime {
       Number(conversation.id),
       chatId,
       orgId,
-      agent === null ? undefined : new Set<string>(agent.tools),
+      agent === null || agent.tools_mode === "all" ? undefined : new Set<string>(agent.tools),
     );
     const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId, signal);
     // Reconcile the complete desired selection, including an empty surface.

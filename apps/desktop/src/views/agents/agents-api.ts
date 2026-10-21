@@ -85,6 +85,8 @@ export interface Agent {
   instructions: string;
   model: string;
   tools: string[];
+  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
+  tools_mode?: "selected" | "all";
   visibility: AgentVisibility;
   resources?: unknown;
   status: AgentStatus;
@@ -211,6 +213,8 @@ export interface CreateAgentInput {
   instructions: string;
   model: string;
   tools: string[];
+  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
+  tools_mode?: "selected" | "all";
   visibility: AgentVisibility;
   team_ids?: string[];
 }
@@ -220,6 +224,8 @@ export interface UpdateAgentInput {
   instructions?: string;
   model?: string;
   tools?: string[];
+  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
+  tools_mode?: "selected" | "all";
   visibility?: AgentVisibility;
   team_ids?: string[];
 }
