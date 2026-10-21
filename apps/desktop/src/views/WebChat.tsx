@@ -4242,6 +4242,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                         {pickedAgent !== null && pickedAgent.visibility !== "private" && (
                           <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
                         )}
+                        <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
