@@ -204,8 +204,8 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
 - **Sandbox containers are not compose services**: `docker ps --filter
   label=guild.sandbox.project=compose`. Idle ones stop after 15 min and
   are removed after 24 h; their files stay on the volume. `docker compose
-  down` does not remove running sandboxes — the runner re-adopts them on
-  its next start.
+  down` does not remove running sandboxes — the runner removes its
+  project's sandboxes on every start and recreates them on demand.
 - **The server runs as uid 1000** (`node`) since the sandbox change; the
   runner hands root-owned data dirs from older volumes to uid 1000 on its
   first boot.
@@ -247,14 +247,18 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   and runs `juicefs quota set --capacity GUILD_AGENT_WORKSPACE_GIB` (default
   50) for each directory. The sweep needs the host network namespace too, so
   `host.docker.internal` resolves to the host's Postgres.
-- Restarting the `juicefs` container leaves Docker's bind volume
-  (`/var/lib/docker/volumes/<project>_guild_workspaces/_data`) pointing at the
-  old FUSE connection. Remount it before starting the dependent services:
+- Restarting the `juicefs` container replaces the FUSE session behind
+  Docker's bind volume (`/var/lib/docker/volumes/<project>_guild_workspaces/_data`).
+  The sidecar re-binds that `_data` to `/mnt/guild` after every mount, so the
+  dependent services start on the live mount; the runner also removes its
+  sandbox containers on boot, because a sandbox created before the remount
+  keeps the dead session (`transport endpoint is not connected`; every
+  command in it hangs). Sandbox files live on the volume, so the removal
+  loses nothing. Verify by hand if a workspace looks empty or a command
+  hangs:
 
   ```bash
-  sudo umount /var/lib/docker/volumes/compose_guild_workspaces/_data
-  sudo mount --bind /mnt/guild /var/lib/docker/volumes/compose_guild_workspaces/_data
-  docker compose up -d server sandbox-runner
+  findmnt -n /var/lib/docker/volumes/compose_guild_workspaces/_data
   ```
 
   A fresh `docker compose up` on a stack that has never run is unaffected.

@@ -1,6 +1,9 @@
 // The runner's container policy (no Docker): what a request can and cannot
 // influence, and the config the runner refuses to start with.
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { pino } from "pino";
 import { containerName, containerSpec, loadRunnerConfig, validKey, validSubpath } from "../../sandbox/runner/spec.js";
@@ -125,6 +128,33 @@ describe("container spec", () => {
 describe("always-on agent sandboxes", () => {
   const config = loadRunnerConfig(env, { project: "compose" });
   const log = pino({ level: "silent" });
+
+  it("removes the sandboxes a previous runner left behind", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "guild-runner-start-"));
+    const boot = loadRunnerConfig(
+      { ...env, GUILD_SANDBOX_DATA_DIR: root, GUILD_SANDBOX_AGENT_DIR: path.join(root, "agents") },
+      { project: "compose" },
+    );
+    const calls: string[] = [];
+    const containers = [
+      { Id: "1", Names: ["/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa"], State: "running", Labels: {} },
+      { Id: "2", Names: ["/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb"], State: "running", Labels: {} },
+    ];
+    const docker = {
+      request: async (method: string, path: string) => {
+        calls.push(`${method} ${path}`);
+        if (path === "/info") return { Runtimes: { runsc: {} } };
+        if (path.startsWith("/images/")) return {};
+        if (path.startsWith("/containers/json")) return containers;
+        return {};
+      },
+    } as unknown as DockerClient;
+    const manager = new SandboxManager(boot, docker, log);
+    await manager.start();
+    manager.stop();
+    expect(calls).toContain("DELETE /containers/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa?force=true");
+    expect(calls).toContain("DELETE /containers/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb?force=true");
+  });
 
   it("reap skips agent sandboxes but still stops idle chats", async () => {
     const calls: string[] = [];

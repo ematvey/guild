@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **A volume remount no longer wedges the agent sandboxes (2026-10-21).**
+  The JuiceFS sidecar remounts `/mnt/guild` in the host namespace on every
+  start, which leaves the Docker bind volume's `_data` on the dead FUSE
+  session. Every command in a sandbox then blocks or fails with
+  `transport endpoint is not connected`, and the chat turn hangs. The
+  sidecar now re-binds `_data` for each volume whose device is the mountpoint
+  before it reports healthy, and the sandbox runner removes its project's
+  sandbox containers on boot instead of adopting them (a container created
+  before the remount keeps the dead session; its files stay on the volume).
+  No manual `umount`/`mount --bind` step remains.
+
 - **Chats pick their agent (2026-10-21).** The composer's model selector is
   gone. A chat shows its agent and can switch it from a dropdown
   (personal agent first, then agents the user can use; a shared agent carries
