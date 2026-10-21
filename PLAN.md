@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **A skill pin is optional; an install follows the latest by default
+  (2026-10-21).** `skill_installs.pinned_version` is nullable and NULL means
+  "follow the latest published version". Every install path — the install
+  route with no version, `read_skill`'s install-on-use, `push_skill`'s
+  auto-install, `autoInstall` after a publish — now writes NULL, so a
+  publish reaches every unpinned install without a re-install. An explicit
+  `POST /api/v1/skills/:slug/pin` is the only writer of a version. The
+  index says "(installed, latest)" for an unpinned row, the desktop badge
+  says "✓ latest", and the detail page's update button only appears for an
+  explicit pin that sits behind the latest.
+
 - **The chat column resizes; the tail has a jump button (2026-10-21).** The
   central column was pinned to `max-w-3xl`. A drag handle on its right edge
   now sets one width for the message list, the composer and the loading
