@@ -1097,7 +1097,7 @@ export class GuildRuntime {
     const { agent } = await this.agents.requireAccess(user, agentId, "use");
     const existing = await agentThreadForChat(this.pool, chatId);
     if (existing !== null) {
-      if (existing.agent_id !== agent.id && !(await this.agentSwitchAllowed(chatId, userId))) {
+      if (existing.agent_id !== agent.id && !(await this.agentSwitchAllowed(chatId))) {
         throw new ThreadAgentLocked();
       }
       if (existing.agent_id !== agent.id) {
@@ -1131,19 +1131,15 @@ export class GuildRuntime {
     return ref === null ? null : this.agents.fetchAgent(ref.agent_id);
   }
 
-  /** A thread belongs to its agent: a shared agent's thread, or an agent's
-   *  Main thread, keeps that agent. Only the caller's own personal-agent
-   *  side threads move. */
-  async agentSwitchAllowed(chatId: string, userId: string): Promise<boolean> {
-    const res = await this.pool.query<{ agent_id: string; kind: string }>(
-      `SELECT agent_id, kind FROM agent_threads WHERE chat_id = $1`,
+  /** A thread keeps the agent that owns it when it is that agent's Main
+   *  thread or a run transcript. Ordinary threads move with the picker. */
+  async agentSwitchAllowed(chatId: string): Promise<boolean> {
+    const res = await this.pool.query<{ kind: string }>(
+      `SELECT kind FROM agent_threads WHERE chat_id = $1`,
       [chatId],
     );
-    const row = res.rows[0];
-    if (row === undefined) return true;
-    if (row.kind === "default") return false;
-    const agent = await this.agents.fetchAgent(row.agent_id);
-    return agent.is_personal && agent.owner_user_id === userId;
+    const kind = res.rows[0]?.kind;
+    return kind === undefined || (kind !== "default" && kind !== "routine_run");
   }
 
   /** Opens the run row for an adopted chat turn; the run lifecycle closes it
