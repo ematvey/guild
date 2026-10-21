@@ -58,6 +58,8 @@ export interface Agent {
   visibility: AgentVisibility;
   resources: Record<string, unknown>;
   status: AgentStatus;
+  /** The user's personal agent: one per user, always private, never deleted. */
+  is_personal: boolean;
   /** Teams granted use of a `team`-visibility agent. */
   team_ids?: string[];
   deleted_at: string | null;
@@ -69,6 +71,8 @@ export interface Agent {
 export interface AgentThread {
   id: string;
   agent_id: string;
+  /** The user whose private conversation this is. */
+  user_id: string;
   /** The chat journal row that holds this thread's transcript. */
   chat_id: string;
   title: string;
@@ -81,6 +85,8 @@ export interface AgentThread {
 export interface AgentRun {
   id: string;
   agent_id: string;
+  /** The user on whose behalf the run happens. */
+  user_id: string | null;
   thread_id: string | null;
   routine_id: string | null;
   parent_run_id: string | null;
@@ -104,6 +110,8 @@ export interface AgentRun {
 export interface AgentRoutine {
   id: string;
   agent_id: string;
+  /** The user whose private threads this routine's runs produce. */
+  created_by_user_id: string | null;
   name: string;
   kind: AgentRoutineKind;
   schedule: string | null;

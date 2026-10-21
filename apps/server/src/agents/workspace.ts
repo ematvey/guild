@@ -9,6 +9,8 @@ import type { PlatformPool } from "../platform/db.js";
 export interface AgentThreadRef {
   agent_id: string;
   org_id: string;
+  /** The user whose private conversation this thread is. */
+  user_id: string;
 }
 
 export interface ConversationWorkspace {
@@ -26,14 +28,16 @@ export function agentWorkspaceSubpath(orgId: string, agentId: string): string {
 
 /** The agent row behind a chat journal row, or null for a plain chat. */
 export async function agentThreadForChat(pool: PlatformPool, chatId: string): Promise<AgentThreadRef | null> {
-  const res = await pool.query<{ agent_id: string; org_id: string }>(
-    `SELECT t.agent_id, a.org_id
+  const res = await pool.query<{ agent_id: string; org_id: string; user_id: string }>(
+    `SELECT t.agent_id, a.org_id, t.user_id
      FROM agent_threads t JOIN agents a ON a.id = t.agent_id
      WHERE t.chat_id = $1`,
     [chatId],
   );
   const row = res.rows[0];
-  return row === undefined ? null : { agent_id: row.agent_id, org_id: row.org_id };
+  return row === undefined
+    ? null
+    : { agent_id: row.agent_id, org_id: row.org_id, user_id: row.user_id };
 }
 
 /** Resolves the sandbox target for one conversation. Agent threads share the

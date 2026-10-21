@@ -61,8 +61,8 @@ dbDescribe("agent workspace conflict journal", () => {
   });
 
   it("notifies the other running turn and finishes the journal row", async () => {
-    const firstThread = await store.createThread(agent.id, "First turn");
-    const secondThread = await store.createThread(agent.id, "Second turn");
+    const firstThread = await store.createThread(agent.id, owner.id, "First turn");
+    const secondThread = await store.createThread(agent.id, owner.id, "Second turn");
     const firstRun = await store.createRun({
       agent_id: agent.id,
       thread_id: firstThread.id,

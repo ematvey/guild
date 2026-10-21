@@ -237,6 +237,7 @@ export function registerAgentRoutes(
     await gateway.gatewayStore.resolveRoute(agent.org_id, agent.model, gateway.masterKey());
     const run = await store.createRun({
       agent_id: agent.id,
+      user_id: user.id,
       thread_id: thread.id,
       trigger: "message",
       status: "running",
@@ -303,6 +304,8 @@ export function registerAgentRoutes(
     if (status !== undefined && status !== "" && !AGENT_STATUSES.has(status as AgentStatus)) {
       throw ApiError.badRequest("invalid status");
     }
+    // The personal agent exists from the first visit.
+    await store.ensurePersonalAgent(user);
     const agents = await store.list(user, {
       includeArchived: queryParam(req, "include_archived") === "1",
       status: status === undefined || status === "" ? undefined : (status as AgentStatus),
@@ -394,7 +397,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    return sendJson(reply, { threads: await store.listThreads(agentId) });
+    return sendJson(reply, { threads: await store.listThreads(agentId, user.id) });
   });
 
   app.post("/api/v1/agents/:id/threads", async (req, reply) => {
@@ -403,7 +406,7 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "use");
     const body = jsonBody(req);
     const title = optionalString(body, "title") ?? "";
-    return sendJson(reply, { thread: await store.createThread(agentId, title) });
+    return sendJson(reply, { thread: await store.createThread(agentId, user.id, title) });
   });
 
   app.get("/api/v1/agents/:id/threads/:threadId", async (req, reply) => {
@@ -411,7 +414,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
-    return sendJson(reply, { thread: await store.getThread(agentId, threadId) });
+    return sendJson(reply, { thread: await store.getThread(agentId, user.id, threadId) });
   });
 
   app.patch("/api/v1/agents/:id/threads/:threadId", async (req, reply) => {
@@ -420,7 +423,7 @@ export function registerAgentRoutes(
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
     const title = requiredString(jsonBody(req), "title");
-    return sendJson(reply, { thread: await store.renameThread(agentId, threadId, title) });
+    return sendJson(reply, { thread: await store.renameThread(agentId, user.id, threadId, title) });
   });
 
   app.post("/api/v1/agents/:id/threads/:threadId/turns", async (req, reply) => {
@@ -428,7 +431,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const threadId = parseUuidParam(req, "threadId");
     const { agent } = await store.requireAccess(user, agentId, "use");
-    const thread = await store.getThread(agentId, threadId);
+    const thread = await store.getThread(agentId, user.id, threadId);
     return agentTurn(req, reply, user, agent, thread);
   });
 
@@ -438,13 +441,12 @@ export function registerAgentRoutes(
     const { agent } = await store.requireAccess(user, agentId, "use");
     const requested = optionalString(jsonBody(req), "thread_id");
     if (requested !== undefined && requested.trim() !== "") {
-      const thread = await store.getThread(agentId, requested);
+      const thread = await store.getThread(agentId, user.id, requested);
       return agentTurn(req, reply, user, agent, thread);
     }
-    const threads = await store.listThreads(agentId);
-    const thread = threads.find((item) => item.kind === "default") ?? threads[0];
-    if (thread === undefined) throw ApiError.notFound("no such thread");
-    return agentTurn(req, reply, user, agent, thread);
+    // The caller's own default thread: a shared agent never posts into
+    // another user's conversation.
+    return agentTurn(req, reply, user, agent, await store.ensureDefaultThread(agentId, user.id));
   });
 
   app.get("/api/v1/agents/:id/files", async (req, reply) => {
@@ -490,6 +492,7 @@ export function registerAgentRoutes(
     const body = jsonBody(req);
     const kind = routineKindField(body) ?? "cron";
     const routine = await store.createRoutine(agentId, {
+      created_by_user_id: user.id,
       name: requiredString(body, "name"),
       kind,
       schedule: optionalString(body, "schedule"),

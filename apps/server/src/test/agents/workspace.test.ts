@@ -47,10 +47,11 @@ dbDescribe("agent workspace resolution", () => {
 
   it("routes an agent thread to the shared agent workspace", async () => {
     const agent = await store.create(owner, { name: "Workspace", model: "GLM-Test" });
-    const thread = (await store.listThreads(agent.id))[0]!;
+    const thread = (await store.listThreads(agent.id, owner.id))[0]!;
     expect(await agentThreadForChat(env!.db, thread.chat_id)).toEqual({
       agent_id: agent.id,
       org_id: orgId,
+      user_id: owner.id,
     });
     const target = await resolveConversationWorkspace(env!.db, {
       conversationId: 41,

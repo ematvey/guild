@@ -58,10 +58,10 @@ dbDescribe("agent conversation tools", () => {
 
   it("send_message creates a thread, assistant message, unread chat and notice", async () => {
     const result = await sendAgentMessage(
-      { pool: env!.db, store, threads, agent },
+      { pool: env!.db, store, threads, agent, userId: owner.id },
       { text: "The report is ready." },
     );
-    const thread = await store.getThread(agent.id, result.thread_id);
+    const thread = await store.getThread(agent.id, owner.id, result.thread_id);
     expect(thread.title).toBe("The report is ready.");
     expect(result.url).toBe(`/agents/${agent.id}/threads/${thread.id}`);
     const events = await threads.listEvents(orgId, thread.chat_id);
@@ -77,7 +77,7 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("registers the routine management tools", () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, agent });
+    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("schedule_reminder");
     expect(names).toContain("list_routines");
@@ -87,8 +87,8 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("search and read are scoped to the calling agent", async () => {
-    const ownThread = (await store.listThreads(agent.id))[0]!;
-    const otherThread = (await store.listThreads(other.id))[0]!;
+    const ownThread = (await store.listThreads(agent.id, owner.id))[0]!;
+    const otherThread = (await store.listThreads(other.id, owner.id))[0]!;
     await store.insertChunks([
       {
         thread_id: ownThread.id,

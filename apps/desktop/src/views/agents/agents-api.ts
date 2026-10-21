@@ -88,6 +88,8 @@ export interface Agent {
   visibility: AgentVisibility;
   resources?: unknown;
   status: AgentStatus;
+  /** The user's personal agent: always private, never deleted. */
+  is_personal?: boolean;
   team_ids?: string[];
   deleted_at?: string | null;
   purge_after?: string | null;

@@ -76,15 +76,16 @@ describe("agent turns", () => {
     expect(run.rows[0]).toMatchObject({ status: "succeeded", summary: "hello" });
     expect(run.rows[0]!.tokens).toBeGreaterThan(0);
 
+    // The default thread keeps its name; a turn into it never renames it.
     const thread = await stack.env.db.query<{ id: string; title: string; chat_id: string }>(
       "SELECT id, title, chat_id FROM agent_threads WHERE agent_id = $1 AND kind = 'default'",
       [agent.id],
     );
-    expect(thread.rows[0]!.title).toBe("Hello world");
+    expect(thread.rows[0]!.title).toBe("Main thread");
     const chat = await stack.env.db.query<{ title: string }>("SELECT title FROM chats WHERE id = $1", [
       thread.rows[0]!.chat_id,
     ]);
-    expect(chat.rows[0]!.title).toBe("Hello world");
+    expect(chat.rows[0]!.title).toBe("Main thread");
 
     const detail = await stack.env.app.inject({
       method: "GET",
