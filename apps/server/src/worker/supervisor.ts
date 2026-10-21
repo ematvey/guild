@@ -20,7 +20,19 @@ const WORKER_ENTRY = fileURLToPath(new URL("./main.ts", import.meta.url));
  *  well under a second; the ceiling only matters when a worker wedges, and
  *  the route's catch surfaces the failure (turn command marked failed). */
 const REQUEST_TIMEOUT_MS = 120_000;
+/** A stop is the user asking for the turn to end; a tool that cannot be
+ *  cancelled must not keep the chat generating. Past this wait the worker is
+ *  killed and its respawn commits the abort from the journal. */
+const STOP_SETTLE_TIMEOUT_MS = 10_000;
 const READY_TIMEOUT_MS = 60_000;
+
+/** A request that outlived its timeout; the caller decides whether to give up
+ *  on the worker or to keep it. */
+class WorkerRequestTimeout extends Error {
+  constructor() {
+    super("worker request timed out");
+  }
+}
 const HEARTBEAT_STALE_MS = 90_000;
 /** Respawn backoff for a worker that died with pending work. */
 const RESPAWN_DELAYS_MS = [1_000, 5_000, 30_000];
@@ -171,7 +183,13 @@ export class ForkSupervisor {
     /** Machine-tool dispatch on the server's hub (workers proxy their
      *  env calls here; undefined only in degenerate test stacks). */
     private readonly dispatchMachine?: (call: MachineDispatchCall, signal?: AbortSignal) => Promise<MachineToolOutcome>,
-    private readonly options: { spawn?: typeof fork; readyTimeoutMs?: number; respawnDelays?: readonly number[] } = {},
+    private readonly options: {
+      spawn?: typeof fork;
+      readyTimeoutMs?: number;
+      respawnDelays?: readonly number[];
+      /** How long a stop may wait for the worker before it is killed. */
+      stopSettleTimeoutMs?: number;
+    } = {},
   ) {}
 
   private startHeartbeatSweeper(): void {
@@ -464,15 +482,15 @@ export class ForkSupervisor {
     handle.child.send(request);
   }
 
-  private async request<T>(chatId: string, msg: WithoutRef<WorkerRequest>): Promise<T> {
+  private async request<T>(chatId: string, msg: WithoutRef<WorkerRequest>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
     const handle = await this.ensureWorker(chatId);
     const ref = handle.nextRef++;
     const full = { ...msg, ref } as WorkerRequest;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         handle.waiters.delete(ref);
-        reject(new Error("worker request timed out"));
-      }, REQUEST_TIMEOUT_MS);
+        reject(new WorkerRequestTimeout());
+      }, timeoutMs);
       timer.unref?.();
       handle.waiters.set(ref, { resolve: resolve as (value: unknown) => void, reject, timer });
       if (handle.readyState === "ready") this.send(handle, full);
@@ -495,7 +513,16 @@ export class ForkSupervisor {
   }
 
   stop(chatId: string): Promise<void> {
-    return this.request<void>(chatId, { t: "stop" });
+    const handle = this.handles.get(chatId);
+    // No worker owns this chat, so nothing of it is in flight here.
+    if (handle === undefined) return Promise.resolve();
+    return this.request<void>(chatId, { t: "stop" }, this.options.stopSettleTimeoutMs ?? STOP_SETTLE_TIMEOUT_MS).catch((error: unknown) => {
+      if (!(error instanceof WorkerRequestTimeout)) throw error;
+      // The abort mark was committed before the worker began to wait, so the
+      // journal ends the turn on respawn. The stuck process is unrecoverable.
+      this.log.warn({ chatId }, "stop did not settle; killing the stuck worker");
+      handle.child.kill("SIGKILL");
+    });
   }
 
   compact(chatId: string): Promise<number | null> {

@@ -6,6 +6,12 @@ import type { Duplex } from "node:stream";
 
 const API = "/v1.47";
 
+/** Docker answers every call it serves; a longer wait means the daemon or the
+ *  runtime is wedged. Bounded failure keeps a sandbox attach from hanging the
+ *  agent turn that waits on it. */
+const REQUEST_TIMEOUT_MS = 180_000;
+const EXEC_START_TIMEOUT_MS = 60_000;
+
 export class DockerError extends Error {
   constructor(
     readonly status: number,
@@ -65,6 +71,12 @@ export class DockerClient {
           res.on("error", reject);
         },
       );
+      const timer = setTimeout(
+        () => req.destroy(new DockerError(0, `docker ${method} ${path}: timed out after ${REQUEST_TIMEOUT_MS} ms`)),
+        REQUEST_TIMEOUT_MS,
+      );
+      timer.unref?.();
+      req.on("close", () => clearTimeout(timer));
       req.on("error", reject);
       if (payload) req.write(payload);
       req.end();
@@ -88,15 +100,25 @@ export class DockerClient {
         },
       });
       req.on("upgrade", (_res, sock, head) => {
+        clearTimeout(timer);
         if (head.length > 0) sock.unshift(head);
         resolve(sock);
       });
       req.on("response", (res) => {
+        clearTimeout(timer);
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => reject(new DockerError(res.statusCode ?? 0, `exec start: ${Buffer.concat(chunks).toString("utf8")}`)));
       });
-      req.on("error", reject);
+      const timer = setTimeout(
+        () => req.destroy(new DockerError(0, `exec start: timed out after ${EXEC_START_TIMEOUT_MS} ms`)),
+        EXEC_START_TIMEOUT_MS,
+      );
+      timer.unref?.();
+      req.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
       req.write(payload);
       req.end();
     });

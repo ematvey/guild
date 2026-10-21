@@ -11,6 +11,18 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Stop ends the turn even when a tool cannot be cancelled (2026-10-21).**
+  The stop route waits for the conversation to go idle, so one hung tool call
+  kept the chat generating and the button on "Stopping" for good. Three
+  holes are closed. The attach handshake to the sandbox runner rejects on
+  error or close (ws reports a failed handshake with the socket already
+  CLOSING, so the old ready-state check never fired) and has a 30 s ceiling.
+  A sandbox call stops waiting for the connection when its context aborts;
+  the shared connect keeps running for the next call. The runner's Docker
+  calls and the agent exec start have timeouts. Past 10 s without a settled
+  stop, the supervisor kills the worker: the abort mark is already durable,
+  so the respawned worker commits the aborted outcomes from the journal.
+
 - **A volume remount no longer wedges the agent sandboxes (2026-10-21).**
   The JuiceFS sidecar remounts `/mnt/guild` in the host namespace on every
   start, which leaves the Docker bind volume's `_data` on the dead FUSE

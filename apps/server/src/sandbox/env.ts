@@ -196,11 +196,38 @@ export class SandboxExecutionEnv implements ExecutionEnv {
     return this.connecting;
   }
 
+  /** The connection, but a caller that aborts stops waiting for it. Opening
+   *  a sandbox waits on the runner and Docker, and neither can be cancelled;
+   *  the shared connect keeps running and its result serves the next call. */
+  private async connFor(context: Context): Promise<Connection> {
+    const signal = context.abortSignal;
+    if (signal === undefined) return this.conn();
+    if (signal.aborted) throw new Error("aborted");
+    return await new Promise<Connection>((resolve, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        reject(new Error("aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.conn().then(
+        (connection) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(connection);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
+  }
+
   private async fileCall<T>(method: string, args: unknown[], context: Context): Promise<Result<T, FileError>> {
     let connection: Connection;
     try {
-      connection = await this.conn();
+      connection = await this.connFor(context);
     } catch (error) {
+      if (context.abortSignal?.aborted) return err(new FileError("aborted", "aborted"));
       return err(new FileError("unknown", `sandbox unavailable: ${(error as Error).message}`));
     }
     return (await connection.call(method, args, context, "file")) as Result<T, FileError>;
@@ -209,8 +236,9 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   private async handleCall<T>(method: string, args: unknown[], context: Context): Promise<Result<T, FileError>> {
     let connection: Connection;
     try {
-      connection = await this.conn();
+      connection = await this.connFor(context);
     } catch (error) {
+      if (context.abortSignal?.aborted) return err(new FileError("aborted", "aborted"));
       return err(new FileError("unknown", `sandbox unavailable: ${(error as Error).message}`));
     }
     const result = (await connection.call(method, args, context, "file")) as Result<HandleRef, FileError>;
@@ -307,8 +335,9 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   ): Promise<Result<FileWatcher, FileError>> {
     let connection: Connection;
     try {
-      connection = await this.conn();
+      connection = await this.connFor(context);
     } catch (error) {
+      if (context.abortSignal?.aborted) return err(new FileError("aborted", "aborted"));
       return err(new FileError("unknown", `sandbox unavailable: ${(error as Error).message}`));
     }
     let callId = 0;
@@ -360,8 +389,9 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   ): Promise<Result<ShellExecResult, ExecutionError>> {
     let connection: Connection;
     try {
-      connection = await this.conn();
+      connection = await this.connFor(context);
     } catch (error) {
+      if (context.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
       return err(new ExecutionError("shell_unavailable", `sandbox unavailable: ${(error as Error).message}`));
     }
     const { onOutput, ...rest } = options ?? {};
