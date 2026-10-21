@@ -89,6 +89,7 @@ import {
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
+import { ModelName } from "./agent-model";
 import { AgentThreadView, ThreadList } from "./AgentThreadView";
 
 export interface Viewer {
@@ -234,7 +235,7 @@ export function AgentPage({
             <span>·</span>
             <VisibilityBadge visibility={agent.visibility} />
             <span>·</span>
-            <span className="font-mono">{agent.model}</span>
+            <ModelName id={agent.model} />
             <span>·</span>
             <span>{agent.tools.length} tools</span>
           </span>
@@ -561,7 +562,9 @@ function AgentOverview({
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Model</dt>
-              <dd className="truncate font-mono text-xs">{agent.model}</dd>
+              <dd className="truncate text-xs">
+                <ModelName id={agent.model} />
+              </dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Visibility</dt>
@@ -985,7 +988,9 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Model</dt>
-          <dd className="font-mono text-xs">{agent.model}</dd>
+          <dd className="text-xs">
+            <ModelName id={agent.model} />
+          </dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Visibility</dt>
