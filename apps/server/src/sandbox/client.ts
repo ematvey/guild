@@ -8,6 +8,11 @@ import WebSocket from "ws";
 import { SandboxExecutionEnv } from "./env.js";
 import type { Wire } from "./protocol.js";
 
+/** Ceiling on the attach handshake: the runner answers an upgrade as soon as
+ *  the agent exec starts, so a longer wait means the runner or Docker is
+ *  wedged. A bounded failure ends the tool call instead of the turn. */
+const ATTACH_TIMEOUT_MS = 30_000;
+
 export interface SandboxTarget {
   /** Stable sandbox identity: `ws:<org>:<name>` or `chat:<org>:<conversationId>`. */
   key: string;
@@ -19,6 +24,7 @@ export class RunnerClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
+    private readonly attachTimeoutMs: number = ATTACH_TIMEOUT_MS,
   ) {}
 
   private headers(): Record<string, string> {
@@ -60,6 +66,18 @@ export class RunnerClient {
       const frameListeners: Array<(frame: string) => void> = [];
       const closeListeners: Array<(error?: Error) => void> = [];
       let closed = false;
+      let opened = false;
+      const timer = setTimeout(() => fail(new Error(`sandbox attach timed out after ${this.attachTimeoutMs} ms`)), this.attachTimeoutMs);
+      timer.unref?.();
+      /** Settles the open promise exactly once. The socket is terminated, so
+       *  an upgrade that never answers cannot leave the caller waiting. */
+      const fail = (error: Error) => {
+        if (opened || closed) return;
+        closed = true;
+        clearTimeout(timer);
+        reject(error);
+        ws.terminate();
+      };
       const end = (error?: Error) => {
         if (closed) return;
         closed = true;
@@ -69,16 +87,20 @@ export class RunnerClient {
         const frame = data.toString();
         for (const l of frameListeners) l(frame);
       });
-      ws.on("close", () => end());
+      // ws reports a refused or aborted handshake as `error` with the socket
+      // already CLOSING, so the ready state cannot decide this.
+      ws.on("close", () => {
+        fail(new Error("sandbox attach closed before it opened"));
+        end();
+      });
       ws.on("error", (error) => {
-        if (ws.readyState === WebSocket.CONNECTING) reject(error);
+        fail(error);
         end(error);
       });
-      ws.on("unexpected-response", (_req, res) => {
-        reject(new Error(`sandbox attach failed: ${res.statusCode}`));
-        ws.terminate();
-      });
-      ws.on("open", () =>
+      ws.on("unexpected-response", (_req, res) => fail(new Error(`sandbox attach failed: ${res.statusCode}`)));
+      ws.on("open", () => {
+        opened = true;
+        clearTimeout(timer);
         resolve({
           send: (frame) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(frame);
@@ -86,8 +108,8 @@ export class RunnerClient {
           onFrame: (l) => frameListeners.push(l),
           onClose: (l) => closeListeners.push(l),
           close: () => ws.close(),
-        }),
-      );
+        });
+      });
     });
   }
 }
