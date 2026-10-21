@@ -84,6 +84,7 @@ import { DesktopTooltip } from "../components/desktop-tooltip";
 import { ContextRing } from "../components/context-ring";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
+import { ModelName } from "./agents/agent-model";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
 import { SkillsPanel } from "./skills/SkillsPanel";
@@ -4183,7 +4184,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
                     title="This agent's model"
                   >
-                    {agentThreadData.agent.model}
+                    <ModelName id={agentThreadData.agent.model} />
                   </span>
                 ) : models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
