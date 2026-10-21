@@ -11,6 +11,16 @@
 #
 # The container runs with pid: host and privileged: true, which is what makes
 # nsenter into PID 1's namespaces possible.
+#
+# TODO: mount the volume inside this container instead of the host namespace.
+# The nsenter route is fragile: the sidecar needs pid: host and privileged,
+# it writes the client binary and library links onto the host, and a remount
+# leaves dead FUSE binds under /var/lib/docker/volumes/<vol>/_data. Container
+# start then fails with "transport endpoint is not connected" until the stale
+# bind is unmounted by hand. The fix is a FUSE mount created in this container
+# and made visible to the host and to the sandbox containers through shared
+# mount propagation (rshared), or a mount helper that does not depend on the
+# host namespace at all.
 set -eu
 
 log() {
