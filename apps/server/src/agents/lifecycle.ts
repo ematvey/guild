@@ -191,8 +191,8 @@ export class AgentRunLifecycle {
           name: String(row["agent_name"] ?? ""),
           summary: String(row["summary"] ?? ""),
           error: String(row["error_message"] ?? ""),
-          started_at: new Date(String(row["started_at"] ?? row["created_at"])),
-          finished_at: row["finished_at"] === null ? null : new Date(String(row["finished_at"])),
+          started_at: new Date((row["started_at"] ?? row["created_at"]) as string | Date),
+          finished_at: row["finished_at"] === null ? null : new Date(row["finished_at"] as string | Date),
         });
       })
       .catch(() => {});

@@ -155,6 +155,7 @@ const time = (iso: string | null): string =>
       });
 const totalTokens = (row: { tokens_in: number; tokens_out: number }): number =>
   row.tokens_in + row.tokens_out;
+const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 function toneOf(status: string): "success" | "danger" | "info" | "warning" | "neutral" {
   if (status === "succeeded" || status === "ok") return "success";
@@ -358,22 +359,24 @@ export function ActivityPage({
             value={state.q}
             onChange={(e) => set({ q: e.target.value })}
             placeholder="Search summary or agent"
-            className="w-56 rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
+            className="w-40 rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60 lg:w-56"
           />
         </div>
         <div className="flex-1" />
-        <span className="text-xs text-muted-foreground">
-          {total} {state.tab === "sessions" ? "sessions" : state.tab === "calls" ? "calls" : "traces"}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Refresh activity"
-          onClick={() => setTick((value) => value + 1)}
-        >
-          <RefreshCw />
-          Refresh
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Refresh activity"
+            onClick={() => setTick((value) => value + 1)}
+          >
+            <RefreshCw />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3">
@@ -525,8 +528,11 @@ function TracesTable({
               <span className="truncate text-sm font-medium">
                 {row.summary.trim() !== "" ? row.summary : `${triggerLabel(row.trigger)} run`}
               </span>
+              <span className="lg:hidden">
+                <ToneBadge tone={toneOf(row.status)}>{statusLabel(row.status)}</ToneBadge>
+              </span>
               {row.error_count > 0 && (
-                <ToneBadge tone="danger">{row.error_count} errors</ToneBadge>
+                <ToneBadge tone="danger">{count(row.error_count, "error")}</ToneBadge>
               )}
             </span>
             <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -534,9 +540,17 @@ function TracesTable({
               <span>·</span>
               <span>{triggerLabel(row.trigger)}</span>
               <span>·</span>
-              <span>{row.call_count} calls</span>
+              <span>{count(row.call_count, "call")}</span>
               <span>·</span>
-              <span>{row.tool_count} tools</span>
+              <span>{count(row.tool_count, "tool")}</span>
+              {showAgent && row.agent_name !== "" && (
+                <>
+                  <span className="lg:hidden">·</span>
+                  <span className="lg:hidden">{row.agent_name}</span>
+                </>
+              )}
+              <span className="lg:hidden">·</span>
+              <span className="lg:hidden">{ms(row.duration_ms)}</span>
               {admin && (
                 <>
                   <span>·</span>
@@ -669,8 +683,8 @@ function SessionsTable({
           <span className="min-w-0 flex-1">
             <span className="block truncate font-mono text-xs">{row.session_id}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">
-              {row.traces} traces · {row.calls} calls · {row.tool_calls} tools
-              {row.errors > 0 ? ` · ${row.errors} errors` : ""}
+              {count(row.traces, "trace")} · {count(row.calls, "call")} · {count(row.tool_calls, "tool")}
+              {row.errors > 0 ? ` · ${count(row.errors, "error")}` : ""}
             </span>
           </span>
           <span className="hidden text-right text-xs tabular-nums text-muted-foreground sm:block">
@@ -742,13 +756,18 @@ export function RunDetailPage({
     [spans],
   );
   const bounds = useMemo(() => {
-    if (ordered.length === 0) return null;
-    const start = Math.min(...ordered.map((span) => Date.parse(span.start_time)));
-    const end = Math.max(
-      ...ordered.map((span) => (span.end_time === null ? Date.parse(span.start_time) + span.duration_ms : Date.parse(span.end_time))),
+    const spanStarts = ordered.map((span) => Date.parse(span.start_time));
+    const spanEnds = ordered.map((span) =>
+      span.end_time === null ? Date.parse(span.start_time) + span.duration_ms : Date.parse(span.end_time),
     );
-    return { start, end: Math.max(end, start + 1) };
-  }, [ordered]);
+    const traceStart = trace?.started_at === null || trace?.started_at === undefined ? NaN : Date.parse(trace.started_at);
+    const traceEnd = trace?.finished_at === null || trace?.finished_at === undefined ? NaN : Date.parse(trace.finished_at);
+    const starts = Number.isFinite(traceStart) ? [...spanStarts, traceStart] : spanStarts;
+    const ends = Number.isFinite(traceEnd) ? [...spanEnds, traceEnd] : spanEnds;
+    if (starts.length === 0) return null;
+    const start = Math.min(...starts);
+    return { start, end: Math.max(...ends, start + 1) };
+  }, [ordered, trace?.started_at, trace?.finished_at]);
 
   const admin = role === "admin";
   const chatId = trace?.session_id ?? null;
@@ -783,7 +802,7 @@ export function RunDetailPage({
               <ToneBadge tone="neutral">{triggerLabel(trace.trigger)}</ToneBadge>
               {trace.routine_id !== null && <ToneBadge tone="info">routine</ToneBadge>}
               <span className="text-xs text-muted-foreground">
-                {trace.call_count} calls · {trace.tool_count} tools · {compact(totalTokens(trace))} tokens
+                {count(trace.call_count, "call")} · {count(trace.tool_count, "tool")} · {compact(totalTokens(trace))} tokens
                 {admin ? ` · ${money(trace.cost_usd)}` : ""}
               </span>
               <span className="flex-1" />
@@ -854,7 +873,10 @@ export function RunDetailPage({
                                   ? "bg-sky-500/70"
                                   : "bg-emerald-500/70"
                             }`}
-                            style={{ left: `${Math.min(99.5, left)}%`, width: `${Math.min(100 - left, width)}%` }}
+                            style={{
+                              left: `${Math.min(99.5, Math.max(0, left))}%`,
+                              width: `${Math.min(100 - Math.max(0, left), Math.max(0.5, width))}%`,
+                            }}
                           />
                         </span>
                         <span className="text-right text-2xs tabular-nums text-muted-foreground">
@@ -867,7 +889,7 @@ export function RunDetailPage({
               </Section>
             )}
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
               <Section title="Transcript" description="Model turns and tool calls in order.">
                 {ordered.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No spans were recorded for this trace.</p>
