@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Chats pick their agent (2026-10-21).** The composer's model selector is
+  gone. A chat shows its agent and can switch it from a dropdown
+  (personal agent first, then agents the user can use; a shared agent carries
+  a users icon). `GET/POST /api/v1/threads/:chatId/agent` reads and sets the
+  binding; the turn body accepts `agent_id`. A plain chat is adopted by the
+  caller's personal agent on its first turn; switching an existing chat keeps
+  the transcript and moves the thread to the chosen agent. The model is the
+  agent's, never a per-chat choice.
+- **A personal agent is visible only to its owner** — no admin override, no
+  org or team visibility. `visiblePredicate` handles `is_personal` first.
+
 - **Threads are private; agents are shared (2026-10-21).** Design:
   `docs/specs/2026-10-21-unified-threads.md`. Every conversation is a thread of
   an agent; a thread carries the user on whose behalf it exists (caller for a
