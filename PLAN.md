@@ -1679,6 +1679,20 @@ not kept here — it lives in git.
 
 ## Future directions
 
+- **Decide the skill scope: per-user installs or per-agent sets (open,
+  2026-10-21).** Installs and pins are per user today, and a chat resolves
+  them through its owner (`identity` in `apps/server/src/harness/skills.ts`),
+  so two people who use the same shared org agent get two different skill
+  sets and two different pins from it. The alternative mirrors the existing
+  tool pattern: `agents.skills` (JSONB slug list) plus `agents.skills_mode`
+  (`selected` | `all`), with personal agents defaulting to `all`. That
+  costs a migration, the four call sites in `harness/skills.ts`, the agent
+  create/update routes, the agent settings UI, and a new source for the
+  machine-sync payload (the union of the skill sets of the agents a user
+  can run). Kept per-user for now: pins are optional and installs follow
+  the latest, so the wrong-scope damage is small. Revisit when a shared
+  agent needs a fixed skill set for everyone.
+
 - **Schema-first protocol types (protobuf or similar), dropping the
   Rust-side ts-rs generation** (maintainer, 2026-10-14): define the wire types
   once in a language-neutral IDL and generate both the Rust and TS types
