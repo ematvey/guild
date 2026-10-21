@@ -833,7 +833,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
 
     const older = r.prependEvents("chat", [
       row(40, assistantText("step", 0)),
-      row(41, { type: "tool_result", call_id: "call-1", name: "bash", content: "ok", is_error: false }),
+      row(41, { type: "tool_result", turn: 1, step: 0, call_id: "call-1", name: "bash", content: "ok", is_error: false }),
     ], false);
     const tools = older.blocks.filter(b => b.kind === "tool");
     expect(tools).toHaveLength(1);
