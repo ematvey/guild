@@ -63,7 +63,8 @@ export function sourceBadge(row: Pick<LocalSkillRow, "published_by_me" | "instal
  *  latest version. */
 export interface InstallRowVM {
   slug: string;
-  pinnedVersion: string;
+  /** The pinned version, or null when the install follows the latest. */
+  pinnedVersion: string | null;
   installedAt: string;
   /** True when the catalog knows a version other than the pin. */
   updateAvailable: boolean;
@@ -76,7 +77,7 @@ export function installRow(install: SkillInstall, latest: string | null): Instal
     slug: install.slug,
     pinnedVersion: install.pinned_version,
     installedAt: install.installed_at,
-    updateAvailable: latest !== null && install.pinned_version !== latest,
+    updateAvailable: install.pinned_version !== null && latest !== null && install.pinned_version !== latest,
     pinTarget: latest,
   };
 }
@@ -228,7 +229,7 @@ export default function LocalSkills() {
                   <div className="min-w-0">
                     <span className="font-medium">/{vm.slug}</span>
                     <p className="text-xs text-muted-foreground">
-                      pinned at {vm.pinnedVersion}
+                      {vm.pinnedVersion === null ? "follows latest" : `pinned at ${vm.pinnedVersion}`}
                       {latest.has(vm.slug)
                         ? ` · latest ${displayVersion(latest.get(vm.slug) ?? "")}`
                         : ""}

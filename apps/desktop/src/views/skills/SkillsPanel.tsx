@@ -57,13 +57,17 @@ export interface SkillRow {
   /** The access label shown in the row's lock badge when gated
    *  ("Team Platform can edit" / "Owner can edit"), null when open. */
   gatedLabel: string | null;
-  /** The viewer's pinned version ("v2"), or null when not installed. */
+  /** True when the viewer has this skill installed. */
+  installed: boolean;
+  /** The viewer's pinned version ("v2"); null when unpinned (follows the
+   *  latest) or not installed. */
   pin: string | null;
   /** The latest version when the viewer's pin is behind it, else null. */
   updateTo: string | null;
 }
 
 export function skillRow(item: SkillItem, install: SkillInstall | null | undefined): SkillRow {
+  const installed = install != null;
   const pin = install?.pinned_version ?? null;
   const updateTo =
     pin !== null && item.latest_version !== null && pin !== item.latest_version
@@ -82,6 +86,7 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     gatedLabel: item.maintainer_gated
       ? editAccessLabel(editAccess(item), item.owner?.label)
       : null,
+    installed,
     pin,
     updateTo,
   };
@@ -463,13 +468,13 @@ export function SkillsPanel({
                                 <Lock className="size-3" /> {row.gatedLabel}
                               </Badge>
                             )}
-                            {row.pin !== null && (
+                            {row.installed && (
                               <Badge
                                 variant="outline"
                                 className="text-muted-foreground"
                                 title="You have this installed"
                               >
-                                ✓ {row.pin}
+                                ✓ {row.pin ?? "latest"}
                               </Badge>
                             )}
                             {row.updateTo !== null && (

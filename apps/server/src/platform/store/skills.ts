@@ -1,6 +1,7 @@
 // Per-user org-skill installs over the skill_installs table: one row per
-// (user, slug); the pin is the version the user's agents run with, and
-// updates advance it explicitly.
+// (user, slug). The pin is optional — NULL means "follow the latest
+// published version", which is what an install records unless the user
+// pins a version explicitly.
 
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
@@ -9,7 +10,8 @@ import type { PlatformPool } from "../db.js";
 
 export interface InstallRow {
   slug: string;
-  pinned_version: string;
+  /** The version the user pinned, or null to follow the latest. */
+  pinned_version: string | null;
   installed_at: string;
 }
 
@@ -19,10 +21,10 @@ const INSTALLED_AT_TEXT =
 export class SkillStore {
   constructor(readonly pool: PlatformPool) {}
 
-  /** Installs a skill for a user at the given pinned version; a repeated
-   *  install of the same slug re-pins the existing row instead of
-   *  duplicating it (UNIQUE (user_id, slug)). */
-  async install(orgId: string, userId: string, slug: string, version: string): Promise<InstallRow> {
+  /** Installs a skill for a user, pinned at `version` or unpinned (null,
+   *  follow the latest); a repeated install of the same slug re-pins the
+   *  existing row instead of duplicating it (UNIQUE (user_id, slug)). */
+  async install(orgId: string, userId: string, slug: string, version: string | null): Promise<InstallRow> {
     const res = await this.pool.query(
       `INSERT INTO skill_installs (id, org_id, user_id, slug, pinned_version)
        VALUES ($1, $2, $3, $4, $5)
@@ -86,8 +88,8 @@ export class SkillStore {
    *  version first. */
   async pinCounts(orgId: string, slug: string): Promise<Array<{ version: string; count: number }>> {
     const res = await this.pool.query<{ pinned_version: string; n: string }>(
-      "SELECT pinned_version, count(*)::text AS n FROM skill_installs " +
-      "WHERE org_id = $1 AND slug = $2 GROUP BY pinned_version ORDER BY count(*) DESC, pinned_version",
+      "SELECT COALESCE(pinned_version, 'latest') AS pinned_version, count(*)::text AS n FROM skill_installs " +
+      "WHERE org_id = $1 AND slug = $2 GROUP BY 1 ORDER BY count(*) DESC, 1",
       [orgId, slug],
     );
     return res.rows.map((r) => ({ version: r.pinned_version, count: Number(r.n) }));
@@ -119,7 +121,8 @@ export class SkillStore {
               (SELECT count(*)::text FROM skill_installs si
                WHERE si.org_id = i.org_id AND si.slug = i.slug) AS installs,
               (SELECT count(*)::text FROM skill_installs si
-               WHERE si.org_id = i.org_id AND si.slug = i.slug AND si.pinned_version = i.latest_version) AS installs_latest
+               WHERE si.org_id = i.org_id AND si.slug = i.slug
+                 AND (si.pinned_version = i.latest_version OR si.pinned_version IS NULL)) AS installs_latest
        FROM registry_items i
        LEFT JOIN users u ON u.id = i.owner_user_id
        LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version
@@ -180,7 +183,7 @@ export class SkillStore {
   private row(r: Record<string, unknown>): InstallRow {
     return {
       slug: r.slug as string,
-      pinned_version: r.pinned_version as string,
+      pinned_version: (r.pinned_version as string | null) ?? null,
       installed_at: pgTimestampToRfc3339(r.installed_at as string),
     };
   }

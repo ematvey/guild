@@ -24,7 +24,7 @@ const API = { conversationId: 7, callId: "call-1" } as unknown as ToolExecutionA
 const CTX = {} as Context;
 
 interface Recorded {
-  installs: Array<{ orgId: string; userId: string; slug: string; version: string }>;
+  installs: Array<{ orgId: string; userId: string; slug: string; version: string | null }>;
   emitted: Array<{ orgId: string; kind: string; payload: unknown }>;
   reads: Array<Record<string, unknown>>;
   materialized: Array<Record<string, unknown>>;
@@ -37,7 +37,7 @@ interface FakeOptions {
   dir?: string;
   meta?: Record<string, unknown> | null;
   versions?: Array<{ version: string }>;
-  install?: { slug: string; pinned_version: string; installed_at: string } | null;
+  install?: { slug: string; pinned_version: string | null; installed_at: string } | null;
   gate?: "allow" | "forbidden";
   search?: Array<{
     slug: string;
@@ -237,7 +237,8 @@ describe("read_skill", () => {
       { slug: "hello" }, API, CTX,
     );
     expect(result.isError).toBeFalsy();
-    expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: "v2" }]);
+    // Installed without a pin: the row follows the latest version.
+    expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: null }]);
     expect(recorded.emitted).toEqual([
       expect.objectContaining({ orgId: ORG, kind: "skill.installed" }),
     ]);
@@ -499,8 +500,8 @@ describe("push_skill", () => {
       ]);
       expect(recorded.emitted.map((e) => e.kind)).toContain("registry.published");
       expect(recorded.puts).toHaveLength(1);
-      // Publish auto-installs for the pusher, pinned at the pushed version.
-      expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: "v1" }]);
+      // Publish auto-installs for the pusher, unpinned.
+      expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: null }]);
       expect(recorded.emitted.map((e) => e.kind)).toContain("skill.installed");
     } finally {
       rmSync(dir, { recursive: true, force: true });

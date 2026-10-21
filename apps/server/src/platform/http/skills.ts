@@ -128,7 +128,9 @@ async function autoInstall(
   version: string,
 ): Promise<void> {
   try {
-    await skills.install(orgId, userId, slug, version);
+    // Unpinned: the publisher's row follows the latest version like any
+    // other install.
+    await skills.install(orgId, userId, slug, null);
     await emitEvent(auth, orgId, "skill.installed", {
       slug,
       version,
@@ -399,14 +401,14 @@ export function registerSkillRoutes(
     const slug = param(req, "slug");
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");
-    const version =
-      typeof jsonBody(req)["version"] === "string" ? (jsonBody(req)["version"] as string) : control.latest_version;
-    if (version === null) throw ApiError.notFound("no such skill version");
-    await gateway.registry.getVersion(user.org_id, "skill", slug, version); // 404 when missing
-    const install = await skills.install(user.org_id, user.id, slug, version);
+    // No version in the body installs unpinned: the row follows the latest
+    // published version until the user pins one explicitly.
+    const requested = typeof jsonBody(req)["version"] === "string" ? (jsonBody(req)["version"] as string) : null;
+    if (requested !== null) await gateway.registry.getVersion(user.org_id, "skill", slug, requested); // 404 when missing
+    const install = await skills.install(user.org_id, user.id, slug, requested);
     await emitEvent(auth, user.org_id, "skill.installed", {
       slug,
-      version,
+      version: install.pinned_version ?? control.latest_version,
       user_id: user.id,
       actor: await actorLabel(skills, user.org_id, user.id),
     });

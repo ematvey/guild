@@ -46,6 +46,7 @@ export function skillMdPreviewBody(skillMd: string): string {
 export function updateAvailable(detail: SkillDetailData): boolean {
   return (
     detail.my_install !== null &&
+    detail.my_install.pinned_version !== null &&
     detail.latest_version !== null &&
     detail.my_install.pinned_version !== detail.latest_version
   );
@@ -595,7 +596,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             )}
             {detail.my_install !== null && (
               <Badge variant="outline" className="text-muted-foreground">
-                installed {detail.my_install.pinned_version}
+                installed {detail.my_install.pinned_version ?? "latest"}
               </Badge>
             )}
             {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
