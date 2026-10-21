@@ -422,7 +422,17 @@ export class TraceStore {
         "ORDER BY started_at ASC, trace_id ASC",
       [orgId, traceId],
     );
-    return { trace: traces[0] ?? null, spans, children };
+    const trace = traces[0] ?? null;
+    if (trace !== null) Object.assign(trace, spanTotals(spans));
+    const childAggregates = await this.spanAggregates(orgId, children.map((row) => String(row["trace_id"])));
+    return {
+      trace,
+      spans,
+      children: children.map((row) => ({
+        ...row,
+        ...(childAggregates.get(String(row["trace_id"])) ?? {}),
+      })),
+    };
   }
 
   /** Filtered spans (newest first) + the total matching count. */
@@ -598,6 +608,40 @@ export class TraceStore {
     for (const row of rows) out.set(String(row["trace_id"]), row);
     return out;
   }
+}
+
+/** Span totals for one trace, from the rows already loaded. */
+function spanTotals(spans: Record<string, unknown>[]): Record<string, unknown> {
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let reasoningTokens = 0;
+  let costUsd = 0;
+  let longestMs = 0;
+  let calls = 0;
+  let tools = 0;
+  let errors = 0;
+  const number = (value: unknown): number => (typeof value === "number" ? value : Number(value ?? 0) || 0);
+  for (const span of spans) {
+    tokensIn += number(span["tokens_in"]);
+    tokensOut += number(span["tokens_out"]);
+    reasoningTokens += number(span["reasoning_tokens"]);
+    costUsd += number(span["cost_usd"]);
+    longestMs = Math.max(longestMs, number(span["duration_ms"]));
+    if (span["span_type"] === "llm") calls += 1;
+    if (span["span_type"] === "tool") tools += 1;
+    if (span["status"] === "error") errors += 1;
+  }
+  return {
+    span_count: spans.length,
+    call_count: calls,
+    tool_count: tools,
+    error_count: errors,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    reasoning_tokens: reasoningTokens,
+    cost_usd: costUsd,
+    longest_ms: longestMs,
+  };
 }
 
 function countOf(rows: Record<string, unknown>[]): number {
