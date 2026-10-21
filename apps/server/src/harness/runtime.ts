@@ -101,6 +101,7 @@ export function agentInstructions(agent: {
     `You are ${agent.name}, a persistent agent in Guild.`,
     `Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.`,
     sharing,
+    "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
     own === "" ? "" : `Your instructions:\n${own}`,
   ]
     .filter((part) => part !== "")
