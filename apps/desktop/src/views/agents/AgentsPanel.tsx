@@ -1,7 +1,7 @@
 import { AgentsDirectory } from "./AgentsDirectory";
 import { AgentCreate } from "./AgentCreate";
 import { AgentPage, type Viewer } from "./AgentPage";
-import { ActivityPage, RunDetailPage } from "./ActivityPage";
+import { ActivityPage, RunDetailPage, SessionDetailPage } from "./ActivityPage";
 import { InboxPage } from "./InboxPage";
 import type { AgentsRoute } from "./agents-route";
 
@@ -49,5 +49,7 @@ export function AgentsPanel({
       );
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+    case "session":
+      return <SessionDetailPage sessionId={route.sessionId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
   }
 }

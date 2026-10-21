@@ -924,7 +924,12 @@ export class AgentStore {
         );
         for (const row of res.rows) {
           const ts = row.created_at.toISOString();
-          if (row.type === "assistant_message") {
+          if (row.type === "user_message") {
+            const text = typeof row.payload.content === "string" ? row.payload.content : "";
+            if (text.trim() !== "") {
+              steps.push({ type: "user_message", seq: Number(row.seq), ts, text: text.slice(0, 4_000) });
+            }
+          } else if (row.type === "assistant_message") {
             const blocks = Array.isArray(row.payload.blocks)
               ? (row.payload.blocks as { type?: string; text?: string }[])
               : [];

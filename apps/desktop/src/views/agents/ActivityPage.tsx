@@ -5,7 +5,7 @@
 // and its calls are one story. Navigation stays in the URL: the tab,
 // period and filters ride the query, the open trace is /runs/<id>.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -38,6 +38,7 @@ import {
 } from "./agents-route";
 import {
   getActivitySummary,
+  getRun,
   getSpanPayloads,
   getTrace,
   listRunArtifacts,
@@ -49,6 +50,8 @@ import {
   type ActivitySummary,
   type ActivityTab,
   type AgentArtifact,
+  type AgentRun,
+  type AgentRunStep,
   type SessionRow,
   type SpanRow,
   type TraceRow,
@@ -83,6 +86,24 @@ const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
+type TraceView = "transcript" | "tree" | "timeline";
+const TRACE_VIEWS: ReadonlyArray<readonly [TraceView, string]> = [
+  ["transcript", "Transcript"],
+  ["tree", "Tree"],
+  ["timeline", "Timeline"],
+];
+
+function readTraceView(): TraceView {
+  const value = new URL(window.location.href).searchParams.get("view");
+  return value === "tree" || value === "timeline" ? value : "transcript";
+}
+
+function writeTraceView(view: TraceView): void {
+  const url = new URL(window.location.href);
+  if (view === "transcript") url.searchParams.delete("view");
+  else url.searchParams.set("view", view);
+  if (url.toString() !== window.location.href) window.history.pushState(null, "", url);
+}
 
 interface ListState {
   tab: ActivityTab;
@@ -404,7 +425,7 @@ export function ActivityPage({
           <SessionsTable
             rows={sessions}
             admin={admin}
-            onOpen={(id) => onOpenChat?.(id)}
+            onOpen={(id) => onNavigate({ view: "session", sessionId: id })}
           />
         )}
       </div>
@@ -728,6 +749,126 @@ function SessionsTable({
   );
 }
 
+export function SessionDetailPage({
+  sessionId,
+  onNavigate,
+  onOpenChat,
+}: {
+  sessionId: string;
+  onNavigate: (route: AgentsRoute) => void;
+  onOpenChat?: (chatId: string) => void;
+}) {
+  const [rows, setRows] = useState<TraceRow[] | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    const to = new Date(Date.now() + 86_400_000).toISOString();
+    const from = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    void listTraces({ session: sessionId, from, to, limit: 200 })
+      .then((res) => {
+        if (live) setRows(res.traces);
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        setError(err instanceof Error ? err.message : "The session did not load.");
+        setRows(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [sessionId, tick]);
+
+  const admin = role === "admin";
+  const totals = useMemo(() => {
+    const list = rows ?? [];
+    return {
+      traces: list.length,
+      calls: list.reduce((sum, row) => sum + row.call_count, 0),
+      tools: list.reduce((sum, row) => sum + row.tool_count, 0),
+      tokens: list.reduce((sum, row) => sum + totalTokens(row), 0),
+      cost: list.reduce((sum, row) => sum + row.cost_usd, 0),
+      duration: list.reduce((sum, row) => Math.max(sum, row.duration_ms), 0),
+    };
+  }, [rows]);
+
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <PageHeader
+        title="Session"
+        description={sessionId}
+        actions={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "activity" })}>
+              <ArrowLeft />
+              Activity
+            </Button>
+            {onOpenChat !== undefined && (
+              <Button variant="outline" size="sm" onClick={() => onOpenChat(sessionId)}>
+                <MessageSquare />
+                Open chat
+              </Button>
+            )}
+          </>
+        }
+      />
+      <PageBody className="max-w-[80rem]">
+        {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
+        {error === null && rows === null && <InlineLoading label="Loading session" />}
+        {rows !== null && (
+          <>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
+                <div>
+                  <dt className="text-muted-foreground">Traces</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.traces}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Calls</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.calls}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Tools</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.tools}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Tokens</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{compact(totals.tokens)}</dd>
+                </div>
+                {admin && (
+                  <div>
+                    <dt className="text-muted-foreground">Cost</dt>
+                    <dd className="mt-0.5 text-lg font-semibold tabular-nums">{money(totals.cost)}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt className="text-muted-foreground">Longest</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{ms(totals.duration)}</dd>
+                </div>
+              </dl>
+            </div>
+            <div className="mt-4">
+              <TracesTable
+                rows={rows}
+                admin={admin}
+                showAgent
+                onOpen={(id) => onNavigate({ view: "run", runId: id })}
+              />
+            </div>
+          </>
+        )}
+      </PageBody>
+    </div>
+  );
+}
+
 export function RunDetailPage({
   runId,
   onNavigate,
@@ -742,6 +883,8 @@ export function RunDetailPage({
   const [children, setChildren] = useState<TraceRow[]>([]);
   const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [selected, setSelected] = useState<SpanRow | null>(null);
+  const [run, setRun] = useState<AgentRun | null>(null);
+  const [view, setView] = useState<TraceView>(readTraceView);
   const [role, setRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -763,6 +906,13 @@ export function RunDetailPage({
       .catch((err: unknown) => {
         if (!live) return;
         setError(err instanceof Error ? err.message : "The trace did not load.");
+      });
+    void getRun(runId)
+      .then((value) => {
+        if (live) setRun(value);
+      })
+      .catch(() => {
+        if (live) setRun(null);
       });
     void listRunArtifacts(runId)
       .then((rows) => {
@@ -864,101 +1014,39 @@ export function RunDetailPage({
               )}
             </div>
 
-            {bounds !== null && (
-              <Section title="Timeline" description="Span bars on the trace's time axis.">
-                <div className="space-y-1">
-                  {ordered.map((span) => {
-                    const left = ((Date.parse(span.start_time) - bounds.start) / (bounds.end - bounds.start)) * 100;
-                    const width = Math.max(0.5, (span.duration_ms / (bounds.end - bounds.start)) * 100);
-                    return (
-                      <button
-                        key={span.span_id}
-                        type="button"
-                        onClick={() => setSelected(span)}
-                        className={`grid w-full grid-cols-[10rem_minmax(0,1fr)_5rem] items-center gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent/50 ${
-                          selected?.span_id === span.span_id ? "bg-accent/60" : ""
-                        }`}
-                      >
-                        <span className="flex min-w-0 items-center gap-1.5 text-xs">
-                          {span.span_type === "llm" ? (
-                            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="truncate">{span.name}</span>
-                        </span>
-                        <span className="relative h-4 rounded bg-accent/40">
-                          <span
-                            className={`absolute top-0 h-4 rounded ${
-                              span.status === "error"
-                                ? "bg-destructive/70"
-                                : span.span_type === "llm"
-                                  ? "bg-sky-500/70"
-                                  : "bg-emerald-500/70"
-                            }`}
-                            style={{
-                              left: `${Math.min(99.5, Math.max(0, left))}%`,
-                              width: `${Math.min(100 - Math.max(0, left), Math.max(0.5, width))}%`,
-                            }}
-                          />
-                        </span>
-                        <span className="text-right text-2xs tabular-nums text-muted-foreground">
-                          {ms(span.duration_ms)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </Section>
-            )}
-
             <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-              <Section title="Transcript" description="Model turns and tool calls in order.">
-                {ordered.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No spans were recorded for this trace.</p>
-                ) : (
-                  <ol className="space-y-1.5">
-                    {ordered.map((span, index) => (
-                      <li key={span.span_id}>
-                        <button
-                          type="button"
-                          onClick={() => setSelected(span)}
-                          className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted/50 ${
-                            selected?.span_id === span.span_id ? "border-foreground/30 bg-muted/40" : "border-border"
-                          }`}
-                        >
-                          <span className="mt-0.5 font-mono text-2xs text-muted-foreground">
-                            {String(index + 1).padStart(2, "0")}
-                          </span>
-                          <span className="mt-0.5 shrink-0 text-muted-foreground">
-                            {span.span_type === "llm" ? <Bot className="size-3.5" /> : <Wrench className="size-3.5" />}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-medium">{span.name}</span>
-                              {span.model !== "" && (
-                                <span className="font-mono text-2xs text-muted-foreground">{span.model}</span>
-                              )}
-                              {span.status === "error" && <ToneBadge tone="danger">error</ToneBadge>}
-                            </span>
-                            {spanPreview(span) !== "" && (
-                              <span className="mt-0.5 block truncate text-muted-foreground">
-                                {spanPreview(span)}
-                              </span>
-                            )}
-                          </span>
-                          <span className="shrink-0 text-right text-2xs text-muted-foreground">
-                            {span.tokens_in + span.tokens_out > 0 && (
-                              <span className="block tabular-nums">{compact(totalTokens(span))} tok</span>
-                            )}
-                            <span className="block tabular-nums">{ms(span.duration_ms)}</span>
-                          </span>
-                        </button>
-                      </li>
+              <div className="rounded-xl border border-border bg-card">
+                <div className="border-b border-border px-2 pt-2">
+                  <TabBar
+                    label="Trace views"
+                    tabs={TRACE_VIEWS}
+                    value={view}
+                    onChange={(next) => {
+                      setView(next);
+                      writeTraceView(next);
+                    }}
+                  />
+                </div>
+                <div className="px-4 py-3">
+                  {view === "timeline" &&
+                    (bounds === null ? (
+                      <p className="text-sm text-muted-foreground">No spans were recorded for this trace.</p>
+                    ) : (
+                      <TimelineView spans={ordered} bounds={bounds} selected={selected} onSelect={setSelected} />
                     ))}
-                  </ol>
-                )}
-              </Section>
+                  {view === "tree" && (
+                    <SpanTree spans={ordered} selected={selected} onSelect={setSelected} />
+                  )}
+                  {view === "transcript" && (
+                    <TranscriptView
+                      spans={ordered}
+                      steps={run?.steps ?? []}
+                      selected={selected}
+                      onSelect={setSelected}
+                    />
+                  )}
+                </div>
+              </div>
 
               <div className="space-y-4">
                 <Section title="Span detail">
@@ -973,7 +1061,22 @@ export function RunDetailPage({
                   <dl className="space-y-2 text-xs">
                     <Meta label="Trace id" value={trace.trace_id} mono />
                     <Meta label="Agent" value={trace.agent_name || "—"} />
-                    <Meta label="Session" value={trace.session_id ?? "—"} mono />
+                    {trace.session_id !== null ? (
+                      <div>
+                        <dt className="text-muted-foreground">Session</dt>
+                        <dd>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ view: "session", sessionId: trace.session_id! })}
+                            className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
+                          >
+                            {trace.session_id}
+                          </button>
+                        </dd>
+                      </div>
+                    ) : (
+                      <Meta label="Session" value="—" />
+                    )}
                     {trace.parent_trace_id !== null && (
                       <Meta label="Parent trace" value={trace.parent_trace_id} mono />
                     )}
@@ -1030,6 +1133,366 @@ export function RunDetailPage({
       </PageBody>
     </div>
   );
+}
+
+function TimelineView({
+  spans,
+  bounds,
+  selected,
+  onSelect,
+}: {
+  spans: SpanRow[];
+  bounds: { start: number; end: number };
+  selected: SpanRow | null;
+  onSelect: (span: SpanRow) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      {spans.map((span) => {
+        const left = ((Date.parse(span.start_time) - bounds.start) / (bounds.end - bounds.start)) * 100;
+        const width = Math.max(0.5, (span.duration_ms / (bounds.end - bounds.start)) * 100);
+        return (
+          <button
+            key={span.span_id}
+            type="button"
+            onClick={() => onSelect(span)}
+            className={`grid w-full grid-cols-[10rem_minmax(0,1fr)_5rem] items-center gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent/50 ${
+              selected?.span_id === span.span_id ? "bg-accent/60" : ""
+            }`}
+          >
+            <span className="flex min-w-0 items-center gap-1.5 text-xs">
+              {span.span_type === "llm" ? (
+                <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="truncate">{span.name}</span>
+            </span>
+            <span className="relative h-4 rounded bg-accent/40">
+              <span
+                className={`absolute top-0 h-4 rounded ${
+                  span.status === "error"
+                    ? "bg-destructive/70"
+                    : span.span_type === "llm"
+                      ? "bg-sky-500/70"
+                      : "bg-emerald-500/70"
+                }`}
+                style={{
+                  left: `${Math.min(99.5, Math.max(0, left))}%`,
+                  width: `${Math.min(100 - Math.max(0, left), Math.max(0.5, width))}%`,
+                }}
+              />
+            </span>
+            <span className="text-right text-2xs tabular-nums text-muted-foreground">
+              {ms(span.duration_ms)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SpanList({
+  spans,
+  selected,
+  onSelect,
+}: {
+  spans: SpanRow[];
+  selected: SpanRow | null;
+  onSelect: (span: SpanRow) => void;
+}) {
+  if (spans.length === 0) {
+    return <p className="text-sm text-muted-foreground">No spans were recorded for this trace.</p>;
+  }
+  return (
+    <ol className="space-y-1.5">
+      {spans.map((span, index) => (
+        <li key={span.span_id}>
+          <button
+            type="button"
+            onClick={() => onSelect(span)}
+            className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted/50 ${
+              selected?.span_id === span.span_id ? "border-foreground/30 bg-muted/40" : "border-border"
+            }`}
+          >
+            <span className="mt-0.5 font-mono text-2xs text-muted-foreground">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <span className="mt-0.5 shrink-0 text-muted-foreground">
+              {span.span_type === "llm" ? <Bot className="size-3.5" /> : <Wrench className="size-3.5" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium">{span.name}</span>
+                {span.model !== "" && (
+                  <span className="font-mono text-2xs text-muted-foreground">{span.model}</span>
+                )}
+                {span.status === "error" && <ToneBadge tone="danger">error</ToneBadge>}
+              </span>
+              {spanPreview(span) !== "" && (
+                <span className="mt-0.5 block truncate text-muted-foreground">{spanPreview(span)}</span>
+              )}
+            </span>
+            <span className="shrink-0 text-right text-2xs text-muted-foreground">
+              {span.tokens_in + span.tokens_out > 0 && (
+                <span className="block tabular-nums">{compact(totalTokens(span))} tok</span>
+              )}
+              <span className="block tabular-nums">{ms(span.duration_ms)}</span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The conversation view: user, assistant and tool steps from the run's
+ *  transcript, with each step linked to the span that produced it. */
+function TranscriptView({
+  spans,
+  steps,
+  selected,
+  onSelect,
+}: {
+  spans: SpanRow[];
+  steps: AgentRunStep[];
+  selected: SpanRow | null;
+  onSelect: (span: SpanRow) => void;
+}) {
+  const llm = useMemo(() => spans.filter((span) => span.span_type === "llm"), [spans]);
+  const tools = useMemo(() => spans.filter((span) => span.span_type === "tool"), [spans]);
+  const toolByCall = useMemo(() => {
+    const map = new Map<string, SpanRow>();
+    for (const span of tools) {
+      const callId = span.attributes["call_id"];
+      if (typeof callId === "string") map.set(callId, span);
+    }
+    return map;
+  }, [tools]);
+  if (steps.length === 0) return <SpanList spans={spans} selected={selected} onSelect={onSelect} />;
+
+  const nearestLlm = (at: string | null | undefined): SpanRow | null => {
+    if (at === null || at === undefined) return null;
+    const ts = Date.parse(at);
+    if (!Number.isFinite(ts)) return null;
+    let best: SpanRow | null = null;
+    for (const span of llm) {
+      const start = Date.parse(span.start_time);
+      if (start <= ts && (best === null || start > Date.parse(best.start_time))) best = span;
+    }
+    return best;
+  };
+
+  return (
+    <ol className="space-y-3">
+      {steps.map((step, index) => {
+        const key = `${step.kind}-${step.at ?? ""}-${index}`;
+        if (step.kind === "user") {
+          return (
+            <li key={key} className="flex justify-end">
+              <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-accent px-3 py-2 text-sm">
+                {step.detail}
+              </div>
+            </li>
+          );
+        }
+        if (step.kind === "assistant") {
+          const span = nearestLlm(step.at);
+          return (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => span !== null && onSelect(span)}
+                className={`w-full rounded-2xl rounded-bl-sm border px-3 py-2 text-left transition-colors ${
+                  span !== null && selected?.span_id === span.span_id
+                    ? "border-foreground/30 bg-muted/40"
+                    : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <span className="mb-1 flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
+                  <Bot className="size-3.5" />
+                  <span className="font-medium text-foreground">Assistant</span>
+                  {span !== null && span.model !== "" && <span className="font-mono">{span.model}</span>}
+                  {span !== null && (
+                    <span>
+                      · {compact(totalTokens(span))} tok · {ms(span.duration_ms)}
+                    </span>
+                  )}
+                </span>
+                <span className="block whitespace-pre-wrap text-sm">{step.detail}</span>
+              </button>
+            </li>
+          );
+        }
+        if (step.kind === "tool") {
+          const span =
+            (step.call_id !== null && step.call_id !== undefined ? toolByCall.get(step.call_id) : undefined) ??
+            tools.find((tool) => tool.name === step.name) ??
+            null;
+          return (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => span !== null && onSelect(span)}
+                className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                  span !== null && selected?.span_id === span.span_id
+                    ? "border-foreground/30 bg-muted/40"
+                    : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <span className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
+                  <Wrench className="size-3.5" />
+                  <span className="font-medium text-foreground">{step.name ?? "tool"}</span>
+                  <ToneBadge tone={step.status === "error" ? "danger" : "success"}>
+                    {step.status === "error" ? "error" : "ok"}
+                  </ToneBadge>
+                  {span !== null && <span>· {ms(span.duration_ms)}</span>}
+                </span>
+                {step.detail !== null && step.detail !== undefined && step.detail !== "" && (
+                  <span className="mt-1 block max-h-24 overflow-hidden whitespace-pre-wrap break-words font-mono text-2xs text-muted-foreground">
+                    {step.detail}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        }
+        if (step.kind === "file") {
+          return (
+            <li key={key} className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
+              <FileText className="size-3.5" />
+              <span className="font-mono">{step.detail}</span>
+            </li>
+          );
+        }
+        return null;
+      })}
+    </ol>
+  );
+}
+
+interface SpanNode {
+  span: SpanRow;
+  children: SpanNode[];
+}
+
+/** Parent links when the writer set them; otherwise tool spans nest under
+ *  the model call that preceded them. */
+function buildSpanTree(spans: SpanRow[]): SpanNode[] {
+  const nodes = new Map<string, SpanNode>(spans.map((span) => [span.span_id, { span, children: [] }]));
+  const roots: SpanNode[] = [];
+  const ordered = [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
+  const llm = ordered.filter((span) => span.span_type === "llm");
+  for (const span of ordered) {
+    const node = nodes.get(span.span_id);
+    if (node === undefined) continue;
+    let parentId = span.parent_span_id;
+    if (parentId === null || !nodes.has(parentId)) {
+      if (span.span_type === "tool") {
+        let candidate: SpanRow | null = null;
+        for (const call of llm) {
+          if (Date.parse(call.start_time) <= Date.parse(span.start_time)) candidate = call;
+          else break;
+        }
+        parentId = candidate?.span_id ?? null;
+      } else {
+        parentId = null;
+      }
+    }
+    if (parentId !== null && parentId !== span.span_id) {
+      nodes.get(parentId)?.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+function SpanTree({
+  spans,
+  selected,
+  onSelect,
+}: {
+  spans: SpanRow[];
+  selected: SpanRow | null;
+  onSelect: (span: SpanRow) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const roots = useMemo(() => buildSpanTree(spans), [spans]);
+  if (spans.length === 0) {
+    return <p className="text-sm text-muted-foreground">No spans were recorded for this trace.</p>;
+  }
+  const toggle = (id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  function renderNode(node: SpanNode, depth: number): ReactNode {
+    const { span } = node;
+    const hasChildren = node.children.length > 0;
+    const isCollapsed = collapsed.has(span.span_id);
+    return (
+      <li key={span.span_id}>
+        <div
+          className={`flex items-center gap-1 rounded py-0.5 pr-1 transition-colors hover:bg-accent/50 ${
+            selected?.span_id === span.span_id ? "bg-accent/60" : ""
+          }`}
+          style={{ paddingLeft: `${depth * 14 + 2}px` }}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={isCollapsed ? "Expand span" : "Collapse span"}
+              onClick={() => toggle(span.span_id)}
+              className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className={`size-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+            </button>
+          ) : (
+            <span className="size-4 shrink-0" />
+          )}
+          <button
+            type="button"
+            onClick={() => onSelect(span)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            {span.span_type === "llm" ? (
+              <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs">{span.name}</span>
+            {span.model !== "" && (
+              <span className="hidden shrink-0 font-mono text-2xs text-muted-foreground sm:block">
+                {span.model}
+              </span>
+            )}
+            {span.tokens_in + span.tokens_out > 0 && (
+              <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+                {compact(totalTokens(span))} tok
+              </span>
+            )}
+            <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
+              {ms(span.duration_ms)}
+            </span>
+            <span
+              className={`size-1.5 shrink-0 rounded-full ${
+                span.status === "error" ? "bg-destructive" : "bg-emerald-500"
+              }`}
+            />
+          </button>
+        </div>
+        {hasChildren && !isCollapsed && (
+          <ul className="space-y-0.5">{node.children.map((child) => renderNode(child, depth + 1))}</ul>
+        )}
+      </li>
+    );
+  }
+  return <ul className="space-y-0.5">{roots.map((node) => renderNode(node, 0))}</ul>;
 }
 
 function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

@@ -180,6 +180,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     const window = windowOf(req);
     const agent = uuidFilter(req, "agent");
     const parent = uuidFilter(req, "parent");
+    const session = uuidFilter(req, "session");
     const status = queryParam(req, "status");
     const trigger = queryParam(req, "trigger");
     const q = queryParam(req, "q");
@@ -193,6 +194,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         to: window.to,
         ...(agent === undefined ? {} : { agentId: agent }),
         ...(parent === undefined ? {} : { parentTraceId: parent }),
+        ...(session === undefined ? {} : { sessionId: session }),
         ...(status === undefined || status === "" ? {} : { status }),
         ...(trigger === undefined || trigger === "" ? {} : { trigger }),
         ...(q === undefined || q === "" ? {} : { query: q }),

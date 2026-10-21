@@ -28,6 +28,7 @@ const routes: AgentsRoute[] = [
   { view: "activity" },
   { view: "inbox" },
   { view: "run", runId: "run-1" },
+  { view: "session", sessionId: "session-1" },
 ];
 
 describe("agents route contract", () => {
@@ -42,6 +43,7 @@ describe("agents route contract", () => {
     expect(agentsRailTab({ view: "inbox" })).toBe("inbox");
     expect(agentsRailTab({ view: "activity" })).toBe("activity");
     expect(agentsRailTab({ view: "run", runId: "r" })).toBe("activity");
+    expect(agentsRailTab({ view: "session", sessionId: "s" })).toBe("activity");
     expect(agentsRailTab({ view: "directory" })).toBe("agents");
     expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe("agents");
   });

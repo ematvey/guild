@@ -23,7 +23,8 @@ export type AgentsRoute =
     }
   | { view: "activity" }
   | { view: "inbox" }
-  | { view: "run"; runId: string };
+  | { view: "run"; runId: string }
+  | { view: "session"; sessionId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
 export const AGENTS_ACTIVITY: AgentsRoute = { view: "activity" };
@@ -67,6 +68,7 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
   if (parts[0] === "inbox" && parts.length === 1) return AGENTS_INBOX;
   if (parts[0] === "activity" && parts.length === 1) return AGENTS_ACTIVITY;
   if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
+  if (parts[0] === "sessions" && parts[1]) return { view: "session", sessionId: parts[1] };
   if (parts[0] !== "agents") return null;
   if (parts.length === 1) return AGENTS_DIRECTORY;
   if (parts[1] === "new" && parts.length === 2) return { view: "new" };
@@ -109,6 +111,8 @@ export function agentsRoutePath(route: AgentsRoute): string {
       return "/inbox";
     case "run":
       return `/runs/${segment(route.runId)}`;
+    case "session":
+      return `/sessions/${segment(route.sessionId)}`;
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
@@ -135,7 +139,7 @@ export function agentsRailTab(
   route: AgentsRoute,
 ): "inbox" | "agents" | "activity" {
   if (route.view === "inbox") return "inbox";
-  if (route.view === "activity" || route.view === "run") return "activity";
+  if (route.view === "activity" || route.view === "run" || route.view === "session") return "activity";
   return "agents";
 }
 

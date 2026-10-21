@@ -111,6 +111,8 @@ export interface TraceFilters {
   /** Free-text over the agent name and the run summary. */
   query?: string;
   parentTraceId?: string;
+  /** One chat's traces (the session detail). */
+  sessionId?: string;
   limit: number;
   offset: number;
 }
@@ -378,6 +380,10 @@ export class TraceStore {
     if (filter.parentTraceId !== undefined) {
       where.push("parent_trace_id = toUUID(?)");
       binds.push(filter.parentTraceId);
+    }
+    if (filter.sessionId !== undefined) {
+      where.push("session_id = toUUID(?)");
+      binds.push(filter.sessionId);
     }
     if (filter.query !== undefined && filter.query !== "") {
       where.push("(positionCaseInsensitive(summary, ?) > 0 OR positionCaseInsensitive(agent_name, ?) > 0 OR positionCaseInsensitive(name, ?) > 0)");
