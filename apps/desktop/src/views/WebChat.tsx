@@ -93,7 +93,6 @@ import {
   type SkillsRoute,
 } from "./skills/skills-route";
 import { AgentsPanel } from "./agents/AgentsPanel";
-import { AgentGlyph } from "./agents/agent-ui";
 import {
   AGENTS_ACTIVITY,
   AGENTS_DIRECTORY,
@@ -3174,7 +3173,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [chats, chatStatus]);
 
   const activeChat = chats?.find((c) => c.id === chatId);
-  const activeTitle = activeChat?.title ?? "New chat";
+  // An agent thread route may not have its chat in the list yet; the thread
+  // row carries the same title.
+  const activeTitle = activeChat?.title ?? agentThreadData?.thread.title ?? "New chat";
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
   const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
@@ -3644,45 +3645,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </DesktopTooltip>
             )
           )}
-          {agentThreadData !== null ? (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="-ml-1 size-8 shrink-0 text-muted-foreground"
-                aria-label="Back to threads"
-                title="Back to threads"
-                onClick={() =>
-                  pushRoute({
-                    chatId: null,
-                    projectId: null,
-                    overlay: null,
-                    skills: null,
-                    agents: {
-                      view: "agent",
-                      agentId: agentThreadData.agent.id,
-                      tab: "threads",
-                    },
-                  })
-                }
-              >
-                <ArrowLeft />
-              </Button>
-              <AgentGlyph name={agentThreadData.agent.name} className="size-7 rounded-md" />
-              <span className="min-w-0 truncate font-medium">{agentThreadData.agent.name}</span>
-              <span className="hidden min-w-0 truncate text-muted-foreground sm:inline">
-                / {agentThreadData.thread.title}
-              </span>
-            </div>
-          ) : (
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {threadLoading && blocks.length === 0 ? (
-                <Skeleton className="h-4 w-28 rounded-md" />
-              ) : (
-                activeTitle
-              )}
-            </span>
-          )}
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {threadLoading && blocks.length === 0 ? (
+              <Skeleton className="h-4 w-28 rounded-md" />
+            ) : (
+              activeTitle
+            )}
+          </span>
           {chatId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
