@@ -1095,6 +1095,7 @@ export async function sendChatNoStream(
   sendMode?: "queue" | "steer",
   skillsIndex?: string,
   projectInstructions?: string,
+  agentId?: string,
 ): Promise<void> {
   const token = getToken();
   let res: Response;
@@ -1120,6 +1121,7 @@ export async function sendChatNoStream(
         client_tools: true,
         attachment_ids: attachmentIds,
         project_id: projectId || undefined,
+        agent_id: agentId || undefined,
         send_mode: sendMode,
         skills_index: skillsIndex || undefined,
         agents_md: projectInstructions || undefined,
@@ -1321,6 +1323,26 @@ export async function setChatProject(
   });
   if (!res.ok) return null;
   return res.json().catch(() => null);
+}
+
+/** The agent bound to a chat (the composer's agent picker). */
+export async function chatAgent(chatId: string): Promise<unknown | null> {
+  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/agent`), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => ({}))) as { agent?: unknown };
+  return body.agent ?? null;
+}
+
+/** Binds a chat to an agent. A chat with a thread keeps its transcript. */
+export async function bindChatAgent(chatId: string, agentId: string): Promise<boolean> {
+  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/agent`), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+  return res.ok;
 }
 
 // ---- Projects (spec §1/§2: a named folder bound to a machine) ----
