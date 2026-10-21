@@ -397,6 +397,9 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
+    // The caller's default thread exists from their first visit, so the
+    // pinned row is always there and a turn never has to create it first.
+    await store.ensureDefaultThread(agentId, user.id);
     return sendJson(reply, { threads: await store.listThreads(agentId, user.id) });
   });
 
