@@ -61,7 +61,8 @@ const SEARCH = [
 
 const INSTALLS = [
   { slug: "sql-explorer", pinned_version: "v3", installed_at: "2026-01-01T00:00:00.000Z" },
-  { slug: "backup-tool", pinned_version: "v2", installed_at: "2026-01-01T00:00:00.000Z" },
+  // Unpinned: follows the latest version, so no update note.
+  { slug: "backup-tool", pinned_version: null, installed_at: "2026-01-01T00:00:00.000Z" },
 ];
 
 // The client-assembled index a machine turn sends (client header + its own
@@ -72,7 +73,7 @@ const LOCAL_INDEX =
 
 interface FakeOptions {
   search?: Array<{ slug: string; description: string; latest_version: string | null; review_status: string }>;
-  installs?: Array<{ slug: string; pinned_version: string; installed_at: string }>;
+  installs?: Array<{ slug: string; pinned_version: string | null; installed_at: string }>;
   /** The registry search throws (store failure). */
   fail?: boolean;
 }
@@ -127,7 +128,7 @@ describe("combined skills index section", () => {
         GUIDANCE,
         "- demo: Local demo skill (/home/u/.agents/skills/demo/SKILL.md)",
         `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5, by Dana Levi)`,
-        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2, by Isaac Cohen)`,
+        `- backup-tool: ${BACKUP_DESC} (installed, latest, by Isaac Cohen)`,
         `- incident-runbook: ${RUNBOOK_DESC} (org)`,
         `- log-tailer: ${TAILER_DESC} (org)`,
       ].join("\n"),
@@ -142,7 +143,7 @@ describe("combined skills index section", () => {
         HEADER,
         GUIDANCE,
         `- sql-explorer: ${SQL_EXPLORER_DESC} (installed, pinned v3, update available: v5, by Dana Levi)`,
-        `- backup-tool: ${BACKUP_DESC} (installed, pinned v2, by Isaac Cohen)`,
+        `- backup-tool: ${BACKUP_DESC} (installed, latest, by Isaac Cohen)`,
         `- incident-runbook: ${RUNBOOK_DESC} (org)`,
         `- log-tailer: ${TAILER_DESC} (org)`,
       ].join("\n"),

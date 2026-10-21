@@ -207,6 +207,29 @@ describe("read_skill", () => {
     ]);
   });
 
+  it("serves the latest version for an unpinned install, and the pin when one is set", async () => {
+    const unpinned = fakeDeps({
+      install: { slug: "hello", pinned_version: null, installed_at: "2026-01-01T00:00:00.000Z" },
+    });
+    const readUnpinned = makeRuntime(unpinned.deps).tools().find((t) => t.name === "read_skill")!;
+    const latest = await (readUnpinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+      { slug: "hello" }, API, CTX,
+    );
+    expect(text(latest)).toContain("version v2");
+    // An existing install is not re-installed by a read.
+    expect(unpinned.recorded.installs).toHaveLength(0);
+
+    const pinned = fakeDeps({
+      install: { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" },
+    });
+    const readPinned = makeRuntime(pinned.deps).tools().find((t) => t.name === "read_skill")!;
+    const atPin = await (readPinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+      { slug: "hello" }, API, CTX,
+    );
+    expect(text(atPin)).toContain("version v1");
+    expect(text(atPin)).toContain("newer version (v2)");
+  });
+
   it("serves a registry skill's extra files inline, so no copy is needed on disk", async () => {
     const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
     const { deps } = fakeDeps({
