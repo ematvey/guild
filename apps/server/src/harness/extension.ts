@@ -22,7 +22,7 @@ export const DEFAULT_PERSONA =
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
   const persona = orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
-  return `${persona} Every tool runs on the Guild server through the codemode tool: write JavaScript that calls \`tools.read\`, \`tools.write\`, \`tools.edit\`, \`tools.bash\`, \`tools.thread_history\`, \`tools.thread_search\`, and the skill/MCP tools as nested calls. Inspect and change files with scripts before answering anything that could be about files.`;
+  return `${persona} Coding tools — \`read\`, \`write\`, \`edit\`, \`list\`, \`bash\` and \`web_search\` — are called directly. Integration and MCP tools run on the Guild server through the codemode tool: write JavaScript that calls \`tools.<name>\`, and \`tools.thread_history\`/\`tools.thread_search\` as nested calls. Inspect and change files with the coding tools before answering anything that could be about files.`;
 }
 
 /** The codemode usage notes: what the shipped tool description leaves easy
@@ -31,7 +31,7 @@ export function buildSystemPrompt(orgPrompt: string | null | undefined): string 
 export const CODEMODE_NOTES_SECTION_TEXT = [
   "Codemode rules:",
   "- `searchTools`, `ALL_TOOLS`, `describeTool`, `describeNamespace`, `store`, `load`, `text`, `image`, `console`, and `exit` are sandbox globals. Call them bare (`await searchTools(\"query\")`), NEVER as `tools.searchTools` — only the conversation's real tools live on `tools`.",
-  "- Every real tool is script-only: direct calls are not offered to you, so always act through `codemode` scripts.",
+  "- Coding tools are called directly. Integration, MCP and thread-history tools are script-only: reach them through `codemode` scripts, never as direct calls.",
   "- The `code` parameter is the raw script body: pure JavaScript only, never wrapped in a code fence or quotes, and no prose or explanations inside it.",
   "- Tool arguments are always ONE object per the tool's declaration: `await tools.bash({ command: \"pwd\" })`, never a bare string or number.",
   "- There is NO sleep, timer, or delay mechanism in the sandbox — never busy-wait on a clock. Pace calls with sequential awaits and split long work across several codemode calls; a script that would run past ~60s should raise the timeout via the first line `// @options: {\"timeout_ms\": 300000}` or be split.",
@@ -98,9 +98,12 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
   };
   return defineExtension({
     name: "guild",
-    tools: [...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()), ...(deps.threadTools ?? [])].map(
-      toolsOnlyCaller,
-    ),
+    // Skill tools are direct; thread history is script-only (the agent's
+    // own conversations_search/conversation_read are the direct surface).
+    tools: [
+      ...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()),
+      ...(deps.threadTools ?? []).map(toolsOnlyCaller),
+    ],
     sections: [section, skillsSection, codemodeNotes],
     hooks: [createApprovalGate(deps), ...(deps.toolHooks ?? [])],
   });

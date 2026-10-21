@@ -5,6 +5,9 @@
 // built app instance.
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pg from "pg";
 import { buildApp } from "../../app.js";
 import { applyPlatformMigrations } from "../../platform/migrations.js";
@@ -106,6 +109,7 @@ export async function createM2TestEnv(
   });
   await ch.ensureUsageTable();
 
+  const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-m2-agents-"));
   const config = loadConfig({
     GUILD_DATABASE_URL: databaseUrl.toString(),
     GUILD_MASTER_KEY_HEX: "22".repeat(32),
@@ -121,6 +125,10 @@ export async function createM2TestEnv(
     GUILD_S3_URL: TEST_S3_URL,
     GUILD_S3_ACCESS_KEY_ID: TEST_S3_ACCESS_KEY_ID,
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
+    // Every chat is adopted by a personal agent, so coding tools write into
+    // the agent workspace. A per-suite temp root keeps it writable.
+    GUILD_AGENT_WORKSPACE_ROOT: agentRoot,
+    GUILD_AGENT_WORKSPACE_WRITE_ROOT: agentRoot,
     ...configOverrides,
   });
   const app = await buildApp(config);

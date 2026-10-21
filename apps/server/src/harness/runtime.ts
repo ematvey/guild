@@ -59,7 +59,7 @@ import {
 } from "../machines/dispatch.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
-import { createGuildExtension, toolsOnlyCaller, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
 import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
 import { ConversationDirectory } from "./conversation-directory.js";
 import { chatsWithWork } from "../platform/store/work.js";
@@ -84,6 +84,18 @@ import type { LlmTraceSink } from "../platform/trace.js";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
+
+/** The direct tool surface for an agent: its allowlist narrows the coding
+ *  and skill tools, and codemode is always present (the only path to the
+ *  script-only integration and thread-history tools). */
+export function directBaseTools<T extends { name: string }>(
+  base: readonly T[],
+  agent: { tools: string[]; tools_mode: string } | null,
+): readonly T[] {
+  if (agent === null || agent.tools_mode === "all") return base;
+  const allowed = new Set(agent.tools);
+  return base.filter((tool) => tool.name === "codemode" || allowed.has(tool.name));
+}
 
 /** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
 export class ThreadAgentLocked extends Error {
@@ -212,10 +224,9 @@ export class GuildRuntime {
    *  and the `codemode` prompt section) — one registration object shared
    *  by every conversation configure, like CodingTools. */
   private readonly codemodeExtension: Extension;
-  /** CodingTools with every tool demoted to script-only (codemode-only
-   *  exposure): the same registrations, sections, and hooks — only
-   *  `callers` changes, so the model is offered none of them directly. */
-  private readonly codingToolsScriptOnly: Extension;
+  /** The coding tools (read/write/edit/list/bash/web_search), offered to the
+   *  model directly. Integration tools stay script-only. */
+  private readonly codingTools: Extension;
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
@@ -357,8 +368,8 @@ export class GuildRuntime {
       }),
     });
     this.registry.install(this.guildExtension);
-    this.codingToolsScriptOnly = { ...CodingTools, tools: (CodingTools.tools ?? []).map(toolsOnlyCaller) };
-    this.registry.install(this.codingToolsScriptOnly);
+    this.codingTools = CodingTools;
+    this.registry.install(this.codingTools);
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
@@ -369,7 +380,7 @@ export class GuildRuntime {
   /** The base conversation configuration: the guild, coding, and codemode
    *  extensions with their tools — every configure starts from this. */
   private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
-    const extensions = [this.guildExtension, this.codingToolsScriptOnly, this.codemodeExtension];
+    const extensions = [this.guildExtension, this.codingTools, this.codemodeExtension];
     return { extensions, tools: extensions.flatMap((extension) => extension.tools ?? []) };
   }
 
@@ -679,7 +690,7 @@ export class GuildRuntime {
           settings: {
             extensions: [
               this.registry.snapshot().extension("guild")!,
-              this.codingToolsScriptOnly,
+              this.codingTools,
               this.codemodeExtension,
             ],
             // Decision 12: automatic background compaction on (built-in default
@@ -1024,6 +1035,10 @@ export class GuildRuntime {
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
+    // The agent's allowlist narrows the direct coding and skill tools the
+    // same way it narrows integrations. Codemode itself is always present:
+    // it is the only path to the script-only tools.
+    const baseTools = directBaseTools(base.tools, agent);
     const agentTools = await this.agentToolsForChat(chatId);
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
@@ -1041,7 +1056,7 @@ export class GuildRuntime {
           ...prepared.extensions,
           ...userPrepared.extensions,
         ],
-        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
+        tools: [...baseTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
         ...(agent === null ? {} : { instructions: agentInstructions(agent) }),
       },
       BACKGROUND_CONTEXT,

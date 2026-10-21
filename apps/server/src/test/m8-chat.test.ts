@@ -221,6 +221,7 @@ describe("M8: integrations chat runtime", () => {
       expect(call).toBeDefined();
       const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
       expect(result).toBeDefined();
+      if ((result!.event as { is_error: boolean }).is_error) console.log("DEBUG", (result!.event as { content: string }).content);
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
       const specs = JSON.parse((result!.event as { content: string }).content.split("Output:\n")[1]!) as Record<string, unknown>[];
       const names = specs.map((s) => s["name"]);

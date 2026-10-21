@@ -137,17 +137,19 @@ done
 # above replaces the FUSE session, so those binds now point at the dead one:
 # sandbox containers fail with "transport endpoint is not connected" and
 # commands on the workspace hang. Stack a fresh bind over each stale one, for
-# every volume whose device is this mountpoint.
-for opts in /var/lib/docker/volumes/*/opts.json; do
-  [ -f "$opts" ] || continue
-  grep -q "\"MountDevice\":\"$mountpoint\"" "$opts" || continue
-  volume_dir=${opts%/opts.json}
-  nsenter -t 1 -m -- sh -c "
-    umount '$volume_dir/_data' >/dev/null 2>&1 || umount -l '$volume_dir/_data' >/dev/null 2>&1 || true
-    mount --bind '$mountpoint' '$volume_dir/_data'
-  " || die "failed to rebind $volume_dir/_data"
-  log "rebound $volume_dir/_data to $mountpoint"
-done
+# every volume whose device is this mountpoint. The volumes live in the host
+# namespace, so the whole loop runs there.
+nsenter -t 1 -m -- sh -c '
+  mountpoint=$1
+  for opts in /var/lib/docker/volumes/*/opts.json; do
+    [ -f "$opts" ] || continue
+    grep -q "\"MountDevice\":\"$mountpoint\"" "$opts" || continue
+    volume_dir=${opts%/opts.json}
+    umount "$volume_dir/_data" >/dev/null 2>&1 || umount -l "$volume_dir/_data" >/dev/null 2>&1 || true
+    mount --bind "$mountpoint" "$volume_dir/_data" || exit 1
+    printf "juicefs: rebound %s/_data to %s\n" "$volume_dir" "$mountpoint"
+  done
+' sh "$mountpoint" || die "failed to rebind the docker volume to $mountpoint"
 
 # Per-agent workspace quota: every agent directory under agents/<org>/<id>
 # gets the same capacity. Setting it repeatedly is idempotent and covers

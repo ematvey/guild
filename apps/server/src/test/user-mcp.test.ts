@@ -435,7 +435,11 @@ describe("user mcp chat runtime", () => {
       // The system prompt carries the index line; the request declared the
       // wire tool names.
       const modelReq = stack.mock.requests[0]!.body as { messages: { role: string; content: string }[]; tools: { function: { name: string } }[] };
-      expect(modelReq.tools.map(tool => tool.function.name)).toEqual(["codemode"]);
+      // Coding tools are direct; the MCP tools stay script-only.
+      const direct = modelReq.tools.map((tool) => tool.function.name);
+      expect(direct).toContain("codemode");
+      expect(direct).toContain("read");
+      expect(direct.some((name) => name.startsWith("mcp"))).toBe(false);
       const system = modelReq.messages.find((m) => m.role === "system")?.content ?? "";
       expect(system).toContain("MCP testsvr: 2 tools");
     },
