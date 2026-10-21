@@ -71,6 +71,13 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
     SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
   ) le ON true`;
 
+/** Routine runs and delegation children are execution transcripts, not
+ *  conversations: they stay out of the sidebar lists. */
+const NOT_EXECUTION_TRANSCRIPT = `NOT EXISTS (
+    SELECT 1 FROM agent_threads xt
+    WHERE xt.chat_id = c.id AND xt.kind = 'routine_run'
+  )`;
+
 /** The sidebar lists sort by recent activity, not creation: a chat's place
  *  follows its latest thread event (creation is its initial activity), so a
  *  chat with a fresh turn rises above a newer chat that never got one. */
@@ -207,6 +214,7 @@ export class ChatStore {
   async listChats(orgId: string, userId: string): Promise<ChatListRow[]> {
     const res = await this.pool.query<Record<string, unknown>>(
       `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
+       AND ${NOT_EXECUTION_TRANSCRIPT}
        ${LIST_ORDER}`,
       [orgId, userId],
     );
@@ -228,6 +236,7 @@ export class ChatStore {
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
        WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL
+         AND ${NOT_EXECUTION_TRANSCRIPT}
        ${LIST_ORDER}`,
       [orgId, userId],
     );

@@ -85,6 +85,28 @@ import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
+/** The system instructions of an agent thread: who the agent is, where its
+ *  files live, and what its threads and workspace share. The agent's own
+ *  instructions follow. */
+export function agentInstructions(agent: {
+  name: string;
+  instructions: string;
+  is_personal: boolean;
+}): string {
+  const sharing = agent.is_personal
+    ? "Only its owner can use this agent, so the workspace is private."
+    : "Every thread is private to the user you are talking to. The workspace is shared with everyone who can use this agent.";
+  const own = agent.instructions.trim();
+  return [
+    `You are ${agent.name}, a persistent agent in Guild.`,
+    `Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.`,
+    sharing,
+    own === "" ? "" : `Your instructions:\n${own}`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
 /** Guild-side chat ↔ durable-conversation mapping (spec decision 6). Kept
  *  out of the shared durable migrations: the storage conformance suite runs
  *  on bare databases without the platform schema. */
@@ -1011,6 +1033,7 @@ export class GuildRuntime {
           ...userPrepared.extensions,
         ],
         tools: [...base.tools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
+        ...(agent === null ? {} : { instructions: agentInstructions(agent) }),
       },
       BACKGROUND_CONTEXT,
     );
