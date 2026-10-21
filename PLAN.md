@@ -37,7 +37,10 @@ not kept here — it lives in git.
   modern agent observability rather than an LLM-call table. The agent turn
   route opens the run before `submitTurn`; `submitTurn` no longer opens a
   second one for adopted chats (each turn used to produce two runs and two
-  traces). Desktop 0.5.93 carries the surface to installed clients.
+  traces). The surface keeps its status, duration, model and token data at
+  the 900px desktop width, the timeline uses the trace's millisecond axis,
+  and counts use singular forms. Desktop 0.5.94 carries it to installed
+  clients.
 
 - **A long thread reaches the client in pages (2026-10-22).** The member
   socket's ThreadState frame carried every durable event, and a live turn
