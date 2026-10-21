@@ -125,7 +125,7 @@ export function PageHeader({
             {title}
           </h1>
           {description !== undefined && (
-            <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+            <p className="mt-0.5 truncate text-[0.8125rem] text-muted-foreground">
               {description}
             </p>
           )}
@@ -159,7 +159,7 @@ export function TabBar<T extends string>({
           aria-selected={value === id}
           aria-label={`${text} tab`}
           onClick={() => onChange(id)}
-          className={`-mb-px shrink-0 border-b-2 px-3 pb-2 pt-2 text-[13.5px] outline-none transition-colors ${
+          className={`-mb-px shrink-0 border-b-2 px-3 pb-2 pt-2 text-[0.84375rem] outline-none transition-colors ${
             value === id
               ? "border-foreground text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground"
@@ -207,7 +207,7 @@ export function EmptyState({
       </div>
       <p className="text-sm font-medium">{title}</p>
       {body !== undefined && (
-        <p className="mt-1 max-w-md text-[13px] text-muted-foreground">{body}</p>
+        <p className="mt-1 max-w-md text-[0.8125rem] text-muted-foreground">{body}</p>
       )}
       {action !== undefined && <div className="mt-4">{action}</div>}
     </div>
@@ -232,7 +232,7 @@ export function ErrorState({
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{title}</p>
         {message !== undefined && message !== "" && (
-          <p className="mt-0.5 break-words text-[13px] text-muted-foreground">
+          <p className="mt-0.5 break-words text-[0.8125rem] text-muted-foreground">
             {message}
           </p>
         )}
@@ -294,7 +294,7 @@ export function Section({
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-medium">{title}</h2>
           {description !== undefined && (
-            <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>
+            <p className="mt-0.5 text-[0.8125rem] text-muted-foreground">{description}</p>
           )}
         </div>
         {action}
@@ -306,5 +306,5 @@ export function Section({
 
 /** Monospace path/name text that never widens the page. */
 export function Mono({ children }: { children: ReactNode }) {
-  return <span className="break-all font-mono text-[12.5px]">{children}</span>;
+  return <span className="break-all font-mono text-[0.78125rem]">{children}</span>;
 }

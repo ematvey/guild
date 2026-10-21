@@ -82,6 +82,14 @@ body {
   font-weight: 375;
 }
 
+/* Global type size knob. The type scale and every layout step are rem-based,
+   so this one value scales the whole interface: text, spacing and controls
+   keep their proportions. 112.5% of the 16px browser default is 18px.
+   Percent (not px) keeps a user's own browser font-size preference in play. */
+html {
+  font-size: 112.5%;
+}
+
 /* Markdown **bold** renders <strong>/<b>; Tailwind's preflight pins it to
    `bolder` (700 in body text). Message bold is the main emphasis voice:
    clearly heavier than the 375 body, below preflight-heavy — literal 600

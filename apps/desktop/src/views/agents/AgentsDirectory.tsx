@@ -164,7 +164,7 @@ function AgentGroup({
   if (agents.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 className="mb-2 px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </h2>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -195,7 +195,7 @@ function AgentCard({
         <AgentGlyph name={agent.name} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{agent.name}</p>
-          <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
+          <p className="mt-0.5 truncate text-[0.78125rem] text-muted-foreground">
             {agent.owner_label ?? "Unknown owner"}
             {agent.owner_email && agent.owner_email !== agent.owner_label
               ? ` · ${agent.owner_email}`
@@ -206,11 +206,11 @@ function AgentCard({
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <VisibilityBadge visibility={agent.visibility} />
-        <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[11.5px] text-muted-foreground">
+        <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[0.71875rem] text-muted-foreground">
           {agent.model || "No model"}
         </span>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-2 text-[12px] text-muted-foreground">
+      <div className="mt-auto flex items-center justify-between gap-2 text-[0.75rem] text-muted-foreground">
         <span>{agent.tools.length} tool{agent.tools.length === 1 ? "" : "s"}</span>
         <span title={last}>{relativeTime(last)}</span>
       </div>
