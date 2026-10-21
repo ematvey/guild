@@ -133,6 +133,7 @@ export interface AgentRunStep {
   status?: string | null;
   detail?: string | null;
   at?: string | null;
+  call_id?: string | null;
   is_error?: boolean | null;
 }
 

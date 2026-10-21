@@ -608,11 +608,19 @@ export function registerAgentRoutes(
     const steps = await store.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
     const mapped = steps.map((step) => ({
-      kind: step.type === "assistant_text" ? "assistant" : step.type === "tool_call" ? "tool" : "file",
+      kind:
+        step.type === "user_message"
+          ? "user"
+          : step.type === "assistant_text"
+            ? "assistant"
+            : step.type === "tool_call"
+              ? "tool"
+              : "file",
       name: step.name ?? null,
       status: step.is_error === true ? "error" : "ok",
       detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
       at: step.ts,
+      call_id: step.call_id ?? null,
       is_error: step.is_error ?? null,
     }));
     return sendJson(reply, { run: { ...run, steps: mapped, files }, steps });

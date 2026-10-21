@@ -180,7 +180,7 @@ export interface AgentNotice {
 /** One derived run-detail step: a tool call, an assistant text block, or a
  *  file touched by the run's workspace turn. */
 export interface AgentRunStep {
-  type: "tool_call" | "assistant_text" | "file";
+  type: "tool_call" | "assistant_text" | "user_message" | "file";
   seq?: number;
   ts: string;
   text?: string;
