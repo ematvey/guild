@@ -77,7 +77,6 @@ import {
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { toast } from "sonner";
 import { WorkingIndicator } from "@guild/ui/components/working-indicator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Skeleton, SkeletonRows, SkeletonText } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
@@ -107,6 +106,7 @@ import {
 import {
   getAgent,
   getAgentThread,
+  listAgents,
   listInbox,
   renameAgentThread,
   sendAgentTurn,
@@ -140,7 +140,6 @@ import {
   listChats,
   listMachines,
   listModels,
-  modelLabel,
   listProjects,
   saveChatViewMode,
   updateChat,
@@ -1800,6 +1799,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     void fileStore.saveDraft(target, files).catch(storageFailure);
   };
   const [models, setModels] = useState<ModelOption[] | null>(null);
+  // The caller's personal agent. Every plain chat is adopted by it on the
+  // first turn, so the composer names the agent, not a model.
+  const [personalAgent, setPersonalAgent] = useState<Agent | null>(null);
   // Sign-out hygiene: drafts can hold sensitive composer text, so they are
   // cleared with the session — a shared browser's next account must not
   // inherit them. Every sign-out path in this view goes through here.
@@ -2222,6 +2224,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       window.clearInterval(id);
     };
     // busyRef/threadLoadingRef are stable refs; see below.
+  }, []);
+
+  useEffect(() => {
+    void listAgents()
+      .then((rows) => setPersonalAgent(rows.find((a) => a.is_personal) ?? null))
+      .catch(() => setPersonalAgent(null));
   }, []);
 
   useEffect(() => {
@@ -4195,19 +4203,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
                     )}
                   </span>
-                ) : models !== null && models.length > 0 && (
-                  <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger className="h-7 w-auto min-w-0 max-w-28 gap-1 border-none bg-secondary px-2 shadow-none sm:max-w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {models.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {modelLabel(m)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                ) : (
+                  <span
+                    className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                    title="Every chat runs with your personal agent"
+                  >
+                    <span className="truncate">{personalAgent?.name ?? "Assistant"}</span>
+                  </span>
                 )}
                 {(() => {
                   // While a turn generates the composer stays usable: with

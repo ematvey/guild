@@ -73,6 +73,7 @@ import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { delegationContextForChat } from "../agents/delegation.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
+import { uuidv7 } from "../platform/time.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -1011,6 +1012,56 @@ export class GuildRuntime {
       },
       BACKGROUND_CONTEXT,
     );
+  }
+
+  /** Makes a plain chat an agent chat: the caller's personal agent adopts it
+   *  on the first turn, so every conversation has an agent. Idempotent — a
+   *  chat that already belongs to an agent keeps it. Returns the agent whose
+   *  model and tools the turn must use, or null when the org has no model. */
+  async adoptChatAgent(
+    chatId: string,
+    orgId: string,
+    userId: string,
+    title: string,
+  ): Promise<{ agent_id: string; thread_id: string; model: string } | null> {
+    const existing = await agentThreadForChat(this.pool, chatId);
+    if (existing !== null) {
+      const agent = await this.agents.fetchAgent(existing.agent_id);
+      return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
+    }
+    const personal = await this.agents.ensurePersonalAgentFor(orgId, userId);
+    if (personal === null) return null;
+    const threadId = uuidv7();
+    const inserted = await this.pool.query<{ id: string }>(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
+       VALUES ($1, $2, $3, $4, $5, false, 'thread')
+       ON CONFLICT (chat_id) DO NOTHING
+       RETURNING id`,
+      [threadId, personal.id, userId, chatId, title],
+    );
+    const id = inserted.rows[0]?.id;
+    if (id === undefined) {
+      // A concurrent turn adopted it first.
+      const again = await agentThreadForChat(this.pool, chatId);
+      if (again === null) throw new Error("chat adoption lost its thread");
+      const agent = await this.agents.fetchAgent(again.agent_id);
+      return { agent_id: agent.id, thread_id: again.thread_id, model: agent.model };
+    }
+    return { agent_id: personal.id, thread_id: id, model: personal.model };
+  }
+
+  /** Opens the run row for an adopted chat turn; the run lifecycle closes it
+   *  from the transcript like any other agent turn. */
+  async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
+    const run = await this.agents.createRun({
+      agent_id: agentId,
+      user_id: userId,
+      thread_id: threadId,
+      trigger: "message",
+      status: "running",
+      started_at: new Date().toISOString(),
+    });
+    return run.id;
   }
 
   /** The conversation tools that exist only for agent threads: send_message,

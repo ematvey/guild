@@ -360,11 +360,17 @@ export class AgentStore {
    *  private, and exempt from deletion. Returns null when the org has no
    *  enabled model to give it. */
   async ensurePersonalAgent(user: UserRow): Promise<Agent | null> {
+    return this.ensurePersonalAgentFor(user.org_id, user.id);
+  }
+
+  /** Same, addressed by ids: the chat turn path adopts a plain chat without
+   *  loading the full user row. */
+  async ensurePersonalAgentFor(orgId: string, userId: string): Promise<Agent | null> {
     const find = async (): Promise<Agent | null> => {
       const res = await this.pool.query<Record<string, unknown>>(
         `SELECT ${AGENT_COLUMNS} FROM agents a
          WHERE a.owner_user_id = $1 AND a.is_personal AND a.status <> 'deleted' LIMIT 1`,
-        [user.id],
+        [userId],
       );
       const row = res.rows[0];
       return row === undefined ? null : toAgent(row);
@@ -372,7 +378,7 @@ export class AgentStore {
     const existing = await find();
     if (existing !== null) return existing;
 
-    const model = await this.defaultModel(user.org_id);
+    const model = await this.defaultModel(orgId);
     if (model === null) return null;
     try {
       await this.pool.query(
@@ -380,8 +386,8 @@ export class AgentStore {
          VALUES ($1, $2, $3, 'Assistant', '', $4, $5::jsonb, 'private', $6::jsonb, true)`,
         [
           uuidv7(),
-          user.org_id,
-          user.id,
+          orgId,
+          userId,
           model,
           JSON.stringify(DEFAULT_AGENT_TOOLS),
           JSON.stringify(DEFAULT_AGENT_RESOURCES),

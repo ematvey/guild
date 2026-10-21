@@ -4,7 +4,7 @@
 // with their flag but never traversed.
 
 import { createReadStream, type ReadStream } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "../platform/errors.js";
 
@@ -78,7 +78,13 @@ function entryFor(rel: string, stats: Awaited<ReturnType<typeof lstat>>, symlink
 }
 
 export class AgentFiles {
-  constructor(private readonly workspaceRoot: string) {}
+  constructor(
+    private readonly workspaceRoot: string,
+    /** Read-write view of the same volume. When set, the agent's root is
+     *  created on first browse so an untouched agent shows an empty
+     *  workspace instead of an error. */
+    private readonly writeRoot?: string,
+  ) {}
 
   private rootFor(orgId: string, agentId: string): string {
     return path.resolve(this.workspaceRoot, "agents", orgId, agentId);
@@ -130,6 +136,18 @@ export class AgentFiles {
   }
 
   async listDir(orgId: string, agentId: string, relPath?: string, showHidden = false): Promise<AgentDirListing> {
+    // An agent that has not run yet has no directory on the volume. Create it
+    // (through the read-write view when one is mounted) and list it empty.
+    const rootDir = this.rootFor(orgId, agentId);
+    const present = await lstat(rootDir).catch(() => null);
+    if (present === null) {
+      const rel = normalizeRelativePath(relPath);
+      if (rel !== "") throw ApiError.notFound("no such path");
+      if (this.writeRoot !== undefined) {
+        await mkdir(path.resolve(this.writeRoot, "agents", orgId, agentId), { recursive: true }).catch(() => {});
+      }
+      return { path: "", entries: [] };
+    }
     const { root, realRoot, rel, abs } = await this.resolvePath(orgId, agentId, relPath);
     await this.assertNoSymlink(root, rel);
     await this.assertContained(realRoot, abs);

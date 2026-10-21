@@ -98,3 +98,55 @@ describe("agent turns", () => {
     expect(body.steps.some((step) => step.type === "assistant_text")).toBe(true);
   }, 40_000);
 });
+
+describe("plain chat adoption", () => {
+  it("turns a plain chat into a thread of the caller's personal agent", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "Adopted chat" },
+    });
+    expect(created.statusCode).toBe(200);
+    const chatId = (JSON.parse(created.body) as { id: string }).id;
+
+    const turn = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/turns`,
+      headers: auth(),
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "Hello there" }] },
+    });
+    expect(turn.statusCode).toBe(200);
+
+    const rows = await stack.env.db.query<{ agent_id: string; user_id: string; is_personal: boolean }>(
+      `SELECT t.agent_id, t.user_id, a.is_personal
+       FROM agent_threads t JOIN agents a ON a.id = t.agent_id
+       WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]!.is_personal).toBe(true);
+
+    await waitFor(async () => {
+      const run = await stack.env.db.query<{ status: string }>(
+        "SELECT status FROM agent_runs WHERE thread_id = (SELECT id FROM agent_threads WHERE chat_id = $1)",
+        [chatId],
+      );
+      return run.rows[0] !== undefined && run.rows[0].status !== "running";
+    });
+
+    // A second turn keeps the same thread: adoption is idempotent.
+    const again = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/turns`,
+      headers: auth(),
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "Second" }] },
+    });
+    expect(again.statusCode).toBe(200);
+    const after = await stack.env.db.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM agent_threads WHERE chat_id = $1",
+      [chatId],
+    );
+    expect(after.rows[0]!.n).toBe(1);
+  }, 30_000);
+});

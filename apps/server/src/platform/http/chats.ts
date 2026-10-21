@@ -528,7 +528,21 @@ export async function submitTurn(
   }
 
   const chatId = chatIdRaw.toLowerCase();
-  const model = await resolveTurnModel(gateway, user.org_id, body["model"] as string);
+  // Every conversation belongs to an agent. A plain chat is adopted by the
+  // caller's personal agent on its first turn; from then on the turn runs
+  // with the agent's model and tools, and the run lifecycle closes the run.
+  const chatRow = preloadedChat ?? (await chats.chats.getChat(user.org_id, chatId, user));
+  const adopted = await chats.runtime.adoptChatAgent(
+    chatId,
+    user.org_id,
+    user.id,
+    chatRow.title ?? "",
+  );
+  const model = await resolveTurnModel(
+    gateway,
+    user.org_id,
+    adopted === null ? (body["model"] as string) : adopted.model,
+  );
   const messages = body["messages"] as { role?: unknown; content?: unknown }[];
   if (body["client_tools"] !== undefined && typeof body["client_tools"] !== "boolean") {
     throw invalidTypeText(req, "client_tools");
@@ -538,7 +552,7 @@ export async function submitTurn(
   }
 
   // Org scoping: the chat must belong to the caller's org.
-  const chat = preloadedChat ?? (await chats.chats.getChat(user.org_id, chatId, user));
+  const chat = chatRow;
 
   const commandId =
     body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));
@@ -634,6 +648,11 @@ export async function submitTurn(
         queued: priorGenerating,
         mode: sendMode,
       });
+    // The run row exists before the turn is admitted; the lifecycle closes it
+    // from the transcript.
+    if (adopted !== null) {
+      await chats.runtime.beginChatRun(adopted.agent_id, adopted.thread_id, user.id);
+    }
     const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
       orgId: user.org_id,
       requestId: commandId,

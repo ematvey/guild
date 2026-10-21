@@ -203,7 +203,7 @@ export function registerAgentRoutes(
   objects: ObjectStore,
 ): void {
   const store = new AgentStore(infra.pool);
-  const files = new AgentFiles(infra.config.agentWorkspaceRoot);
+  const files = new AgentFiles(infra.config.agentWorkspaceRoot, infra.config.agentWorkspaceWriteRoot);
 
   /** The built-in tool catalog the creation/settings forms offer. Integration
    *  and MCP tools are added by the runtime; this endpoint is the stable
