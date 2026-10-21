@@ -1,6 +1,6 @@
 // Sandbox lifecycle on one Docker host: ensure (create/start), agent
-// attach, idle stop/remove, capacity, and adoption of containers a previous
-// runner process left behind.
+// attach, idle stop/remove, capacity, and removal of the containers a
+// previous runner process left behind.
 
 import { chown, lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -61,7 +61,8 @@ export class SandboxManager {
   ) {}
 
   /** Boot checks: the runtime exists (and is runsc unless allowed), the
-   *  image is present; adopts existing sandboxes into idle tracking. */
+   *  image is present; removes sandboxes a previous runner process left
+   *  behind. */
   async start(): Promise<void> {
     const info = await this.docker.request<{ Runtimes: Record<string, unknown> }>("GET", "/info");
     if (!(this.config.runtime in info.Runtimes)) {
@@ -76,12 +77,25 @@ export class SandboxManager {
       this.log.warn({ err: error, image: this.config.image }, "sandbox image not found; sandbox creation will fail until it is built");
     }
     await this.prepareDataRoot();
-    const now = Date.now();
-    for (const c of await this.list()) {
-      this.usage.set(c.Names[0]!.replace(/^\//, ""), { attached: 0, lastUsed: now });
-    }
+    await this.removeStale();
     this.reaper = setInterval(() => void this.reap().catch((error) => this.log.warn({ err: error }, "reap failed")), 30_000);
     this.reaper.unref();
+  }
+
+  /** Sandboxes are disposable: their files live on the volume, and every
+   *  agent process died with the previous runner. A container started before
+   *  the workspace volume was remounted keeps the dead FUSE session, so
+   *  adopting it would serve a workspace whose every operation hangs. Remove
+   *  them all; the next ensure creates a fresh one on the live mount. */
+  private async removeStale(): Promise<void> {
+    const stale = await this.list();
+    for (const c of stale) {
+      const name = c.Names[0]!.replace(/^\//, "");
+      await this.docker.request("DELETE", `/containers/${name}?force=true`).catch((error: unknown) => {
+        this.log.warn({ err: error, name }, "stale sandbox removal failed");
+      });
+    }
+    if (stale.length > 0) this.log.info({ count: stale.length }, "removed stale sandboxes");
   }
 
   stop(): void {

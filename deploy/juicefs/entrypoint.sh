@@ -14,13 +14,13 @@
 #
 # TODO: mount the volume inside this container instead of the host namespace.
 # The nsenter route is fragile: the sidecar needs pid: host and privileged,
-# it writes the client binary and library links onto the host, and a remount
-# leaves dead FUSE binds under /var/lib/docker/volumes/<vol>/_data. Container
-# start then fails with "transport endpoint is not connected" until the stale
-# bind is unmounted by hand. The fix is a FUSE mount created in this container
-# and made visible to the host and to the sandbox containers through shared
-# mount propagation (rshared), or a mount helper that does not depend on the
-# host namespace at all.
+# it writes the client binary and library links onto the host. The rebind loop
+# below repairs the stale /var/lib/docker/volumes/<vol>/_data binds a remount
+# leaves behind; sandbox containers started before the remount still hold the
+# dead session, so the runner removes its sandboxes on boot. The fix is a FUSE
+# mount created in this container and made visible to the host and to the
+# sandbox containers through shared mount propagation (rshared), or a mount
+# helper that does not depend on the host namespace at all.
 set -eu
 
 log() {
@@ -132,6 +132,22 @@ while [ "$i" -lt 60 ]; do
   sleep 1
 done
 [ "$i" -lt 60 ] || die "timed out waiting for the mount"
+
+# Docker resolves a bind volume's source under <volume>/_data. The remount
+# above replaces the FUSE session, so those binds now point at the dead one:
+# sandbox containers fail with "transport endpoint is not connected" and
+# commands on the workspace hang. Stack a fresh bind over each stale one, for
+# every volume whose device is this mountpoint.
+for opts in /var/lib/docker/volumes/*/opts.json; do
+  [ -f "$opts" ] || continue
+  grep -q "\"MountDevice\":\"$mountpoint\"" "$opts" || continue
+  volume_dir=${opts%/opts.json}
+  nsenter -t 1 -m -- sh -c "
+    umount '$volume_dir/_data' >/dev/null 2>&1 || umount -l '$volume_dir/_data' >/dev/null 2>&1 || true
+    mount --bind '$mountpoint' '$volume_dir/_data'
+  " || die "failed to rebind $volume_dir/_data"
+  log "rebound $volume_dir/_data to $mountpoint"
+done
 
 # Per-agent workspace quota: every agent directory under agents/<org>/<id>
 # gets the same capacity. Setting it repeatedly is idempotent and covers
