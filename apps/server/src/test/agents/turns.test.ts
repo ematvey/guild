@@ -150,3 +150,56 @@ describe("plain chat adoption", () => {
     expect(after.rows[0]!.n).toBe(1);
   }, 30_000);
 });
+
+describe("agent picker", () => {
+  it("keeps a shared agent's thread on that agent", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Picker agent", model: "GLM-Test-Model", visibility: "org" },
+    });
+    const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
+
+    const chat = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "Picker chat" },
+    });
+    const chatId = (JSON.parse(chat.body) as { id: string }).id;
+
+    const bound = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+      payload: { agent_id: agent.id },
+    });
+    expect(bound.statusCode).toBe(200);
+
+    const read = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+    });
+    expect((JSON.parse(read.body) as { switcheable: boolean }).switcheable).toBe(false);
+
+    // Another agent: the thread refuses to move.
+    const other = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Other agent", model: "GLM-Test-Model", visibility: "org" },
+    });
+    const otherId = (JSON.parse(other.body) as { agent: { id: string } }).agent.id;
+
+    const moved = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+      payload: { agent_id: otherId },
+    });
+    expect(moved.statusCode).toBe(409);
+    expect(JSON.parse(moved.body)).toMatchObject({ error: { code: "thread_agent_locked" } });
+  }, 40_000);
+});

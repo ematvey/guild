@@ -26,6 +26,7 @@ import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
 import type { ChatRow } from "../store/chats.js";
 import { modalityOf } from "../../chats/turn-text.js";
+import { ThreadAgentLocked } from "../../harness/runtime.js";
 
 // ---------------------------------------------------------------------------
 // Wire shapes (serde field order / skip rules)
@@ -348,7 +349,12 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "chatId");
     await chats.chats.getChat(user.org_id, chatId, user);
-    return reply.type("application/json").send(JSON.stringify({ agent: await chats.runtime.chatAgent(chatId) }));
+    return reply.type("application/json").send(
+      JSON.stringify({
+        agent: await chats.runtime.chatAgent(chatId),
+        switcheable: await chats.runtime.agentSwitchAllowed(chatId, user.id),
+      }),
+    );
   });
 
   app.post("/api/v1/threads/:chatId/agent", async (req, reply) => {
@@ -360,7 +366,15 @@ export function registerChatsRoutes(
       throw ApiError.badRequest("agent_id is required");
     }
     const chat = await chats.chats.getChat(user.org_id, chatId, user);
-    const bound = await chats.runtime.bindChatAgent(chatId, user.id, agentId, chat.title ?? "", user);
+    let bound: { thread_id: string };
+    try {
+      bound = await chats.runtime.bindChatAgent(chatId, user.id, agentId, chat.title ?? "", user);
+    } catch (error) {
+      if (error instanceof ThreadAgentLocked) {
+        throw ApiError.conflict("thread_agent_locked", error.message);
+      }
+      throw error;
+    }
     return reply
       .type("application/json")
       .send(JSON.stringify({ agent: await chats.runtime.chatAgent(chatId), thread_id: bound.thread_id }));
@@ -561,7 +575,14 @@ export async function submitTurn(
   const adopted =
     requestedAgent === null
       ? await chats.runtime.adoptChatAgent(chatId, user.org_id, user.id, chatRow.title ?? "")
-      : await chats.runtime.bindChatAgent(chatId, user.id, requestedAgent, chatRow.title ?? "", user);
+      : await chats.runtime
+          .bindChatAgent(chatId, user.id, requestedAgent, chatRow.title ?? "", user)
+          .catch((error: unknown) => {
+            if (error instanceof ThreadAgentLocked) {
+              throw ApiError.conflict("thread_agent_locked", error.message);
+            }
+            throw error;
+          });
   const model = await resolveTurnModel(
     gateway,
     user.org_id,
