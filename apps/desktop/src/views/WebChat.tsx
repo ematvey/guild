@@ -3567,7 +3567,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             />
           </SheetContent>
         </Sheet>
-      ) : skillsRoute !== null || agentsRoute !== null ? null : (
+      ) : skillsRoute !== null ||
+        (agentsRoute !== null && !(agentsRoute.view === "agent" && agentsRoute.threadId !== undefined)) ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
