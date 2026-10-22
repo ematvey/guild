@@ -1,7 +1,7 @@
 {
   "name": "@guild/ui",
   "private": true,
-  "version": "0.5.100",
+  "version": "0.5.101",
   "type": "module",
   "description": "Shared shadcn/ui-style component kit for the Guild chat client and admin console.",
   "exports": {
