@@ -73,16 +73,18 @@ describe("composeAgentInstructions", () => {
     const text = composeAgentInstructions(
       { name: "Scout", is_personal: false },
       config(FULL),
-      "# AGENTS.md\n\nUse pnpm, never npm.",
+      '<project_instructions path="/repo/AGENTS.md">\n# AGENTS.md\n\nUse pnpm, never npm.\n</project_instructions>',
     );
-    expect(text.indexOf("## Project instructions")).toBeGreaterThan(text.indexOf("## MEMORY.md"));
+    expect(text.indexOf("<project_context>")).toBeGreaterThan(text.indexOf("## MEMORY.md"));
+    expect(text).toContain('<project_instructions path="/repo/AGENTS.md">');
+    expect(text).toContain("Project-specific instructions and guidelines:");
     expect(text).toContain("Use pnpm, never npm.");
   });
 
   it("ignores an empty or whitespace-only project chain", () => {
     for (const value of ["", "   \n\t "]) {
       const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), value);
-      expect(text).not.toContain("## Project instructions");
+      expect(text).not.toContain("<project_context>");
     }
   });
 
@@ -90,7 +92,7 @@ describe("composeAgentInstructions", () => {
     const huge = "z".repeat(PROJECT_INSTRUCTIONS_MAX_CHARS + 5000);
     const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config({}), huge);
     expect(text).toContain("(truncated)");
-    const block = text.slice(text.indexOf("## Project instructions"));
+    const block = text.slice(text.indexOf("<project_context>"));
     expect(block.length).toBeLessThan(PROJECT_INSTRUCTIONS_MAX_CHARS + 1000);
   });
 

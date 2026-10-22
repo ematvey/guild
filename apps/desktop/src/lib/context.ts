@@ -510,15 +510,19 @@ export async function prepareTurn(
   const expanded = mentionBlock(mentions);
   const finalPrompt =
     expanded === null ? prompt : `${prompt}${expanded}`;
-  let instructions: string | undefined;
+  // The project chain in pi's context syntax: one tagged block per file,
+  // path included, so the model can tell a root file from a subdirectory
+  // one. The server wraps the blocks in its `<project_context>` section.
+  const docs: DocEntry[] = [];
   const global = await loadGlobalAgentsMd(fs, configDir);
-  const projectDocs = projectDir ? await projectAgentDocs(fs, projectDir) : [];
-  if (global || projectDocs.length > 0) {
-    const parts: string[] = [];
-    if (global) parts.push(global.contents);
-    for (const d of projectDocs) parts.push(d.contents);
-    instructions = parts.join("\n\n--- project-doc ---\n\n");
-  }
+  if (global) docs.push(global);
+  if (projectDir) docs.push(...(await projectAgentDocs(fs, projectDir)));
+  const instructions =
+    docs.length === 0
+      ? undefined
+      : docs
+          .map((d) => `<project_instructions path="${d.path.replaceAll('"', "&quot;")}">\n${d.contents.trim()}\n</project_instructions>`)
+          .join("\n\n");
   return { prompt: finalPrompt, index, instructions };
 }
 

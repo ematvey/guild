@@ -200,7 +200,10 @@ describe("prepareTurn (end to end over the bridge)", () => {
     expect(prep.prompt).toContain("### Skill: deploy");
     expect(prep.index).toContain("- deploy: Deploy the thing");
     expect(prep.index).toContain("- user-skill: User scope");
-    expect(prep.instructions).toBe("global rules\n\n--- project-doc ---\n\nrepo rules");
+    expect(prep.instructions).toBe(
+      '<project_instructions path="/cfg/guild/AGENTS.md">\nglobal rules\n</project_instructions>\n\n' +
+        '<project_instructions path="/repo/AGENTS.md">\nrepo rules\n</project_instructions>',
+    );
   });
   it("browser mode (no scopes) passes the prompt through untouched", async () => {
     const prep = await prepareTurn(

@@ -15,10 +15,11 @@ first. Code comments describe only the present.
 - **Desktop turns see the workspace and the project (2026-10-22).** An
   agent's instructions are its workspace files plus, on a desktop turn, the
   client-assembled chain (global config file and the project's AGENTS.md
-  files from the git root down). The server appends the chain as a
-  `## Project instructions` block after the workspace files, cuts it at
-  32 KiB, and keeps the last chain per conversation so a resumed run sees
-  the same text. The skills index already merges the client's local lines
+  files from the git root down). The client renders pi's context syntax —
+  one `<project_instructions path="…">` block per file — and the server
+  wraps the blocks in a `<project_context>` section after the workspace
+  files, cuts it at 32 KiB, and keeps the last chain per conversation so a
+  resumed run sees the same text. The skills index already merges the client's local lines
   with the org catalog and drops org duplicates.
 
 - **Activity is an admin surface (2026-10-22).** The rail entry, the

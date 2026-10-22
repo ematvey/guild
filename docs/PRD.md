@@ -195,8 +195,10 @@ project it runs in.
   `MEMORY.md` and `BOOTSTRAP.md` from the agent workspace on every turn,
   under a per-file and total byte budget.
 - A desktop turn also supplies the project's AGENTS.md chain (global config
-  file plus one file per directory from the repo root down); the server
-  appends it after the workspace files under its own byte budget.
+  file plus one file per directory from the repo root down), one
+  `<project_instructions path="…">` block per file inside a
+  `<project_context>` section; the server appends it after the workspace
+  files under its own byte budget.
 - Skills merge the same way: the desktop's local index and the org catalog
   render as one section, and an org skill the local index already lists is
   not repeated.
