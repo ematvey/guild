@@ -83,6 +83,15 @@ export interface ActivityFilters {
   offset?: number;
 }
 
+export interface ChildThreadSummary {
+  thread: AgentThread;
+  agent_name: string;
+  run_id: string | null;
+  status: AgentRunStatus | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface CreateRunInput {
   agent_id: string;
   user_id?: string | null;
@@ -828,6 +837,17 @@ export class AgentStore {
     return this.fetchThread(agentId, userId, threadId);
   }
 
+  /** One thread row by id without caller scoping. Tree tools resolve a child
+   *  by id and check the parent edge themselves. */
+  async threadById(threadId: string): Promise<AgentThread | null> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.id = $1`,
+      [threadId],
+    );
+    const row = res.rows[0];
+    return row === undefined ? null : toThread(row);
+  }
+
   /** Renames a thread and locks the title against regeneration. */
   async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
     const client = await this.pool.connect();
@@ -1036,6 +1056,53 @@ export class AgentStore {
       [parentThreadId],
     );
     return Number(res.rows[0]?.count ?? 0);
+  }
+
+  /** Direct children of one node with the latest run's status and times. */
+  async childThreadSummaries(parentThreadId: string): Promise<ChildThreadSummary[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS}, a.name AS agent_name,
+              r.id AS run_id, r.status AS run_status,
+              ${TS("COALESCE(r.started_at, r.created_at)")} AS run_started_at,
+              ${TS("r.finished_at")} AS run_finished_at
+       FROM agent_threads t
+       JOIN agents a ON a.id = t.agent_id
+       LEFT JOIN LATERAL (
+         SELECT id, status, started_at, created_at, finished_at
+         FROM agent_runs WHERE thread_id = t.id
+         ORDER BY created_at DESC, id DESC LIMIT 1
+       ) r ON true
+       WHERE t.parent_thread_id = $1
+       ORDER BY t.created_at ASC, t.id ASC`,
+      [parentThreadId],
+    );
+    return res.rows.map((row) => ({
+      thread: toThread(row),
+      agent_name: row.agent_name as string,
+      run_id: (row.run_id as string | null) ?? null,
+      status: (row.run_status as AgentRunStatus | null) ?? null,
+      started_at: (row.run_started_at as string | null) ?? null,
+      finished_at: (row.run_finished_at as string | null) ?? null,
+    }));
+  }
+
+  /** Queued or running runs in one node's subtree, with their chat ids. */
+  async activeRunsInSubtree(
+    threadId: string,
+  ): Promise<{ run_id: string; thread_id: string; chat_id: string }[]> {
+    const res = await this.pool.query<{ run_id: string; thread_id: string; chat_id: string }>(
+      `WITH RECURSIVE tree AS (
+         SELECT id FROM agent_threads WHERE id = $1
+         UNION ALL
+         SELECT child.id FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
+       )
+       SELECT r.id AS run_id, r.thread_id, t.chat_id
+       FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
+       WHERE r.thread_id IN (SELECT id FROM tree) AND r.status IN ('queued', 'running')
+       ORDER BY r.created_at ASC, r.id ASC`,
+      [threadId],
+    );
+    return res.rows;
   }
 
   /** The node and every descendant, root first. */
