@@ -11,6 +11,13 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Composer typing stays cheap on long threads (2026-10-22).** A keystroke
+  re-renders the whole chat view, and a 3000-event thread holds thousands of
+  markdown blocks. `WebChat` now memoizes the transcript element list, so an
+  unchanged thread keeps identical element objects and React bails out of
+  that subtree. Measured on the 3000-event dev thread: one keystroke went
+  from 23 ms to 4 ms (median, headless Chrome).
+
 - **Security hardening pass (2026-10-22).** The review in
   `docs/reviews/2026-10-22-security-review.md` drove one batch of fixes. The
   Rust clients move to `rustls` 0.23.46, `rustls-webpki` 0.103.16 and the

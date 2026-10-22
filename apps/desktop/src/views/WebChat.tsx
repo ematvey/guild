@@ -3288,6 +3288,78 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [blocks, chatView]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
+  // The transcript is the expensive subtree: every keystroke in the
+  // composer re-renders the whole view, and a long thread holds thousands
+  // of markdown blocks. Memoizing the element list keeps those elements
+  // identical across prompt edits, so React bails out of the transcript
+  // and typing costs only the composer.
+  const lastBlockIndex = blocks.length - 1;
+  const transcriptEntries = useMemo(
+    () =>
+      displayEntries.map((e, i) =>
+        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
+        e.kind === "work" ? (
+          <WorkedForBlock
+            key={`work-${e.run[0]!.key}`}
+            run={e.run}
+            active={streaming && i === displayEntries.length - 1}
+            stopping={!!(chatId && stopping[chatId])}
+            turnStart={e.turnStart}
+          />
+        ) : e.b.kind === "user" ? (
+          <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
+            <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
+              {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
+              {e.b.attachments && e.b.attachments.length > 0 && (
+                <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
+                  {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
+                    <AttachmentImageThumb key={a.id} att={a} />
+                  ))}
+                  {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
+                    <AttachmentFileChip key={a.id} att={a} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <HoverStamp ts={e.b.ts} side="right" />
+          </div>
+        ) : e.b.kind === "reasoning" ? (
+          <ReasoningFrame
+            key={e.b.key}
+            text={e.b.reasoningText ?? ""}
+            live={streaming && e.i === lastBlockIndex}
+          />
+        ) : e.b.kind === "tool" && e.b.tool ? (
+          <ToolFrame key={e.b.key} t={e.b.tool} />
+        ) : e.b.kind === "approval" && e.b.approval ? (
+          <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
+        ) : e.b.kind === "compaction" && e.b.compaction ? (
+          <CompactionCard key={e.b.key} c={e.b.compaction} />
+        ) : e.b.kind === "error" ? (
+          <div
+            key={e.b.key}
+            className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
+          >
+            {e.b.text}
+          </div>
+        ) : (
+          <div key={e.b.key} className="group relative">
+            <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                {e.b.text}
+              </Markdown>
+              {e.b.interrupted && !streaming && (
+                <div className="text-xs text-muted-foreground">stopped</div>
+              )}
+            </div>
+            {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
+              <HoverStamp ts={e.b.ts} side="left" />
+            )}
+          </div>
+        ),
+      ),
+    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex],
+  );
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -3828,73 +3900,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   </Button>
                 </div>
               )}
-              {displayEntries.map((e, i) =>
-                e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
-                e.kind === "work" ? (
-                  <WorkedForBlock
-                    key={`work-${e.run[0]!.key}`}
-                    run={e.run}
-                    active={streaming && i === displayEntries.length - 1}
-                    stopping={!!(chatId && stopping[chatId])}
-                    turnStart={e.turnStart}
-                  />
-                ) : e.b.kind === "user" ? (
-                  <div
-                    key={e.b.key}
-                    className="group relative ml-auto w-fit max-w-[80%]"
-                  >
-                    <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
-                      {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
-                      {e.b.attachments && e.b.attachments.length > 0 && (
-                        <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
-                          {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
-                            <AttachmentImageThumb key={a.id} att={a} />
-                          ))}
-                          {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
-                            <AttachmentFileChip key={a.id} att={a} />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <HoverStamp ts={e.b.ts} side="right" />
-                  </div>
-                ) : e.b.kind === "reasoning" ? (
-                  <ReasoningFrame
-                    key={e.b.key}
-                    text={e.b.reasoningText ?? ""}
-                    live={streaming && e.i === blocks.length - 1}
-                  />
-                ) : e.b.kind === "tool" && e.b.tool ? (
-                  <ToolFrame key={e.b.key} t={e.b.tool} />
-                ) : e.b.kind === "approval" && e.b.approval ? (
-                  <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
-                ) : e.b.kind === "compaction" && e.b.compaction ? (
-                  <CompactionCard key={e.b.key} c={e.b.compaction} />
-                ) : e.b.kind === "error" ? (
-                  <div
-                    key={e.b.key}
-                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
-                  >
-                    {e.b.text}
-                  </div>
-                ) : (
-                  <div key={e.b.key} className="group relative">
-                    <div
-                      className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}
-                    >
-                      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                        {e.b.text}
-                      </Markdown>
-                      {e.b.interrupted && !streaming && (
-                        <div className="text-xs text-muted-foreground">stopped</div>
-                      )}
-                    </div>
-                    {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
-                      <HoverStamp ts={e.b.ts} side="left" />
-                    )}
-                  </div>
-                ),
-              )}
+              {transcriptEntries}
               {/* in-progress /compact line: replaced by the durable
                   "Context compacted" card when the event lands. The reducer
                   computes the guard (its armed target vs the open chat) —
