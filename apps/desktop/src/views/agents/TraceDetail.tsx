@@ -37,7 +37,7 @@ import type { AgentsRoute } from "./agents-route";
 import { compact, money, ms, spanPreview, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { JsonView } from "./JsonView";
 import { MessagesView, type ChatMessage } from "./MessagesView";
-import { ErrorState, InlineLoading, PageBody, TabBar, ToneBadge } from "./agent-ui";
+import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 
 type TraceView = "transcript" | "tree" | "timeline";
 const TRACE_VIEWS: ReadonlyArray<readonly [TraceView, string]> = [
@@ -184,113 +184,119 @@ export function RunDetailPage({
         </div>
       </header>
 
-      <PageBody className="max-w-[90rem]">
-        {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && trace === null && <InlineLoading label="Loading trace" />}
-        {trace !== null && (
-          <div className="space-y-4">
-            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
-              <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
-                <div className="border-b border-border px-2">
-                  <TabBar
-                    label="Trace views"
-                    tabs={TRACE_VIEWS}
-                    value={view}
-                    onChange={(next) => {
-                      setView(next);
-                      writeTraceView(next);
-                    }}
-                  />
-                </div>
-                <div className="px-3 py-2">
-                  {view === "timeline" &&
-                    (bounds === null ? (
-                      <p className="py-6 text-center text-sm text-muted-foreground">No spans were recorded for this trace.</p>
-                    ) : (
-                      <TimelineView spans={ordered} bounds={bounds} selected={selected} onSelect={setSelected} />
-                    ))}
-                  {view === "tree" && <SpanTree spans={ordered} selected={selected} onSelect={setSelected} />}
-                  {view === "transcript" && (
-                    <TranscriptView spans={ordered} steps={run?.steps ?? []} selected={selected} onSelect={setSelected} />
-                  )}
-                </div>
-              </div>
-
-              <aside className="space-y-4">
-                <SpanDetail span={selected} admin={admin} />
-                <div className="border-t border-border pt-3">
-                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
-                  <dl className="mt-2 space-y-1.5 text-2xs">
-                    <Meta label="Trace id" value={trace.trace_id} mono />
-                    <Meta label="Agent" value={trace.agent_name || "—"} />
-                    {trace.session_id !== null ? (
-                      <div>
-                        <dt className="text-muted-foreground">Session</dt>
-                        <dd>
-                          <button
-                            type="button"
-                            onClick={() => onNavigate({ view: "session", sessionId: trace.session_id! })}
-                            className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
-                          >
-                            {trace.session_id}
-                          </button>
-                        </dd>
-                      </div>
-                    ) : (
-                      <Meta label="Session" value="—" />
-                    )}
-                    {trace.parent_trace_id !== null && <Meta label="Parent trace" value={trace.parent_trace_id} mono />}
-                    <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
-                  </dl>
-                </div>
-              </aside>
-            </div>
-
-            {children.length > 0 && (
-              <section className="border-t border-border pt-3">
-                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Delegated traces</p>
-                <ul className="mt-2 divide-y divide-border/60">
-                  {children.map((child) => (
-                    <li key={child.trace_id}>
-                      <button
-                        type="button"
-                        onClick={() => onNavigate({ view: "run", runId: child.trace_id })}
-                        className="flex w-full items-start gap-2 py-2 text-left text-xs transition-colors hover:bg-accent/40"
-                      >
-                        <ToneBadge tone={toneOf(child.status)}>{statusLabel(child.status)}</ToneBadge>
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium">{child.agent_name || "Delegated agent"}</span>
-                          {child.summary !== "" && (
-                            <span className="mt-0.5 block truncate text-muted-foreground">{child.summary}</span>
-                          )}
-                        </span>
-                        <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            {artifacts.length > 0 && (
-              <section className="border-t border-border pt-3">
-                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Artifacts</p>
-                <ul className="mt-2 space-y-1">
-                  {artifacts.map((artifact) => (
-                    <li key={artifact.id} className="flex items-center gap-2 text-xs">
-                      <FileText className="size-3.5 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 break-all font-mono">{artifact.path}</span>
-                      <span className="shrink-0 text-2xs text-muted-foreground">
-                        {artifact.status} · {formatBytes(artifact.size)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+      <div className="min-h-0 flex-1 overflow-y-auto xl:overflow-hidden">
+        {error !== null && (
+          <div className="mx-auto w-full max-w-[90rem] px-4 pt-4 sm:px-6">
+            <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />
           </div>
         )}
-      </PageBody>
+        {error === null && trace === null && (
+          <div className="mx-auto w-full max-w-[90rem] px-4 pt-4 sm:px-6">
+            <InlineLoading label="Loading trace" />
+          </div>
+        )}
+        {trace !== null && (
+          <div className="mx-auto flex min-h-full w-full max-w-[90rem] flex-col gap-4 px-4 pb-16 pt-4 sm:px-6 xl:h-full xl:min-h-0 xl:flex-row xl:pb-4">
+            <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card xl:min-h-0 xl:flex-1">
+              <div className="shrink-0 border-b border-border px-2">
+                <TabBar
+                  label="Trace views"
+                  tabs={TRACE_VIEWS}
+                  value={view}
+                  onChange={(next) => {
+                    setView(next);
+                    writeTraceView(next);
+                  }}
+                />
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2" data-scrollable>
+                {view === "timeline" &&
+                  (bounds === null ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">No spans were recorded for this trace.</p>
+                  ) : (
+                    <TimelineView spans={ordered} bounds={bounds} selected={selected} onSelect={setSelected} />
+                  ))}
+                {view === "tree" && <SpanTree spans={ordered} selected={selected} onSelect={setSelected} />}
+                {view === "transcript" && (
+                  <TranscriptView spans={ordered} steps={run?.steps ?? []} selected={selected} onSelect={setSelected} />
+                )}
+              </div>
+            </div>
+
+            <aside className="w-full space-y-4 xl:min-h-0 xl:w-[24rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
+              <SpanDetail span={selected} admin={admin} />
+              <div className="border-t border-border pt-3">
+                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
+                <dl className="mt-2 space-y-1.5 text-2xs">
+                  <Meta label="Trace id" value={trace.trace_id} mono />
+                  <Meta label="Agent" value={trace.agent_name || "—"} />
+                  {trace.session_id !== null ? (
+                    <div>
+                      <dt className="text-muted-foreground">Session</dt>
+                      <dd>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ view: "session", sessionId: trace.session_id! })}
+                          className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
+                        >
+                          {trace.session_id}
+                        </button>
+                      </dd>
+                    </div>
+                  ) : (
+                    <Meta label="Session" value="—" />
+                  )}
+                  {trace.parent_trace_id !== null && <Meta label="Parent trace" value={trace.parent_trace_id} mono />}
+                  <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
+                </dl>
+              </div>
+
+              {children.length > 0 && (
+                <section className="border-t border-border pt-3">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Delegated traces</p>
+                  <ul className="mt-2 divide-y divide-border/60">
+                    {children.map((child) => (
+                      <li key={child.trace_id}>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ view: "run", runId: child.trace_id })}
+                          className="flex w-full items-start gap-2 py-2 text-left text-xs transition-colors hover:bg-accent/40"
+                        >
+                          <ToneBadge tone={toneOf(child.status)}>{statusLabel(child.status)}</ToneBadge>
+                          <span className="min-w-0 flex-1">
+                            <span className="font-medium">{child.agent_name || "Delegated agent"}</span>
+                            {child.summary !== "" && (
+                              <span className="mt-0.5 block truncate text-muted-foreground">{child.summary}</span>
+                            )}
+                          </span>
+                          <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {artifacts.length > 0 && (
+                <section className="border-t border-border pt-3">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Artifacts</p>
+                  <ul className="mt-2 space-y-1">
+                    {artifacts.map((artifact) => (
+                      <li key={artifact.id} className="flex items-center gap-2 text-xs">
+                        <FileText className="size-3.5 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 break-all font-mono">{artifact.path}</span>
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          {artifact.status} · {formatBytes(artifact.size)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </aside>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -823,7 +829,7 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
           : "";
 
   return (
-    <div className="flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-card">
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <SpanIcon span={span} />
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{span.name}</span>
@@ -852,7 +858,7 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
           <CopyButton value={tabText} className="ml-auto" />
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="p-3">
         {tab === "overview" && <SpanOverview span={span} />}
         {tab === "input" && (
           <div className="space-y-2">
