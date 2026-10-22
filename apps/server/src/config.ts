@@ -70,10 +70,9 @@ export interface Config {
   allowShellTools: boolean;
   /** Where server-side tools run (GUILD_SANDBOX): `runner` — gVisor
    *  sandboxes via the sandbox runner; `inprocess-unsafe` — in the server
-   *  process, unconfined (tests/dev only, refused in production);
-   *  `disabled` — server-side tools fail. Default: runner when
-   *  GUILD_SANDBOX_RUNNER_URL is set, else disabled in production and
-   *  inprocess-unsafe elsewhere. */
+   *  process, unconfined (tests/dev only, refused in production). Default:
+   *  runner when GUILD_SANDBOX_RUNNER_URL is set, else inprocess-unsafe
+   *  outside production; production requires the runner. */
   sandbox: SandboxConfig;
   /** Approval card deadline (GUILD_APPROVAL_TIMEOUT_MS, default 5 min — the
    *  Rust APPROVAL_TIMEOUT); the gate auto-denies when it lapses. */
@@ -98,13 +97,12 @@ export interface Config {
 
 export type SandboxConfig =
   | { mode: "runner"; runnerUrl: string; runnerToken: string }
-  | { mode: "inprocess-unsafe" }
-  | { mode: "disabled" };
+  | { mode: "inprocess-unsafe" };
 
 export function parseSandboxConfig(env: NodeJS.ProcessEnv): SandboxConfig {
   const runnerUrl = env.GUILD_SANDBOX_RUNNER_URL;
   const production = env.NODE_ENV === "production";
-  const mode = env.GUILD_SANDBOX ?? (runnerUrl ? "runner" : production ? "disabled" : "inprocess-unsafe");
+  const mode = env.GUILD_SANDBOX ?? (runnerUrl ? "runner" : "inprocess-unsafe");
   if (mode === "runner") {
     if (!runnerUrl) throw new Error("GUILD_SANDBOX=runner requires GUILD_SANDBOX_RUNNER_URL");
     const runnerToken = env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
@@ -115,8 +113,7 @@ export function parseSandboxConfig(env: NodeJS.ProcessEnv): SandboxConfig {
     if (production) throw new Error("GUILD_SANDBOX=inprocess-unsafe is refused when NODE_ENV=production");
     return { mode };
   }
-  if (mode === "disabled") return { mode };
-  throw new Error(`GUILD_SANDBOX must be runner, inprocess-unsafe or disabled (got ${mode})`);
+  throw new Error(`GUILD_SANDBOX must be runner or inprocess-unsafe (got ${mode})`);
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";

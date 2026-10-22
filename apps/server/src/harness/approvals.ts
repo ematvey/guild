@@ -64,11 +64,16 @@ export function toolClass(name: string): string {
     case "read":
       return "read_file";
     case "bash":
+    case "agent_bash":
       return "execute";
     case "write":
+    case "agent_write":
       return "write_file";
     case "edit":
+    case "agent_edit":
       return "edit_file";
+    case "agent_read":
+      return "read_file";
     default:
       return name;
   }
@@ -76,6 +81,7 @@ export function toolClass(name: string): string {
 
 export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
+import { AGENT_TOOL_NAMES } from "./agent-tools.js";
 
 export interface ApprovalGateDeps {
   pool: PlatformPool;
@@ -484,7 +490,11 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         return undefined;
       }
       const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
-      const isCommandTool = call.name === "bash" || call.name === "execute";
+      const isCommandTool = call.name === "bash" || call.name === "execute" || call.name === "agent_bash";
+      // The agent's own sandbox tools act server-side even when the chat is
+      // bound to a machine: same shell allowlist and same batch contract as
+      // the server-side coding tools.
+      const isAgentTool = (AGENT_TOOL_NAMES as readonly string[]).includes(call.name);
       // An unmapped conversation has no policy to consult, and failing open
       // here skipped the static deny rules, the shell allowlist and the card
       // for every tool. A command-bearing tool is refused instead; non-command
@@ -495,6 +505,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           : undefined;
       }
       const executor = await deps.executorKind(Number(runtime.conversationId));
+      const toolExecutor = isAgentTool ? "server" : executor;
 
       // 1. Static exec policy (the machine `execute` path's rules, applied
       //    to the harness's bash tool — same rules, same matcher).
@@ -506,7 +517,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         // Server-side executors honor the shell allowlist (the Rust
         // run_server_tool check); machine-bound chats run on the desktop's
         // own executor.
-        if (executor !== "machine" && !deps.allowShellTools) {
+        if (toolExecutor !== "machine" && !deps.allowShellTools) {
           return { block: "denied: shell tools are disabled on this server" };
         }
         if (decision.kind === "allow") return undefined; // static allow skips the gate
@@ -532,7 +543,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       // 2. The batch contract: server-side workspace sessions are
       //    pre-approved — no interactive gate (the exec policy above still
       //    ran). Everything else gates by policy.
-      if (executor === "server" && !isCommandTool) {
+      if (toolExecutor === "server" && !isCommandTool) {
         // Non-shell server tools (read/write/edit) run under the same batch
         // contract in the Rust server-local executor.
         return undefined;

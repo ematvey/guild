@@ -87,13 +87,14 @@ import {
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
 import { uuidv7 } from "../platform/time.js";
-import { IntegrationsRuntime } from "./integrations.js";
+import { CODING_TOOL_NAMES, IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import type { TraceStore } from "../platform/trace.js";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
+import { createAgentWorkspaceTools, createMachineTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
 /** The direct tool surface for an agent: its allowlist narrows the coding
@@ -127,6 +128,7 @@ export function composeAgentInstructions(
   agent: { name: string; is_personal: boolean },
   config: AgentConfigFiles,
   projectInstructions?: string,
+  machineBound = false,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -138,8 +140,11 @@ export function composeAgentInstructions(
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
   ];
   const workspace: string[] = [
-    "Your own files. Edit them with write/edit; a change applies on your next turn. " +
-      "If BOOTSTRAP.md exists, follow it and then delete it.",
+    machineBound
+      ? "Your own files. Read them with agent_read and edit them with agent_write/agent_edit; " +
+        "a change applies on your next turn. If BOOTSTRAP.md exists, follow it and then delete it."
+      : "Your own files. Edit them with write/edit; a change applies on your next turn. " +
+        "If BOOTSTRAP.md exists, follow it and then delete it.",
   ];
   let budget = TOTAL_MAX_CHARS;
   for (const entry of CONFIG_FILES) {
@@ -161,6 +166,13 @@ export function composeAgentInstructions(
   parts.push(
     `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
+  if (machineBound) {
+    parts.push(
+      "This chat is bound to the user's project, so `read`, `write`, `edit` and `bash` act on their machine " +
+        "in the project folder. `agent_read`, `agent_write`, `agent_edit` and `agent_bash` act in your own " +
+        "workspace sandbox; that sandbox is a full Linux environment, so other paths there work too.",
+    );
+  }
   const project = projectBlock(projectInstructions);
   if (project !== null) parts.push(project);
   return parts.join("\n\n");
@@ -577,8 +589,6 @@ export class GuildRuntime {
         if (opts.materialize && target.chatId !== null) await this.materializeSandboxSkills(target.chatId, env);
         return env;
       }
-      case "disabled":
-        throw new Error("server-side tools are disabled: no sandbox runner is configured (GUILD_SANDBOX_RUNNER_URL)");
     }
   }
 
@@ -1101,7 +1111,11 @@ export class GuildRuntime {
   /** Seeds the workspace config files when absent, reads them, and builds
    *  the thread's instructions. A broken volume never fails a turn: the
    *  prompt falls back to the runtime block alone. */
-  private async agentInstructionsFor(agent: Agent, projectInstructions?: string): Promise<string> {
+  private async agentInstructionsFor(
+    agent: Agent,
+    projectInstructions?: string,
+    machineBound = false,
+  ): Promise<string> {
     const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
     try {
@@ -1111,7 +1125,7 @@ export class GuildRuntime {
       this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name), identity: { name: null, vibe: null, emoji: null, avatar: null } };
     }
-    return composeAgentInstructions(agent, config, projectInstructions);
+    return composeAgentInstructions(agent, config, projectInstructions, machineBound);
   }
 
   private async provisionTurnTools(
@@ -1136,11 +1150,27 @@ export class GuildRuntime {
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
+    const machineBound = (await this.executorKind(Number(conversation.id))) === "machine";
     // The agent's allowlist narrows the direct coding and skill tools the
     // same way it narrows integrations. Codemode itself is always present:
     // it is the only path to the script-only tools.
-    const baseTools = directBaseTools(base.tools, agent);
+    const baseTools = directBaseTools(
+      machineBound
+        ? base.tools.filter((tool) => !(CODING_TOOL_NAMES as readonly string[]).includes(tool.name))
+        : base.tools,
+      agent,
+    );
     const agentTools = await this.agentToolsForChat(chatId);
+    // The plain names keep their behavior; only their descriptions change,
+    // so the model sees which environment each set acts on.
+    const machineTools = machineBound ? createMachineTools() : [];
+    // A project-bound chat runs the plain coding tools on the user's
+    // machine, so the agent gets a second set bound to its own sandbox.
+    // They are outside the allowlist: the workspace is the agent's memory,
+    // not an optional capability.
+    const workspaceTools = machineBound
+      ? createAgentWorkspaceTools(await this.envForConversation(Number(conversation.id), orgId))
+      : [];
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
     // under a chat-scoped name and listed with the other extensions.
@@ -1149,21 +1179,39 @@ export class GuildRuntime {
         ? null
         : { name: `guild-agent-tools:${chatId}`, tools: agentTools };
     if (agentExtension !== null) this.registry.install(agentExtension);
+    const machineExtension =
+      machineTools.length === 0 ? null : { name: `guild-machine-tools:${chatId}`, tools: machineTools };
+    if (machineExtension !== null) this.registry.install(machineExtension);
+    const workspaceExtension =
+      workspaceTools.length === 0
+        ? null
+        : { name: `guild-agent-workspace-tools:${chatId}`, tools: workspaceTools };
+    if (workspaceExtension !== null) this.registry.install(workspaceExtension);
     await conversation.configure(
       {
         extensions: [
           ...base.extensions,
           ...(agentExtension === null ? [] : [agentExtension]),
+          ...(machineExtension === null ? [] : [machineExtension]),
+          ...(workspaceExtension === null ? [] : [workspaceExtension]),
           ...prepared.extensions,
           ...userPrepared.extensions,
         ],
-        tools: [...baseTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
+        tools: [
+          ...baseTools,
+          ...machineTools,
+          ...prepared.tools,
+          ...userPrepared.tools,
+          ...agentTools,
+          ...workspaceTools,
+        ],
         ...(agent === null
           ? {}
           : {
               instructions: await this.agentInstructionsFor(
                 agent,
                 this.projectInstructions.get(Number(conversation.id)),
+                workspaceTools.length > 0,
               ),
             }),
       },

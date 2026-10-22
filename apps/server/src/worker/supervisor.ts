@@ -81,6 +81,11 @@ function workerEnv(config: Config, chatId: string): NodeJS.ProcessEnv {
     GUILD_S3_ACCESS_KEY_ID: config.s3AccessKeyId,
     GUILD_S3_SECRET_ACCESS_KEY: config.s3SecretAccessKey,
     GUILD_DATA_DIR: config.dataDir,
+    // Workspace roots: the worker resolves sandbox targets from its own
+    // config, so a non-default root must cross the fork.
+    GUILD_AGENT_WORKSPACE_ROOT: config.agentWorkspaceRoot,
+    GUILD_AGENT_WORKSPACE_WRITE_ROOT: config.agentWorkspaceWriteRoot,
+    ...(process.env.GUILD_SANDBOX_ROOT ? { GUILD_SANDBOX_ROOT: process.env.GUILD_SANDBOX_ROOT } : {}),
     ...(config.execPolicyRulesPath ? { GUILD_EXEC_POLICY_RULES: config.execPolicyRulesPath } : {}),
     GUILD_SANDBOX: config.sandbox.mode,
     ...(config.sandbox.mode === "runner"
