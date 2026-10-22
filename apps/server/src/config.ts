@@ -80,6 +80,10 @@ export interface Config {
   /** Machine-tool dispatch deadline (GUILD_CLIENT_TOOL_TIMEOUT_MS, default
    *  5 min — the Rust CLIENT_TOOL_TIMEOUT). */
   clientToolTimeoutMs: number;
+  /** Base delay of the durable generation retry backoff
+   *  (GUILD_RETRY_BASE_DELAY_MS, default 2000 — pi-durable's own default).
+   *  Tests lower it so a 404-wrapped-as-502 does not cost 2+4+8 seconds. */
+  retryBaseDelayMs: number;
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
@@ -249,6 +253,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sandbox,
     approvalTimeoutMs,
     clientToolTimeoutMs,
+    retryBaseDelayMs: Number(env.GUILD_RETRY_BASE_DELAY_MS ?? 2000),
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES || null,
     tracePayloads,
     // Worker-per-chat: when "on", the server holds no harness — admission

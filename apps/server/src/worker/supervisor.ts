@@ -94,6 +94,7 @@ function workerEnv(config: Config, chatId: string): NodeJS.ProcessEnv {
     GUILD_ALLOW_SHELL_TOOLS: config.allowShellTools ? "1" : "0",
     GUILD_CLIENT_TOOL_TIMEOUT_MS: String(config.clientToolTimeoutMs),
     GUILD_APPROVAL_TIMEOUT_MS: String(config.approvalTimeoutMs),
+    GUILD_RETRY_BASE_DELAY_MS: String(config.retryBaseDelayMs),
     GUILD_LOG_LEVEL: config.logLevel,
     GUILD_WORKER_MODE: "off", // the worker itself must not spawn workers
     GUILD_WORKER_CHAT_ID: chatId,
