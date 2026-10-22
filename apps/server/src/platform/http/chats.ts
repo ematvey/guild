@@ -688,6 +688,10 @@ export async function submitTurn(
   // The machine turn's client-assembled skills index (additive wire field;
   // the desktop sends it, browser clients do not).
   const skillsIndex = typeof body["skills_index"] === "string" ? body["skills_index"] : undefined;
+  // The desktop's project instruction chain (global config-dir file + the
+  // project's AGENTS.md chain). Additive like skills_index: the server
+  // appends it to the agent's workspace instructions under its own cap.
+  const agentsMd = typeof body["agents_md"] === "string" ? body["agents_md"] : undefined;
 
   const payload = {
     user_message_id: commandId,
@@ -733,6 +737,7 @@ export async function submitTurn(
       model,
       ...(sendMode !== undefined ? { sendMode } : {}),
       ...(skillsIndex !== undefined ? { skillsIndex } : {}),
+      ...(agentsMd !== undefined ? { agentsMd } : {}),
     });
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
   } catch (error) {
@@ -817,6 +822,7 @@ function canonicalChatRequest(body: Record<string, unknown>, chatId: string, mod
     out.server_workspace = sortedJson(body["server_workspace"]);
   }
   if (body["skills_index"] !== undefined && body["skills_index"] !== null) out.skills_index = body["skills_index"];
+  if (body["agents_md"] !== undefined && body["agents_md"] !== null) out.agents_md = body["agents_md"];
   return sortedJson(out);
 }
 

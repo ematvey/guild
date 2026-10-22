@@ -770,6 +770,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 attachment_ids: Vec::new(),
                 project_id: None,
                 skills_index: None,
+                agents_md: None,
             })
             .await?;
         let (message_id, cost_usd, tokens_in, tokens_out) =
@@ -847,6 +848,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     // via lib/context.ts, an engine client via its own assembly over the
     // fs.* bridge): the shim forwards it into the additive request fields.
     let skills_index = req.params["skills_index"].as_str().map(str::to_string);
+    let agents_md = req.params["agents_md"].as_str().map(str::to_string);
 
     // 2. The workflow dispatches tools to the machine the project is bound
     //    to — it must be this daemon's own executor link. Then chat
@@ -926,6 +928,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             attachment_ids: Vec::new(),
             project_id: Some(project.id),
             skills_index,
+            agents_md,
         })
         .await;
     let run = match streamed {

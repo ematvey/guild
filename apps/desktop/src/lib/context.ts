@@ -1,19 +1,23 @@
-//! Context assembly: skills discovery + index and `/name` expansion over
-//! the daemon's allowlisted `fs.*` bridge — the logic that used to live in
-//! the daemon's Rust (`app-server/src/skills.rs`), now on the client where
-//! the files are.
+//! Context assembly (unification spec §3 item 2 / phase 2): skills
+//! discovery + index, `/name` expansion, and the AGENTS.md instruction
+//! chain — the logic that used to live in the daemon's Rust
+//! (`app-server/src/skills.rs` + `agents_md.rs`), now on the client where
+//! the files are. Rust only touches bytes via the allowlisted `fs.*`
+//! bridge; everything here is discovery logic over that bridge.
 //!
-//! Skills: config scope → user `~/.agents` → repo chain (git root → cwd) →
-//! legacy `.guild`; later entries win a name collision; the index budget is
-//! 8000 bytes with description clipping at 120/60/24 then tail-dropping
-//! with an omission notice.
+//! Semantics are ported to the letter from the Rust implementations:
+//! - skills: config scope → user `~/.agents` → repo chain (git root →
+//!   cwd) → legacy `.guild`; later entries win a name collision; the index
+//!   budget is 8000 bytes with description clipping at 120/60/24 then
+//!   tail-dropping with an omission notice.
+//! - AGENTS.md (Codex semantics, codex-rs `core/src/agents_md.rs`): the
+//!   global config-dir file (`AGENTS.override.md` beats `AGENTS.md`),
+//!   then one file per directory from the git root down to the working
+//!   dir (override beats plain, empty files stop the dir's contribution),
+//!   under a shared 32 KiB budget with byte-truncation.
 //!
-//! Agent instructions are not assembled here: an agent thread reads its
-//! workspace files (`IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`,
-//! `MEMORY.md`, `BOOTSTRAP.md`) on the server, on every turn.
-//!
-//! Browser mode (no daemon) has no local files: the index is empty and the
-//! prompt passes through untouched.
+//! Browser mode (no daemon) has no local files: every assembly returns
+//! empty and the prompt passes through untouched.
 
 export interface SkillEntry {
   name: string;
@@ -40,11 +44,19 @@ export interface SkillListEntry extends SkillEntry {
 export interface PreparedTurn {
   prompt: string;
   index: string;
+  instructions?: string;
 }
 
 /** Byte length (the Rust budget checks are byte-based). */
 function byteLength(s: string): number {
   return new TextEncoder().encode(s).length;
+}
+
+/** UTF-8-safe truncation to `max` bytes (Rust's char-boundary slice). */
+function truncateBytes(s: string, max: number): string {
+  if (byteLength(s) <= max) return s;
+  const bytes = new TextEncoder().encode(s);
+  return new TextDecoder().decode(bytes.slice(0, max));
 }
 
 // ---------- the fs bridge ----------
@@ -57,7 +69,8 @@ export interface DirEntry {
 
 /**
  * The daemon-side file bridge. Browser mode returns empty results —
- * there are no local files there.
+ * there are no local files there (server-side AGENTS.md for web chats is
+ * phase 5a, machine-mediated).
  */
 export interface BridgeFs {
   scopes(): Promise<{ configDir: string | null; home: string | null }>;
@@ -380,10 +393,92 @@ export function mentionBlock(
   return s;
 }
 
+// ---------- AGENTS.md (Codex semantics) ----------
+
+const AGENTS_MD_FILENAME = "AGENTS.md";
+const AGENTS_OVERRIDE_FILENAME = "AGENTS.override.md";
+/** Codex's `project_doc_max_bytes` default. */
+export const PROJECT_DOC_MAX_BYTES = 32 * 1024;
+
+export interface DocEntry {
+  path: string;
+  contents: string;
+}
+
+/** The global instructions: override beats plain, first non-empty wins. */
+export async function loadGlobalAgentsMd(
+  fs: BridgeFs,
+  configDir: string,
+): Promise<DocEntry | null> {
+  for (const name of [AGENTS_OVERRIDE_FILENAME, AGENTS_MD_FILENAME]) {
+    const path = `${configDir}/${name}`;
+    const text = await fs.readText(undefined, path);
+    if (text !== null && text.trim() !== "") return { path, contents: text };
+  }
+  return null;
+}
+
+/** The nearest ancestor (inclusive) holding `.git`; else the start itself. */
+async function projectRoot(
+  fs: BridgeFs,
+  projectDir: string,
+): Promise<string> {
+  let cur: string | null = projectDir;
+  while (cur) {
+    if (await fs.exists(projectDir, `${cur}/.git`)) return cur;
+    cur = parentOf(cur);
+  }
+  return projectDir;
+}
+
+/** Directories from the project root down to cwd (inclusive), in that order. */
+async function searchDirs(fs: BridgeFs, projectDir: string): Promise<string[]> {
+  const root = await projectRoot(fs, projectDir);
+  const dirs: string[] = [];
+  let cur: string | null = projectDir;
+  while (cur) {
+    dirs.push(cur);
+    if (cur === root) break;
+    cur = parentOf(cur);
+  }
+  dirs.reverse();
+  return dirs;
+}
+
+/**
+ * The project AGENTS.md chain: at most one file per directory (override
+ * beats plain; an empty file stops that dir's contribution), root → cwd,
+ * shared byte budget with truncation. Unreadable files are skipped.
+ */
+export async function projectAgentDocs(
+  fs: BridgeFs,
+  projectDir: string,
+  maxBytes = PROJECT_DOC_MAX_BYTES,
+): Promise<DocEntry[]> {
+  projectDir = projectDir.replaceAll("\\", "/").replace(/\/$/, "");
+  const out: DocEntry[] = [];
+  let remaining = maxBytes;
+  for (const dir of await searchDirs(fs, projectDir)) {
+    if (remaining === 0) break;
+    for (const name of [AGENTS_OVERRIDE_FILENAME, AGENTS_MD_FILENAME]) {
+      const path = `${dir}/${name}`;
+      const text = await fs.readText(projectDir, path);
+      if (text === null) continue;
+      if (text.trim() === "") break; // the dir contributed an empty file — stop
+      const truncated = truncateBytes(text, remaining);
+      remaining -= byteLength(truncated);
+      out.push({ path, contents: truncated });
+      break; // one file per directory: the first existing candidate wins
+    }
+  }
+  return out;
+}
+
 /**
  * One-call turn preparation (the old daemon `skills.prepare_turn`):
- * expands `/name` mentions into the prompt and renders the skills index.
- * Everything best-effort — context assembly never blocks a turn.
+ * expands `/name` mentions into the prompt, renders the skills index, and
+ * assembles the AGENTS.md instructions. Everything best-effort — context
+ * assembly never blocks a turn.
  */
 export async function prepareTurn(
   fs: BridgeFs,
@@ -415,7 +510,16 @@ export async function prepareTurn(
   const expanded = mentionBlock(mentions);
   const finalPrompt =
     expanded === null ? prompt : `${prompt}${expanded}`;
-  return { prompt: finalPrompt, index };
+  let instructions: string | undefined;
+  const global = await loadGlobalAgentsMd(fs, configDir);
+  const projectDocs = projectDir ? await projectAgentDocs(fs, projectDir) : [];
+  if (global || projectDocs.length > 0) {
+    const parts: string[] = [];
+    if (global) parts.push(global.contents);
+    for (const d of projectDocs) parts.push(d.contents);
+    instructions = parts.join("\n\n--- project-doc ---\n\n");
+  }
+  return { prompt: finalPrompt, index, instructions };
 }
 
 // ---------- skills UI (the manager's listing + toggles) ----------

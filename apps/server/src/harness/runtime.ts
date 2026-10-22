@@ -123,6 +123,7 @@ export class ThreadAgentLocked extends Error {
 export function composeAgentInstructions(
   agent: { name: string; is_personal: boolean },
   config: AgentConfigFiles,
+  projectInstructions?: string,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -149,7 +150,30 @@ export function composeAgentInstructions(
     "These files are your configuration: edit them with write/edit and the change applies on your next turn. " +
       "If BOOTSTRAP.md exists, follow it and then delete it.",
   );
+  const project = projectBlock(projectInstructions);
+  if (project !== null) parts.push(project);
   return parts.join("\n\n");
+}
+
+/** Server-side cap on the client-sent chain; the desktop truncates to the
+ *  same budget before sending, this is the trust boundary. */
+export const PROJECT_INSTRUCTIONS_MAX_CHARS = 32 * 1024;
+
+/** The desktop project's instruction chain, appended after the workspace
+ *  files. The text is client-supplied, so it is cut here regardless of what
+ *  the client did; empty or whitespace-only input yields no block. */
+function projectBlock(text: string | undefined): string | null {
+  const trimmed = (text ?? "").trim();
+  if (trimmed === "") return null;
+  const cut =
+    trimmed.length <= PROJECT_INSTRUCTIONS_MAX_CHARS
+      ? trimmed
+      : `${trimmed.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS)}\n\n(truncated)`;
+  return [
+    "## Project instructions",
+    "The user's desktop project supplies these instructions (the global config file plus the project's AGENTS.md chain). Follow them alongside your workspace files; where they conflict, the project wins for work in that project.",
+    cut,
+  ].join("\n\n");
 }
 
 /** Guild-side chat ↔ durable-conversation mapping (spec decision 6). Kept
@@ -180,6 +204,9 @@ export interface SubmitTurnInput {
   /** The machine turn's client-assembled skills index (the combined
    *  section's local portion); browser/server turns send none. */
   skillsIndex?: string;
+  /** The desktop's project instruction chain (global config-dir file plus
+   *  the project's AGENTS.md chain); browser/server turns send none. */
+  agentsMd?: string;
 }
 
 export class GuildRuntime {
@@ -195,6 +222,9 @@ export class GuildRuntime {
   private readonly bridge: ChatBridge;
   private readonly recovery: ConversationRecovery;
   private readonly host = new ConversationHost();
+  /** The last desktop-sent project instruction chain per conversation, so
+   *  a resumed run sees the same instructions its submit did. */
+  private readonly projectInstructions = new Map<number, string>();
   private readonly watchOpening = new SingleFlight<string, void>();
   private readonly admissions = new ConversationAdmissions();
   private get watches(): Map<string, AgentEventStream> {
@@ -1055,7 +1085,7 @@ export class GuildRuntime {
   /** Seeds the workspace config files when absent, reads them, and builds
    *  the thread's instructions. A broken volume never fails a turn: the
    *  prompt falls back to the runtime block alone. */
-  private async agentInstructionsFor(agent: Agent): Promise<string> {
+  private async agentInstructionsFor(agent: Agent, projectInstructions?: string): Promise<string> {
     const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
     try {
@@ -1065,7 +1095,7 @@ export class GuildRuntime {
       this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name), identity: { name: null, vibe: null, emoji: null, avatar: null } };
     }
-    return composeAgentInstructions(agent, config);
+    return composeAgentInstructions(agent, config, projectInstructions);
   }
 
   private async provisionTurnTools(
@@ -1112,7 +1142,14 @@ export class GuildRuntime {
           ...userPrepared.extensions,
         ],
         tools: [...baseTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
-        ...(agent === null ? {} : { instructions: await this.agentInstructionsFor(agent) }),
+        ...(agent === null
+          ? {}
+          : {
+              instructions: await this.agentInstructionsFor(
+                agent,
+                this.projectInstructions.get(Number(conversation.id)),
+              ),
+            }),
       },
       BACKGROUND_CONTEXT,
     );
@@ -1329,6 +1366,7 @@ export class GuildRuntime {
     // filter). User MCP servers: the chat owner's enabled servers declare
     // their tools the same way (one extension + bare registrations).
     // Empty desired selections clear previously configured dynamic tools.
+    this.projectInstructions.set(Number(conversation.id), input.agentsMd ?? "");
     await this.provisionTurnTools(conversation, chatId, orgId, signal);
     signal.throwIfAborted();
     // The combined skills index section renders at turn start from the

@@ -15,6 +15,7 @@ export type PreparedCommand = {
   projectId?: string | null;
   sendMode?: "queue" | "steer";
   skillsIndex?: string;
+  instructions?: string;
 };
 
 /** Owns the exact send, independently of navigation and later composer edits. */
@@ -60,7 +61,7 @@ export type SubmissionIO = {
   created: (chatId: string) => void;
   upload: (chatId: string, attachment: DraftAttachment) => Promise<MessageAttachmentMeta>;
   uploaded: (attachment: DraftAttachment, metadata: MessageAttachmentMeta) => void;
-  prepare: (text: string, folder?: string) => Promise<{ prompt: string; index?: string } | null>;
+  prepare: (text: string, folder?: string) => Promise<{ prompt: string; index?: string; instructions?: string } | null>;
   submit: (chatId: string, id: string, payload: PreparedCommand) => Promise<void>;
   checkpoint?: (command: OutgoingCommand) => Promise<void>;
 };
@@ -102,7 +103,7 @@ export async function submitCommand(command: OutgoingCommand, io: SubmissionIO):
         model: command.model, prompt: prep?.prompt ?? command.text,
         attachmentIds: command.attachments.map(a => command.uploaded.get(a.id)!.id),
         projectId: command.projectId, sendMode: command.sendMode,
-        skillsIndex: prep?.index || undefined,
+        skillsIndex: prep?.index || undefined, instructions: prep?.instructions || undefined,
       };
     }
     await io.checkpoint?.(command);

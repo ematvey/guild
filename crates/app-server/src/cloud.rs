@@ -299,6 +299,7 @@ impl CloudClient {
             attachment_ids: Vec::new(),
             project_id: None,
             skills_index: None,
+            agents_md: None,
         })
         .await
     }

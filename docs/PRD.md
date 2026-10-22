@@ -188,16 +188,20 @@ invoke a skill explicitly.
 - A `/name` mention injects the full SKILL.md body as context for that turn.
 
 **PRD-15 — Agent instructions.**
-An agent thread's instructions come from the agent workspace, and a local
-engine chat still gets the project's AGENTS.md chain.
+An agent thread reads both its workspace and, on a desktop turn, the
+project it runs in.
 
 - Agent threads read `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`,
   `MEMORY.md` and `BOOTSTRAP.md` from the agent workspace on every turn,
   under a per-file and total byte budget.
+- A desktop turn also supplies the project's AGENTS.md chain (global config
+  file plus one file per directory from the repo root down); the server
+  appends it after the workspace files under its own byte budget.
+- Skills merge the same way: the desktop's local index and the org catalog
+  render as one section, and an org skill the local index already lists is
+  not repeated.
 - Editing a workspace file changes the next turn; no restart or re-pair is
   needed.
-- A workspace file over its cap is truncated, and the agent sees the
-  truncated text.
 
 ### 3.6 Integrations
 

@@ -469,9 +469,15 @@ A thread's instructions are its agent's workspace files (`IDENTITY.md`,
 `SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, `BOOTSTRAP.md`), read on
 the server on every turn under a per-file and total cap
 (`FILE_MAX_CHARS = 8 KiB`, `TOTAL_MAX_CHARS = 24 KiB` in
-`apps/server/src/agents/workspace-config.ts`). There is no separate
-client-assembled AGENTS.md chain: the desktop sends only the skills index,
-and the turn body carries no instruction field.
+`apps/server/src/agents/workspace-config.ts`). A desktop turn adds the
+client-assembled chain: the global config-dir file (`AGENTS.override.md`
+beats `AGENTS.md`) plus one file per directory from the git root down to
+the working dir, joined under `PROJECT_DOC_MAX_BYTES = 32 KiB`
+(`context.ts`). The server appends that chain as `## Project instructions`
+after the workspace files and cuts it at 32 KiB itself
+(`PROJECT_INSTRUCTIONS_MAX_CHARS`); the last chain is kept per
+conversation, so a resumed run renders the same instructions. Browser and
+server turns send no chain and get the workspace files alone.
 
 ## 12. Integrations
 
