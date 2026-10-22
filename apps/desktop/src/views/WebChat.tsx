@@ -104,6 +104,7 @@ import {
   type AgentsRoute,
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
+import { ChildRow } from "./agents/ChildRow";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -2740,6 +2741,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
   };
 
+  // A stable opener for the memoized transcript: the child row's chevron
+  // must not force the whole block list to re-render on every composer key.
+  const openChatRef = useRef(openChat);
+  openChatRef.current = openChat;
+  const openChildChat = useCallback((id: string) => openChatRef.current(id), []);
+
   const newChat = () => {
     // Navigation only: the route moves to the addressed scratch composer
     // (/chats/new, or /work/new when entered from the Work tab); the
@@ -3348,6 +3355,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             text={e.b.reasoningText ?? ""}
             live={streaming && e.i === lastBlockIndex}
           />
+        ) : e.b.kind === "tool" && e.b.tool?.child ? (
+          <ChildRow key={e.b.key} row={e.b.tool.child} onOpen={openChildChat} />
         ) : e.b.kind === "tool" && e.b.tool ? (
           <ToolFrame key={e.b.key} t={e.b.tool} />
         ) : e.b.kind === "approval" && e.b.approval ? (
@@ -3377,7 +3386,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           </div>
         ),
       ),
-    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex],
+    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
   );
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.

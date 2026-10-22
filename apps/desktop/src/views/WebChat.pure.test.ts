@@ -1083,3 +1083,47 @@ describe("isImeEnter", () => {
     expect(isImeEnter({})).toBe(false);
   });
 });
+
+describe("child thread navigation", () => {
+  it("opens a child at the canonical thread address and parses it back", () => {
+    const path = chatRoutePath("child-chat", null, null);
+    expect(path).toBe("/thread/child-chat");
+    expect(parseChatRoute(path).chatId).toBe("child-chat");
+    expect(parseChatRoute(path).agents).toBeNull();
+  });
+
+  it("keeps a child row visible in the casual transcript", () => {
+    const blocks = eventsToBlocks([
+      {
+        id: "e1",
+        seq: 1,
+        created_at: "2026-10-22T10:00:00.000Z",
+        event: {
+          type: "assistant_message",
+          turn: 1,
+          step: 0,
+          model: "m",
+          usage: {},
+          blocks: [{ type: "tool_call", id: "c1", name: "spawn", arguments: "{}" }],
+        },
+      },
+      {
+        id: "e2",
+        seq: 2,
+        created_at: "2026-10-22T10:00:01.000Z",
+        event: {
+          type: "tool_result",
+          turn: 1,
+          step: 0,
+          call_id: "c1",
+          name: "spawn",
+          content: "",
+          is_error: false,
+          meta: { thread_id: "child-thread", chat_id: "child-chat", status: "running" },
+        },
+      },
+    ]);
+    const entries = viewEntries(blocks, "casual");
+    expect(entries.some((e) => e.kind === "plain" && e.b.kind === "tool" && e.b.tool?.child)).toBe(true);
+  });
+});

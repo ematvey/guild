@@ -864,3 +864,82 @@ describe("older-page loading (bounded tail + prepend)", () => {
     expect(after.hasMore).toBe(false);
   });
 });
+
+describe("subagent rows (child_result)", () => {
+  const spawnStep = (name = "spawn"): ThreadEvent => ({
+    type: "assistant_message",
+    turn: 1,
+    step: 0,
+    model: "m",
+    usage,
+    blocks: [{ type: "tool_call", id: "call-spawn", name, arguments: '{"agent":"Researcher","task":"look"}' }],
+  });
+  const spawnResult = (meta: Record<string, unknown>): ThreadEvent => ({
+    type: "tool_result",
+    turn: 1,
+    step: 0,
+    call_id: "call-spawn",
+    name: "spawn",
+    content: "",
+    is_error: false,
+    meta,
+  });
+  const childResult = (status: string): ThreadEvent => ({
+    type: "child_result",
+    thread_id: "child-thread",
+    run_id: "child-run",
+    status,
+    final_text: "done",
+  });
+
+  it("turns a spawn result into one child row and updates it from child_result", () => {
+    const blocks = eventsToBlocks([
+      row(1, spawnStep()),
+      row(2, spawnResult({
+        thread_id: "child-thread",
+        chat_id: "child-chat",
+        run_id: "child-run",
+        agent_name: "Researcher",
+        started_at: "2026-10-22T10:00:00.000Z",
+        status: "running",
+      })),
+      row(3, childResult("succeeded")),
+    ]);
+    const tools = blocks.filter((b) => b.kind === "tool");
+    expect(tools).toHaveLength(1);
+    const child = tools[0]!.tool?.child;
+    expect(child).toMatchObject({
+      threadId: "child-thread",
+      chatId: "child-chat",
+      runId: "child-run",
+      agentName: "Researcher",
+      status: "succeeded",
+      startedAt: "2026-10-22T10:00:00.000Z",
+    });
+    expect(child?.finishedAt).toBe("t");
+  });
+
+  it("matches the incremental reducer to the full derivation", () => {
+    const events = [
+      row(1, spawnStep()),
+      row(2, spawnResult({ thread_id: "child-thread", chat_id: "child-chat", agent_name: "Researcher", status: "running" })),
+      row(3, childResult("failed")),
+    ];
+    const r = createThreadReducer();
+    r.open("chat");
+    const applied = r.applyState(state("chat", 3, events));
+    expect(applied.blocks).toEqual(eventsToBlocks(events));
+    expect(applied.blocks.find((b) => b.kind === "tool")?.tool?.child?.status).toBe("failed");
+  });
+
+  it("creates a fallback row when the spawn result is outside the loaded window", () => {
+    const blocks = eventsToBlocks([row(9, childResult("cancelled"))]);
+    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
+    expect(child).toMatchObject({
+      threadId: "child-thread",
+      runId: "child-run",
+      chatId: "child-thread",
+      status: "cancelled",
+    });
+  });
+});

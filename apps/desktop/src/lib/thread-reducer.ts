@@ -17,6 +17,20 @@ import type {
 
 // ---------- block shapes ----------
 
+export interface ChildRow {
+  /** The child agent thread id (the child_result event's thread_id). */
+  threadId: string;
+  runId?: string;
+  /** The durable chat id the child thread projects into; the row's chevron
+   *  opens this chat at its canonical /thread/<chatId> address. */
+  chatId?: string | null;
+  agentName: string;
+  status: string;
+  reason?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface ToolBlock {
   callId: string;
   name: string;
@@ -25,6 +39,8 @@ export interface ToolBlock {
   status: "running" | "done" | "error";
   content?: string;
   meta?: ToolMeta;
+  /** Spawn/delegate calls render as one compact child row, not a tool card. */
+  child?: ChildRow;
   /// Coarse category from the server (web_search | web_browse | generic):
   /// drives the native label/icon regardless of the providing integration.
   kind?: string;
@@ -34,6 +50,110 @@ export interface ToolBlock {
   /// never finished.
   ts?: string;
   endTs?: string;
+}
+
+/** A spawn-family tool: its result opens a child thread instead of a card. */
+export function isChildToolName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n === "spawn" || n === "delegate" || n === "subagent";
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function jsonObject(text: string | undefined): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    return recordOf(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+function stringOf(record: Record<string, unknown> | null, ...keys: string[]): string | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value !== "") return value;
+  }
+  return undefined;
+}
+
+/** Child metadata from a spawn tool's arguments (the row exists before the
+ *  tool result lands, so the agent name comes from the request). */
+function childRowFromArgs(args: string, startedAt: string): ChildRow {
+  const request = jsonObject(args);
+  return {
+    threadId: "",
+    agentName: stringOf(request, "agent", "agent_name", "agentName", "name") ?? "Subagent",
+    status: "running",
+    startedAt,
+  };
+}
+
+/** Child metadata from a spawn tool result. The server owns the wire shape;
+ *  meta wins over the JSON content, and a nested `child` object is accepted. */
+export function childRowFromTool(t: ToolBlock, existing?: ChildRow): ChildRow | null {
+  const meta = recordOf(t.meta);
+  const content = jsonObject(t.content);
+  const nested = recordOf(meta?.["child"]) ?? recordOf(content?.["child"]);
+  const source = nested
+    ? { ...content, ...meta, ...nested }
+    : { ...content, ...meta };
+  const request = jsonObject(t.args);
+  const threadId = stringOf(source, "thread_id", "threadId") ?? existing?.threadId ?? "";
+  if (threadId === "" && existing === undefined) return null;
+  return {
+    threadId,
+    runId: stringOf(source, "run_id", "runId") ?? existing?.runId,
+    chatId:
+      stringOf(source, "chat_id", "chatId") ??
+      existing?.chatId ??
+      null,
+    agentName:
+      stringOf(source, "agent_name", "agentName", "agent") ??
+      stringOf(request, "agent", "agent_name", "agentName", "name") ??
+      existing?.agentName ??
+      "Subagent",
+    status: stringOf(source, "status") ?? existing?.status ?? "running",
+    reason: stringOf(source, "reason") ?? existing?.reason,
+    startedAt:
+      stringOf(source, "started_at", "startedAt") ??
+      existing?.startedAt ??
+      "",
+    finishedAt:
+      stringOf(source, "finished_at", "finishedAt") ??
+      existing?.finishedAt,
+  };
+}
+
+/** The fallback row for a child_result with no spawn tool result in the
+ *  loaded window. The event names the agent thread, not its chat, so the
+ *  row opens the thread id until a spawn result supplies the chat id. */
+function childRowFromEvent(
+  ev: { thread_id: string; run_id: string; status: string; reason?: string | null },
+  createdAt: string,
+): ChildRow {
+  return {
+    threadId: ev.thread_id,
+    runId: ev.run_id,
+    chatId: ev.thread_id,
+    agentName: "Subagent",
+    status: ev.status,
+    reason: ev.reason ?? undefined,
+    startedAt: createdAt,
+    finishedAt: createdAt,
+  };
+}
+
+function childToolOf(blocks: Block[], threadId: string): ToolBlock | null {
+  for (const block of blocks) {
+    if (block.kind === "tool" && block.tool?.child?.threadId === threadId) return block.tool;
+  }
+  return null;
 }
 
 /// One durable approval gate (design spec section F): a client tool waiting
@@ -301,6 +421,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
               status: "done", // filled by the matching tool_result below
               ts: row.created_at,
             };
+            if (isChildToolName(b.name)) tb.child = childRowFromArgs(b.arguments, row.created_at);
             toolsByCall.set(b.id, tb);
             blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
           }
@@ -328,23 +449,32 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           tb.meta = meta;
           tb.kind = kind;
           tb.endTs = row.created_at;
+          if (tb.child || isChildToolName(ev.name)) {
+            const child = childRowFromTool(tb, tb.child);
+            if (child) tb.child = child;
+          }
         } else {
           // Orphan result (call block missing): render it anyway rather than drop it.
+          const orphan: ToolBlock = {
+            callId: ev.call_id,
+            name: ev.name || "tool",
+            args: "",
+            executor: "server",
+            status: ev.is_error ? "error" : "done",
+            content: ev.content,
+            meta,
+            kind,
+            ts: row.created_at,
+            endTs: row.created_at,
+          };
+          if (isChildToolName(ev.name)) {
+            const child = childRowFromTool(orphan);
+            if (child) orphan.child = child;
+          }
           blocks.push({
             kind: "tool",
             text: "",
-            tool: {
-              callId: ev.call_id,
-              name: ev.name || "tool",
-              args: "",
-              executor: "server",
-              status: ev.is_error ? "error" : "done",
-              content: ev.content,
-              meta,
-              kind,
-              ts: row.created_at,
-              endTs: row.created_at,
-            },
+            tool: orphan,
             key: seqKey(inEvent++),
           });
         }
@@ -386,6 +516,36 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
       case "turn_error":
         blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(inEvent++) });
         break;
+      case "child_result": {
+        const target = childToolOf(blocks, ev.thread_id);
+        if (target?.child) {
+          target.child = {
+            ...target.child,
+            runId: ev.run_id,
+            status: ev.status,
+            reason: ev.reason ?? undefined,
+            finishedAt: row.created_at,
+          };
+          target.status = ev.status === "failed" ? "error" : "done";
+        } else {
+          blocks.push({
+            kind: "tool",
+            text: "",
+            tool: {
+              callId: `child:${ev.thread_id}`,
+              name: "spawn",
+              args: "",
+              executor: "server",
+              status: ev.status === "failed" ? "error" : "done",
+              child: childRowFromEvent(ev, row.created_at),
+              ts: row.created_at,
+              endTs: row.created_at,
+            },
+            key: seqKey(inEvent++),
+          });
+        }
+        break;
+      }
     }
   }
   // Resolved approvals are decisions, not conversation content: a card whose
@@ -786,6 +946,9 @@ export function createThreadReducer(): ThreadReducer {
               existing.args = b.arguments;
               existing.executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
               existing.ts = existing.ts ?? row.created_at;
+              if (isChildToolName(b.name) && !existing.child) {
+                existing.child = childRowFromArgs(b.arguments, existing.ts ?? row.created_at);
+              }
             } else {
               const tb: ToolBlock = {
                 callId: b.id,
@@ -795,6 +958,7 @@ export function createThreadReducer(): ThreadReducer {
                 status: "done",
                 ts: row.created_at,
               };
+              if (isChildToolName(b.name)) tb.child = childRowFromArgs(b.arguments, row.created_at);
               v.toolsByCall.set(b.id, tb);
               v.blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(v.blocks.length - start) });
             }
@@ -823,22 +987,31 @@ export function createThreadReducer(): ThreadReducer {
           tb.meta = meta;
           tb.kind = kind;
           tb.endTs = row.created_at;
+          if (tb.child || isChildToolName(ev.name)) {
+            const child = childRowFromTool(tb, tb.child);
+            if (child) tb.child = child;
+          }
         } else {
+          const orphan: ToolBlock = {
+            callId: ev.call_id,
+            name: ev.name || "tool",
+            args: "",
+            executor: "server",
+            status: ev.is_error ? "error" : "done",
+            content: ev.content,
+            meta,
+            kind,
+            ts: row.created_at,
+            endTs: row.created_at,
+          };
+          if (isChildToolName(ev.name)) {
+            const child = childRowFromTool(orphan);
+            if (child) orphan.child = child;
+          }
           v.blocks.push({
             kind: "tool",
             text: "",
-            tool: {
-              callId: ev.call_id,
-              name: ev.name || "tool",
-              args: "",
-              executor: "server",
-              status: ev.is_error ? "error" : "done",
-              content: ev.content,
-              meta,
-              kind,
-              ts: row.created_at,
-              endTs: row.created_at,
-            },
+            tool: orphan,
             key: seqKey(0),
           });
         }
@@ -890,6 +1063,36 @@ export function createThreadReducer(): ThreadReducer {
       case "turn_error":
         v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
         break;
+      case "child_result": {
+        const target = childToolOf(v.blocks, ev.thread_id);
+        if (target?.child) {
+          target.child = {
+            ...target.child,
+            runId: ev.run_id,
+            status: ev.status,
+            reason: ev.reason ?? undefined,
+            finishedAt: row.created_at,
+          };
+          target.status = ev.status === "failed" ? "error" : "done";
+        } else {
+          v.blocks.push({
+            kind: "tool",
+            text: "",
+            tool: {
+              callId: `child:${ev.thread_id}`,
+              name: "spawn",
+              args: "",
+              executor: "server",
+              status: ev.status === "failed" ? "error" : "done",
+              child: childRowFromEvent(ev, row.created_at),
+              ts: row.created_at,
+              endTs: row.created_at,
+            },
+            key: seqKey(0),
+          });
+        }
+        break;
+      }
     }
     // A new event supersedes a shown error: prune keeps the error visible
     // only while it stays the thread's latest block.
@@ -1062,6 +1265,7 @@ export function createThreadReducer(): ThreadReducer {
               status: "running",
               ts: nowIso(),
             };
+            if (isChildToolName(fresh.name)) fresh.child = childRowFromArgs(fresh.args, fresh.ts ?? nowIso());
             v.toolsByCall.set(frame.call_id, fresh);
             v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
           }
