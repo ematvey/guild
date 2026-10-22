@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Agents talk to agents through the thread tree (2026-10-22).** `delegate`
+  and `release_artifacts` are gone. A spawn creates exactly one child thread
+  (`kind = 'delegated'`, `parent_thread_id`, `depth`); downward traffic is a
+  turn in that thread, upward traffic is a `child_result` event plus one steer
+  input merged into the parent's pending inbox item, drained once per
+  boundary. The tool group `subagents` holds `spawn`, `send`, `read_thread`,
+  `list`, `cancel` and `close`; `send_file` stays separate and now snapshots
+  the bytes at call time, materialised per turn at
+  `/tmp/attachments/<runId>/`. Shape bounds are depth 3 and 16 children per
+  node; there is no budget. `close` cancels and archives the subtree and
+  keeps its bytes. A user can read and cancel a child but cannot post into
+  it. `cancel` across workers fails with `cancel_unreachable` until a
+  `remoteStop` IPC exists. Spec: `docs/specs/2026-10-22-agent-to-agent.md`;
+  plan and outcome: `docs/plans/2026-10-22-agent-to-agent.md`.
+
 - **The agent gets its own tool set (2026-10-22).** A project-bound chat
   runs `read`/`write`/`edit`/`bash` on the user's machine, so the agent
   could not touch its workspace at all. It now also carries `agent_read`,
