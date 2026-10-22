@@ -251,15 +251,19 @@ Object key follows the existing shape: `attachments/<org>/<id>/<filename>`
 
 | tool | meaning |
 |---|---|
-| `spawn(agent, task)` | create a child thread, post the first turn, return its id |
+| `spawn(agent, task)` | create a child thread, post the first turn, return `{thread_id, run_id}` at once |
 | `send(thread_id, text)` | post a turn into a child thread |
-| `read(thread_id)` | read a bounded excerpt of a child thread |
+| `read_thread(thread_id)` | read a bounded excerpt of a child thread |
 | `list()` | list children with status, depth and elapsed time |
 | `cancel(thread_id)` | stop in-flight turns in the subtree, keep the nodes |
 | `close(thread_id)` | cancel the subtree, archive it, stop deliveries |
 | `send_file(path, as?)` | attach a file to this turn's response |
 
 Removed: `delegate`, `release_artifacts`.
+
+The read tool is `read_thread`, not `read`: a tool named `read` shadows the
+coding `read` in the registry and silently removes it from the direct tool
+list. `list` does not collide, so it keeps the plain name.
 
 ## Data model
 
