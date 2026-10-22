@@ -359,10 +359,10 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   lives on the host services: Postgres db `guild`, ClickHouse for traces and
   usage, rustfs for objects. Agent workspaces ride a JuiceFS volume; tools
   run in gVisor sandboxes via `sandbox-runner`.
-- **Version:** dev runs 0.5.102. Prod is a separate checkout
+- **Version:** dev runs 0.5.103. Prod is a separate checkout
   (`~/guild-live`, branch master, `:18081`), runs 0.5.82, and stays in
   supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
-- **Clients:** desktop 0.5.102 is published on the dev updater manifest for
+- **Clients:** desktop 0.5.103 is published on the dev updater manifest for
   all four platforms (six artifacts: Windows NSIS, Linux AppImage, macOS
   aarch64 and x86_64 DMG plus their updater bundles), minisign-signed.
   Installed clients pick it up on relaunch. Releases stay dev-controlled and
