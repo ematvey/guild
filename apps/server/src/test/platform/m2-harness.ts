@@ -129,6 +129,10 @@ export async function createM2TestEnv(
     // the agent workspace. A per-suite temp root keeps it writable.
     GUILD_AGENT_WORKSPACE_ROOT: agentRoot,
     GUILD_AGENT_WORKSPACE_WRITE_ROOT: agentRoot,
+    // A retryable failure (a provider 404 wrapped as 502) otherwise costs
+    // 2+4+8 seconds per occurrence. The policy is the same; only the delay
+    // shrinks, so recovery tests observe the same transitions quickly.
+    GUILD_RETRY_BASE_DELAY_MS: "20",
     ...configOverrides,
   });
   const app = await buildApp(config);

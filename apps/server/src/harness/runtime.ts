@@ -794,6 +794,14 @@ export class GuildRuntime {
             compaction: { enabled: true },
             steeringMode: "one-at-a-time",
             followUpMode: "one-at-a-time",
+            // Same policy as pi-durable's default, with the base delay exposed
+            // so tests do not spend 2+4+8 seconds on a retryable 502.
+            retry: {
+              enabled: true,
+              maxRetries: 3,
+              baseDelayMs: this.config.retryBaseDelayMs,
+              maxAgentDelayMs: 60_000,
+            },
           },
           env: async (target) => {
             // M4 executor selection: the chat's bound machine (machine dispatch

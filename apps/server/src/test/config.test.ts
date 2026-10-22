@@ -33,6 +33,7 @@ describe("loadConfig", () => {
       sandbox: { mode: "inprocess-unsafe" },
       approvalTimeoutMs: 300_000,
       clientToolTimeoutMs: 300_000,
+      retryBaseDelayMs: 2_000,
       execPolicyRulesPath: null,
       tracePayloads: false,
       workerMode: "off",
