@@ -14,6 +14,7 @@
 // the MCP peer at call time only.
 
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { lookup } from "node:dns/promises";
 import type { IdentityCtx } from "../contexts.js";
 import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -52,6 +53,9 @@ export function validateName(name: string): void {
  *  (IPv4 dotted quad + the ranges below, or IPv6 in brackets or bare). */
 export function isPrivateIpLiteral(host: string): boolean {
   const h = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  // IPv4-mapped IPv6 (`::ffff:127.0.0.1`) delegates to the IPv4 rules.
+  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
+  if (mapped !== null) return isPrivateIpLiteral(mapped[1]!);
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   if (v4 !== null) {
     const [a, b, c] = [Number(v4[1]), Number(v4[2]), Number(v4[3])];
@@ -61,16 +65,29 @@ export function isPrivateIpLiteral(host: string): boolean {
   }
   if (h === "::1" || h === "::") return true;
   if (h.includes(":")) {
-    // fe80::/10: first hextet 0xfe80–0xfebf.
+    // fe80::/10 and fc00::/7: the first hextet decides.
     const first = h.split(":")[0] ?? "";
     const n = parseInt(first, 16);
-    if (!Number.isNaN(n) && n >= 0xfe80 && n <= 0xfebf) return true;
+    if (!Number.isNaN(n) && ((n >= 0xfe80 && n <= 0xfebf) || (n >= 0xfc00 && n <= 0xfdff))) return true;
   }
   return false;
 }
 
-/** URL validation: http(s), a host, and the SSRF literal guard. */
-export function validateUrl(raw: string): void {
+/** Hostnames allowed to resolve to a private address. The compose deployment
+ *  reaches `host.docker.internal`; anything else must resolve public. */
+function allowedPrivateHosts(): Set<string> {
+  return new Set(
+    (process.env.GUILD_MCP_ALLOWED_HOSTS ?? "host.docker.internal")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s !== ""),
+  );
+}
+
+/** URL validation: http(s), a host, and the SSRF guard. The guard checks IP
+ *  literals and every address the hostname resolves to, so a name that
+ *  points at a private service is refused like the literal would be. */
+export async function validateUrl(raw: string): Promise<void> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -81,7 +98,21 @@ export function validateUrl(raw: string): void {
     throw ApiError.badRequest("url must be http(s)");
   }
   if (url.hostname === "") throw ApiError.badRequest("url must carry a host");
-  if (process.env.GUILD_MCP_ALLOW_PRIVATE !== "1" && isPrivateIpLiteral(url.hostname)) {
+  if (process.env.GUILD_MCP_ALLOW_PRIVATE === "1") return;
+  if (isPrivateIpLiteral(url.hostname)) {
+    throw ApiError.badRequest("private and loopback addresses are not allowed");
+  }
+  if (allowedPrivateHosts().has(url.hostname.toLowerCase())) return;
+  // RFC 2606 reserved names never resolve, so they cannot reach a private
+  // service. Tests use them as stand-ins for a real remote host.
+  if (/\.(test|example|invalid)$/i.test(url.hostname)) return;
+  let addresses: { address: string }[];
+  try {
+    addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  } catch {
+    throw ApiError.badRequest("url host does not resolve");
+  }
+  if (addresses.some((a) => isPrivateIpLiteral(a.address))) {
     throw ApiError.badRequest("private and loopback addresses are not allowed");
   }
 }
@@ -120,20 +151,20 @@ export async function probeServer(
   }
 }
 
-function connectionDraft(body: Json): { name: string; url: string; headers?: Record<string, string> } {
+async function connectionDraft(body: Json): Promise<{ name: string; url: string; headers?: Record<string, string> }> {
   const name = body["name"];
   if (typeof name !== "string") throw ApiError.badRequest("missing name");
   validateName(name);
   const url = body["url"];
   if (typeof url !== "string") throw ApiError.badRequest("missing url");
-  validateUrl(url);
+  await validateUrl(url);
   return { name, url, headers: validateHeaders(body["headers"]) };
 }
 
 export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): void {
   app.post("/api/v1/mcp/probe", async (req, reply) => {
     await requireUser(auth, req);
-    sendJson(reply, await probeServer(connectionDraft(requireJsonBody(req))));
+    sendJson(reply, await probeServer(await connectionDraft(requireJsonBody(req))));
     return reply;
   });
   // `GET /api/v1/mcp/servers` — the caller's servers (masked headers).
@@ -158,7 +189,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
   app.post("/api/v1/mcp/servers", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
-    const { name, url, headers } = connectionDraft(body);
+    const { name, url, headers } = await connectionDraft(body);
     const enabled = body["enabled"] === undefined ? true : body["enabled"] === true;
     const existing = await auth.userMcp.list(user.org_id, user.id);
     if (existing.some((r) => r.name === name)) {
@@ -182,7 +213,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
     }
     if (body["url"] !== undefined) {
       if (typeof body["url"] !== "string") throw ApiError.badRequest("url must be a string");
-      validateUrl(body["url"]);
+      await validateUrl(body["url"]);
       patch.url = body["url"];
     }
     if (body["headers"] !== undefined) patch.headers = validateHeaders(body["headers"]);

@@ -187,7 +187,7 @@ export function registerReleaseRoutes(
   ctx: IdentityCtx,
   objects: ObjectStore,
 ): void {
-  app.post("/api/v1/admin/releases", async (req, reply) => {
+  app.post("/api/v1/admin/releases", { bodyLimit: 512 * 1024 * 1024 }, async (req, reply) => {
     await requireAdmin(ctx, req);
     const version = queryOne(req, "version");
     if (version === undefined) throw ApiError.badRequest("missing version");

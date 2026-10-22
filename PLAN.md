@@ -11,6 +11,28 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Security hardening pass (2026-10-22).** The review in
+  `docs/reviews/2026-10-22-security-review.md` drove one batch of fixes. The
+  Rust clients move to `rustls` 0.23.46, `rustls-webpki` 0.103.16 and the
+  1.0.10 root bundles (distrusted-intermediate and TLS advisories); the
+  dev-only npm tree moves to `vite` 7.3.7 and `vitest` 4.1.12 (audit now
+  clean). `POST /api/v1/auth/login`, `/auth/bootstrap` and `/auth/pair` now
+  pass a per-email and per-address sliding-window failure counter
+  (`platform/http/login-throttle.ts`); ten failed logins on one email answer
+  429 for the rest of the window. `loadConfig` refuses the example
+  placeholders (`change-me`, the all-zero master key) when
+  `NODE_ENV=production`, and the example config now says to generate real
+  values. The user-MCP URL guard resolves the hostname and rejects every
+  private address (allowlist: `host.docker.internal` plus
+  `GUILD_MCP_ALLOWED_HOSTS`; RFC 2606 names pass because they never
+  resolve). The SPA and the Tauri webview carry a CSP and the standard
+  security headers. The global body limit drops to 1 MiB; the four upload
+  routes keep their own larger limits. Attachment content types must match a
+  MIME token. The internal gateway key compares in constant time. Left
+  open by design: skill bundles publish without review (spec §1.3), and the
+  file tools can read any path on a paired machine (the pairing is the
+  grant).
+
 - **Agent config lives in the workspace, OpenClaw-style (2026-10-21).** The
   agent's identity, persona and operating rules moved out of the `agents`
   row into root files that the agent itself can edit: `IDENTITY.md` (one

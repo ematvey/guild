@@ -48,7 +48,7 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
     return reply.status(200).send(sortedJson({ ok: true, name }));
   });
 
-  app.put("/api/v1/org/logo", async (req, reply) => {
+  app.put("/api/v1/org/logo", { bodyLimit: LOGO_MAX_BYTES }, async (req, reply) => {
     const user = await requireUser(identity, req);
     requireAdminRole(user);
     const contentType = queryOne(req, "content_type") ?? "image/png";

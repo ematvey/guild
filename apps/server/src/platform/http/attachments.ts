@@ -10,6 +10,17 @@ import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
 import { getChatOwned } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
 
+const MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+/** MIME type token pair, no parameters: keeps the stored value echo-safe in
+ *  the download's Content-Type header. */
+const MIME_RE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i;
+
+function safeContentType(raw: string): string {
+  const value = raw.trim();
+  if (value.length > 128 || !MIME_RE.test(value)) throw ApiError.badRequest("bad content type");
+  return value.toLowerCase();
+}
+
 function queryOne(req: { url: string }, name: string): string | undefined {
   const url = new URL(req.url, "http://local");
   const value = url.searchParams.get(name);
@@ -25,7 +36,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     const rawFilename = queryOne(req, "filename");
     const filename = rawFilename === undefined ? null : safeFilename(rawFilename);
     if (filename === null) throw ApiError.badRequest("bad filename");
-    const contentType = queryOne(req, "content_type") ?? "application/octet-stream";
+    const contentType = safeContentType(queryOne(req, "content_type") ?? "application/octet-stream");
     // chat must belong to the caller's org
     const chat = await getChatOwned(infra.pool, user.org_id, chatId, user);
     const id = uuidv7();
@@ -49,8 +60,8 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     );
     return reply.status(200).send(sortedJson(row));
   };
-  app.post("/api/v1/chats/:chatId/attachments", uploadAttachment);
-  app.post("/api/v1/threads/:chatId/attachments", uploadAttachment);
+  app.post("/api/v1/chats/:chatId/attachments", { bodyLimit: MAX_ATTACHMENT_BYTES }, uploadAttachment);
+  app.post("/api/v1/threads/:chatId/attachments", { bodyLimit: MAX_ATTACHMENT_BYTES }, uploadAttachment);
 
   // Deprecated alias: GET /api/v1/chats/:chatId/attachments.
   const listAttachments = async (req: FastifyRequest, reply: FastifyReply) => {
