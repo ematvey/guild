@@ -42,6 +42,7 @@ import { ChatStore } from "../platform/store/chats.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import { AttachmentStore } from "../platform/store/attachments.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import { UserMcpStore } from "../platform/store/userMcp.js";
@@ -93,6 +94,7 @@ import { SkillRuntime } from "./skills.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import type { TraceStore } from "../platform/trace.js";
 import { ConversationRecovery } from "../chats/recovery.js";
+import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import { createAgentWorkspaceTools, createMachineTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
@@ -319,6 +321,11 @@ export class GuildRuntime {
   private readonly sandboxes: SandboxPool | null;
   /** Sandbox key → chat id, for the connect-time skill materialization. */
   private readonly sandboxChats = new Map<string, string>();
+  /** Object storage for turn attachment materialization and send_file. */
+  private readonly objects?: ObjectStore;
+  private readonly attachments: AttachmentStore;
+  /** Chat → run whose turn directory is already materialized. */
+  private readonly materializedTurns = new Map<string, string>();
 
   constructor(
     private readonly config: Config,
@@ -344,6 +351,8 @@ export class GuildRuntime {
       remoteSubmit?: (chatId: string, orgId: string, input: SubmitTurnInput) => Promise<number>;
     },
   ) {
+    this.objects = objects;
+    this.attachments = new AttachmentStore(pool);
     this.sandboxes =
       config.sandbox.mode === "runner"
         ? new SandboxPool({
@@ -363,7 +372,13 @@ export class GuildRuntime {
     this.chats = new ChatStore(pool);
     this.agents = new AgentStore(pool, this.trace, this.config.agentWorkspaceWriteRoot);
     this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
-    this.agentRuns = new AgentRunLifecycle({ pool, log, journal: this.conflicts, trace: this.trace });
+    this.agentRuns = new AgentRunLifecycle({
+      pool,
+      log,
+      journal: this.conflicts,
+      trace: this.trace,
+      attachments: this.attachments,
+    });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
@@ -640,6 +655,57 @@ export class GuildRuntime {
     }
   }
 
+  /** Writes the turn's attachments into the sandbox at
+   *  /tmp/attachments/<runId>/ and wipes the previous turn's directory.
+   *  Runs once per run, before the first tool call. */
+  private async materializeAttachmentsForTurn(chatId: string, orgId: string, env: ExecutionEnv): Promise<void> {
+    if (this.objects === undefined || this.config.sandbox.mode !== "runner") return;
+    const run = await this.agents.runningRunForChat(chatId).catch(() => null);
+    if (run === null) return;
+    if (this.materializedTurns.get(chatId) === run.id) return;
+    this.materializedTurns.set(chatId, run.id);
+    try {
+      const ids = new Set<string>();
+      // The user event is written just before or just after the run row;
+      // the nearest one in time is this turn's message, even when later
+      // messages are already queued.
+      const messages = await this.pool.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM thread_events
+         WHERE chat_id = $1 AND type = 'user_message'
+         ORDER BY abs(extract(epoch FROM (created_at - $2::timestamptz))) ASC, seq DESC
+         LIMIT 1`,
+        [chatId, run.started_at ?? run.created_at],
+      );
+      const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM thread_events
+         WHERE chat_id = $1 AND type = 'child_result'
+           AND (consumed_by_run_id IS NULL OR consumed_by_run_id = $2)`,
+        [chatId, run.id],
+      );
+      for (const row of [...messages.rows, ...deliveries.rows]) {
+        const list = Array.isArray(row.payload.attachments) ? row.payload.attachments : [];
+        for (const item of list) {
+          if (typeof item === "string") ids.add(item);
+          else if (item !== null && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
+            ids.add((item as { id: string }).id);
+          }
+        }
+      }
+      const rows = await this.attachments.byIds(orgId, [...ids]);
+      await materializeTurnAttachments({
+        env,
+        objects: this.objects,
+        orgId,
+        runId: run.id,
+        rows,
+        context: BACKGROUND_CONTEXT,
+      });
+    } catch (error) {
+      this.materializedTurns.delete(chatId);
+      this.log.warn({ err: error, chatId, runId: run.id }, "attachment materialization failed");
+    }
+  }
+
   /** The read_skill install-on-use dep: one freshly installed skill into a
    *  plain chat's dir; the caller in harness/skills.ts catches and logs, so
    *  errors must not escape here. An agent workspace gets nothing. */
@@ -846,7 +912,9 @@ export class GuildRuntime {
               return new NodeExecutionEnv({ cwd: dir });
             }
             const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-            return this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
+            const env = await this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
+            await this.materializeAttachmentsForTurn(chatId, chat.rows[0]!.org_id, env);
+            return env;
           },
           onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
         },
@@ -1371,9 +1439,18 @@ export class GuildRuntime {
             model: input.model,
           }),
       },
-      workspaceRoot: this.config.agentWorkspaceRoot,
-      writeRoot: this.config.agentWorkspaceWriteRoot,
     });
+    const sendFile =
+      delegation === null || this.objects === undefined
+        ? undefined
+        : {
+            attachments: this.attachments,
+            objects: this.objects,
+            agent,
+            run: delegation.parentRun,
+            chatId,
+            workspaceRoot: this.config.agentWorkspaceWriteRoot,
+          };
     const tools = createAgentTools({
       pool: this.pool,
       store: this.agents,
@@ -1381,6 +1458,7 @@ export class GuildRuntime {
       agent,
       userId: ref.user_id,
       ...(delegation === null ? {} : { delegation }),
+      ...(sendFile === undefined ? {} : { sendFile }),
     });
     this.log.info({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
     return tools;

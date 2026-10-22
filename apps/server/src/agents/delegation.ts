@@ -1,11 +1,8 @@
 // Agent-to-agent delegation: a child run in the target agent's workspace,
-// bounded by depth/child/cycle rules, returning text plus declared artifact
-// files copied into the parent's inbox (or the shared staging area when
-// large). Artifacts are never cleaned up automatically.
+// bounded by depth/child/cycle rules. The parent receives the child's final
+// text and the ids of the files the child sent with send_file; nothing is
+// copied between workspaces.
 
-import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, readdir, realpath, rm } from "node:fs/promises";
-import path from "node:path";
 import { Type } from "typebox";
 import type { JsonValue } from "@earendil-works/chord";
 import {
@@ -17,19 +14,11 @@ import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { isUuid, uuidv7 } from "../platform/time.js";
-import { normalizeRelativePath } from "./files.js";
 import type { AgentStore } from "./store.js";
-import type {
-  Agent,
-  AgentDelegationArtifact,
-  AgentRun,
-  AgentRunStatus,
-} from "./types.js";
+import type { Agent, AgentRun, AgentRunStatus } from "./types.js";
 
 export const MAX_DELEGATION_DEPTH = 2;
 export const MAX_CHILDREN_PER_RUN = 3;
-export const MAX_ARTIFACTS = 20;
-export const MAX_INBOX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_DELEGATION_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
 const TERMINAL: ReadonlySet<AgentRunStatus> = new Set(["succeeded", "failed", "silent", "skipped", "cancelled"]);
@@ -57,10 +46,6 @@ export interface DelegationToolContext {
   parentRun: AgentRun;
   requester: UserRow;
   runtime: DelegationRuntime;
-  workspaceRoot: string;
-  /** Read-write view of the same volume; parent artifact writes land here. */
-  writeRoot: string;
-  stagingRoot: string;
   timeoutMs: number;
   /** False when depth or child count has removed the delegate tool. */
   can_spawn: boolean;
@@ -72,18 +57,11 @@ export interface DelegateArgs {
   context?: string;
 }
 
-export interface DelegatedArtifact {
-  path: string;
-  size: number;
-  status: "inbox" | "staged";
-  inbox_path: string | null;
-  staging_path: string | null;
-}
-
 export interface DelegateResult {
   run_id: string;
   text: string;
-  artifacts: DelegatedArtifact[];
+  /** Ids of the child's send_file attachments, in send order. */
+  attachments: string[];
 }
 
 export class DelegationError extends Error {
@@ -93,10 +71,6 @@ export class DelegationError extends Error {
   ) {
     super(message);
   }
-}
-
-function rootFor(workspaceRoot: string, orgId: string, agentId: string): string {
-  return path.resolve(workspaceRoot, "agents", orgId, agentId);
 }
 
 /** Resolves the target by id or exact case-insensitive name within the
@@ -205,7 +179,7 @@ function composeTask(parent: AgentRun, args: DelegateArgs): string {
   if (parent.summary !== null && parent.summary.trim() !== "") {
     parts.push(`Parent run summary:\n${parent.summary.trim()}`);
   }
-  parts.push("Work only in your own workspace. Return a concise result; files you write are returned to the parent.");
+  parts.push("Work only in your own workspace. Return a concise result; use send_file for files the parent should receive.");
   return parts.join("\n\n");
 }
 
@@ -245,109 +219,19 @@ async function assistantText(pool: PlatformPool, run: AgentRun): Promise<string>
   return texts.join("\n\n").trim() || run.summary || "";
 }
 
-async function declaredPaths(pool: PlatformPool, runId: string): Promise<string[]> {
-  const res = await pool.query<{ paths: string[] }>(
-    "SELECT paths FROM agent_workspace_turns WHERE run_id = $1 ORDER BY started_at ASC",
-    [runId],
+async function childAttachmentIds(pool: PlatformPool, chatId: string, agentId: string, since: string): Promise<string[]> {
+  const res = await pool.query<{ id: string }>(
+    `SELECT id FROM attachments
+     WHERE chat_id = $1 AND author_kind = 'agent' AND author_id = $2
+       AND created_at >= $3::timestamptz
+     ORDER BY created_at ASC, id ASC`,
+    [chatId, agentId, since],
   );
-  return [...new Set(res.rows.flatMap((row) => row.paths))];
-}
-
-async function copyOne(source: string, destination: string): Promise<void> {
-  await mkdir(path.dirname(destination), { recursive: true });
-  try {
-    await copyFile(source, destination, constants.COPYFILE_FICLONE);
-  } catch {
-    await copyFile(source, destination);
-  }
-}
-
-/** Clones declared child files into the parent's inbox/<run-id>/, or into
- *  /tmp/delegations/<run-id>/ when a file exceeds the inbox threshold. */
-export async function transferArtifacts(args: {
-  store: AgentStore;
-  parentAgentId: string;
-  parentRunId: string;
-  childRunId: string;
-  childAgentId: string;
-  childRoot: string;
-  parentRoot: string;
-  stagingRoot: string;
-  declared: string[];
-  maxFiles?: number;
-  maxInboxBytes?: number;
-}): Promise<DelegatedArtifact[]> {
-  const maxFiles = Math.max(1, Math.min(MAX_ARTIFACTS, args.maxFiles ?? MAX_ARTIFACTS));
-  const maxBytes = args.maxInboxBytes ?? MAX_INBOX_ARTIFACT_BYTES;
-  const realChild = await realpath(args.childRoot).catch(() => null);
-  if (realChild === null) return [];
-  const out: DelegatedArtifact[] = [];
-  for (const candidate of args.declared) {
-    if (out.length >= maxFiles) break;
-    let rel: string;
-    try {
-      rel = normalizeRelativePath(candidate);
-    } catch {
-      continue;
-    }
-    if (rel === "") continue;
-    const source = path.resolve(realChild, rel);
-    if (source !== realChild && !source.startsWith(realChild + path.sep)) continue;
-    const stats = await lstat(source).catch(() => null);
-    if (stats === null || !stats.isFile() || stats.isSymbolicLink()) continue;
-    const large = Number(stats.size) > maxBytes;
-    const inboxRel = path.posix.join("inbox", args.childRunId, rel);
-    const destination = large
-      ? path.resolve(args.stagingRoot, args.childRunId, rel)
-      : path.resolve(args.parentRoot, inboxRel);
-    const parentRel = large ? null : inboxRel;
-    await copyOne(source, destination);
-    const artifact = await args.store.createArtifact({
-      run_id: args.childRunId,
-      parent_run_id: args.parentRunId,
-      agent_id: args.childAgentId,
-      path: rel,
-      size: Number(stats.size),
-      status: large ? "staged" : "inbox",
-      inbox_path: parentRel,
-      staging_path: large ? destination : null,
-    });
-    out.push({
-      path: artifact.path,
-      size: artifact.size,
-      status: large ? "staged" : "inbox",
-      inbox_path: artifact.inbox_path,
-      staging_path: artifact.staging_path,
-    });
-  }
-  return out;
-}
-
-/** Deletes the staging directory for one child run and marks its staged
- *  artifacts released. No other cleanup runs automatically. */
-export async function releaseArtifacts(
-  store: AgentStore,
-  stagingRoot: string,
-  runId: string,
-): Promise<{ run_id: string; staging_dir: string; released: DelegatedArtifact[] }> {
-  const stagingDir = path.resolve(stagingRoot, runId);
-  const rows = await store.releaseArtifacts(runId);
-  await rm(stagingDir, { recursive: true, force: true });
-  return {
-    run_id: runId,
-    staging_dir: stagingDir,
-    released: rows.map((row) => ({
-      path: row.path,
-      size: row.size,
-      status: "staged",
-      inbox_path: row.inbox_path,
-      staging_path: row.staging_path,
-    })),
-  };
+  return res.rows.map((row) => row.id);
 }
 
 /** Creates the child run and thread, submits the isolated task, waits for a
- *  terminal state, then transfers declared artifacts. */
+ *  terminal state, then returns the child's final text and sent file ids. */
 export async function delegate(context: DelegationToolContext, args: DelegateArgs): Promise<DelegateResult> {
   const task = args.task.trim();
   if (task === "") throw new DelegationError("invalid_task", "task must not be empty");
@@ -405,20 +289,13 @@ export async function delegate(context: DelegationToolContext, args: DelegateArg
     );
   }
   const text = await assistantText(context.pool, finished);
-  const childRoot = rootFor(context.workspaceRoot, target.org_id, target.id);
-  const parentRoot = rootFor(context.writeRoot, context.agent.org_id, context.agent.id);
-  const artifacts = await transferArtifacts({
-    store: context.store,
-    parentAgentId: context.agent.id,
-    parentRunId: context.parentRun.id,
-    childRunId: childRun.id,
-    childAgentId: target.id,
-    childRoot,
-    parentRoot,
-    stagingRoot: context.stagingRoot,
-    declared: await declaredPaths(context.pool, childRun.id),
-  });
-  return { run_id: childRun.id, text, artifacts };
+  const attachments = await childAttachmentIds(
+    context.pool,
+    thread.chat_id,
+    target.id,
+    childRun.started_at ?? childRun.created_at,
+  );
+  return { run_id: childRun.id, text, attachments };
 }
 
 /** Builds the per-run delegation context; null when the chat has no running
@@ -430,9 +307,6 @@ export async function delegationContextForChat(args: {
   agent: Agent;
   chatId: string;
   runtime: DelegationRuntime;
-  workspaceRoot: string;
-  writeRoot?: string;
-  stagingRoot?: string;
   timeoutMs?: number;
 }): Promise<DelegationToolContext | null> {
   const parentRun = await args.store.runningRunForChat(args.chatId);
@@ -448,29 +322,9 @@ export async function delegationContextForChat(args: {
     parentRun,
     requester,
     runtime: args.runtime,
-    workspaceRoot: args.workspaceRoot,
-    writeRoot: args.writeRoot ?? args.workspaceRoot,
-    stagingRoot: args.stagingRoot ?? path.join("/tmp", "delegations"),
     timeoutMs: args.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS,
     can_spawn: parentRun.depth < MAX_DELEGATION_DEPTH && children < MAX_CHILDREN_PER_RUN,
   };
-}
-
-/** Fallback declaration for tests and simple child agents: every regular
- *  file under outbox/, relative to the child root. */
-export async function outboxFiles(childRoot: string): Promise<string[]> {
-  const root = path.join(childRoot, "outbox");
-  const out: string[] = [];
-  const walk = async (dir: string, rel: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-      if (entry.isDirectory()) await walk(path.join(dir, entry.name), childRel);
-      else if (entry.isFile()) out.push(`outbox/${childRel}`);
-    }
-  };
-  await walk(root, "");
-  return out;
 }
 
 const textErr = (text: string): ToolExecutionResult => ({ output: [{ type: "text", text }], isError: true });
@@ -478,29 +332,7 @@ const textErr = (text: string): ToolExecutionResult => ({ output: [{ type: "text
 const delegateOutput = Type.Object({
   run_id: Type.String(),
   text: Type.String(),
-  artifacts: Type.Array(
-    Type.Object({
-      path: Type.String(),
-      size: Type.Number(),
-      status: Type.Union([Type.Literal("inbox"), Type.Literal("staged")]),
-      inbox_path: Type.Union([Type.String(), Type.Null()]),
-      staging_path: Type.Union([Type.String(), Type.Null()]),
-    }),
-  ),
-});
-
-const releaseOutput = Type.Object({
-  run_id: Type.String(),
-  staging_dir: Type.String(),
-  released: Type.Array(
-    Type.Object({
-      path: Type.String(),
-      size: Type.Number(),
-      status: Type.Literal("staged"),
-      inbox_path: Type.Union([Type.String(), Type.Null()]),
-      staging_path: Type.Union([Type.String(), Type.Null()]),
-    }),
-  ),
+  attachments: Type.Array(Type.String()),
 });
 
 function errorResult(error: unknown): ToolExecutionResult {
@@ -514,7 +346,7 @@ export function createDelegateTool(context: DelegationToolContext): ToolRegistra
     name: "delegate",
     description:
       "Delegate a task to another agent in this organization. The target runs in its own workspace with its own " +
-      "model and tool allowlist and returns text plus declared artifact files. The child gets the task text and " +
+      "model and tool allowlist and returns text plus the ids of the files it sent. The child gets the task text and " +
       "optional context, never this conversation's transcript. Limits: depth 2, 3 children per run.",
     parameters: Type.Object({
       agent: Type.String({ description: "Target agent id or exact name within this organization" }),
@@ -541,33 +373,3 @@ export function createDelegateTool(context: DelegationToolContext): ToolRegistra
     },
   });
 }
-
-export function createReleaseArtifactsTool(context: DelegationToolContext): ToolRegistration {
-  return defineTool({
-    name: "release_artifacts",
-    description:
-      "Delete the staging directory of a delegated child run and report the files it released. Files above 16 MiB " +
-      "stay in /tmp/delegations/<run-id>/ until this call. Nothing is cleaned up automatically.",
-    parameters: Type.Object({
-      run_id: Type.String({ description: "The delegated child run id whose staging area to release" }),
-    }),
-    structuredOutputSchema: releaseOutput,
-    replay: "unsafe",
-    callers: ["tools"],
-    outputLimits: { maxBytes: 16 * 1024 },
-    execute: async (args) => {
-      try {
-        const run = await context.store.getRun(args.run_id);
-        if (run.parent_run_id !== context.parentRun.id) {
-          throw new DelegationError("forbidden", "run is not a child of this run");
-        }
-        const result = await releaseArtifacts(context.store, context.stagingRoot, args.run_id);
-        return { structuredOutput: result as unknown as JsonValue };
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  });
-}
-
-export type { AgentDelegationArtifact };

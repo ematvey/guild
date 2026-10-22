@@ -1051,19 +1051,6 @@ export class AgentStore {
     return res.rows.map(toArtifact);
   }
 
-  /** Marks every staged artifact of one run released; returns the rows that
-   *  were staged before this call. */
-  async releaseArtifacts(runId: string): Promise<AgentDelegationArtifact[]> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `WITH released AS (
-         UPDATE agent_delegation_artifacts SET status = 'released'
-         WHERE (run_id = $1 OR parent_run_id = $1) AND status = 'staged' RETURNING *)
-       SELECT ${ARTIFACT_COLUMNS} FROM released d ORDER BY d.created_at ASC, d.path ASC`,
-      [runId],
-    );
-    return res.rows.map(toArtifact);
-  }
-
   async createRun(input: CreateRunInput): Promise<AgentRun> {
     const id = uuidv7();
     const res = await this.pool.query<Record<string, unknown>>(

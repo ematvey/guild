@@ -44,7 +44,7 @@ const AGENT_TOOL_CATALOG = [
   { name: "update_routine", label: "Update routine", group: "Routines", description: "Change a routine's schedule, prompt or enabled state.", safe: true },
   { name: "delete_routine", label: "Delete routine", group: "Routines", description: "Delete a routine and stop its schedule.", safe: true },
   { name: "delegate", label: "Delegate", group: "Agents", description: "Delegate a task to another agent and collect its result.", safe: false },
-  { name: "release_artifacts", label: "Release artifacts", group: "Agents", description: "Release delegated artifact staging for a run.", safe: false },
+  { name: "send_file", label: "Send file", group: "Files", description: "Attach a workspace file to the turn's response.", safe: false },
   { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
 ];
 

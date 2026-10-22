@@ -21,7 +21,8 @@ import {
   scheduleReminder,
   updateRoutine,
 } from "./routines.js";
-import { createDelegateTool, createReleaseArtifactsTool, type DelegationToolContext } from "./delegation.js";
+import { createDelegateTool, type DelegationToolContext } from "./delegation.js";
+import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { ALL_AGENT_TOOLS, type Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -40,9 +41,12 @@ export interface AgentToolDeps {
   /** Present only when this chat has a running run and the delegation limits
    *  still allow spawning. */
   delegation?: DelegationToolContext;
+  /** Present when this chat has a running agent turn. */
+  sendFile?: SendFileContext;
 }
 
-export { createDelegateTool, createReleaseArtifactsTool } from "./delegation.js";
+export { createDelegateTool } from "./delegation.js";
+export { createSendFileTool } from "./send-file.js";
 
 export interface AgentMessageResult {
   thread_id: string;
@@ -458,8 +462,8 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
     tools.push(createDelegateTool(deps.delegation));
   }
 
-  if (allowed.has("release_artifacts") && deps.delegation !== undefined) {
-    tools.push(createReleaseArtifactsTool(deps.delegation));
+  if (allowed.has("send_file") && deps.sendFile !== undefined) {
+    tools.push(createSendFileTool(deps.sendFile));
   }
 
   if (allowed.has("conversation_read")) {
