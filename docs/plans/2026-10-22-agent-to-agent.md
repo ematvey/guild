@@ -1,6 +1,6 @@
 # Agent-to-agent — implementation plan
 
-Date: 2026-10-22. Status: planned; no code yet.
+Date: 2026-10-22. Status: **implemented** on `feat/agent-to-agent`.
 
 Spec: `docs/specs/2026-10-22-agent-to-agent.md` (21 decisions). This plan says
 how to build it and in what order. It does not repeat the reasoning.
@@ -152,6 +152,41 @@ scripts/check-bindings.sh      # must stay clean: decision 16 adds no frame fiel
 A desktop change always ships with a client release (`docs/clients.md`), and
 the compose rebuild from `docs/deploy-nuances.md` §2 runs in the same task.
 
+## Outcome
+
+| package | commit | result |
+|---|---|---|
+| WP1 schema | `03b75c36` | migration 0087: tree columns, `delegated` kind, `cancelled` status, `child_result` event |
+| WP0 spike | `1d44b859` | merge works: `harness/inbox-merge.ts` appends to an unplaced steer item |
+| WP4 files | `8d398ad8` | `send_file`, per-turn `/tmp/attachments/<runId>/`, copy path deleted |
+| WP5a UI | `551a0ff5` | compact child row, `child_result` through the reducer, child thread URL |
+| WP2 delivery | `28c7039c` | child thread store, delivery + drain, cancel delivery, archive cascade |
+| WP6 backfill | `7b8274ae` | migration 0088: relabel, tree edges, attachment authors, artifact copy, allowlists |
+| WP3 tools | `c787c58d` | `spawn`/`send`/`read_thread`/`list`/`cancel`/`close`, one `subagents` group, `<spawned_by>` |
+
+Suite work done alongside: the wedge diagnostic removed, the failing
+`always_ask` case dropped, the retry backoff made configurable, and files run
+four at a time against the 500-connection Postgres. Wall time ~150 s -> ~49 s.
+
+## What the plan got wrong
+
+- **`read` collides with the coding tool.** A tool named `read` shadows the
+  base `read` in the registry and removes it from the direct tool list, which
+  broke user-mcp, codemode and durable-contracts. The tree tool is
+  `read_thread`.
+- **`send` needs a run row.** "Post a turn" is not enough: the lifecycle needs
+  a running `agent_runs` row to finish the turn and deliver the result.
+- **`release_artifacts` was already gone** from the catalog and the type union,
+  so only `delegate` needed removal.
+- **Artifact bytes are not migrated.** The 0088 copy moves declaration rows
+  into `attachments`, but the bytes were never uploaded to object storage, so
+  an old artifact row resolves and its download can still fail. SQL cannot fix
+  that; a one-off upload would be needed.
+- **`NOT NULL` on the attachment author columns** is applied only when the
+  backfill leaves no gaps. A pending agent attachment is inserted with
+  `event_id` NULL and published at turn end, so the columns stay nullable on an
+  empty database.
+
 ## Risks
 
 - **An `always_ask` integration curation produces no approval card.**
@@ -162,14 +197,11 @@ the compose rebuild from `docs/deploy-nuances.md` §2 runs in the same task.
   In `approvals.ts` the ask branch ends in `if (decision === "ask") return
   undefined`, so an ask that reaches that line becomes an allow. Find out why
   `gateDecision` does not return `"ask"` for the curated read tool.
-
-- **Inbox content mutation** (WP0). The only undocumented API in the design.
-  Test it first; the fallback costs one model call per batch.
-- **`attachments.event_id NOT NULL`** breaks existing rows. Backfill before the
-  constraint, in that order.
 - **Cross-worker cancel** needs a `remoteStop` IPC next to `remoteSubmit`
-  (`apps/server/src/platform/context.ts:200`). Until it lands, `cancel` works
-  only for chats the calling worker owns.
-- **Old delegated threads** are `routine_run` today and hidden by
-  `NOT_EXECUTION_TRANSCRIPT` (`apps/server/src/platform/store/chats.ts:76`).
-  Relabelling to `delegated` keeps them hidden, which is intended.
+  (`apps/server/src/platform/context.ts:200`). Until it lands, `cancel` and
+  `close` fail with `cancel_unreachable` for a chat in another worker and change
+  nothing.
+- **No budget.** The tree is bounded by shape only (depth 3, 16 children per
+  node). A parent turn can spawn more children each time it is woken.
+- **Overall cleanup** is out of scope: nothing deletes attachment objects or
+  archived subtree rows yet.
