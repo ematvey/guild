@@ -2359,6 +2359,25 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     window.history.replaceState(null, "", `/activity${window.location.search}`);
   }, [route.agents]);
 
+  // Activity is an admin surface. A member who lands on one of its
+  // addresses (deep link, old history entry) is moved to the agents
+  // directory without adding a history step.
+  useEffect(() => {
+    if (role === "admin") return;
+    const a = route.agents;
+    if (a === null) return;
+    const next: AgentsRoute | null =
+      a.view === "activity" || a.view === "run" || a.view === "session"
+        ? AGENTS_DIRECTORY
+        : a.view === "agent" && a.tab === "activity"
+          ? { view: "agent", agentId: a.agentId, tab: "overview" }
+          : null;
+    if (next === null) return;
+    const path = agentsRoutePath(next);
+    if (window.location.pathname !== path) window.history.replaceState(null, "", path);
+    setRoute((current) => ({ ...current, agents: next }));
+  }, [role, route.agents]);
+
   // A bare /settings arrival (deep link, old bookmark, back/forward)
   // normalizes to the default section — the Settings tab always has a
   // sectioned address. replaceState: the normalization is not a step back.
@@ -3664,6 +3683,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           onSignOut={signOut}
           onAddWorkspace={onAddWorkspace}
           inboxUnread={inboxUnread}
+          role={role}
         />
       )}
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}

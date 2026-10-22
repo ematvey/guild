@@ -97,6 +97,7 @@ export function SidebarRail({
   onSignOut,
   onAddWorkspace,
   inboxUnread,
+  role,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
@@ -111,7 +112,10 @@ export function SidebarRail({
   onSignOut: () => void;
   /** Desktop multi-workspace: the rail's first button hosts the switcher. */
   onAddWorkspace?: () => void;
+  /** Activity is an admin surface; members never see its rail entry. */
+  role?: string;
 }) {
+  const tabs = role === "admin" ? TABS : TABS.filter((tab) => tab.id !== "activity");
   return (
     <nav className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 text-sidebar-foreground">
       <div className="flex flex-col items-center gap-1">
@@ -121,7 +125,7 @@ export function SidebarRail({
           onAddWorkspace={onAddWorkspace}
           onReload={() => window.location.reload()}
         />
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon }) => (
           <RailButton
             key={id}
             label={label}
