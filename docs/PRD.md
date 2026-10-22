@@ -19,7 +19,7 @@ Product surfaces:
   Rust backend process hosts execution, the file bridge, and the CLI verbs;
   the webview is a pure interface that owns context assembly.
 - **Web UI** — served by the org server; a browser tab is a full chat client
-  and the admin console.
+  and carries the admin surfaces.
 - **Headless CLI / engine callers** — scripts and tools that drive the local
   backend process over the engine protocol.
 
@@ -274,11 +274,11 @@ An artifact materializes as a real file inside the workspace.
 Users create durable routines — a trigger plus an agent configuration — that
 run on the server without a chat open.
 
-- Trigger kinds include cron schedules and inbound webhooks.
+- Trigger kinds are cron schedules and one-off runs at a set time.
 - Routine runs are journaled and resumable; run history is visible.
 - A routine that exhausts its step budget ends with a visible explanation.
 
-### 3.10 Web UI and admin console
+### 3.10 Web UI and admin surfaces
 
 **PRD-25 — Web chat.**
 A browser tab is a full chat client.
@@ -288,12 +288,13 @@ A browser tab is a full chat client.
   the workspace instructions are fetched machine-mediated.
 - A web chat with no project runs tools in the server sandbox.
 
-**PRD-26 — Admin console.**
-Admins manage the org from the web UI.
+**PRD-26 — Admin surfaces.**
+Admins manage the org from the web UI Settings sections.
 
 - Users, teams, provider keys and routes, integrations and their tools,
-  registry review, releases, org approval defaults, and prompts are all
-  manageable.
+  registry review, org approval defaults, and prompts are all manageable.
+- Desktop releases are not managed here; they are published from the dev
+  checkout.
 - The console shows org events (including integration audit) and usage
   surfaces.
 

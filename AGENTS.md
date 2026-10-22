@@ -3,6 +3,7 @@
 Self-hosted org-level Codex/Cowork replacement: a TypeScript cloud server,
 a Rust local engine with shared protocol/core crates, plus a Tauri desktop
 client.
+
 Layout, build/test commands, and API examples live in `README.md` — it is the
 source of truth for them; this file carries only what the repo cannot tell
 you.
@@ -10,8 +11,9 @@ you.
 ## Read before touching the code
 
 - **`PLAN.md`** — current state of work and the decisions behind it
-  (approvals, exec policy, skills, thread events…). Newest entries on top.
-  Read the top entries before changing the areas they cover.
+  (approvals, exec policy, skills, thread events…). Newest entries on top;
+  older ones are in `docs/archive/decisions.md`. Read the top entries before
+  changing the areas they cover.
 - **`docs/deploy-nuances.md`** — deploy recipes, the compose stack on
   :18080, and the frontend-embedding model. Read before shipping anything.
 - **`docs/clients.md`** — building, signing, and releasing desktop clients.

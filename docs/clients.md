@@ -192,9 +192,8 @@ the server-computed sha256 matches the local file before declaring success.
 
 ## 5. Downloading + verifying clients
 
-- UI: **Downloads** view — per-artifact **Download** (mints a short-lived
-  HMAC-signed URL server-side), **copy curl**, **copy verify**; the signing
-  key is displayed (pin it out-of-band after first use).
+- No UI view: desktop releases are dev-controlled, not admin-controlled.
+  The API lists them and mints download URLs.
 - CLI:
   ```bash
   URL=$(curl -sS -H "authorization: Bearer $TOKEN" \

@@ -24,6 +24,7 @@ apps/desktop        Tauri desktop client (also the web SPA)
 deploy/compose      docker compose bundle
 docs/specs          design docs
 docs/plans          implementation plans
+docs/archive        older decision log
 ```
 
 ## Build & test
@@ -33,6 +34,7 @@ cargo fmt --all
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 npm test --workspace apps/server        # TS server suite (disposable PG/CH databases)
+cd apps/desktop && npm test             # frontend vitest
 ```
 
 ## Run the stack
