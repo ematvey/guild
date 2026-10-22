@@ -12,6 +12,14 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The turn body carries no AGENTS.md chain (2026-10-22).** Removed
+  `agents_md` end to end: the webview no longer assembles the config-dir
+  file plus the project chain, the turn body has no field for it, the Rust
+  protocol and the engine forwarding drop it, and the TS server no longer
+  accepts it. The field was dead once the workspace-config model landed —
+  the server ignored it, so no turn ever saw the chain. Instructions come
+  from the agent workspace files only.
+
 - **Activity is an admin surface (2026-10-22).** The rail entry, the
   `/activity` page, the trace and session deep links, and each agent's
   Activity tab are admin-only. A member who lands on one of those addresses
@@ -351,10 +359,10 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   lives on the host services: Postgres db `guild`, ClickHouse for traces and
   usage, rustfs for objects. Agent workspaces ride a JuiceFS volume; tools
   run in gVisor sandboxes via `sandbox-runner`.
-- **Version:** dev runs 0.5.101. Prod is a separate checkout
+- **Version:** dev runs 0.5.102. Prod is a separate checkout
   (`~/guild-prod`, branch master, `:18081`), runs 0.5.82, and stays in
   supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
-- **Clients:** desktop 0.5.101 is published on the dev updater manifest for
+- **Clients:** desktop 0.5.102 is published on the dev updater manifest for
   all four platforms (six artifacts: Windows NSIS, Linux AppImage, macOS
   aarch64 and x86_64 DMG plus their updater bundles), minisign-signed.
   Installed clients pick it up on relaunch. Releases stay dev-controlled and
@@ -371,10 +379,10 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
 
 ## Next steps (ordered)
 
-1. **Finish the worker-mode soak and flip prod.** Dev serves turns through
-   forked workers, so every agent turn rides this path. Still unverified:
-   idle reap, and live approval, compaction and steering inside a worker
-   turn. Prod stays on the supervisor until these pass.
+1. **Finish the worker-mode soak.** Dev serves turns through forked
+   workers, so every agent turn rides this path. Still unverified: idle
+   reap, and live approval, compaction and steering inside a worker turn.
+   Prod is not in scope — agent work is tested on dev only.
 2. **Enforce agent resource limits, or drop the field.** Every agent records
    `resources` (1 vCPU / 2 GiB / 256 pids / 50 GiB), but the sandbox runner
    ignores it and uses its own env defaults (2 vCPU / 2 GiB / 512 pids). The
@@ -385,18 +393,13 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
    object store. Decide the budget and where it is enforced.
 4. **Decide whether an archived thread can move to another agent.** Today a
    live thread moves with its transcript; an archived one has no such path.
-5. **Drop or use the `agents_md` field on cloud turns.** The client still
-   assembles the project AGENTS.md chain and sends it, and the TS server
-   accepts it into the request object but never reads it — agent threads
-   take their instructions from the workspace files. Remove the field, or
-   give it a reader.
-6. **Decide machine identity after an OS reinstall.** A changed hardware
+5. **Decide machine identity after an OS reinstall.** A changed hardware
    fingerprint matches no row, so the machine registers as new and its old
    chats go dark. Candidates: derive the fingerprint from the firmware/board
    UUID, or give the user an explicit takeover on the machines page.
-7. **Measure the rest of the long-thread path.** Composer typing is fixed.
+6. **Measure the rest of the long-thread path.** Composer typing is fixed.
    Initial load and scroll of the 3000-event dev thread were not measured.
-8. **Cover the review gaps in the next loop:** Windows-only engine paths
+7. **Cover the review gaps in the next loop:** Windows-only engine paths
    (compile-checked, never run), the desktop updater flow on a real install,
    and the integration connectors.
 

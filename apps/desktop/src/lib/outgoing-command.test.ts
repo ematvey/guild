@@ -6,7 +6,7 @@ const command = (files: DraftAttachment[] = []) => captureCommand({ id: "stable-
 const io = (): SubmissionIO => ({
   create: vi.fn(async () => "created-chat"), created: vi.fn(),
   upload: vi.fn(async (_chat, a) => ({ ...a, id: `uploaded-${a.id}` })), uploaded: vi.fn(),
-  prepare: vi.fn(async text => ({ prompt: `${text} expanded`, instructions: "original instructions" })),
+  prepare: vi.fn(async text => ({ prompt: `${text} expanded` })),
   submit: vi.fn(async () => {}),
 });
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((ok, bad) => { resolve = ok; reject = bad; }); return { promise, resolve, reject }; }
@@ -78,7 +78,7 @@ describe("outgoing command lifecycle used by WebChat", () => {
     const send = command(); send.prepareLocally = false;
     const api = io(); await submitCommand(send, api);
     expect(api.prepare).not.toHaveBeenCalled();
-    expect(send.prepared?.instructions).toBeUndefined(); expect(send.prepared?.prompt).toBe("original");
+    expect(send.prepared?.prompt).toBe("original");
   });
 });
 

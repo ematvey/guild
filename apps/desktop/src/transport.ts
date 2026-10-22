@@ -1117,7 +1117,6 @@ export async function sendChatNoStream(
   messageId?: string,
   sendMode?: "queue" | "steer",
   skillsIndex?: string,
-  projectInstructions?: string,
   agentId?: string,
 ): Promise<void> {
   const token = getToken();
@@ -1147,7 +1146,6 @@ export async function sendChatNoStream(
         agent_id: agentId || undefined,
         send_mode: sendMode,
         skills_index: skillsIndex || undefined,
-        agents_md: projectInstructions || undefined,
       }),
       // A hung connection (proxy, tunnel, stalled body) must surface as an
       // error block. Delivery may already have committed; retries must reuse
@@ -1305,14 +1303,12 @@ function orgSkillsApi(): OrgSkillsApi {
 export { orgSkillsApi };
 
 /// Expands `/name` skill mentions in a turn prompt against the local skill
-/// discovery, renders the skills index, and assembles the AGENTS.md
-/// instructions (global config-dir file + the bound project's chain, Codex
-/// semantics) — app-process RPC; browser mode has no local files and passes
-/// the prompt through untouched.
+/// discovery and renders the skills index — app-process RPC; browser mode
+/// has no local files and passes the prompt through untouched.
 export async function prepareTurn(
   prompt: string,
   projectDir?: string,
-): Promise<{ prompt: string; index: string; instructions?: string }> {
+): Promise<{ prompt: string; index: string }> {
   // Context assembly moved to the client (lib/context.ts) over the fs
   // bridge; browser mode has no local files and passes through untouched.
   const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;

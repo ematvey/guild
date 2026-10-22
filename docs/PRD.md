@@ -194,11 +194,10 @@ engine chat still gets the project's AGENTS.md chain.
 - Agent threads read `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`,
   `MEMORY.md` and `BOOTSTRAP.md` from the agent workspace on every turn,
   under a per-file and total byte budget.
-- A local engine chat gets the global config-dir instructions file first,
-  then one file per directory from the repo root down to the working
-  directory; an override file beats the plain file, and an empty file
-  silences its directory.
-- The chain is assembled under a shared byte budget.
+- Editing a workspace file changes the next turn; no restart or re-pair is
+  needed.
+- A workspace file over its cap is truncated, and the agent sees the
+  truncated text.
 
 ### 3.6 Integrations
 

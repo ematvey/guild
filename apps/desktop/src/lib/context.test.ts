@@ -1,6 +1,6 @@
 //! Context-assembly logic (context.ts): the port of the daemon's Rust
-//! skills.rs + agents_md.rs. The fake fs mirrors the bridge contract;
-//! expectations come from the Rust implementations' own tests.
+//! skills.rs. The fake fs mirrors the bridge contract; expectations come
+//! from the Rust implementation's own tests.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -9,8 +9,6 @@ import {
   mentionExpansions,
   mentionBlock,
   prepareTurn,
-  projectAgentDocs,
-  loadGlobalAgentsMd,
   discoverSkills,
   listSkills,
   setSkillDisabled,
@@ -146,52 +144,11 @@ describe("mentionExpansions + mentionBlock", () => {
   });
 });
 
-describe("AGENTS.md chain (Codex semantics)", () => {
-  it("assembles override > plain per directory, root → cwd, empty stops the dir", async () => {
-    const fs = fakeFs({
-      "/cfg/guild/AGENTS.md": "global instructions",
-      "/repo/.git/x": "",
-      "/repo/AGENTS.override.md": "root override",
-      "/repo/AGENTS.md": "root plain (shadowed)",
-      "/repo/sub/AGENTS.md": "   ", // empty: the dir contributes nothing
-      "/repo/sub/deep/AGENTS.md": "deep guidance",
-    });
-    const global = await loadGlobalAgentsMd(fs, "/cfg/guild");
-    expect(global?.contents).toBe("global instructions");
-    const docs = await projectAgentDocs(fs, "/repo/sub/deep");
-    expect(docs.map((d) => d.contents)).toEqual([
-      "root override",
-      "deep guidance",
-    ]);
-  });
-  it("stops the directory walk at the project root (no .git → cwd only)", async () => {
-    const fs = fakeFs({
-      "/outside/AGENTS.md": "above",
-      "/proj/AGENTS.md": "local",
-    });
-    const docs = await projectAgentDocs(fs, "/proj");
-    expect(docs.map((d) => d.contents)).toEqual(["local"]);
-  });
-  it("truncates against the shared byte budget", async () => {
-    const big = "y".repeat(31000);
-    const fs = fakeFs({
-      "/repo/.git/x": "",
-      "/repo/AGENTS.md": big,
-      "/repo/sub/AGENTS.md": "tail",
-    });
-    const docs = await projectAgentDocs(fs, "/repo/sub");
-    expect(byteLengthOf(docs[0].contents)).toBeLessThanOrEqual(32 * 1024);
-    expect(docs.map((d) => d.contents)[1]).toBe("tail");
-  });
-});
-
 describe("prepareTurn (end to end over the bridge)", () => {
-  it("expands mentions, builds the index, joins global + project docs", async () => {
+  it("expands mentions and builds the index", async () => {
     const fs = fakeFs({
-      "/cfg/guild/AGENTS.md": "global rules",
       "/cfg/guild/skills/deploy/SKILL.md": SKILL("deploy", "Deploy the thing"),
       "/repo/.git/x": "",
-      "/repo/AGENTS.md": "repo rules",
       "/home/u/.agents/skills/user-skill/SKILL.md": SKILL("user-skill", "User scope"),
     });
     const scopes = { configDir: "/cfg/guild", home: "/home/u" };
@@ -200,7 +157,6 @@ describe("prepareTurn (end to end over the bridge)", () => {
     expect(prep.prompt).toContain("### Skill: deploy");
     expect(prep.index).toContain("- deploy: Deploy the thing");
     expect(prep.index).toContain("- user-skill: User scope");
-    expect(prep.instructions).toBe("global rules\n\n--- project-doc ---\n\nrepo rules");
   });
   it("browser mode (no scopes) passes the prompt through untouched", async () => {
     const prep = await prepareTurn(
@@ -393,9 +349,7 @@ describe("project skill scope contracts", () => {
     const fs = fakeFs({
       "C:/repo/.git/x": "",
       "C:/repo/.agents/skills/root/SKILL.md": SKILL("root", "root"),
-      "C:/repo/AGENTS.md": "root instructions",
     });
     expect((await discoverSkills(fs, "C:\\repo\\sub", "/cfg", "/home/u"))[0].name).toBe("root");
-    expect((await projectAgentDocs(fs, "C:\\repo\\sub"))[0].contents).toBe("root instructions");
   });
 });
