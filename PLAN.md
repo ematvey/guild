@@ -1,13 +1,14 @@
 # PLAN — current state and future directions
 
-Guild is a self-hosted Codex/Cowork replacement: a Rust workspace (cloud
-server, local engine, shared protocol/core crates) plus a Tauri desktop
-client. Product requirements live in `docs/PRD.md`, system contracts in
+Guild is a self-hosted Codex/Cowork replacement: a TypeScript cloud
+server, a Rust local engine with shared protocol/core crates, and a Tauri
+desktop client. Product requirements live in `docs/PRD.md`, system contracts in
 `docs/SRS.md`, deploy recipes in `docs/deploy-nuances.md`, client release
 recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 
-This file tracks where the project stands and where it is going. History is
-not kept here — it lives in git.
+This file tracks where the project stands and where it is going. The
+decision log is the changelog: each entry says what changed and why, newest
+first. Code comments describe only the present.
 
 ## Latest decisions
 
@@ -39,21 +40,6 @@ not kept here — it lives in git.
   open by design: skill bundles publish without review (spec §1.3), and the
   file tools can read any path on a paired machine (the pairing is the
   grant).
-
-- **Agent config lives in the workspace, OpenClaw-style (2026-10-21).** The
-  agent's identity, persona and operating rules moved out of the `agents`
-  row into root files that the agent itself can edit: `IDENTITY.md` (one
-  line: name, vibe, emoji, avatar), `SOUL.md`, `AGENTS.md`, `USER.md`,
-  `MEMORY.md`, `BOOTSTRAP.md`, plus an empty `memories/`. Every new agent is
-  seeded from the templates in `apps/server/src/agents/templates.ts` (never
-  overwriting an existing file), and the thread's instructions are composed
-  from the files on each turn (8 KiB per file, 24 KiB total, truncation and
-  missing-file markers). `BOOTSTRAP.md` is a first-run ritual the agent
-  deletes. `agents.instructions` is now a mirror of `AGENTS.md`: a create
-  writes the file, a patch rewrites it, and the UI reads the identity line
-  (`identity` on the agent payload). Spec:
-  `docs/specs/2026-10-21-workspace-agent-config.md`; re-seed a dev install
-  with `npx tsx scripts/agents-reinit.ts`.
 
 - **Observability is one Activity surface: traces and spans, not a settings
   page (2026-10-22).** ClickHouse now owns the agent-observability model.
@@ -112,6 +98,21 @@ not kept here — it lives in git.
   possibly non-contiguous tail could hide the rows between them. The full
   log stays on `GET /threads/:id` for the engine's turn assembly.
 
+- **Agent config lives in the workspace, OpenClaw-style (2026-10-21).** The
+  agent's identity, persona and operating rules moved out of the `agents`
+  row into root files that the agent itself can edit: `IDENTITY.md` (one
+  line: name, vibe, emoji, avatar), `SOUL.md`, `AGENTS.md`, `USER.md`,
+  `MEMORY.md`, `BOOTSTRAP.md`, plus an empty `memories/`. Every new agent is
+  seeded from the templates in `apps/server/src/agents/templates.ts` (never
+  overwriting an existing file), and the thread's instructions are composed
+  from the files on each turn (8 KiB per file, 24 KiB total, truncation and
+  missing-file markers). `BOOTSTRAP.md` is a first-run ritual the agent
+  deletes. `agents.instructions` is now a mirror of `AGENTS.md`: a create
+  writes the file, a patch rewrites it, and the UI reads the identity line
+  (`identity` on the agent payload). Spec:
+  `docs/specs/2026-10-21-workspace-agent-config.md`; re-seed a dev install
+  with `npx tsx scripts/agents-reinit.ts`.
+
 - **A skill pin is optional; an install follows the latest by default
   (2026-10-21).** `skill_installs.pinned_version` is nullable and NULL means
   "follow the latest published version". Every install path — the install
@@ -148,6 +149,7 @@ not kept here — it lives in git.
   behind `codemode` scripts. The agent's tool allowlist narrows the direct
   surface the same way it narrows integrations, and `codemode` is always
   present because it is the only path to the script-only tools.
+
 - **Stop ends the turn even when a tool cannot be cancelled (2026-10-21).**
   The stop route waits for the conversation to go idle, so one hung tool call
   kept the chat generating and the button on "Stopping" for good. Three
@@ -179,6 +181,7 @@ not kept here — it lives in git.
   caller's personal agent on its first turn; switching an existing chat keeps
   the transcript and moves the thread to the chosen agent. The model is the
   agent's, never a per-chat choice.
+
 - **A personal agent is visible only to its owner** — no admin override, no
   org or team visibility. `visiblePredicate` handles `is_personal` first.
 
@@ -288,21 +291,6 @@ not kept here — it lives in git.
   the local-tree read names the owner too. Index guidance states the
   provenance is there.
 
-- **The 2026-10-18 review's criticals are closed (2026-10-19, 0.5.82).**
-  Project binding is owner-only: `lockBindableMachine` matches the machine's
-  `user_id`, with the org kept as a tenancy filter — a project's folder is the
-  workdir its chats execute in, so an org-wide bind was remote execution on a
-  coworker's machine. An unmapped conversation now blocks command-bearing
-  tools instead of failing open; non-command tools keep the pre-approved
-  batch contract. The composer ignores Enter while an IME is composing. A
-  malformed path escape parses to the default route and the address is
-  rewritten, instead of throwing from the render-time route initializer. The
-  route upsert runs in one transaction, so a rename onto a taken id or
-  display name is a 409 from the index, not a lost race or a 500. Route
-  display names are unique per org (case-insensitive; the empty default may
-  repeat), and the context tooltip names the route that actually measured the
-  usage instead of the currently selected one.
-
 - **A turn naming a retired model runs on the default route (2026-10-19).**
   A chat pins no model: the picker offers the org's catalog, and the turn
   carries whatever the client has in hand. A tab opened before an admin
@@ -326,6 +314,21 @@ not kept here — it lives in git.
   id; that is data, not a live route reference. Dev compose serves 0.5.81,
   the migration is applied, and all six signed client artifacts are
   published.
+
+- **The 2026-10-18 review's criticals are closed (2026-10-19, 0.5.82).**
+  Project binding is owner-only: `lockBindableMachine` matches the machine's
+  `user_id`, with the org kept as a tenancy filter — a project's folder is the
+  workdir its chats execute in, so an org-wide bind was remote execution on a
+  coworker's machine. An unmapped conversation now blocks command-bearing
+  tools instead of failing open; non-command tools keep the pre-approved
+  batch contract. The composer ignores Enter while an IME is composing. A
+  malformed path escape parses to the default route and the address is
+  rewritten, instead of throwing from the render-time route initializer. The
+  route upsert runs in one transaction, so a rename onto a taken id or
+  display name is a 409 from the index, not a lost race or a 500. Route
+  display names are unique per org (case-insensitive; the empty default may
+  repeat), and the context tooltip names the route that actually measured the
+  usage instead of the currently selected one.
 
 - **Machine ids stay handles; the hardware id only matches (2026-10-18, 0.5.79).**
   Reverts the derived ids of 0.5.77/0.5.78 (`uuidv5(org, user, fingerprint)`):
@@ -521,6 +524,7 @@ not kept here — it lives in git.
   limit; the per-result scrape option is gone with the nonstandard
   signature). The principle is codified in a comment above the firecrawl
   connector in `connectors.ts`.
+
 - **The live "Agent is working Ns" clock anchors to the turn
   (2026-10-16, 0.5.64).** The casual view's counter is a per-run timer and
   read as broken: it reset at every step/intermediate text, and a race
@@ -529,6 +533,7 @@ not kept here — it lives in git.
   starting mid-flight). While a run is the turn's live tail, the label now
   counts from the turn's user message — starts at 0, never resets; settled
   runs keep their own per-run durations.
+
 - **Error wire gap closed — assistant_message error now reaches clients (2026-10-16,
   0.5.63).** The 0.5.61 fix persisted the error on the assistant_message DB
   payload but never emitted it on any wire: parseThreadEvent (jsonb →
@@ -542,6 +547,7 @@ not kept here — it lives in git.
   already expected the field. Golden failures in the suite are the known
   stale ones (`onboarded`, `last_activity_at`) + the pre-existing ws-feed
   timing flake — both fail identically on base.
+
 - **View modes re-consolidated — casual differs only in the collapse (2026-10-16,
   0.5.61).** The 2026-10-15 casual view had grown extra divergences beyond the
   thinking/tool collapse (extra py-2 padding around user/agent text, terminal
@@ -555,6 +561,7 @@ not kept here — it lives in git.
   differ exactly where intended: contiguous thinking/tool runs collapse into
   one worked-for entry (casual) vs 1:1 frames (technical). Hover-stamp logic
   was already view-independent (computed on the shared entry list).
+
 - **Provider/model errors surface in the chat (2026-10-16, 0.5.61).**
   A failed provider attempt (e.g. the upstream 401 rendered as "502:
   provider auth failed (check org key)") produced empty assistant blocks
@@ -567,6 +574,7 @@ not kept here — it lives in git.
   turns and queued chips all supersede it, and mid-history failures never
   render. All four failed "hello" attempts in the affected thread are
   still tracked in the journal, only the last shows.
+
 - **Codemode script block gets JS highlighting (2026-10-16, 0.5.60).**
   The monospace source block on the codemode card is tokenized for display
   by an in-house single-regex highlighter (`js-highlight.tsx` — keywords,
@@ -574,6 +582,7 @@ not kept here — it lives in git.
   unknown constructs fall through as plain text). Shipped 0.5.60: compose
   rebuild live-verified and client release published to the dev registry
   (all four platforms, `latest.json` serves 0.5.60).
+
 - **Codemode widget: the script card renders its nested calls (2026-10-16,
   0.5.59).** The codemode-only exposure (above) left every script call as a
   generic tool frame — args JSON dump, no visibility into what the script
@@ -594,6 +603,7 @@ not kept here — it lives in git.
   Shipped 0.5.59: compose rebuild live-verified (bundle hash changed,
   health ok) and client release published to the dev registry (all four
   platforms signed, `latest.json` serves 0.5.59).
+
 - **Codemode-only tool exposure + thread-history tools (2026-10-16).** The
   model is now offered exactly one tool: `codemode` (every registration
   carries `callers: ["tools"]` — pi-durable's native script-only marker;
@@ -610,6 +620,7 @@ not kept here — it lives in git.
   individually; gating the wrapper asked the judge before the script even
   ran). Judge-consult and spill semantics unchanged for nested calls; tests
   migrated to script their tool calls (`return await tools.bash(…)`).
+
 - **Composer bottom padding is remount-safe (2026-10-16, 0.5.56).** The
   reported "composer overlaps the last line at scroll-bottom" bug was the
   composer's ResizeObserver: it observed once on mount, but the
@@ -646,7 +657,6 @@ not kept here — it lives in git.
   conversation with pending work. Gate: kill mid-integration-call → the
   resumed run's NEW call must resolve (red before, green after).
 
-
 - **Releases 0.5.49–0.5.50 (2026-10-15).** Worked-for label spacing
   iteration: v4 `space-y` puts the margin on the previous sibling's bottom,
   so negative margins on the label only shaped its top — the label now
@@ -660,19 +670,6 @@ not kept here — it lives in git.
   turn end, tightened worked-for spacing. Rule recorded in AGENTS.md:
   desktop-affecting changes ship a client release in the same task — a
   web-only deploy leaves installed clients on the old bundle.
-
-## Latest decisions
-
-- **Loading states describe pending data, never absence (2026-10-16, 0.5.68).**
-  Workspace identity, approval policy, assistant prompts, account role,
-  observability totals/payloads and release versions now wait for their reads
-  before showing defaults, zeroes or missing-content copy. Failed settings
-  reads render errors instead of editable defaults or permanent skeletons;
-  missing user/team/model detail records resolve explicitly. Shared skeletons
-  use subdued, reduced-motion-aware fills and compact text/row/form shapes;
-  chat, skills, tables, project pickers and workspace switchers use those
-  shapes instead of broad solid slabs. Scope and verification are recorded in
-  `docs/plans/2026-10-16-loading-states.md`.
 
 - **Never touch prod while developing (user-mandated 2026-10-15).** Dev
   work targets the dev stack only (`:18080`), including client-release
@@ -733,6 +730,7 @@ not kept here — it lives in git.
   ids across harnesses); SIGKILL-isolation gate green; suite at baseline.
   M2.5 remains: idle reap, approval/compaction live verification, machine
   dispatch IPC proxy, then flip the flag on dev → prod.
+
 - **The storage layer survives transient Postgres failures instead of sealing the session (2026-10-15).**
   Root cause of the chat wedge (incident 2026-10-15): pi-durable is fail-stop by design —
   "nothing retries, that is the Storage's to retry" — and the Postgres adapter never retried,
@@ -775,6 +773,7 @@ not kept here — it lives in git.
   `scripts/durable-repair.mjs` scans for and removes such documents
   (`--fix`). Found via the user's screencast of a thread that accepted two
   messages and never answered.
+
 - **`always_allow` tool curation — the org grants a tool past the approval gate (2026-10-15).**
   The per-tool admin curation on an integration row gains a third approval
   value next to `default` and `always_ask`: `always_allow` classifies the
@@ -793,6 +792,7 @@ not kept here — it lives in git.
   default curation would have gone to the judge/card. Full suite: 439
   passing, failures identical to base (pre-existing timing flakes + the
   stale golden). Commit `6612a4b`.
+
 - **Chat view modes — casual/technical, header kebab, hover timestamps (2026-10-15).**
   Designed by grill (doc: `docs/plans/2026-10-15-chat-view-modes-design.md`). The
   thread header gains a kebab menu: Rename (popup dialog), Archive/Unarchive
@@ -810,6 +810,7 @@ not kept here — it lives in git.
   month/day within the year, + year older. Reducer now stamps durable text
   blocks with `ts` (tool/reasoning already carried it). In technical view the
   rendering is byte-identical to before.
+
 - **Release 0.5.46 (2026-10-15).** First release cut straight from develop's
   working tree: the approval-gate idempotency fixes (below), the agent
   sessions' queued mid-turn sends (steer/queue chips, withdrawal), the
@@ -883,6 +884,7 @@ not kept here — it lives in git.
   (URL contract). Pre-existing failure not touched by this work:
   `platform/golden.test.ts` fails on the base commit too (stale `/me` golden
   missing the `onboarded` field).
+
 - **Server runtime is Bun — no server compile, no dist (2026-10-14).**
   `Dockerfile.server-ts` no longer runs tsc for the server: the runtime
   stage installs Bun (copied from oven/bun:1 into the node:22-slim base,
@@ -897,6 +899,7 @@ not kept here — it lives in git.
   agent keeps running node inside the separate guild-sandbox image —
   untouched. Schema-first IDL (protobuf) for the protocol remains the
   longer-term direction (see Future directions).
+
 - **Bindings compile in place; @guild/protocol exports an identity map
   (2026-10-14).** The NodeNext-consuming server could not actually resolve
   `@guild/protocol/ThreadEvent.js`: the .js→.ts substitution only applies to
@@ -938,6 +941,7 @@ not kept here — it lives in git.
   considered and declined: the wire is JSON end-to-end (browser clients,
   persisted journals, wiremock fixtures) and the duplication was ~300
   lines — the binding package solves it without a wire-format migration.
+
 - **Release 0.5.44 (2026-10-14).** First release through the reconciled
   flow: develop → master `--no-ff` (f347971) carried the sandbox-runner
   (gVisor), URL-driven navigation, the onboarding guide, webchat
@@ -967,6 +971,7 @@ not kept here — it lives in git.
   pin indefinitely. The HTTP surfaces now compute the flag via
   `machineOnlineOf` (the same hub truth); regression test in
   ws-feed.test.ts pins HTTP/push/machines parity.
+
 - **Trailing reasoning no longer splits the live answer (2026-10-14).**
   Backends that emit a reasoning delta after the answer began (local vLLM,
   DeepSeek-class models) streamed as [thinking][text][thinking][text] — the
@@ -978,6 +983,7 @@ not kept here — it lives in git.
   stop being emitted live and only accumulate into the view buffer — the
   tail joins the reasoning block at the turn-boundary restamp, matching the
   durable form with no added latency.
+
 - **Silent turn deaths now surface + shutdown drains (2026-10-14).** A turn
   whose generation task fails (model unreachable, deploy restart mid-turn)
   used to vanish: the failure rode only a live error frame — no persisted
@@ -1168,6 +1174,7 @@ not kept here — it lives in git.
   The `skipWhenEmpty` option and the `wsSkillsSync` connect seam are removed; change
   triggers (install/pin/uninstall) keep pushing. Desktop client needs a rebuild/release to
   ship the pull (binary rebuilt locally).
+
 - **User-owned MCP servers + the codemode tool (0.5.40, 2026-10-14).** Two
   branches merged (`user-mcp`, `codemode`), both built by subagents in their
   own worktrees and browser-E2E-verified live on :18080.
@@ -1195,6 +1202,7 @@ not kept here — it lives in git.
   gate) exactly like direct calls. E2E: MCP probe + real-model turn
   (`mcp_e2efixture_add(2,3)` → `5`), codemode write→read script round-trip
   plus a correctly policy-blocked nested bash; SSRF deny path verified live.
+
 - **Descriptions are one line, stored and rendered (2026-10-14).** The
   detail page's apparent line breaks were the `max-w-[560px]` render cap
   wrapping — the stored value was already single-line. Save points now
@@ -1203,6 +1211,7 @@ not kept here — it lives in git.
   and the push_skill derivation, and the desktop `parseFrontmatter` folds
   literal block scalars flat too — descriptions feed one-line index
   entries and a multi-line value would corrupt that format.
+
 - **Publish parses the SKILL.md description; publish auto-installs (2026-10-14).**
   `descriptionFromSkillMd` (server push path) now reads the frontmatter's
   `description` first — single-line plain/quoted, block scalars (`>`/`|`
@@ -1218,6 +1227,7 @@ not kept here — it lives in git.
   untouched (their update-available marker works as before). The live
   `hubspot-investigate` row's description and manifest were corrected in
   place, and the pusher got their retroactive install record.
+
 - **Rail tabs own URLs; tab switch resets the composer (2026-10-13).**
   Each sidebar tab now has its own address: `/chats` (default, `/` aliases
   to it), `/work` (also implied by `/project/<id>`), `/settings` (bare;
@@ -1229,6 +1239,7 @@ not kept here — it lives in git.
   the open chat: switching Chats ↔ Work (or any tab) always lands on a fresh
   composer, never the previously selected chat. `ChatRoute` gained a `tab`
   field; `chatRoutePath` takes it as a fifth parameter.
+
 - **Org-wide skills shipped (2026-10-13).** The 17-task plan
   (`docs/superpowers/plans/2026-10-13-org-skills.md`, spec
   `docs/superpowers/specs/2026-10-13-org-skills-design.md`) is complete and
@@ -1268,19 +1279,6 @@ not kept here — it lives in git.
   protocol, guild-core, app-server, codex-execpolicy(+utils), desktop
   Tauri.
 
-- **Sidebar icon rail — chats and project chats separated.** The chat
-  sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
-  always visible even when the panel is collapsed) with three tabs:
-  Chats (workspace switcher, New chat, Recents, Archived), Work (projects
-  with their fold-out chats), Settings (section rows that open the settings
-  overlay at that section). The account menu moved to the rail bottom; the
-  tab selection persists in `localStorage["guild.sidebarTab"]`. Recents
-  now shows only stateless chats — project-bound chats appear only under
-  their project on the Work tab (project rows carry an aggregate
-  unread/generating dot, and `/project/<id>` deep links open the Work tab).
-  The mobile drawer is pinned to the Chats panel (no rail there).
-  `sidebarGrouping.visible` changed meaning accordingly (stateless only).
-
 - **0.5.36 — read markers ride event `seq`, not event id.** Threads with a
   dead executor kept reappearing unread after every refresh: durable
   workflow events carry deterministic uuid v5 ids (idempotent replay), and
@@ -1294,66 +1292,18 @@ not kept here — it lives in git.
   transform (editing 0048 broke fresh template builds with a duplicate
   column). Server-only; no client change.
 
-- **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by a
-  deliberate merge of develop into its master (a release merge, e.g.
-  "release 0.5.42 — merge develop into prod") — never a blind
-  fast-forward: develop → master crossings are meant to be deliberate,
-  and its docker-compose.yml carries prod-local edits, so never rebase it
-  either. Then `docker compose build server && up -d` there. First
-  multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
-  exposed that an untracked migration file breaks the tree — migrations
-  must be committed with the code that reads them.
-
-- **Multi-workspace auth — the daemon holds N live sessions, one per
-  server.** The desktop client can now be signed into two guild servers
-  (different domains) at once and switch between them: both servers see the
-  machine online and either can dispatch tools. Design spec:
-  `docs/plans/2026-09-30-multi-workspace-auth-design.md` (approved:
-  "both live simultaneously", not Slack-style single-active switching).
-  Mechanics: `workspaces.json` (session list + active pointer) beside
-  `token.json`, which stays the ACTIVE session's mirror so the watcher,
-  CLI logins, and every reader keep working. The single machine-link
-  channel became a registry (one link task per live workspace, supervisor
-  per host cycle). New RPC: `workspace.list`, `workspace.switch`;
-  `session.clear` gained an optional `base_url` (per-workspace sign-out).
-  Webview: workspace switcher in the account menu, "Add workspace" shows
-  the pair/sign-in card over the running app; switching re-mirrors
-  `session.info` and reloads (the existing restore path). Accepted
-  consequence: one machine's executor serves two servers concurrently —
-  dispatches are independent requests, the executor processes them one at
-  a time. Machine slots are per-server, so the 0.5.25 live-slot rule is
-  unaffected. A dead token in one workspace keeps its row listed as "sign
-  in again" instead of vanishing.
-
-- **0.5.25 — a live machine slot is held, not displaced.** Root cause of the
-  recurring devbox outages: any locally-run guild binary (dev sessions on
-  this box — which IS devbox) loads the real token.json and connects a
-  machine link as the same row; the hub's newest-wins displacement handed
-  the slot to the thief, and the displaced link never learns it lost the
-  slot — its leftover server conn keeps heartbeating, so the daemon sits
-  "connected" while the machine shows offline until the daemon restarts.
-  The hub now REJECTS a connect from a different instance while a live slot
-  exists (same-instance reconnects still replace their own zombie slot —
-  that's the blip-heal path); clients of every deployed version already
-  park 300s on the Displaced notice and retry. Rejections are logged with
-  machine + instance. Known limit: instance_id is client-claimed, so a
-  determined spoofer could still bypass — real defense would need
-  per-instance credentials. Server-only change; no client release needed.
-
-- **0.5.24 — the Windows machines were offline because of one misplaced
-  flag.** WORKSTATION's daemon trace (the 0.5.23 toggle earning its keep) showed
-  `daemon host cycle failed: os error 87` once per second: the Sep 23 pipe
-  rewrite passed `PIPE_REJECT_REMOTE_CLIENTS` in `dwOpenMode` where the bit
-  is unassigned, so `CreateNamedPipeW` failed on every call and the host
-  cycle aborted + respawned the machine link once a second — no Windows
-  client could hold a link past ~1s (WORKSTATION, DEVBOX-2), while the
-  Linux daemon path never runs this code. Flag moved to `dwPipeMode`; the
-  reclaiming host also no longer tears the link down on a failed bind (the
-  link is independent of the CLI socket — the Sep 23 abort+respawn shape
-  was the storm's other half). Lesson that keeps paying: the Sep 25
-  instrumentation + the 0.5.23 trace toggle turned "why is it offline"
-  into a one-line answer without touching the user's machine.
+- **Sidebar icon rail — chats and project chats separated.** The chat
+  sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
+  always visible even when the panel is collapsed) with three tabs:
+  Chats (workspace switcher, New chat, Recents, Archived), Work (projects
+  with their fold-out chats), Settings (section rows that open the settings
+  overlay at that section). The account menu moved to the rail bottom; the
+  tab selection persists in `localStorage["guild.sidebarTab"]`. Recents
+  now shows only stateless chats — project-bound chats appear only under
+  their project on the Work tab (project rows carry an aggregate
+  unread/generating dot, and `/project/<id>` deep links open the Work tab).
+  The mobile drawer is pinned to the Chats panel (no rail there).
+  `sidebarGrouping.visible` changed meaning accordingly (stateless only).
 
 - **Desktop 0.5.35 released (2026-10-04).** `scripts/release-clients.sh` run
   detached (systemd user unit, warm caches — 3.5 min wall) against the dev
@@ -1475,6 +1425,7 @@ not kept here — it lives in git.
   gates prod on "after dev stabilizes"). Backup of the dev DB taken
   before the importer's final run:
   `/tmp/guild-backup/guild-2026-10-04-0332.sql`.
+
 - **M1 platform core + M4 workspace sessions landed (2026-10-04).** M1:
   native auth (opaque sessions/argon2id/OIDC), org, events, attachments
   with 64 golden Rust fixtures replaying byte-semantically. M4: workspace
@@ -1486,6 +1437,7 @@ not kept here — it lives in git.
   read it back; the policy correctly blocked shell tools with
   `GUILD_ALLOW_SHELL_TOOLS` unset (Rust parity). Reports:
   `M1-REPORT.md` (git history), `M4-REPORT.md` (git history).
+
 - **M7 retirement landed (2026-10-04).** `apps/server` ported the last
   proxied surfaces on `m7/retire`: integration tool API (list, tools
   listing, execute with the Rust error/audit shapes; built-in connector
@@ -1523,6 +1475,7 @@ not kept here — it lives in git.
   script-side `/api/v1/integrations/*` (need the connector ports + MCP
   client; unreachable at M7). 160/160 tests green (sequential file mode —
   parallel lanes exhaust Postgres max_connections on the shared host DB).
+
 - **M5 hub core landed (2026-10-04).** The `InMemoryHub` seam became the
   real `LiveHub` (`apps/server/src/hub/`): member/machine registries, 32
   socket caps, the 0.5.25 live-slot rule (a live machine slot is held —
@@ -1543,6 +1496,7 @@ not kept here — it lives in git.
   `M5-REPORT.md` (git history). Remaining for later lanes: feed forwarder,
   sync frames, tool-result completion, `reconcile_machine_tools` (all
   behind `ctx` seams).
+
 - **M3 harness + chats cutover landed (2026-10-04).** `apps/server` now runs
   the durable agent engine itself: pi-durable 1.0.1 over the M3 Postgres
   storage (one owning process, `GUILD_SANDBOX_ROOT` exec env), model access
@@ -1589,6 +1543,7 @@ not kept here — it lives in git.
   benchmarks. pi-durable 1.0.1 gaps found so far are recorded as a dated
   spec amendment. The rest of M3 (harness wiring, chats routes + SSE,
   importer, restate removal) follows M2's internal gateway key.
+
 - **M0 — TS server shell cutover landed (2026-10-04).** `apps/server`
   (Fastify) serves `/api/v1/health` natively and proxy-everything (HTTP + WS
   upgrade) to the Rust server on the compose network; TS container
@@ -1605,6 +1560,7 @@ not kept here — it lives in git.
   `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
   `agent-plane` (worktree `~/guild-wt-agent-plane`).
+
 - **TS server rebuild on pi-durable starts (2026-10-04).** The cloud server
   is rebuilt in TypeScript on `@earendil-works/pi-durable` (pinned `1.0.1`,
   never forked, no upstream fix loop); Restate is dropped; the public API,
@@ -1616,6 +1572,7 @@ not kept here — it lives in git.
   Design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
   `agent-plane` (worktree `~/guild-wt-agent-plane`).
+
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
   stack on :18081, public at guild.example.org). Deploy to prod by a
   deliberate merge of develop into its master (a release merge, e.g.
@@ -1691,54 +1648,48 @@ not kept here — it lives in git.
 
 ## Where things stand
 
-- **Server** runs on :18080 (compose, embedded web bundles). It carries the
-  0.5.19 feature set plus six full review rounds merged on 2026-09-24
-  (126 findings fixed across auth/session, machines/executor identity, turn
-  queue, provider contracts, engine session lifecycle, integrations, and
-  desktop transport). Live-bundle and migration state verified per deploy.
-- **Clients:** desktop 0.5.22 released 2026-09-26 (all four platforms,
-- **Telemetry (opt-in):** the server proxies `POST /faro/collect` to the
-  shared Faro collector (Alloy+Loki in `/srv/faro`, `GUILD_FARO_URL`); the
-  client ships a Settings → About toggle (off by default, localStorage
-  `guild.faro.enabled`) that lazy-loads `@grafana/faro-web-sdk` and sends
-  app diagnostics through the paired server. Collector receives app_name
-  `guild`; logs land in Loki (`/srv/faro`), traces forward to Laminar.
-  installers + updater bundles, sha256-verified, updater manifest serving it
-  with minisign signatures). 0.5.22 ships the mobile-chat fixes: the
-  project-chat send crash (uncaught render error bricked the view — analysis
-  and repro in docs/plans/2026-09-24-mobile-chat-ux.md), chat error boundary,
-  icon-only composer badges on narrow screens, touch-drag containment
-  (pull-to-refresh no longer pans the shell), top-center toasts on phones.
-  0.5.21 (2026-09-25) shipped the CSP removal — avatars render in desktop
-  and web clients. Running clients pick releases up via the auto-updater on
-  relaunch; the devbox install (0.5.18) must be relaunched (or updated in
-  place) to reconnect — 0.5.18 cannot talk to the current server. Client
-  releases remain dev-controlled and deliberate.
-- **Quality baseline:** six review rounds with adversarial verification; the
-  last two fix-diff audits found no regressions. Full gates at merge time:
-  workspace cargo test (705+ tests), frontend vitest, strict clippy,
-  windows-gnu check (`scripts/check-windows.sh`), bindings freshness.
+- **Server:** a TypeScript Fastify app on `pi-durable`, run by Bun with no
+  compile step. The compose stack on `:18080` (`deploy/compose`) serves the
+  API and the chat SPA baked into the image from `apps/desktop/dist`. State
+  lives on the host services: Postgres db `guild`, ClickHouse for traces and
+  usage, rustfs for objects. Agent workspaces ride a JuiceFS volume; tools
+  run in gVisor sandboxes via `sandbox-runner`.
+- **Version:** dev runs 0.5.101. Prod is a separate checkout
+  (`~/guild-prod`, branch master, `:18081`), runs 0.5.82, and stays in
+  supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
+- **Clients:** desktop 0.5.101 is published on the dev updater manifest for all four
+  platforms (six artifacts: Windows NSIS, Linux AppImage, macOS aarch64 and
+  x86_64 DMG plus their updater bundles), minisign-signed. Installed clients pick it up on relaunch. Releases
+  stay dev-controlled and deliberate.
+- **Product surface:** private threads and shared persistent agents; org
+  skills with provenance; projects, machines and agent routines. Admin sections
+  live inside Settings (`/settings/<section>`); there is no separate admin
+  app. Observability is the Activity surface, fed by traces and spans from
+  ClickHouse.
+- **Quality baseline:** `cargo test --workspace`, the TS server suite
+  (`npm test --workspace apps/server`), desktop vitest, strict clippy, the
+  Windows compile check (`scripts/check-windows.sh`) and the bindings
+  freshness gate (`scripts/check-bindings.sh`).
 
 ## Next steps (ordered)
 
-1. **Ship desktop 0.5.20 to the devbox install — blocking, user-visible.**
-   The release is published and verified; the devbox install (0.5.18) needs a
-   relaunch so its auto-updater takes 0.5.20, then confirm the machine link
-   establishes against the current server.
-2. **Confirm-or-reopen two legacy items** (their original context predates
-   the review loop):
-   - Thread list + thread messages keyset pagination/infinite scroll —
-     `list_events_page` may already exist in a prior working tree; check and
-     finish or re-plan.
-   - Machine-link flap diagnosis (0.5.17-era) — later rounds reworked the
-     watchdog/error-frame handling; likely improved but never confirmed
-     against a flapping client. Re-open only if a client still flaps.
-3. **Fix the flaky reaper test** `the_reclaiming_daemon_entry_reaps_completed_agent_tasks`
-   (fixed 12 s sleep racing a 10 s cadence; failed under load three times
-   during verification).
-4. **Optional client hardening after the 0.5.20 rollout:** confirm the updater
-   pending-update fix behaves on a real install (it was logic-verified only —
-   Tauri updater APIs need an app bundle to test).
+1. **Finish the worker-mode soak and flip prod.** Dev serves turns through
+   forked workers. Still unverified: idle reap, and live approval,
+   compaction and steering inside a worker turn. Prod stays on the
+   supervisor until these pass.
+2. **Decide machine identity after an OS reinstall.** A changed hardware
+   fingerprint currently matches no row, so the machine registers as new and
+   its old chats go dark. Candidates: derive the fingerprint from the
+   firmware/board UUID, or give the user an explicit takeover on the machines
+   page. Undecided.
+3. **Measure the rest of the long-thread path.** Composer typing is fixed.
+   Initial load and scroll of the 3000-event dev thread were not measured;
+   treat them as the next perf target if they feel slow.
+4. **Revisit the skill scope** when a shared agent needs a fixed skill set
+   (see Future directions).
+5. **Cover the review gaps in the next loop:** Windows-only engine paths
+   (compile-checked, never run), the desktop updater flow on a real install,
+   and the integration connectors.
 
 ## Future directions
 
@@ -1764,17 +1715,19 @@ not kept here — it lives in git.
   oddity and the per-type export tests. Precondition for picking the tool:
   it must preserve the freshness gate (generated-vs-committed diff) and the
   64-bit wire-field number handling (`ts(type = "number")` today).
+
+- **Wire field renames (`chat_id` → `thread_id`) are still open.** The
+  routes and client paths moved to threads in 0.5.47; the wire fields did
+  not. Any rename is a client/server coupling decision, so it ships as one
+  deliberate release.
+
 - **A future review loop** (when a meaningful diff accumulates): start from a
   surface-coverage map rather than a full-diff audit — see
   `2026-09-24-loop-summary.md` (git history) for the per-surface pass counts
   and the process playbook (mixed reviewers; pi fixer/verifier; verifier
   rebuilds exploit chains against the real caller; env var gotcha:
   `GUILD_TEST_PG_URL` is a base URL without a db suffix).
-- **Review coverage gaps to close in that loop:** Windows-only engine paths
-  (compile-checked, never executed), desktop updater flows (logic-verified
-  only), integrations connectors (one sweep), and the accepted residuals
-  listed in the round FIX/VERIFY reports (per-frame usage billing,
-  process-crash usage loss, html_csp parser latent note).
+
 - **Engine/product direction unchanged:** one agent loop, thin desktop
   backend, project-derived executor binding, durable Restate workflows. The
   review rounds tightened contracts (auth generations, executor identity
@@ -1785,6 +1738,12 @@ not kept here — it lives in git.
 - **Always redeploy after a change** — detached compose build+up from
   `deploy/compose`, then verify the live bundle hash and API health. The
   user tests against :18080.
+- **Desktop-affecting changes ship a client release in the same task** —
+  `scripts/release-clients.sh` against the dev manifest, then check
+  `latest.json`.
+- **Bump the version with `scripts/bump-version.sh <semver>`**, never by
+  hand; the script covers every file the health endpoint and release
+  scripts compare.
 - **Sessions run this repo concurrently** — check `git log`/`git status`
   before and after editing; pull rather than clobber.
 - **Review-loop branch topology:** `review/roundN-<agent>`, `fix/roundN`,

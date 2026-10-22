@@ -1,7 +1,8 @@
 # AGENTS.md — Guild
 
-Self-hosted org-level Codex/Cowork replacement: Rust workspace (cloud server,
-local engine, shared protocol/core crates) plus a Tauri desktop client.
+Self-hosted org-level Codex/Cowork replacement: a TypeScript cloud server,
+a Rust local engine with shared protocol/core crates, plus a Tauri desktop
+client.
 Layout, build/test commands, and API examples live in `README.md` — it is the
 source of truth for them; this file carries only what the repo cannot tell
 you.
@@ -31,7 +32,7 @@ you.
   `http://localhost:18080`; a local build or container restart ships
   nothing. Every task ends with the compose rebuild recipe from
   `deploy-nuances.md` §2 and a live-bundle check (§2 end). Run the rebuild
-  detached — the cargo release build inside Docker is the long pole.
+  detached — the npm install and vite build inside Docker are the long pole.
 - **Desktop-affecting changes always get a desktop release, same task.**
   Anything that lands under `apps/desktop/` (or anything else baked into
   the client) must end with a client release cut from `develop` and

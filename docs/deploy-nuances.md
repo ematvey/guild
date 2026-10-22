@@ -43,9 +43,10 @@ to it. See `/srv/faro/README.md`.
 
 ## 1. What runs where
 
-Two different "Guild" stacks exist on this host. **Don't confuse them.**
+Guild runs on two stacks on this host: dev here, prod in `~/guild-prod`.
+**Don't confuse them.**
 
-### The real one: compose stack on :18080
+### Dev: compose stack on :18080
 
 - Compose project: `~/guild/deploy/compose` (`docker-compose.yml` there).
 - Running container: `compose-server-1` (the TS server). The infra services
@@ -65,23 +66,17 @@ Two different "Guild" stacks exist on this host. **Don't confuse them.**
   hold the pre-cutover data — keep until confident.
   `docker compose down -v` destroys all of it.
 
-### The stale one: legacy Node stack on :9330
+### The legacy Node stack on :9330 — removed
 
 The Cloudflare tunnel ingress for `guild.example.com` targets `localhost:18080`
-(`/etc/cloudflared/config.yml`); it previously targeted :9330 and produced 502s
-once the legacy stack stopped.
+(`/etc/cloudflared/config.yml`). It previously targeted :9330.
 
-- Containers `guild-web-1` (Next-ish web on :3000), `guild-api-1`
-  (`npm run start -w @guild/api` on :4000), `guild-nginx-1` (:9330),
-  `guild-db-1`, `guild-cli-releases-1` — running since 2026-09-02.
-- **The compose file that defined them (`~/guild/docker-compose.yml`) has
-  been deleted from the repo**; the `@guild/api`/`guild-web` workspaces no
-  longer exist. This is a leftover of an earlier architecture.
-- Teardown candidate (`docker rm -f` the five containers + `docker rmi
-  guild-web guild-api guild-nginx guild-cli-releases guild-migrate`) — but
-  confirm nothing still points at :9330 first.
-- Recognition shortcut: `guild-*-1` names = legacy; `compose-*-1` names =
-  current.
+- The old `guild-web-1`, `guild-api-1`, `guild-nginx-1`, `guild-db-1` and
+  `guild-cli-releases-1` containers are gone, and the compose file that
+  defined them (`~/guild/docker-compose.yml`) is not in the repo. They were
+  a leftover of the earlier architecture.
+- Nothing points at :9330 now. If `guild-*-1` names ever reappear, they are
+  legacy; `compose-*-1` names are the current stack.
 
 ---
 
@@ -445,7 +440,8 @@ releases, tests, or the daemon itself.
 
 ## 10. Version sync — one product version everywhere (mandatory)
 
-The product carries a single version (currently 0.5.37). It must be the
+The product carries a single version (the one in `Cargo.toml`'s
+`[workspace.package]`). It must be the
 same in every place it lives; the health endpoint, the updater manifest
 checks and the release scripts all compare against it, so drift reads as a
 mismatched client or a stale server.
