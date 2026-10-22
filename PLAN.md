@@ -63,7 +63,9 @@ not kept here — it lives in git.
   commands and result previews, the tree has aligned columns and one-line
   span previews, the timeline has a ruler and grid, and the span pane shows
   role-colored chat messages plus a syntax-highlighted JSON viewer with
-  expand-all/collapse-all. Desktop 0.5.97 carries it to installed clients.
+  expand-all/collapse-all. The trace view and the span pane scroll
+  independently on wide windows; the header stays fixed. Desktop 0.5.98
+  carries it to installed clients.
 
 - **A long thread reaches the client in pages (2026-10-22).** The member
   socket's ThreadState frame carried every durable event, and a live turn
