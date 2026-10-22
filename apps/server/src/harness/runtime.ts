@@ -72,10 +72,12 @@ import { AgentStore } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
+import { ChildResultDelivery, assistantTextForRun, type ChildRunFinished } from "../agents/delivery.js";
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { createTraceHook } from "../agents/trace-hook.js";
 import { delegationContextForChat } from "../agents/delegation.js";
+import { appendToPendingSteer } from "./inbox-merge.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import {
   CONFIG_FILES,
@@ -247,6 +249,7 @@ export class GuildRuntime {
   private readonly agents: AgentStore;
   private readonly conflicts: AgentConflictJournal;
   private readonly agentRuns: AgentRunLifecycle;
+  private readonly childDelivery: ChildResultDelivery;
   private readonly turnCommands: TurnCommandStore;
   private readonly gateway: GatewayStore;
   private readonly bridge: ChatBridge;
@@ -372,12 +375,34 @@ export class GuildRuntime {
     this.chats = new ChatStore(pool);
     this.agents = new AgentStore(pool, this.trace, this.config.agentWorkspaceWriteRoot);
     this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
+    this.childDelivery = new ChildResultDelivery({
+      pool,
+      store: this.agents,
+      threads: this.threads,
+      log,
+      runtime: {
+        beginRun: async (thread) => {
+          const run = await this.agents.createRun({
+            agent_id: thread.agent_id,
+            user_id: thread.user_id,
+            thread_id: thread.id,
+            depth: thread.depth,
+            trigger: "message",
+            status: "running",
+            started_at: new Date().toISOString(),
+          });
+          return run.id;
+        },
+        deliverSteer: (chatId, orgId, text, model) => this.deliverChildSteer(chatId, orgId, text, model),
+      },
+    });
     this.agentRuns = new AgentRunLifecycle({
       pool,
       log,
       journal: this.conflicts,
       trace: this.trace,
       attachments: this.attachments,
+      delivery: this.childDelivery,
     });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
@@ -1386,7 +1411,77 @@ export class GuildRuntime {
       [chatId],
     );
     const kind = res.rows[0]?.kind;
-    return kind === undefined || (kind !== "default" && kind !== "routine_run");
+    return kind === undefined || (kind !== "default" && kind !== "routine_run" && kind !== "delegated");
+  }
+
+  /** Delivers one terminal child run to its parent thread. The run-settle
+   *  path calls the same object through the lifecycle. */
+  async deliverChildResult(input: ChildRunFinished): Promise<void> {
+    await this.childDelivery.deliver(input);
+  }
+
+  /** Places one drained child-result batch as a steer input: merge into a
+   *  pending unplaced steer item, else submit a new steer. Never enqueues a
+   *  follow-up turn. */
+  async deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    await this.start();
+    const conversation = await this.conversationForChat(chatId, orgId);
+    const pending = await conversation.commit(async (tx) => {
+      const inbox = await tx.doc(InboxDoc, conversation.id);
+      const item = inbox.items.find((candidate) => candidate.mode === "steer");
+      return item === undefined ? null : Number(item.id);
+    }, BACKGROUND_CONTEXT);
+    if (pending !== null && (await appendToPendingSteer(conversation, pending, text))) {
+      await this.reconcileConversation(chatId, Number(conversation.id));
+      return;
+    }
+    await this.submitTurn(chatId, orgId, {
+      orgId,
+      requestId: uuidv7(),
+      content: text,
+      images: [],
+      model,
+      sendMode: "steer",
+    });
+  }
+
+  /** Archiving a chat closes its agent-thread subtree: in-flight runs stop
+   *  and deliveries to and from the subtree stop. */
+  async closeChatSubtree(chatId: string): Promise<void> {
+    const row = await this.pool.query<{ id: string }>("SELECT id FROM agent_threads WHERE chat_id = $1", [chatId]);
+    if (row.rows[0] !== undefined) await this.agents.closeSubtree(row.rows[0].id);
+  }
+
+  /** A user stop of a child chat is a delivered cancellation: mark its
+   *  running runs cancelled, then wake the parent with cancelled/user. */
+  private async cancelChildOnStop(chatId: string): Promise<void> {
+    const thread = await this.pool.query<{ id: string; parent_thread_id: string | null }>(
+      "SELECT id, parent_thread_id FROM agent_threads WHERE chat_id = $1",
+      [chatId],
+    );
+    const row = thread.rows[0];
+    if (row === undefined || row.parent_thread_id === null) return;
+    const runs = await this.pool.query<{ id: string; started_at: string }>(
+      `UPDATE agent_runs
+       SET status = 'cancelled', finished_at = now()
+       WHERE thread_id = $1 AND status IN ('queued', 'running')
+       RETURNING id,
+         to_char(COALESCE(started_at, created_at) AT TIME ZONE 'UTC',
+                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at`,
+      [row.id],
+    );
+    for (const run of runs.rows) {
+      const finalText = await assistantTextForRun(this.pool, chatId, run.started_at).catch(() => "");
+      await this.childDelivery
+        .deliver({
+          child_thread_id: row.id,
+          run_id: run.id,
+          status: "cancelled",
+          reason: "user",
+          final_text: finalText,
+        })
+        .catch((error: unknown) => this.log.warn({ err: error, chatId, runId: run.id }, "cancel delivery failed"));
+    }
   }
 
   /** The chat's running agent run id, cached briefly: every model call in
@@ -1429,6 +1524,8 @@ export class GuildRuntime {
       threads: this.threads,
       agent,
       chatId,
+      maxDepth: this.config.agentMaxDepth,
+      maxChildrenPerNode: this.config.agentMaxChildrenPerNode,
       runtime: {
         submitTurn: (childChatId, childOrgId, input) =>
           this.submitTurn(childChatId, childOrgId, {
@@ -1657,6 +1754,9 @@ export class GuildRuntime {
    *  the ordinary ownership scope, and waits until it is idle. */
   async stopChat(chatId: string): Promise<void> {
     this.admissions.cancel(chatId);
+    await this.cancelChildOnStop(chatId).catch((error: unknown) => {
+      this.log.warn({ err: error, chatId }, "child cancel marking failed");
+    });
     if (this.supervisor) {
       await this.supervisor.stop(chatId);
       return;

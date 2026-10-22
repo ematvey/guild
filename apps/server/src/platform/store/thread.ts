@@ -12,6 +12,10 @@ import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import { calculateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
+export interface ChildResultRecord extends ThreadEventRow {
+  event: Extract<ThreadEvent, { type: "child_result" }>;
+}
+
 export interface ProjectionCursor {
   entryId: number;
   turn: number;
@@ -150,6 +154,65 @@ export class ThreadStore {
       const normalized = toRow(row);
       if (!normalized) throw new ApiError(500, "internal", "appended thread event does not parse");
       return normalized;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** One delivery row in the parent thread. It stays unconsumed until a
+   *  parent run takes the batch. */
+  appendChildResult(
+    chatId: string,
+    event: Extract<ThreadEvent, { type: "child_result" }>,
+  ): Promise<ThreadEventRow> {
+    return this.appendEvent(chatId, event);
+  }
+
+  /** Unconsumed delivery rows in seq order. */
+  async unconsumedChildResults(chatId: string): Promise<ChildResultRecord[]> {
+    const res = await this.pool.query<EventRowDb>(
+      `SELECT id, chat_id, seq, payload,
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM thread_events
+       WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
+       ORDER BY seq ASC`,
+      [chatId],
+    );
+    return res.rows
+      .map(toRow)
+      .filter((row): row is ChildResultRecord => row !== undefined && row.event.type === "child_result");
+  }
+
+  /** Takes every unconsumed delivery row in one transaction and stamps it
+   *  with the consuming run id. The lock makes concurrent drains safe: one
+   *  batch belongs to exactly one run. */
+  async consumeChildResults(chatId: string, runId: string): Promise<ChildResultRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query<EventRowDb>(
+        `SELECT id, chat_id, seq, payload,
+                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+         FROM thread_events
+         WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
+         ORDER BY seq ASC
+         FOR UPDATE`,
+        [chatId],
+      );
+      const rows = res.rows
+        .map(toRow)
+        .filter((row): row is ChildResultRecord => row !== undefined && row.event.type === "child_result");
+      if (rows.length > 0) {
+        await client.query(
+          "UPDATE thread_events SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])",
+          [rows.map((row) => row.id), runId],
+        );
+      }
+      await client.query("COMMIT");
+      return rows;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;

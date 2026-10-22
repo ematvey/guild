@@ -109,6 +109,12 @@ export interface AgentThread {
   title: string;
   title_locked: boolean;
   kind: AgentThreadKind;
+  /** The spawning thread, or null for a root thread. */
+  parent_thread_id: string | null;
+  /** Real tree depth: a root is 0, its child is 1. */
+  depth: number;
+  /** Set when the node (or an ancestor) was closed; deliveries stop. */
+  closed_at: string | null;
   created_at: string;
   last_activity_at: string;
 }

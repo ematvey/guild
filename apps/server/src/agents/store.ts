@@ -132,6 +132,7 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.model,
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
 const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.kind,
+  t.parent_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
   ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
 
 const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
@@ -201,6 +202,9 @@ function toThread(row: Record<string, unknown>): AgentThread {
     title: (row.title as string | null) ?? "",
     title_locked: Boolean(row.title_locked),
     kind: row.kind as AgentThreadKind,
+    parent_thread_id: (row.parent_thread_id as string | null) ?? null,
+    depth: Number(row.depth ?? 0),
+    closed_at: row.closed_at === null || row.closed_at === undefined ? null : pgTimestampToRfc3339(row.closed_at as string),
     created_at: pgTimestampToRfc3339(row.created_at as string),
     last_activity_at: pgTimestampToRfc3339(row.last_activity_at as string),
   };
@@ -732,6 +736,50 @@ export class AgentStore {
     return this.fetchThread(agentId, userId, id);
   }
 
+  /** Creates a delegated child thread under an existing node. The edge is
+   *  parent_thread_id; depth is the parent's depth plus one. */
+  async createChildThread(
+    parentThreadId: string,
+    agentId: string,
+    userId: string,
+    title: string,
+  ): Promise<AgentThread> {
+    const agent = await this.fetchAgent(agentId);
+    const parent = await this.pool.query<{ depth: number; closed_at: Date | null }>(
+      "SELECT depth, closed_at FROM agent_threads WHERE id = $1",
+      [parentThreadId],
+    );
+    const parentRow = parent.rows[0];
+    if (parentRow === undefined) throw ApiError.notFound("no such parent thread");
+    if (parentRow.closed_at !== null) throw ApiError.badRequest("the parent thread is closed");
+    const id = uuidv7();
+    const depth = Number(parentRow.depth) + 1;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const chat = await this.chats.createChatOn(
+        client,
+        agent.org_id,
+        userId,
+        title.trim() === "" ? null : title,
+        null,
+      );
+      await client.query(
+        `INSERT INTO agent_threads
+           (id, agent_id, user_id, chat_id, title, title_locked, kind, parent_thread_id, depth)
+         VALUES ($1, $2, $3, $4, $5, false, 'delegated', $6, $7)`,
+        [id, agentId, userId, chat.id, title, parentThreadId, depth],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    return this.fetchThread(agentId, userId, id);
+  }
+
   /** The user's default thread with this agent, created on first use. A
    *  shared agent therefore gives each user their own default thread. */
   async ensureDefaultThread(agentId: string, userId: string): Promise<AgentThread> {
@@ -980,12 +1028,63 @@ export class AgentStore {
     return res.rows.map(toRun);
   }
 
-  async childCount(parentRunId: string): Promise<number> {
+  /** Child threads of one node (decision 17: the count bounds the tree
+   *  shape, so it is per thread, not per run). Closed children still count. */
+  async childCount(parentThreadId: string): Promise<number> {
     const res = await this.pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM agent_runs WHERE parent_run_id = $1",
-      [parentRunId],
+      "SELECT count(*)::text AS count FROM agent_threads WHERE parent_thread_id = $1",
+      [parentThreadId],
     );
     return Number(res.rows[0]?.count ?? 0);
+  }
+
+  /** The node and every descendant, root first. */
+  async subtree(threadId: string): Promise<AgentThread[]> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `WITH RECURSIVE tree AS (
+         SELECT t.*, 0 AS distance FROM agent_threads t WHERE t.id = $1
+         UNION ALL
+         SELECT child.*, tree.distance + 1
+         FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
+         WHERE tree.distance < 64
+       )
+       SELECT ${THREAD_COLUMNS} FROM tree t ORDER BY t.distance ASC, t.created_at ASC`,
+      [threadId],
+    );
+    return res.rows.map(toThread);
+  }
+
+  /** Cancels the in-flight runs of the node and every descendant. The nodes
+   *  stay addressable; only the runs stop. */
+  async cancelSubtree(threadId: string): Promise<number> {
+    const res = await this.pool.query(
+      `WITH RECURSIVE tree AS (
+         SELECT id FROM agent_threads WHERE id = $1
+         UNION ALL
+         SELECT child.id FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
+       )
+       UPDATE agent_runs SET status = 'cancelled', finished_at = now()
+       WHERE thread_id IN (SELECT id FROM tree) AND status IN ('queued', 'running')`,
+      [threadId],
+    );
+    return res.rowCount ?? 0;
+  }
+
+  /** Cancels the subtree and stamps closed_at on every node. Deliveries stop
+   *  because delivery checks closed_at. Rows and attachments stay. */
+  async closeSubtree(threadId: string): Promise<number> {
+    await this.cancelSubtree(threadId);
+    const res = await this.pool.query(
+      `WITH RECURSIVE tree AS (
+         SELECT id FROM agent_threads WHERE id = $1
+         UNION ALL
+         SELECT child.id FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
+       )
+       UPDATE agent_threads SET closed_at = COALESCE(closed_at, now())
+       WHERE id IN (SELECT id FROM tree)`,
+      [threadId],
+    );
+    return res.rowCount ?? 0;
   }
 
   /** Walks parent_run_id from one run to the root, returning every ancestor
