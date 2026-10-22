@@ -81,6 +81,7 @@ import {
   TOTAL_MAX_CHARS,
   agentWorkspaceDir,
   readAgentConfig,
+  AGENT_WORKSPACE_PATH,
   renderFileBlock,
   seedAgentWorkspace,
   type AgentConfigFiles,
@@ -119,7 +120,9 @@ export class ThreadAgentLocked extends Error {
  *  files live, what its threads and workspace share, and the workspace
  *  config files themselves (OpenClaw-style: IDENTITY, SOUL, AGENTS, USER,
  *  MEMORY, BOOTSTRAP). The agent edits those files; the next turn reads
- *  them back. Pure over the files it is given. */
+ *  them back. A desktop turn adds the user's project context after them.
+ *  Each file is a tagged block carrying its full path, so the two sources
+ *  stay distinguishable. Pure over the files it is given. */
 export function composeAgentInstructions(
   agent: { name: string; is_personal: boolean },
   config: AgentConfigFiles,
@@ -134,21 +137,29 @@ export function composeAgentInstructions(
     sharing,
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
   ];
+  const workspace: string[] = [
+    "Your own files. Edit them with write/edit; a change applies on your next turn. " +
+      "If BOOTSTRAP.md exists, follow it and then delete it.",
+  ];
   let budget = TOTAL_MAX_CHARS;
   for (const entry of CONFIG_FILES) {
     const text = config.files.get(entry.name);
     if (text === undefined) {
-      if (entry.required) parts.push(`## ${entry.name}\n\n(missing: ${entry.name})`);
+      if (entry.required) {
+        workspace.push(
+          `<agent_workspace_file path="${AGENT_WORKSPACE_PATH}/${entry.name}">\n` +
+            `(missing: ${entry.name})\n</agent_workspace_file>`,
+        );
+      }
       continue;
     }
     if (budget <= 0) break;
     const block = renderFileBlock(entry.name, text, budget);
     budget -= block.length;
-    parts.push(block);
+    workspace.push(block);
   }
   parts.push(
-    "These files are your configuration: edit them with write/edit and the change applies on your next turn. " +
-      "If BOOTSTRAP.md exists, follow it and then delete it.",
+    `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
   const project = projectBlock(projectInstructions);
   if (project !== null) parts.push(project);
@@ -174,6 +185,7 @@ function projectBlock(text: string | undefined): string | null {
   return [
     "<project_context>",
     "Project-specific instructions and guidelines:",
+    "From the user's desktop project, not your workspace. These files live on their machine.",
     "",
     cut,
     "</project_context>",

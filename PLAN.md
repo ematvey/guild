@@ -19,7 +19,10 @@ first. Code comments describe only the present.
   one `<project_instructions path="…">` block per file — and the server
   wraps the blocks in a `<project_context>` section after the workspace
   files, cuts it at 32 KiB, and keeps the last chain per conversation so a
-  resumed run sees the same text. The skills index already merges the client's local lines
+  resumed run sees the same text. The workspace files render the same way,
+  inside `<agent_workspace path="/workspace">` with one
+  `<agent_workspace_file path="…">` block per file, so the agent always
+  knows which source and which path a block came from. The skills index already merges the client's local lines
   with the org catalog and drops org duplicates.
 
 - **Activity is an admin surface (2026-10-22).** The rail entry, the

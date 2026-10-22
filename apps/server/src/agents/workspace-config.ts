@@ -126,16 +126,21 @@ export async function readAgentConfig(dir: string): Promise<AgentConfigFiles> {
   return { files, missing, identity };
 }
 
-/** The prompt block for one file: trimmed, capped, with a truncation marker
- *  that tells the agent the rest is on disk. */
+/** The agent's workspace path inside its sandbox (the sandbox cwd). */
+export const AGENT_WORKSPACE_PATH = "/workspace";
+
+/** The prompt block for one file: tagged with its full path, trimmed,
+ *  capped, with a truncation marker that tells the agent the rest is on
+ *  disk. The tag carries the path so the model can name the file it edits. */
 export function renderFileBlock(name: string, text: string, budget: number): string {
   const body = text.trim();
   const limit = Math.min(FILE_MAX_CHARS, budget);
-  if (body.length <= limit) return `## ${name}\n\n${body}`;
+  const open = `<agent_workspace_file path="${AGENT_WORKSPACE_PATH}/${name}">`;
+  if (body.length <= limit) return `${open}\n${body}\n</agent_workspace_file>`;
   const cut = body.slice(0, limit);
   return (
-    `## ${name}\n\n${cut}\n\n` +
-    `(truncated at ${limit} characters — read the file for the rest)`
+    `${open}\n${cut}\n\n` +
+    `(truncated at ${limit} characters — read the file for the rest)\n</agent_workspace_file>`
   );
 }
 
