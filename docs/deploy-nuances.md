@@ -300,8 +300,8 @@ isolated config file (`GUILD_CONFIG_ENV`).
 - Bootstrap (once, until an admin exists):
   `POST /api/v1/auth/bootstrap` with `{"email","password"}`.
 - Provider keys & model routes are configured via the admin API (see
-  `deploy/README.md` for copy-paste examples) or the admin console at
-  `http://localhost:18080/admin/` (served by the same binary, WEB_DIST).
+  `deploy/README.md` for copy-paste examples) or the admin Settings sections
+  in the app at `http://localhost:18080/settings/<section>`.
 - Desktop pairing: generate a code in the web app (Settings → Connect
   desktop app); the desktop client pairs against the same :18080.
 
