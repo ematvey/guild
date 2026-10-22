@@ -79,25 +79,33 @@ dbDescribe("agent delegation", () => {
   });
 
   it("rejects self-delegation, depth, child count and cycles", async () => {
-    const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
+    const thread = await store.createThread(parentAgent.id, owner.id, "Limits");
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
-    const base = { pool: env!.db, store, agent: parentAgent, parentRun: run, requester: owner };
+    const base = {
+      pool: env!.db,
+      store,
+      agent: parentAgent,
+      parentRun: run,
+      requester: owner,
+      maxDepth: 3,
+      maxChildrenPerNode: 16,
+    };
 
     await expect(authorizeDelegation({ ...base, targetRef: parentAgent.id })).rejects.toMatchObject({
       code: "self_delegation",
     });
 
-    const deep = await makeRun({ agentId: parentAgent.id, threadId: thread.id, depth: 2 });
+    const deep = await makeRun({ agentId: parentAgent.id, threadId: thread.id, depth: 3 });
     await expect(
       authorizeDelegation({ ...base, parentRun: deep, targetRef: targetAgent.id }),
     ).rejects.toMatchObject({ code: "depth_limit" });
 
     const capped = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     for (let index = 0; index < 3; index += 1) {
-      await makeRun({ agentId: targetAgent.id, threadId: thread.id, parentRunId: capped.id, depth: 1 });
+      await store.createChildThread(thread.id, targetAgent.id, owner.id, `Child ${index}`);
     }
     await expect(
-      authorizeDelegation({ ...base, parentRun: capped, targetRef: targetAgent.id }),
+      authorizeDelegation({ ...base, parentRun: capped, targetRef: targetAgent.id, maxChildrenPerNode: 3 }),
     ).rejects.toMatchObject({ code: "child_limit" });
 
     const rootRun = await makeRun({ agentId: targetAgent.id, threadId: thread.id });
@@ -115,7 +123,15 @@ dbDescribe("agent delegation", () => {
   it("requires the requester to be able to use the target", async () => {
     const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
-    const base = { pool: env!.db, store, agent: parentAgent, parentRun: run, requester: owner };
+    const base = {
+      pool: env!.db,
+      store,
+      agent: parentAgent,
+      parentRun: run,
+      requester: owner,
+      maxDepth: 3,
+      maxChildrenPerNode: 16,
+    };
     await expect(
       authorizeDelegation({ ...base, targetRef: privateTarget.id }),
     ).rejects.toMatchObject({ code: "forbidden" });
@@ -127,7 +143,7 @@ dbDescribe("agent delegation", () => {
     expect(target.id).toBe(privateTarget.id);
   });
 
-  it("runs the child in a routine_run thread and returns its text and sent file ids", async () => {
+  it("runs the child in a delegated thread and returns its text and sent file ids", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Delegation flow");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const attachmentId = randomUUID();
@@ -159,6 +175,8 @@ dbDescribe("agent delegation", () => {
       chatId: thread.chat_id,
       runtime,
       timeoutMs: 2_000,
+      maxDepth: 3,
+      maxChildrenPerNode: 16,
     });
     expect(context).not.toBeNull();
     const result = await delegate(context!, { agent: targetAgent.name, task: "Write the report" });
@@ -168,7 +186,9 @@ dbDescribe("agent delegation", () => {
     expect(child.parent_run_id).toBe(parentRun.id);
     expect(child.delegate_agent_id).toBe(targetAgent.id);
     const childThread = await store.getThread(targetAgent.id, owner.id, child.thread_id!);
-    expect(childThread.kind).toBe("routine_run");
+    expect(childThread.kind).toBe("delegated");
+    expect(childThread.parent_thread_id).toBe(thread.id);
+    expect(childThread.depth).toBe(1);
     expect(result.text).toBe("The report is ready.");
     expect(result.attachments).toEqual([attachmentId]);
     expect(await store.childRuns(parentRun.id)).toHaveLength(1);
@@ -185,6 +205,8 @@ dbDescribe("agent delegation", () => {
       chatId: thread.chat_id,
       runtime: { submitTurn: async () => 1 },
       timeoutMs: 50,
+      maxDepth: 3,
+      maxChildrenPerNode: 16,
     });
     await expect(
       delegate(context!, { agent: targetAgent.name, task: "never finishes" }),

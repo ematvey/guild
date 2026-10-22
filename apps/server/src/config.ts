@@ -97,6 +97,12 @@ export interface Config {
   /** Routine scheduler loop (GUILD_AGENTS_SCHEDULER=off disables it).
    *  Default: on in the server, off under NODE_ENV=test. */
   agentsScheduler: boolean;
+  /** Deepest agent-tree node a spawn may create (GUILD_AGENT_MAX_DEPTH,
+   *  default 3). A root thread has depth 0. */
+  agentMaxDepth: number;
+  /** Most child threads one node may own (GUILD_AGENT_MAX_CHILDREN,
+   *  default 16). Children are counted per thread node, not per run. */
+  agentMaxChildrenPerNode: number;
 }
 
 export type SandboxConfig =
@@ -268,5 +274,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : env.GUILD_AGENTS_SCHEDULER === "on"
           ? true
           : (env.NODE_ENV ?? process.env.NODE_ENV) !== "test",
+    agentMaxDepth: positiveInt(env.GUILD_AGENT_MAX_DEPTH, 3),
+    agentMaxChildrenPerNode: positiveInt(env.GUILD_AGENT_MAX_CHILDREN, 16),
   };
+}
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`expected a positive integer, got "${raw}"`);
+  }
+  return value;
 }

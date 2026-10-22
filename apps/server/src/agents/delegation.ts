@@ -17,8 +17,6 @@ import { isUuid, uuidv7 } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
 import type { Agent, AgentRun, AgentRunStatus } from "./types.js";
 
-export const MAX_DELEGATION_DEPTH = 2;
-export const MAX_CHILDREN_PER_RUN = 3;
 export const DEFAULT_DELEGATION_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
 const TERMINAL: ReadonlySet<AgentRunStatus> = new Set(["succeeded", "failed", "silent", "skipped", "cancelled"]);
@@ -47,6 +45,9 @@ export interface DelegationToolContext {
   requester: UserRow;
   runtime: DelegationRuntime;
   timeoutMs: number;
+  /** Tree limits from config (never constants in this module). */
+  maxDepth: number;
+  maxChildrenPerNode: number;
   /** False when depth or child count has removed the delegate tool. */
   can_spawn: boolean;
 }
@@ -149,17 +150,23 @@ export async function authorizeDelegation(args: {
   parentRun: AgentRun;
   requester: UserRow;
   targetRef: string;
+  maxDepth: number;
+  maxChildrenPerNode: number;
 }): Promise<Agent> {
   const target = await resolveDelegationTarget(args.pool, args.agent.org_id, args.targetRef);
   if (target.id === args.agent.id) {
     throw new DelegationError("self_delegation", "an agent cannot delegate to itself");
   }
-  if (args.parentRun.depth >= MAX_DELEGATION_DEPTH) {
-    throw new DelegationError("depth_limit", `delegation depth is limited to ${MAX_DELEGATION_DEPTH}`);
+  if (args.parentRun.depth >= args.maxDepth) {
+    throw new DelegationError("depth_limit", `delegation depth is limited to ${args.maxDepth}`);
   }
-  const children = await args.store.childCount(args.parentRun.id);
-  if (children >= MAX_CHILDREN_PER_RUN) {
-    throw new DelegationError("child_limit", `a run may spawn at most ${MAX_CHILDREN_PER_RUN} children`);
+  const parentThreadId = args.parentRun.thread_id;
+  const children = parentThreadId === null ? 0 : await args.store.childCount(parentThreadId);
+  if (children >= args.maxChildrenPerNode) {
+    throw new DelegationError(
+      "child_limit",
+      `a thread node may have at most ${args.maxChildrenPerNode} children`,
+    );
   }
   const ancestors = await args.store.ancestorRuns(args.parentRun.id);
   if (ancestors.some((run) => run.agent_id === target.id)) {
@@ -243,10 +250,20 @@ export async function delegate(context: DelegationToolContext, args: DelegateArg
     parentRun: context.parentRun,
     requester: context.requester,
     targetRef: args.agent,
+    maxDepth: context.maxDepth,
+    maxChildrenPerNode: context.maxChildrenPerNode,
   });
   const title = `Delegated: ${task.split(/\r?\n/)[0]!.slice(0, 80)}`;
   const userId = context.parentRun.user_id ?? context.requester.id;
-  const thread = await context.store.createThread(target.id, userId, title, "routine_run");
+  if (context.parentRun.thread_id === null) {
+    throw new DelegationError("no_parent_thread", "the parent run has no thread");
+  }
+  const thread = await context.store.createChildThread(
+    context.parentRun.thread_id,
+    target.id,
+    userId,
+    title,
+  );
   const childRun = await context.store.createRun({
     agent_id: target.id,
     user_id: userId,
@@ -308,12 +325,14 @@ export async function delegationContextForChat(args: {
   chatId: string;
   runtime: DelegationRuntime;
   timeoutMs?: number;
+  maxDepth: number;
+  maxChildrenPerNode: number;
 }): Promise<DelegationToolContext | null> {
   const parentRun = await args.store.runningRunForChat(args.chatId);
   if (parentRun === null) return null;
   const requester = await requesterForChat(args.pool, args.chatId);
   if (requester === null) return null;
-  const children = await args.store.childCount(parentRun.id);
+  const children = parentRun.thread_id === null ? 0 : await args.store.childCount(parentRun.thread_id);
   return {
     pool: args.pool,
     store: args.store,
@@ -323,7 +342,9 @@ export async function delegationContextForChat(args: {
     requester,
     runtime: args.runtime,
     timeoutMs: args.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS,
-    can_spawn: parentRun.depth < MAX_DELEGATION_DEPTH && children < MAX_CHILDREN_PER_RUN,
+    maxDepth: args.maxDepth,
+    maxChildrenPerNode: args.maxChildrenPerNode,
+    can_spawn: parentRun.depth < args.maxDepth && children < args.maxChildrenPerNode,
   };
 }
 
@@ -347,7 +368,7 @@ export function createDelegateTool(context: DelegationToolContext): ToolRegistra
     description:
       "Delegate a task to another agent in this organization. The target runs in its own workspace with its own " +
       "model and tool allowlist and returns text plus the ids of the files it sent. The child gets the task text and " +
-      "optional context, never this conversation's transcript. Limits: depth 2, 3 children per run.",
+      "optional context, never this conversation's transcript. Limits come from the deployment config.",
     parameters: Type.Object({
       agent: Type.String({ description: "Target agent id or exact name within this organization" }),
       task: Type.String({ description: "The task for the target agent" }),

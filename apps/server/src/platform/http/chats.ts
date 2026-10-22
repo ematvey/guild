@@ -345,8 +345,10 @@ export function registerChatsRoutes(
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
     const chat = await chats.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
     if (archived === true) {
-      // Archiving must also end any in-flight generation, or an archived
-      // chat keeps spinning where the user can no longer reach it.
+      // Archiving closes the agent-thread subtree first: descendants stop
+      // and deliveries stop. Then the in-flight generation is ended, or an
+      // archived chat keeps spinning where the user can no longer reach it.
+      await chats.runtime.closeChatSubtree(chatId).catch(() => {});
       await chats.runtime.stopChat(chatId).catch(() => {});
       await chats.turnCommands.cancelAllWaiting(chatId);
     }

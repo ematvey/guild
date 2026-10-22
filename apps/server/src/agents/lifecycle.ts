@@ -11,6 +11,7 @@ import { insertChunks } from "./search.js";
 import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
+import type { ChildResultDelivery, ChildRunFinished } from "./delivery.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -39,6 +40,8 @@ export interface AgentRunLifecycleDeps {
   trace?: TraceStore;
   /** Binds the turn's pending agent attachments to its assistant event. */
   attachments?: Pick<AttachmentStore, "publishAgentAttachments">;
+  /** Delivers a finished child run to its parent thread. */
+  delivery?: Pick<ChildResultDelivery, "deliver">;
 }
 
 function blocksOf(payload: Record<string, unknown>): { type?: string; text?: string }[] {
@@ -162,6 +165,19 @@ export class AgentRunLifecycle {
       await this.deps.journal?.finishRun(run.id);
       this.mirrorFinishedRun(run.id);
       await this.indexTurn(run, turnEvents);
+      if (this.deps.delivery !== undefined) {
+        const finished: ChildRunFinished = {
+          child_thread_id: run.thread_id,
+          run_id: run.id,
+          status,
+          reason: info.error === null ? null : "error",
+          final_text: assistantText,
+          attachment_event_id: info.eventId ?? null,
+        };
+        await this.deps.delivery.deliver(finished).catch((error: unknown) => {
+          this.deps.log.warn({ err: error, runId: run.id, chatId }, "child result delivery failed");
+        });
+      }
     } catch (error) {
       this.deps.log.warn({ err: error, runId: run.id, chatId }, "agent run completion failed");
     }
