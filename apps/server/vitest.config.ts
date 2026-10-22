@@ -10,11 +10,13 @@ export default defineConfig({
     // runnable (their data files are not emitted).
     exclude: ["**/node_modules/**", "**/dist/**"],
     // Each suite worker holds several Postgres connections (app pool,
-    // seeding pools, the notify client) on the shared dev server, whose
-    // 100-connection budget also serves temporal/agenta/posthog — under
-    // load even 6 workers exhaust the remaining slots (observed 2026-10-04:
-    // 81/100 held by other tenants). Sequential file execution is the
-    // stable mode; single suites are fast enough.
-    fileParallelism: false,
+    // seeding pools, the notify client) on the shared dev server, which also
+    // serves temporal/posthog. It ran 300 connections before 2026-10-22 and
+    // 500 since, so four workers at a time stay well inside the budget; the
+    // files are independent stacks (own database, own ClickHouse database,
+    // own temp roots), so running them side by side is safe.
+    fileParallelism: true,
+    maxWorkers: 4,
+    minWorkers: 1,
   },
 });
