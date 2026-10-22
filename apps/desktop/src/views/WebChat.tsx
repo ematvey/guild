@@ -3065,7 +3065,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           if (!mountedRef.current) throw new Error("Chat session closed");
           rememberCommand(localStorage, outgoingScope, command);
           await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
-            id, body.sendMode, body.skillsIndex, body.instructions, pickedAgentRef.current?.id);
+            id, body.sendMode, body.skillsIndex, pickedAgentRef.current?.id);
         },
       });
       settleOutgoing(command);

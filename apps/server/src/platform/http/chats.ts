@@ -817,7 +817,6 @@ function canonicalChatRequest(body: Record<string, unknown>, chatId: string, mod
     out.server_workspace = sortedJson(body["server_workspace"]);
   }
   if (body["skills_index"] !== undefined && body["skills_index"] !== null) out.skills_index = body["skills_index"];
-  if (body["agents_md"] !== undefined && body["agents_md"] !== null) out.agents_md = body["agents_md"];
   return sortedJson(out);
 }
 

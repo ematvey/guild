@@ -464,16 +464,14 @@ at the same budget before rendering — the server stays the enforcement
 point, and the client never sends a system prompt (both fields are
 additive, server-framed segments).
 
-**SRS-42 — AGENTS.md chain.**
-The chain is the global config-dir file (`AGENTS.override.md` beats
-`AGENTS.md`) plus one file per directory from the git root down to the
-working dir (override beats plain; empty file stops that directory's
-contribution), joined under a shared 32 KiB budget with byte-truncation;
-`PROJECT_DOC_MAX_BYTES = 32 KiB` is the cap (`context.ts`). The engine reads
-the chain for local engine chats. Cloud turns do not: the server builds a
-thread's instructions from its agent workspace files
-(`docs/specs/2026-10-21-workspace-agent-config.md`), so
-`agents_md` on the turn body is accepted but unused by the TS server.
+**SRS-42 — Agent instructions.**
+A thread's instructions are its agent's workspace files (`IDENTITY.md`,
+`SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, `BOOTSTRAP.md`), read on
+the server on every turn under a per-file and total cap
+(`FILE_MAX_CHARS = 8 KiB`, `TOTAL_MAX_CHARS = 24 KiB` in
+`apps/server/src/agents/workspace-config.ts`). There is no separate
+client-assembled AGENTS.md chain: the desktop sends only the skills index,
+and the turn body carries no instruction field.
 
 ## 12. Integrations
 
