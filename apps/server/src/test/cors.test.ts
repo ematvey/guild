@@ -53,3 +53,17 @@ describe("cors", () => {
     await app.close();
   });
 });
+
+describe("web security headers", () => {
+  it("serves the SPA shell with a CSP and nosniff", async () => {
+    const app = await buildApp(cfg());
+    const res = await app.inject({ method: "GET", url: "/" });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["x-frame-options"]).toBe("DENY");
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(String(res.headers["content-security-policy"])).toContain("default-src 'self'");
+    expect(String(res.headers["content-security-policy"])).toContain("frame-ancestors 'none'");
+    await app.close();
+  });
+});

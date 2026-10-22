@@ -76,9 +76,32 @@ function mimeGuess(path: string): string {
   return MIME[ext] ?? "application/octet-stream";
 }
 
+const SECURITY_HEADERS: Record<string, string> = {
+  "content-security-policy": [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: http: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; "),
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+};
+
+function applySecurityHeaders(reply: FastifyReply): void {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) reply.header(name, value);
+}
+
 function serveFile(dist: ChatDist, path: string, reply: FastifyReply): FastifyReply | null {
   const content = dist.file(path);
   if (content === null) return null;
+  applySecurityHeaders(reply);
   // Hashed bundle assets are immutable; everything else (index.html, sw.js)
   // must revalidate on every load or deploys leave stale shells behind.
   const slashPath = path.startsWith("/") ? path : `/${path}`;
@@ -117,6 +140,7 @@ export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDi
     if (index !== null) {
       return;
     }
+    applySecurityHeaders(reply);
     await reply.status(503).type("text/plain; charset=utf-8").send(hint);
   };
   app.addHook("onRequest", fallback);

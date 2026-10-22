@@ -178,19 +178,41 @@ function parseMasterKey(raw: string): string {
   return raw.toLowerCase();
 }
 
+/** Values the example config ships. They are public, so a production deploy
+ *  that still carries one has a known secret. */
+const PLACEHOLDER_SECRETS = new Set([
+  "0".repeat(64),
+  "change-me",
+  "change-me-internal-key",
+  "change-me-sandbox-runner-token",
+]);
+
+function rejectPlaceholder(value: string, label: string, production: boolean): void {
+  if (production && PLACEHOLDER_SECRETS.has(value)) {
+    throw new Error(`${label} is still the example placeholder; generate a real secret`);
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const bind = parseBindAddr(env.GUILD_BIND_ADDR ?? DEFAULT_BIND_ADDR);
   const clickhouseUrl = parseUrl(env.GUILD_CLICKHOUSE_URL ?? DEFAULT_CLICKHOUSE_URL, "GUILD_CLICKHOUSE_URL");
   const masterKeyHex = parseMasterKey(requireEnv(env, "GUILD_MASTER_KEY_HEX"));
   const jwtSecret = requireEnv(env, "GUILD_JWT_SECRET");
+  const production = env.NODE_ENV === "production";
+  rejectPlaceholder(masterKeyHex, "GUILD_MASTER_KEY_HEX", production);
+  rejectPlaceholder(jwtSecret, "GUILD_JWT_SECRET", production);
   const apiUrl = (env.GUILD_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
   const internalKey = env.GUILD_INTERNAL_KEY ?? null;
+  if (internalKey !== null) rejectPlaceholder(internalKey, "GUILD_INTERNAL_KEY", production);
   const selfBaseUrl = parseUrl(env.GUILD_SELF_BASE_URL ?? `http://127.0.0.1:${bind.port}`, "GUILD_SELF_BASE_URL");
   const faroUrl = env.GUILD_FARO_URL ?? DEFAULT_FARO_URL;
   const webDistDir = env.GUILD_WEB_DIST === undefined || env.GUILD_WEB_DIST === ""
     ? defaultWebDistDir()
     : env.GUILD_WEB_DIST;
   const sandbox = parseSandboxConfig(env);
+  if (sandbox.mode === "runner") {
+    rejectPlaceholder(sandbox.runnerToken, "GUILD_SANDBOX_RUNNER_TOKEN", production);
+  }
   const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === undefined || env.GUILD_ALLOW_SHELL_TOOLS === ""
     ? sandbox.mode === "runner"
     : env.GUILD_ALLOW_SHELL_TOOLS === "1";

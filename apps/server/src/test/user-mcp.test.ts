@@ -293,7 +293,7 @@ describe("user mcp routes", () => {
       });
       expect(res.statusCode, `name ${name}`).toBe(400);
     }
-    for (const url of ["not-a-url", "ftp://mcp.example.test", "http://127.0.0.1:9000", "http://10.1.2.3", "http://172.16.0.9", "http://10.0.0.4", "http://169.254.169.254", "http://[::1]:9000", "http://[fe80::1]"]) {
+    for (const url of ["not-a-url", "ftp://mcp.example.test", "http://127.0.0.1:9000", "http://10.1.2.3", "http://172.16.0.9", "http://10.0.0.4", "http://169.254.169.254", "http://[::1]:9000", "http://[fe80::1]", "http://localhost:9000"]) {
       const res = await stack.env.app.inject({
         method: "POST",
         url: "/api/v1/mcp/servers",
@@ -302,8 +302,8 @@ describe("user mcp routes", () => {
       });
       expect(res.statusCode, `url ${url}`).toBe(400);
     }
-    // DNS names are never resolved — the compose deployment's
-    // host.docker.internal passes the literal check.
+    // Names are resolved: a hostname that points at a private address is
+    // refused, while the allowlisted compose name passes.
     const named = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/mcp/servers",

@@ -9,6 +9,7 @@ import type { PlatformPool } from "../db.js";
 import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
+import { addressThrottle, loginThrottle } from "./login-throttle.js";
 import { rustJsonText } from "../provider/sse.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -32,6 +33,21 @@ function bearerToken(req: FastifyRequest): string {
   return header.slice("Bearer ".length);
 }
 
+function tooManyAttempts(retryAfterSec: number): ApiError {
+  return new ApiError(
+    429,
+    "too_many_requests",
+    `too many failed sign-in attempts; try again in ${retryAfterSec} seconds`,
+  );
+}
+
+function attemptKeys(req: FastifyRequest, email: string): { emailKey: string; addressKey: string } {
+  return {
+    emailKey: `email:${email.trim().toLowerCase()}`,
+    addressKey: `ip:${req.ip}`,
+  };
+}
+
 export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool: PlatformPool): void {
   // The first org + admin user; the bootstrap credential is often the org's
   // only admin, so the same 8-char minimum as admin-created accounts applies.
@@ -44,21 +60,39 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
     if ([...password].length < 8) {
       throw ApiError.badRequest("password must be at least 8 characters");
     }
+    const { emailKey, addressKey } = attemptKeys(req, email);
+    if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
+      throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
+    }
     const anyUsers = await pool.query<{ count: number }>("SELECT COUNT(*) AS count FROM users");
     if (anyUsers.rows[0]!.count > 0) {
       throw ApiError.conflict("already_bootstrapped", "org already has users");
     }
     await ctx.identity.ensureBootstrapAdmin(email, password);
+    loginThrottle.reset(emailKey);
     return reply.status(200).send({});
   });
 
   app.post("/api/v1/auth/login", async (req, reply) => {
     const body = requireJsonBody(req);
     const fields = requireStringFields(body, ["email", "password"], (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
-    const [user, authGeneration] = await ctx.identity.authenticateWithGeneration(
-      fields["email"]!,
-      fields["password"]!,
-    );
+    const { emailKey, addressKey } = attemptKeys(req, fields["email"]!);
+    if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
+      throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
+    }
+    let user: UserRow;
+    let authGeneration: number;
+    try {
+      [user, authGeneration] = await ctx.identity.authenticateWithGeneration(
+        fields["email"]!,
+        fields["password"]!,
+      );
+    } catch (error) {
+      loginThrottle.recordFailure(emailKey);
+      addressThrottle.recordFailure(addressKey);
+      throw error;
+    }
+    loginThrottle.reset(emailKey);
     // The session stamps the generation captured at validation: a password
     // reset that commits before issuance leaves it unable to validate.
     const [, token] = await ctx.identity.createSessionForCredential(user.id, authGeneration);
@@ -90,9 +124,23 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
   app.post("/api/v1/auth/pair", async (req, reply) => {
     const body = requireJsonBody(req);
     const fields = requireStringFields(body, ["code"], (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+    const addressKey = `ip:${req.ip}`;
+    if (addressThrottle.isLimited(addressKey)) {
+      throw tooManyAttempts(addressThrottle.retryAfterSeconds(addressKey));
+    }
     const secret = secretFromCode(fields["code"]!);
-    if (secret === null) throw ApiError.unauthorized("malformed pairing code");
-    const [orgId, userId, authGeneration] = await ctx.pairing.redeemWithGeneration(secret);
+    if (secret === null) {
+      addressThrottle.recordFailure(addressKey);
+      throw ApiError.unauthorized("malformed pairing code");
+    }
+    let redeemed: [string, string, number];
+    try {
+      redeemed = await ctx.pairing.redeemWithGeneration(secret);
+    } catch (error) {
+      addressThrottle.recordFailure(addressKey);
+      throw error;
+    }
+    const [orgId, userId, authGeneration] = redeemed;
     void orgId;
     const user = await ctx.identity.getUser(userId);
     // Same rule as password login: the session stamps the generation captured

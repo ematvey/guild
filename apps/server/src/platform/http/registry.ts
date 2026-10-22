@@ -148,7 +148,7 @@ export function registerRegistryRoutes(
   auth: IdentityCtx,
   objects: ObjectStore,
 ): void {
-  app.post("/api/v1/registry/:kind", async (req, reply) => {
+  app.post("/api/v1/registry/:kind", { bodyLimit: MAX_BUNDLE_BYTES }, async (req, reply) => {
     const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);

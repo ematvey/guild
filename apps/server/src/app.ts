@@ -43,9 +43,10 @@ export const NATIVE_ROUTES = [
   ...NATIVE_ROUTE_GROUPS.flatMap((g) => g.paths),
 ];
 
-// Body limit mirrors the largest upload surface (releases: 512 MiB,
-// attachments: 64 MiB).
-const BODY_LIMIT_BYTES = 512 * 1024 * 1024;
+// Default body limit for ordinary JSON routes. The few upload surfaces set
+// their own larger limit on the route (releases 512 MiB, attachments 64 MiB,
+// registry bundles 50 MiB, org logo 2 MiB).
+const BODY_LIMIT_BYTES = 1024 * 1024;
 
 export async function buildApp(config: Config) {
   const logger = pino({

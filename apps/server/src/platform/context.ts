@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { pendingWorkQuery } from "./store/work.js";
 // Platform context: the per-process Postgres pool, object store, ClickHouse
 // usage sink, and typed store facades shared by the native route handlers.
@@ -53,6 +54,13 @@ import type { Logger } from "pino";
 // sha256("guild-internal-key"), formatted as UUIDs).
 const INTERNAL_CALLER_UUID = "084e9c72-8c73-636b-f784-132bbeaf766e";
 const INTERNAL_KEY_UUID = "bf14cf48-bd7d-5fb6-6c0f-9047919fb0d8";
+
+/** Byte-wise comparison with no early exit; unequal lengths are unequal. */
+function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 export class PlatformContext {
   readonly pool: PlatformPool;
@@ -252,7 +260,7 @@ export class PlatformContext {
         sessionId: row.id,
       };
     }
-    if (this.config.internalKey !== null && token === this.config.internalKey) {
+    if (this.config.internalKey !== null && constantTimeEquals(token, this.config.internalKey)) {
       const headerOr = (name: string): string | null => {
         const value = req.headers[name];
         return typeof value === "string" && value !== "" ? value : null;
