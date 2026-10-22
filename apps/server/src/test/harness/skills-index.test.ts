@@ -12,6 +12,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Context } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createGuildExtension, type GuildExtensionDeps } from "../../harness/extension.js";
 import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
@@ -319,6 +320,33 @@ describe("submitTurn skills_index plumbing", () => {
     const conversationId = runtime.conversationIdForChat(chatId);
     expect(conversationId).toBeDefined();
     expect(runtime.skillsRuntime.stashedIndex(conversationId!)).toBe(sent);
+  });
+
+  it("appends a desktop turn's agents_md to the agent's instructions", async () => {
+    const chatId = await createChat("agents-md-plumbing");
+    const chain = "# AGENTS.md\n\nUse pnpm, never npm.";
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(memberToken),
+      payload: {
+        chat_id: chatId,
+        model: "GLM-Test-Model",
+        messages: [{ role: "user", content: "hello" }],
+        agents_md: chain,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const chat = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${chatId}`,
+      headers: auth(memberToken),
+    });
+    const orgId = (JSON.parse(chat.body) as { org_id: string }).org_id;
+    const conversation = await runtime.conversationForChat(chatId, orgId);
+    const instructions = (await conversation.agent(BACKGROUND_CONTEXT)).instructions ?? "";
+    expect(instructions).toContain("## Project instructions");
+    expect(instructions).toContain("Use pnpm, never npm.");
   });
 
   it("stashes an empty index for browser turns that send none", async () => {

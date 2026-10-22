@@ -2,7 +2,7 @@
 // workspace config files read at thread start.
 
 import { describe, expect, it } from "vitest";
-import { composeAgentInstructions } from "../../harness/runtime.js";
+import { composeAgentInstructions, PROJECT_INSTRUCTIONS_MAX_CHARS } from "../../harness/runtime.js";
 import type { AgentConfigFiles } from "../../agents/workspace-config.js";
 
 function config(files: Record<string, string>, missing: string[] = []): AgentConfigFiles {
@@ -67,6 +67,31 @@ describe("composeAgentInstructions", () => {
     expect(text).toContain("(truncated at");
     expect(text).toContain("read the file for the rest");
     expect(text.length).toBeLessThan(40 * 1024);
+  });
+
+  it("appends the desktop project chain after the workspace files", () => {
+    const text = composeAgentInstructions(
+      { name: "Scout", is_personal: false },
+      config(FULL),
+      "# AGENTS.md\n\nUse pnpm, never npm.",
+    );
+    expect(text.indexOf("## Project instructions")).toBeGreaterThan(text.indexOf("## MEMORY.md"));
+    expect(text).toContain("Use pnpm, never npm.");
+  });
+
+  it("ignores an empty or whitespace-only project chain", () => {
+    for (const value of ["", "   \n\t "]) {
+      const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), value);
+      expect(text).not.toContain("## Project instructions");
+    }
+  });
+
+  it("cuts a client-sent chain at the server cap", () => {
+    const huge = "z".repeat(PROJECT_INSTRUCTIONS_MAX_CHARS + 5000);
+    const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config({}), huge);
+    expect(text).toContain("(truncated)");
+    const block = text.slice(text.indexOf("## Project instructions"));
+    expect(block.length).toBeLessThan(PROJECT_INSTRUCTIONS_MAX_CHARS + 1000);
   });
 
   it("stops adding files once the total budget is spent", () => {

@@ -1,12 +1,12 @@
 //! The file bridge: primitive, allowlisted filesystem operations the
 //! webview calls over the RPC channel (unification spec §3 item 2). The
-//! discovery *logic* (skills index, `/name` expansion) lives in TS
-//! (`apps/desktop/src/lib/context.ts`); Rust only touches bytes —
-//! reads/writes/existence/listing inside the allowlist.
+//! discovery *logic* (skills index, AGENTS.md chain, `/name` expansion)
+//! lives in TS (`apps/desktop/src/lib/context.ts`); Rust only touches
+//! bytes — reads/writes/existence/listing inside the allowlist.
 //!
 //! Read roots: the bound project folder, its ancestor chain up to and
-//! including the git root (repo `.agents/skills` live there), the Guild
-//! config dir, and the user's
+//! including the git root (Codex semantics — the AGENTS.md chain and repo
+//! `.agents/skills` live there), the Guild config dir, and the user's
 //! shared `~/.agents`. Existence probes additionally walk above the git
 //! root (that is how the root is *found*); reads never do. Write roots:
 //! the config dir and the project folder.

@@ -12,13 +12,14 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
-- **The turn body carries no AGENTS.md chain (2026-10-22).** Removed
-  `agents_md` end to end: the webview no longer assembles the config-dir
-  file plus the project chain, the turn body has no field for it, the Rust
-  protocol and the engine forwarding drop it, and the TS server no longer
-  accepts it. The field was dead once the workspace-config model landed —
-  the server ignored it, so no turn ever saw the chain. Instructions come
-  from the agent workspace files only.
+- **Desktop turns see the workspace and the project (2026-10-22).** An
+  agent's instructions are its workspace files plus, on a desktop turn, the
+  client-assembled chain (global config file and the project's AGENTS.md
+  files from the git root down). The server appends the chain as a
+  `## Project instructions` block after the workspace files, cuts it at
+  32 KiB, and keeps the last chain per conversation so a resumed run sees
+  the same text. The skills index already merges the client's local lines
+  with the org catalog and drops org duplicates.
 
 - **Activity is an admin surface (2026-10-22).** The rail entry, the
   `/activity` page, the trace and session deep links, and each agent's
@@ -379,10 +380,10 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
 
 ## Next steps (ordered)
 
-1. **Finish the worker-mode soak.** Dev serves turns through forked
-   workers, so every agent turn rides this path. Still unverified: idle
-   reap, and live approval, compaction and steering inside a worker turn.
-   Prod is not in scope — agent work is tested on dev only.
+1. **Finish the worker-mode soak and flip prod.** Dev serves turns through
+   forked workers, so every agent turn rides this path. Still unverified:
+   idle reap, and live approval, compaction and steering inside a worker
+   turn. Prod stays on the supervisor until these pass.
 2. **Enforce agent resource limits, or drop the field.** Every agent records
    `resources` (1 vCPU / 2 GiB / 256 pids / 50 GiB), but the sandbox runner
    ignores it and uses its own env defaults (2 vCPU / 2 GiB / 512 pids). The
