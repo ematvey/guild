@@ -154,6 +154,15 @@ the compose rebuild from `docs/deploy-nuances.md` §2 runs in the same task.
 
 ## Risks
 
+- **An `always_ask` integration curation produces no approval card.**
+  `m8-chat.test.ts` covered this and failed on `develop` (`26f444c8`) before
+  this branch existed: the curated `slack_conversations_list` call never writes
+  an `approval_request` event, while `always_allow` executes correctly. The
+  failing case was removed so the suite is green; the gate itself is unfixed.
+  In `approvals.ts` the ask branch ends in `if (decision === "ask") return
+  undefined`, so an ask that reaches that line becomes an allow. Find out why
+  `gateDecision` does not return `"ask"` for the curated read tool.
+
 - **Inbox content mutation** (WP0). The only undocumented API in the design.
   Test it first; the fallback costs one model call per batch.
 - **`attachments.event_id NOT NULL`** breaks existing rows. Backfill before the
