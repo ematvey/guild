@@ -2,7 +2,7 @@
 // the span tree and the time waterfall. The right pane is the selected span:
 // overview, input, output and attributes, with readable JSON.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -140,7 +140,7 @@ export function RunDetailPage({
 
   const admin = role === "admin";
   const chatId = trace?.session_id ?? null;
-  const summary = trace === null ? "" : trace.summary.trim() !== "" ? trace.summary : "No summary was recorded.";
+  const title = trace === null ? runId : traceTitle(trace);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -154,8 +154,6 @@ export function RunDetailPage({
             <>
               <ToneBadge tone={toneOf(trace.status)}>{statusLabel(trace.status)}</ToneBadge>
               <ToneBadge tone="neutral">{triggerLabel(trace.trigger)}</ToneBadge>
-              {trace.routine_id !== null && <ToneBadge tone="info">routine</ToneBadge>}
-              <span className="hidden font-mono text-2xs text-muted-foreground sm:inline">{trace.trace_id}</span>
             </>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -173,7 +171,7 @@ export function RunDetailPage({
           </div>
         </div>
         <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <h1 className="min-w-0 max-w-full truncate text-sm font-medium">{trace === null ? runId : summary}</h1>
+          <h1 className="min-w-0 max-w-full truncate text-sm font-medium">{title}</h1>
           {trace !== null && (
             <span className="text-2xs text-muted-foreground">
               {trace.agent_name || "Agent"} · {time(trace.started_at)} · {ms(trace.duration_ms)} ·{" "}
@@ -196,7 +194,7 @@ export function RunDetailPage({
           </div>
         )}
         {trace !== null && (
-          <div className="mx-auto flex min-h-full w-full max-w-[90rem] flex-col gap-4 px-4 pb-16 pt-4 sm:px-6 xl:h-full xl:min-h-0 xl:flex-row xl:pb-4">
+          <div className="flex min-h-full w-full flex-col gap-4 px-4 pb-16 pt-4 sm:px-6 xl:h-full xl:min-h-0 xl:flex-row xl:pb-4">
             <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card xl:min-h-0 xl:flex-1">
               <div className="shrink-0 border-b border-border px-2">
                 <TabBar
@@ -223,7 +221,7 @@ export function RunDetailPage({
               </div>
             </div>
 
-            <aside className="w-full space-y-4 xl:min-h-0 xl:w-[24rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
+            <aside className="w-full space-y-4 xl:min-h-0 xl:w-[36%] xl:min-w-[24rem] xl:max-w-[40rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
               <SpanDetail span={selected} admin={admin} />
               <div className="border-t border-border pt-3">
                 <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
@@ -250,6 +248,25 @@ export function RunDetailPage({
                   <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
                 </dl>
               </div>
+
+              {trace.summary.trim() !== "" && (
+                <details className="border-t border-border pt-3">
+                  <summary className="cursor-pointer select-none text-2xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                    Summary
+                  </summary>
+                  <div className={cn("mt-2 text-sm text-foreground", MD_CLASS, MD_TABLE_CLASS)}>
+                    <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                      {trace.summary}
+                    </Markdown>
+                  </div>
+                </details>
+              )}
+
+              {trace.error !== "" && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-2xs text-destructive">
+                  {trace.error}
+                </p>
+              )}
 
               {children.length > 0 && (
                 <section className="border-t border-border pt-3">
@@ -299,6 +316,15 @@ export function RunDetailPage({
       </div>
     </div>
   );
+}
+
+function traceTitle(trace: TraceRow): string {
+  const first = trace.summary
+    .split("\n")
+    .map((line) => line.replace(/[#*_`>]/g, "").trim())
+    .find((line) => line !== "");
+  if (first === undefined || first === "") return trace.agent_name || "Trace";
+  return first.length > 140 ? `${first.slice(0, 140).trimEnd()}…` : first;
 }
 
 function formatBytes(size: number): string {
@@ -758,16 +784,12 @@ function SpanTree({
   );
 }
 
-type SpanTab = "overview" | "input" | "output" | "attributes";
-
 function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
-  const [tab, setTab] = useState<SpanTab>("overview");
   const [payloads, setPayloads] = useState<{ kind: string; body: string }[] | null>(null);
   const [payloadError, setPayloadError] = useState<string | null>(null);
   const [rawInput, setRawInput] = useState(false);
 
   useEffect(() => {
-    setTab(span?.span_type === "llm" ? "overview" : "input");
     setRawInput(false);
   }, [span?.span_id, span?.span_type]);
 
@@ -796,37 +818,16 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
     );
   }
 
-  const tabs: ReadonlyArray<readonly [SpanTab, string]> =
-    span.span_type === "llm"
-      ? [
-          ["overview", "Overview"],
-          ["input", "Input"],
-          ["output", "Output"],
-          ["attributes", "Attributes"],
-        ]
-      : [
-          ["input", "Input"],
-          ["output", "Output"],
-          ["attributes", "Attributes"],
-        ];
-
   const requestRaw = payloads?.find((row) => row.kind === "request")?.body ?? "";
   const responseRaw = payloads?.find((row) => row.kind === "response")?.body ?? "";
   const request = parseObject(requestRaw);
   const response = parseObject(responseRaw);
   const messages = Array.isArray(request?.["messages"]) ? (request["messages"] as ChatMessage[]) : null;
   const responseContent = typeof response?.["content"] === "string" ? response["content"] : "";
-
-  const tabText =
-    tab === "input"
-      ? messages !== null && !rawInput
-        ? JSON.stringify(messages)
-        : span.input || requestRaw
-      : tab === "output"
-        ? responseContent || responseRaw
-        : tab === "attributes"
-          ? JSON.stringify(span.attributes, null, 2)
-          : "";
+  const inputText =
+    messages !== null && !rawInput ? JSON.stringify(messages) : span.input || requestRaw;
+  const outputText = responseContent || span.output || responseRaw;
+  const attributesText = JSON.stringify(span.attributes, null, 2);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -838,87 +839,85 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
         </span>
         <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">{ms(span.duration_ms)}</span>
       </div>
-      <div className="flex items-center gap-0.5 overflow-x-auto border-b border-border px-2">
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              "-mb-px shrink-0 border-b-2 px-2 py-1.5 text-2xs transition-colors focus:outline-none",
-              tab === id
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
-        {tabText !== "" && (
-          <CopyButton value={tabText} className="ml-auto" />
+      <div className="divide-y divide-border">
+        {span.span_type === "llm" && (
+          <SpanSection title="Overview">
+            <SpanOverview span={span} />
+          </SpanSection>
         )}
+        <SpanSection title="Input" copy={inputText}>
+          {span.span_type === "llm" && messages !== null && messages.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setRawInput(false)}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-2xs",
+                    !rawInput ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Messages
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRawInput(true)}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-2xs",
+                    rawInput ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  JSON
+                </button>
+              </div>
+              {rawInput ? <JsonView value={requestRaw} /> : <MessagesView messages={messages} />}
+            </div>
+          ) : (
+            <PayloadValue
+              value={span.input}
+              empty={
+                span.span_type === "llm"
+                  ? admin
+                    ? "No input payload was captured for this call."
+                    : "Payload bodies are admin-only."
+                  : "No input was recorded."
+              }
+            />
+          )}
+        </SpanSection>
+        <SpanSection title="Output" copy={outputText}>
+          {span.span_type === "llm" && response !== null ? (
+            <ResponseView response={response} fallback={span.output || responseRaw} />
+          ) : (
+            <PayloadValue value={span.output || responseRaw} empty="No output was recorded." />
+          )}
+        </SpanSection>
+        <SpanSection title="Attributes" copy={attributesText}>
+          <JsonView value={attributesText} />
+        </SpanSection>
       </div>
-      <div className="p-3">
-        {tab === "overview" && <SpanOverview span={span} />}
-        {tab === "input" && (
-          <div className="space-y-2">
-            {span.span_type === "llm" && messages !== null && messages.length > 0 ? (
-              <>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setRawInput(false)}
-                    className={cn(
-                      "rounded px-1.5 py-0.5 text-2xs",
-                      !rawInput ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    Messages
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRawInput(true)}
-                    className={cn(
-                      "rounded px-1.5 py-0.5 text-2xs",
-                      rawInput ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    JSON
-                  </button>
-                </div>
-                {rawInput ? (
-                  <JsonView value={requestRaw} />
-                ) : (
-                  <MessagesView messages={messages} />
-                )}
-              </>
-            ) : (
-              <PayloadValue
-                value={span.input}
-                empty={
-                  span.span_type === "llm"
-                    ? admin
-                      ? "No input payload was captured for this call."
-                      : "Payload bodies are admin-only."
-                    : "No input was recorded."
-                }
-              />
-            )}
-          </div>
-        )}
-        {tab === "output" && (
-          <div className="space-y-2">
-            {span.span_type === "llm" && response !== null ? (
-              <ResponseView response={response} fallback={span.output || responseRaw} />
-            ) : (
-              <PayloadValue value={span.output || responseRaw} empty="No output was recorded." />
-            )}
-          </div>
-        )}
-        {tab === "attributes" && <JsonView value={JSON.stringify(span.attributes)} />}
-        {payloadError !== null && <p className="mt-2 text-2xs text-destructive">{payloadError}</p>}
-      </div>
+      {payloadError !== null && <p className="px-3 pb-2 text-2xs text-destructive">{payloadError}</p>}
     </div>
+  );
+}
+
+function SpanSection({
+  title,
+  copy,
+  children,
+}: {
+  title: string;
+  copy?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+        <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+        {copy !== undefined && copy !== "" && <CopyButton value={copy} />}
+      </div>
+      <div className="px-3 pb-3">{children}</div>
+    </section>
   );
 }
 
