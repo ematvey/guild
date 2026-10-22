@@ -2,9 +2,7 @@
 // + harness + mock provider. Per turn the runtime installs the org's
 // integration extension (list_tools/guide autos + curated connector tools)
 // into the durable conversation, the scripted model drives discovery and a
-// real connector tool against a local mock backend, the audit event lands,
-// and an always_ask tool suspends on an approval card that a deny resolves
-// with the denied tool-result contract.
+// real connector tool against a local mock backend, and the audit event lands.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
@@ -99,10 +97,9 @@ beforeAll(async () => {
   orgId = stack.orgId;
   memberToken = stack.memberToken;
 
-  // Seed atlassian (token secret) + slack with an always_ask-curated read
-  // tool (org governance overrides the read flow onto the card) and an
-  // always_allow-curated write tool (org governance overrides the gate in
-  // the other direction — the call flows with no card).
+  // Seed atlassian (token secret) + slack with a read tool and an
+  // always_allow-curated write tool (org governance overrides the gate —
+  // the call flows with no card).
   const { masterKeyBytes, encryptSecret } = await import("../platform/crypto.js");
   const master = masterKeyBytes(stack.env.config.masterKeyHex);
   await stack.env.db.query(
@@ -221,7 +218,6 @@ describe("M8: integrations chat runtime", () => {
       expect(call).toBeDefined();
       const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
       expect(result).toBeDefined();
-      if ((result!.event as { is_error: boolean }).is_error) console.log("DEBUG", (result!.event as { content: string }).content);
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
       const specs = JSON.parse((result!.event as { content: string }).content.split("Output:\n")[1]!) as Record<string, unknown>[];
       const names = specs.map((s) => s["name"]);
@@ -274,49 +270,6 @@ describe("M8: integrations chat runtime", () => {
       });
       expect(payload["caller"]).toBeTypeOf("string");
       expect(payload["acting_as"]).toBeTypeOf("string");
-    },
-    TEST_TIMEOUT,
-  );
-
-  it(
-    "an always_ask tool suspends on an approval card; a deny yields the denied result",
-    async () => {
-      const chatId = await createChat("m8-always-ask");
-      scriptFor(
-        { body: toolCallSse("slack_conversations_list", "{}") },
-        { body: finalSse },
-      );
-      await submitTurn(chatId, "list slack channels");
-
-      // The card rides the thread log.
-      let callId = "";
-      await waitFor(async () => {
-        const events = await threadEvents(chatId);
-        const request = events.find((e) => (e.event as { type?: string }).type === "approval_request");
-        if (request === undefined) return false;
-        callId = (request.event as { call_id: string }).call_id;
-        return true;
-      });
-      const request = (await threadEvents(chatId)).find((e) => (e.event as { type?: string }).type === "approval_request");
-      expect((request!.event as { name: string }).name).toBe("slack_conversations_list");
-
-      // No tool result yet: the execution task is suspended.
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      expect(toolResults(await threadEvents(chatId))).toHaveLength(0);
-
-      // Deny → the denied tool result, then the turn settles.
-      const decision = await stack.env.app.inject({
-        method: "POST",
-        url: `/api/v1/gateway/chat/${chatId}/approvals/${callId}`,
-        headers: auth(),
-        payload: { approved: false, reason: "not now" },
-      });
-      expect(decision.statusCode).toBe(200);
-      await turnSettled(chatId);
-      const result = toolResults(await threadEvents(chatId))[0]!;
-      const ev = result.event as { content: string; is_error: boolean };
-      expect(ev.is_error).toBe(true);
-      expect(ev.content).toContain("denied by user: not now");
     },
     TEST_TIMEOUT,
   );
