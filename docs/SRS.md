@@ -465,29 +465,44 @@ point, and the client never sends a system prompt (both fields are
 additive, server-framed segments).
 
 **SRS-42 — Agent instructions.**
-A thread's instructions are its agent's workspace files (`IDENTITY.md`,
-`SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, `BOOTSTRAP.md`), read on
-the server on every turn under a per-file and total cap
-(`FILE_MAX_CHARS = 8 KiB`, `TOTAL_MAX_CHARS = 24 KiB` in
-`apps/server/src/agents/workspace-config.ts`). A desktop turn adds the
-client-assembled chain: the global config-dir file (`AGENTS.override.md`
-beats `AGENTS.md`) plus one file per directory from the git root down to
-the working dir, joined under `PROJECT_DOC_MAX_BYTES = 32 KiB`
-(`context.ts`). The client renders it in pi's context syntax, one tagged
-block per file with its path:
+A thread's instructions come from two sources, and each file is a tagged
+block carrying its full path, so the model can tell them apart.
+
+The agent workspace (`/workspace`, `AGENT_WORKSPACE_PATH`) holds
+`IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md` and
+`BOOTSTRAP.md`. The server reads them on every turn, caps each at
+`FILE_MAX_CHARS = 8 KiB` and the set at `TOTAL_MAX_CHARS = 24 KiB`
+(`apps/server/src/agents/workspace-config.ts`), and renders them inside
+one section:
 
 ```
+<agent_workspace path="/workspace">
+<agent_workspace_file path="/workspace/IDENTITY.md">
+...file body...
+</agent_workspace_file>
+</agent_workspace>
+```
+
+A desktop turn adds the user's project context: the global config-dir file
+(`AGENTS.override.md` beats `AGENTS.md`) plus one file per directory from
+the git root down to the working dir, under
+`PROJECT_DOC_MAX_BYTES = 32 KiB` (`context.ts`). The client renders one
+tagged block per file and the server wraps them in the pi section header:
+
+```
+<project_context>
+Project-specific instructions and guidelines:
+...
 <project_instructions path="/repo/AGENTS.md">
 ...file body...
 </project_instructions>
+</project_context>
 ```
 
-The server wraps the blocks in a `<project_context>` section with the
-`Project-specific instructions and guidelines:` header, appends it after
-the workspace files, and cuts it at 32 KiB itself
-(`PROJECT_INSTRUCTIONS_MAX_CHARS`). The last chain is kept per
-conversation, so a resumed run renders the same instructions. Browser and
-server turns send no chain and get the workspace files alone.
+The server cuts the chain at `PROJECT_INSTRUCTIONS_MAX_CHARS = 32 KiB`
+and keeps the last chain per conversation, so a resumed run renders the
+same instructions. Browser and server turns send no chain and get the
+workspace files alone.
 
 ## 12. Integrations
 

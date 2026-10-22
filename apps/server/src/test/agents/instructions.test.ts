@@ -38,14 +38,20 @@ describe("composeAgentInstructions", () => {
 
   it("injects the config files in order, identity first", () => {
     const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
-    const order = ["## IDENTITY.md", "## SOUL.md", "## AGENTS.md", "## USER.md", "## MEMORY.md"].map((marker) =>
-      text.indexOf(marker),
-    );
+    const order = [
+      '<agent_workspace_file path="/workspace/IDENTITY.md">',
+      '<agent_workspace_file path="/workspace/SOUL.md">',
+      '<agent_workspace_file path="/workspace/AGENTS.md">',
+      '<agent_workspace_file path="/workspace/USER.md">',
+      '<agent_workspace_file path="/workspace/MEMORY.md">',
+    ].map((marker) => text.indexOf(marker));
     expect(order.every((at) => at > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(text).toContain("Never delete without asking.");
     expect(text).toContain("The staging host is `dev-1`.");
-    expect(text).toContain("edit them with write/edit");
+    expect(text).toContain("Edit them with write/edit");
+    expect(text).toContain('<agent_workspace path="/workspace">');
+    expect(text.indexOf("</agent_workspace>")).toBeGreaterThan(text.indexOf('<agent_workspace_file path="/workspace/MEMORY.md">'));
   });
 
   it("marks a missing required file and skips a missing optional one", () => {
@@ -53,10 +59,10 @@ describe("composeAgentInstructions", () => {
       { name: "Scout", is_personal: false },
       config({ "IDENTITY.md": "- Name: Scout" }, ["SOUL.md", "AGENTS.md"]),
     );
-    expect(text).toContain("(missing: SOUL.md)");
-    expect(text).toContain("(missing: AGENTS.md)");
-    expect(text).not.toContain("## USER.md");
-    expect(text).not.toContain("## MEMORY.md");
+    expect(text).toContain('path="/workspace/SOUL.md">\n(missing: SOUL.md)');
+    expect(text).toContain('path="/workspace/AGENTS.md">\n(missing: AGENTS.md)');
+    expect(text).not.toContain('path="/workspace/USER.md"');
+    expect(text).not.toContain('path="/workspace/MEMORY.md"');
   });
 
   it("truncates a long file with a marker that points at the file", () => {
@@ -75,9 +81,10 @@ describe("composeAgentInstructions", () => {
       config(FULL),
       '<project_instructions path="/repo/AGENTS.md">\n# AGENTS.md\n\nUse pnpm, never npm.\n</project_instructions>',
     );
-    expect(text.indexOf("<project_context>")).toBeGreaterThan(text.indexOf("## MEMORY.md"));
+    expect(text.indexOf("<project_context>")).toBeGreaterThan(text.indexOf("</agent_workspace>"));
     expect(text).toContain('<project_instructions path="/repo/AGENTS.md">');
     expect(text).toContain("Project-specific instructions and guidelines:");
+    expect(text).toContain("From the user's desktop project, not your workspace.");
     expect(text).toContain("Use pnpm, never npm.");
   });
 
@@ -103,7 +110,7 @@ describe("composeAgentInstructions", () => {
       config({ "IDENTITY.md": big, "SOUL.md": big, "AGENTS.md": big, "USER.md": big, "MEMORY.md": big }),
     );
     // 24 KiB total: the last files cannot fit.
-    expect(text).not.toContain("## MEMORY.md");
+    expect(text).not.toContain('path="/workspace/MEMORY.md"');
     expect(text.length).toBeLessThan(30 * 1024);
   });
 });
