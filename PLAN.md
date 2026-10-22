@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The agent gets its own tool set (2026-10-22).** A project-bound chat
+  runs `read`/`write`/`edit`/`bash` on the user's machine, so the agent
+  could not touch its workspace at all. It now also carries `agent_read`,
+  `agent_write`, `agent_edit` and `agent_bash`, bound to the agent sandbox
+  env and registered only where the chat is machine-bound. The set is
+  outside the agent tool allowlist, counts as server-side for the shell
+  allowlist and the batch contract, and maps to the same approval classes.
+  `GUILD_SANDBOX=disabled` is gone: production requires a runner.
+
 - **Desktop turns see the workspace and the project (2026-10-22).** An
   agent's instructions are its workspace files plus, on a desktop turn, the
   client-assembled chain (global config file and the project's AGENTS.md

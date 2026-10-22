@@ -69,7 +69,8 @@ you.
   target it explicitly with `-p guild-desktop`.
 - **Server-side tools run in gVisor sandboxes** (workspace sessions and
   plain chats) via the `sandbox-runner` compose service — never in the
-  server process. Production refuses `GUILD_SANDBOX=inprocess-unsafe`; the
+  server process. Production refuses `GUILD_SANDBOX=inprocess-unsafe` and
+  requires a runner (there is no disabled mode); the
   test suite uses it by default. Sandbox integration tests need the host's
   `runsc` runtime: `scripts/sandbox-it.sh`. Shell calls still go through
   the static exec-policy rules in `apps/server/assets/exec_policy_base.rules`

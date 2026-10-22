@@ -48,7 +48,7 @@ describe("loadConfig", () => {
     expect(runner.sandbox).toEqual({ mode: "runner", runnerUrl: "http://sandbox-runner:8090", runnerToken: "t".repeat(32) });
     expect(runner.allowShellTools).toBe(true);
     expect(loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32), GUILD_ALLOW_SHELL_TOOLS: "0" }).allowShellTools).toBe(false);
-    expect(loadConfig({ ...base, NODE_ENV: "production" }).sandbox).toEqual({ mode: "disabled" });
+    expect(() => loadConfig({ ...base, NODE_ENV: "production" })).toThrow(/GUILD_SANDBOX/);
     expect(() => loadConfig({ ...base, NODE_ENV: "production", GUILD_SANDBOX: "inprocess-unsafe" })).toThrow(/refused/);
     expect(() => loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1" })).toThrow(/TOKEN/);
     expect(() => loadConfig({ ...base, GUILD_SANDBOX: "yolo" })).toThrow(/GUILD_SANDBOX/);

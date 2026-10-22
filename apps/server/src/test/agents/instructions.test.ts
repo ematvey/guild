@@ -103,6 +103,16 @@ describe("composeAgentInstructions", () => {
     expect(block.length).toBeLessThan(PROJECT_INSTRUCTIONS_MAX_CHARS + 1000);
   });
 
+  it("names the agent tool set when the chat is bound to a machine", () => {
+    const bound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, true);
+    expect(bound).toContain("agent_write/agent_edit");
+    expect(bound).toContain("`read`, `write`, `edit` and `bash` act on their machine");
+    expect(bound).toContain("`agent_bash` act in your own workspace sandbox");
+    const unbound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
+    expect(unbound).not.toContain("agent_bash");
+    expect(unbound).toContain("Edit them with write/edit");
+  });
+
   it("stops adding files once the total budget is spent", () => {
     const big = `# big\n\n${"y".repeat(8 * 1024)}`;
     const text = composeAgentInstructions(

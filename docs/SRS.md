@@ -65,7 +65,7 @@ the desktop arm runs them before suspension).
 **SRS-6 — Two executors.**
 `ExecutorKind` has two variants (`apps/server/src/machines/dispatch.ts`):
 `machine` and `server`. Each tool call resolves to one executor at turn
-time.
+time; one chat may carry tools from both (SRS-8).
 
 **SRS-7 — Machine executor.**
 The `machine` executor dispatches over the machine's singleton WebSocket to
@@ -89,6 +89,14 @@ via the `sandbox-runner` service: a plain chat gets
 `agents/<org>/<agent>`. Every unbound chat (web or desktop origin) uses it. The static exec-policy gate and the interactive approval
 gate both run before execution; `execute` additionally requires the server
 shell flag (`allow_shell_tools`).
+
+A machine-bound chat keeps its sandbox reachable through a second tool set
+(`agent_read`, `agent_write`, `agent_edit`, `agent_bash`), bound to the
+agent sandbox env while the plain names stay on the machine
+(`apps/server/src/harness/agent-tools.ts`). The set is registered per turn,
+outside the agent's tool allowlist, and it counts as server-side for the
+shell allowlist and the batch contract; `toolClass()` maps it to the same
+policy classes as the plain tools.
 
 **SRS-9 — No third executor.**
 The batch workspace executor is removed. Workspace execution belongs to
