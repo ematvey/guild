@@ -276,7 +276,11 @@ export function AgentPage({
         tabs={
           <TabBar
             label="Agent sections"
-            tabs={AGENT_TABS}
+            tabs={
+              viewer.role === "admin"
+                ? AGENT_TABS
+                : AGENT_TABS.filter(([id]) => id !== "activity")
+            }
             value={tab}
             onChange={setTab}
           />

@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Activity is an admin surface (2026-10-22).** The rail entry, the
+  `/activity` page, the trace and session deep links, and each agent's
+  Activity tab are admin-only. A member who lands on one of those addresses
+  is moved to the agents directory (or the agent's Overview tab) with
+  `replaceState`, so Back does not bounce. The server keeps its row scoping
+  (members read their own rows) as defense in depth. Verified live with a
+  member account: no rail entry, `/activity` lands on `/agents`, and the
+  agent Activity tab is absent.
+
 - **Composer typing stays cheap on long threads (2026-10-22).** A keystroke
   re-renders the whole chat view, and a 3000-event thread holds thousands of
   markdown blocks. `WebChat` now memoizes the transcript element list, so an
@@ -107,9 +116,9 @@ first. Code comments describe only the present.
   overwriting an existing file), and the thread's instructions are composed
   from the files on each turn (8 KiB per file, 24 KiB total, truncation and
   missing-file markers). `BOOTSTRAP.md` is a first-run ritual the agent
-  deletes. `agents.instructions` is now a mirror of `AGENTS.md`: a create
-  writes the file, a patch rewrites it, and the UI reads the identity line
-  (`identity` on the agent payload). Spec:
+  deletes. The `agents.instructions` column is gone (migration 0086):
+  `AGENTS.md` in the workspace is the only copy, and the UI reads the
+  identity line (`identity` on the agent payload). Spec:
   `docs/specs/2026-10-21-workspace-agent-config.md`; re-seed a dev install
   with `npx tsx scripts/agents-reinit.ts`.
 
@@ -257,7 +266,9 @@ first. Code comments describe only the present.
     reschedule, manual run, or auto-disable. `send_message` dedupes the same
     agent/title within a minute. The inbox rail badge refreshes when a
     notice is read.
-  - Limits: 25 agents per org, 1 vCPU / 2 GiB / 256 pids / 50 GiB per agent.
+  - Limits: 2 vCPU / 2 GiB / 512 pids per sandbox (runner defaults,
+    env-tunable), a 50 GiB JuiceFS quota per agent workspace; agent count is
+    unbounded. `agents.resources` is recorded but not enforced.
 
 - **Agent workspaces get a JuiceFS volume (2026-10-20).** Compose adds a
   `juicefs` sidecar (foreground mount, `/dev/fuse`, `SYS_ADMIN`, unconfined
@@ -361,20 +372,31 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
 ## Next steps (ordered)
 
 1. **Finish the worker-mode soak and flip prod.** Dev serves turns through
-   forked workers. Still unverified: idle reap, and live approval,
-   compaction and steering inside a worker turn. Prod stays on the
-   supervisor until these pass.
-2. **Decide machine identity after an OS reinstall.** A changed hardware
-   fingerprint currently matches no row, so the machine registers as new and
-   its old chats go dark. Candidates: derive the fingerprint from the
-   firmware/board UUID, or give the user an explicit takeover on the machines
-   page. Undecided.
-3. **Measure the rest of the long-thread path.** Composer typing is fixed.
-   Initial load and scroll of the 3000-event dev thread were not measured;
-   treat them as the next perf target if they feel slow.
-4. **Revisit the skill scope** when a shared agent needs a fixed skill set
-   (see Future directions).
-5. **Cover the review gaps in the next loop:** Windows-only engine paths
+   forked workers, so every agent turn rides this path. Still unverified:
+   idle reap, and live approval, compaction and steering inside a worker
+   turn. Prod stays on the supervisor until these pass.
+2. **Enforce agent resource limits, or drop the field.** Every agent records
+   `resources` (1 vCPU / 2 GiB / 256 pids / 50 GiB), but the sandbox runner
+   ignores it and uses its own env defaults (2 vCPU / 2 GiB / 512 pids). The
+   per-agent 50 GiB JuiceFS quota is the only limit that actually applies.
+   Decide: pass `resources` into the sandbox spec, or remove the field.
+3. **Set an org storage budget for shared agent workspaces.** The 50 GiB
+   quota is per agent, and agent count is unbounded, so one org can fill the
+   object store. Decide the budget and where it is enforced.
+4. **Decide whether an archived thread can move to another agent.** Today a
+   live thread moves with its transcript; an archived one has no such path.
+5. **Drop or use the `agents_md` field on cloud turns.** The client still
+   assembles the project AGENTS.md chain and sends it, and the TS server
+   accepts it into the request object but never reads it — agent threads
+   take their instructions from the workspace files. Remove the field, or
+   give it a reader.
+6. **Decide machine identity after an OS reinstall.** A changed hardware
+   fingerprint matches no row, so the machine registers as new and its old
+   chats go dark. Candidates: derive the fingerprint from the firmware/board
+   UUID, or give the user an explicit takeover on the machines page.
+7. **Measure the rest of the long-thread path.** Composer typing is fixed.
+   Initial load and scroll of the 3000-event dev thread were not measured.
+8. **Cover the review gaps in the next loop:** Windows-only engine paths
    (compile-checked, never run), the desktop updater flow on a real install,
    and the integration connectors.
 

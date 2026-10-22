@@ -151,10 +151,12 @@ the durable journal, configuration in Postgres.
     tarball + threads/runs JSONL) is offered at deletion time. When an owner
     leaves the org, their agents are suspended and flagged for reassignment,
     never auto-deleted.
-21. **Resource limits**: per sandbox 1 vCPU, 2 GiB RAM, 256 pids; per-agent
-    workspace quota 50 GiB (JuiceFS directory quota); max 25 active agents per
-    org; admin override per agent. No tier UI in M1; `resources` is a JSONB
-    column for later profiles.
+21. **Resource limits**: per sandbox 2 vCPU, 2 GiB RAM, 512 pids (runner
+    defaults, env-tunable: `GUILD_SANDBOX_CPUS`, `_MEMORY_MB`, `_PIDS`);
+    per-agent workspace quota 50 GiB (JuiceFS directory quota,
+    `GUILD_AGENT_WORKSPACE_GIB`). Agent count is unbounded — limits are
+    workspace quota and storage budget. No tier UI; `resources` is recorded
+    per agent but not enforced yet.
 22. **UI quality bar**: M1 ships a finished UI, not a prototype — existing
     design system (`packages/ui`, Inter/JetBrains Mono, semantic tokens),
     URL-state navigation (every page/tab/panel has a route, deep links and

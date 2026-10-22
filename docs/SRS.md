@@ -4,10 +4,9 @@ The system-level contracts that satisfy `docs/PRD.md`. Every claim is
 verified against the code. Present-tense requirements only; identifiers are
 stable (`SRS-n`) for citation.
 
-> **Status (2026-10-22):** the contracts below are current. The Rust server
-> was replaced by the TypeScript server (`apps/server`) on 2026-10-04.
-> `crates/server/src/...` paths in this document are historical; read them as
-> "the server" and look in `apps/server/src/...` for the live code.
+> **Status (2026-10-22):** the contracts below are current. The cloud server
+> is TypeScript (`apps/server`); `crates/*` paths name the local engine and
+> the shared protocol crates.
 
 Group index:
 
@@ -33,9 +32,9 @@ Group index:
 ## 1. Architecture invariants
 
 **SRS-1 — One agent loop.**
-Exactly one agent loop exists: the durable gateway workflow
-(`crates/server/src/worker/restate.rs`, the `ChatRunner` Restate object,
-driven through `worker/funnel.rs`). Tool looping, model-turn sequencing,
+Exactly one agent loop exists: the durable gateway workflow (the
+pi-durable `Harness` owned by `GuildRuntime` in
+`apps/server/src/harness/runtime.ts`). Tool looping, model-turn sequencing,
 exec policy, approval gating, history persistence, compaction, and quota
 enforcement all live in that workflow and nowhere else.
 
@@ -55,21 +54,22 @@ feature lands once in the TS frontend plus once in the server, and desktop
 and web both get it.
 
 **SRS-5 — Executors are a dispatch shape, not architectures.**
-Adding an executor is a new arm in `worker/funnel.rs::Executor` and a
-dispatch-shape change; it never forks the loop. All arms share the same
+Adding an executor is a new arm of `ExecutorKind`
+(`apps/server/src/machines/dispatch.ts`) and a dispatch-shape change; it
+never forks the loop. All arms share the same
 exec-policy and approval gates (the sandbox arm runs them before dispatch;
 the desktop arm runs them before suspension).
 
 ## 2. Executor taxonomy
 
-**SRS-6 — Three executors.**
-The funnel's executor type has exactly three variants
-(`worker/funnel.rs::Executor`): `Desktop`, `Sandbox`, `ServerLocal`. Each
-tool call resolves to one executor at turn time.
+**SRS-6 — Two executors.**
+`ExecutorKind` has two variants (`apps/server/src/machines/dispatch.ts`):
+`machine` and `server`. Each tool call resolves to one executor at turn
+time.
 
-**SRS-7 — Desktop executor.**
-`Desktop { machine_id, machine_label, workdir }` dispatches over the
-machine's singleton WebSocket to the desktop backend, which executes through
+**SRS-7 — Machine executor.**
+The `machine` executor dispatches over the machine's singleton WebSocket to
+the desktop backend, which executes through
 its `ToolRegistry` (`read_file`, `write_file`, `edit_file`, `execute`) and
 returns the result over the same socket. A desktop executor is reachable
 ONLY through a project binding: the workdir is the bound project's folder.
@@ -82,17 +82,18 @@ ONLY through a project binding: the workdir is the bound project's folder.
 - A durable 5-minute timeout backstops every suspended call; late and
   duplicate completions no-op through the durable `complete_tool` handler.
 
-**SRS-8 — Sandbox executor.**
-`Sandbox` runs the same client-tool specs server-side against a per-chat
-directory `data_dir/sandbox/{chat_id}`. Every unbound chat (web or desktop
-origin) uses it. The static exec-policy gate and the interactive approval
+**SRS-8 — Server executor.**
+The `server` executor runs the same client-tool specs in a gVisor sandbox
+via the `sandbox-runner` service: a plain chat gets
+`chats/<org>/<conversationId>`, an agent chat gets the agent workspace
+`agents/<org>/<agent>`. Every unbound chat (web or desktop origin) uses it. The static exec-policy gate and the interactive approval
 gate both run before execution; `execute` additionally requires the server
 shell flag (`allow_shell_tools`).
 
-**SRS-9 — Server-local executor.**
+**SRS-9 — No third executor.**
 The batch workspace executor is removed. Workspace execution belongs to
-persistent agents (`docs/specs/2026-10-18-persistent-agents.md`); plain chats
-use the per-chat sandbox of SRS-8.
+persistent agents (`docs/specs/2026-10-18-persistent-agents.md`); plain
+chats use the server sandbox of SRS-8.
 
 ## 3. Binding model
 
@@ -122,14 +123,15 @@ One Rust process per desktop (`crates/app-server`, launched by the Tauri
 app; the detach-and-survive lifecycle retained). Its complete surface:
 
 **SRS-14 — Machine executor.**
-The backend owns the machine link (`machine_link.rs`): one WebSocket to the
-server, `ToolDispatch` receive, `ToolRegistry` execution, `ToolResult`
-return, identity persistence in `token.json`, registry metadata reporting
-(fingerprint, OS, app version). The link survives GUI closure and app
-restarts.
+The backend owns the machine link (`crates/app-server/src/machine_link.rs`):
+one WebSocket to the server, `ToolDispatch` receive, `ToolRegistry`
+execution, `ToolResult` return, identity persistence in `token.json`,
+registry metadata reporting (fingerprint, OS, app version). The link runs
+inside the app process (single-process design); a headless host can run
+`Guild daemon` as a systemd user unit instead.
 
 **SRS-15 — File bridge with an explicit allowlist.**
-The `fs.*` verbs (`fs_bridge.rs`) are the only filesystem surface the
+The `fs.*` verbs (`crates/app-server/src/fs_bridge.rs`) are the only filesystem surface the
 webview can reach. The allowlist is the security boundary — never "anything
 under $HOME":
 
@@ -145,12 +147,13 @@ under $HOME":
 **SRS-16 — Registry crypto.**
 The backend performs bundle hashing (sha256 over bundle bytes) and the
 provenance sidecar writes for publish/install/uninstall; release artifacts
-are ed25519-signed over their sha256 digest (`crates/server/src/signing.rs`)
+are ed25519-signed over their sha256 digest
+(`apps/server/src/platform/http/releases.ts`)
 and the public key is served for verification. Guild metadata lives in
 manifests and sidecars, never inside SKILL.md.
 
 **SRS-17 — Auth store.**
-`auth_state.rs` owns token.json + machine identity + link publication: one
+`crates/app-server/src/auth_state.rs` owns token.json + machine identity + link publication: one
 `transition` method per mutation (login, pair, identify, sign-out) applies
 mutate ⇒ persist ⇒ publish; the RPC verbs are thin over it. The webview
 holds its own session token for direct HTTP; the backend uses its stored
@@ -158,7 +161,7 @@ credentials for the machine socket.
 
 **SRS-18 — Engine entry points ride the gateway.**
 `agent.start` and `chat.send` drive the durable gateway workflow
-(`agent_start.rs::drive` / `drive_chat`) and map its `StreamEvent`s onto the
+(`crates/app-server/src/agent_start.rs`, `drive` / `drive_chat`) and map its `StreamEvent`s onto the
 engine protocol's `agent.*` events; approvals ride the approvals HTTP
 endpoint through the journal. No second completion loop exists.
 
@@ -169,15 +172,17 @@ The `machines` table is one row per pairing: `machine_id` (PK,
 server-issued at pairing), `org_id`, `user_id`, `label`, 
 `hardware_fingerprint`, `os`, `os_version`, `app_version`, `last_ip`, 
 `first_connected_at`, `last_connected_at`, `last_seen_at`, `re_paired_at`
-(`crates/server/migrations/0046_machines.sql`). Writes happen on connect and
+(`apps/server/migrations/0046_machines.sql`). Writes happen on connect and
 pairing adoption; `last_seen_at` refreshes on a 30 s throttle off socket
 pings; disconnect writes nothing (absence of the socket is the disconnect).
 
-**SRS-20 — Singleton machine socket with displacement.**
-Exactly one socket per `machine_id`; a second connect evicts the first
-(newest wins). The displaced holder receives a `displaced` notice and a
-clean close; a stale instance's resume reconnect is answered `displaced`
-and is terminal — only a fresh (non-resume) connect takes the slot.
+**SRS-20 — Singleton machine socket; a live slot is held.**
+Exactly one socket per `machine_id`. A live slot is held, not displaced: a
+connect from a different instance is rejected `displaced` and the holder
+keeps the slot. A reconnect of the same instance replaces its own zombie
+slot, which heals an honest blip. A connect from a different user is
+rejected `foreign_owner`, and a `resume=true` from a stale instance is
+rejected.
 
 **SRS-21 — Ticket auth.**
 Both browsers and machines connect to `/api/v1/ws` with a single-use,
@@ -188,7 +193,8 @@ mint a fresh one per connect). Session expiry mid-connection sends
 `auth_required` and closes.
 
 **SRS-22 — Sanity cap.**
-At most 32 sockets per user (`hub.rs::MAX_SOCKETS_PER_USER`); over-limit
+At most 32 sockets per user (`apps/server/src/hub/live.ts`,
+`MAX_SOCKETS_PER_USER`); over-limit
 upgrades are rejected with an explicit error.
 
 **SRS-23 — Liveness is the socket.**
@@ -204,9 +210,11 @@ endpoint.
 A (re)connect is a stateless client: server pushes `thread_list`, the client
 declares its open chat with `sync`, and the server answers
 `sync_begin → thread_state → sync_done`, where `thread_state` is the atomic
-authoritative view (durable events + in-flight buffers + project fields)
-under a `seq` watermark. Clients apply a `thread_state` only when its
-watermark is strictly newer than the last applied view.
+authoritative view (the newest 120 durable events with `has_more_events`,
+in-flight buffers, project fields) under a `seq` watermark. Older events
+come from `GET /api/v1/threads/{id}/events?before=&limit=`. Clients apply a
+`thread_state` only when its watermark is strictly newer than the last
+applied view.
 
 **SRS-25 — Log-then-broadcast.**
 A command (send, approval, project change) is written to the durable log
@@ -218,23 +226,37 @@ the socket is fan-out only.
 ## 6. Data model
 
 **SRS-26 — Postgres holds the records.**
-Live tables (verify against `crates/server/src/store/` + 
-`crates/server/migrations/`): `orgs`, `users`, `teams`, `team_members`, 
-`sessions` (opaque tokens, sha256-hashed), `oidc_configs`, `pairing_tokens`, 
-`provider_keys` (encrypted secrets), `model_routes`, `chats` (incl. 
-`machine_id`/`machine_label` columns derived from the project, `project_id`, 
-`generating`, `approval`, archive flag), `thread_events` (the history log —
-there is no separate messages table), `chat_reads`, `attachments`, 
-`projects` (id, org_id, user_id, name — display label, duplicates allowed, 
-folder, machine_id), `machines` (SRS-19), `registry_items` + 
-`registry_versions` (with `reviewed_version` + `reviewed_bundle_sha256` 
-binding approval to content), `integrations` + `integration_secrets` 
-(AES-256-GCM, masked preview column), `api_keys`, `routines` + 
-`routine_runs`, `events` (org audit log), `agents` and its grant/thread/run/
-routine/notice tables, `releases`, 
-`org_kv`/`server_kv` (incl. the `tool_dispatch:` claim keys), 
-`tool_artifacts`. Schema changes go through embedded, checksummed
-migrations applied under an advisory lock.
+Live tables (verify against `apps/server/src/platform/store/` +
+`apps/server/migrations/`), grouped by area:
+
+- Identity: `orgs`, `users`, `teams`, `team_members`, `sessions` (opaque
+  tokens, sha256-hashed), `oidc_configs`, `pairing_tokens`.
+- Gateway: `provider_keys` (encrypted secrets), `model_routes`, `api_keys`.
+- Threads: `chats`, `thread_events` (the history log — there is no separate
+  messages table), `chat_reads`, `attachments`, the `chat_*` projection
+  tables, `conversations`, `entries`, `submissions`, `tasks`,
+  `turn_commands`, `documents` + `document_revisions`.
+- Projects and machines: `projects` (id, org_id, user_id, name — display
+  label, duplicates allowed, folder, machine_id), `machines` (SRS-19).
+- Registry and skills: `registry_items` + `registry_versions` (with
+  `reviewed_version` + `reviewed_bundle_sha256` binding approval to
+  content), `skill_installs`.
+- Integrations: `integrations`, `integration_secrets` (AES-256-GCM, masked
+  preview column), `user_mcp_servers`.
+- Agents: `agents`, `agent_grants`, `agent_team_grants`, `agent_threads`,
+  `agent_thread_chunks`, `agent_runs`, `agent_routines`,
+  `agent_routine_occurrences`, `agent_notices`,
+  `agent_delegation_artifacts`, `agent_workspace_turns`.
+- Durable: `durable_commits`, `durable_metadata`, `durable_schema`,
+  `record_ids`.
+- Ops: `events` (org audit log), `releases`, `org_kv`/`server_kv`/`user_kv`
+  (incl. the `tool_dispatch:` claim keys), `tool_artifacts`,
+  `schema_history`, `live_projection_repairs`.
+
+The `routines`, `routine_runs` and `routine_schedule_starts` tables are
+leftovers from the removed integration routines; no code reads them.
+Schema changes go through embedded, checksummed migrations applied under an
+advisory lock.
 
 **SRS-27 — ClickHouse holds usage events.**
 `usage_events` (ts, org_id, user_id, team_id, session_id, model, provider, 
@@ -249,14 +271,16 @@ tool artifacts (`object_key(org_id, id, filename)` per the store modules).
 Clients never hold object-store credentials; downloads go through
 member-authenticated HTTP endpoints.
 
-**SRS-29 — Restate journals hold only the active subset.**
-The durable journals of in-flight runs (current step, pending awakeables,
-timers) live in Restate; on completion, results persist to Postgres and the
-journal retires. No long-term record lives only in Restate.
+**SRS-29 — The durable store holds only the active subset.**
+The durable state of in-flight runs (current step, pending awaits, timers)
+lives in pi-durable's Postgres tables (`durable_commits`,
+`durable_metadata`); on completion, results persist to the domain tables and
+the journal retires. No long-term record lives only in the durable journal.
 
 ## 7. WS protocol
 
-Per `crates/protocol/src/ws.rs` + `crates/server/src/http/{ws,hub,feed}.rs`.
+Per `crates/protocol/src/ws.rs` + `apps/server/src/http/ws.ts` and the
+`apps/server/src/hub/` feed.
 JSON text frames, internally tagged by `type` (snake_case).
 
 **SRS-30 — Frames.**
@@ -302,19 +326,30 @@ per-machine claim registry: a dispatch whose connection changed resolves as
 
 **SRS-33 — Route families.**
 All HTTP lives under `/api/v1` (plus the OpenAI-compatible
-`/openai/v1/chat/completions`), per `crates/server/src/http/mod.rs::build_router`:
+`/openai/v1/chat/completions`), per `apps/server/src/platform/http/register.ts`:
 
 - Health: `GET /api/v1/health`.
 - Auth/identity: `/api/v1/auth/{bootstrap,login,me,refresh,pair,oidc/*,pairing-tokens*}`, `GET /api/v1/me/approval`.
-- Chats: `POST|GET /api/v1/chats`, `PATCH /api/v1/chats/{id}`, 
-  `/api/v1/chats/{id}/thread` (GET history, POST client-appended events), 
-  `/api/v1/chats/{id}/project`, `/api/v1/chats/{id}/approval`, 
-  `/api/v1/chats/{id}/read`, `/api/v1/chats/{id}/attachments`, 
-  `/api/v1/chats/{id}/tool_artifacts`, `GET /api/v1/machines`.
+- Threads: `POST|GET /api/v1/threads`, `GET|PATCH /api/v1/threads/{id}`,
+  `GET|POST /api/v1/threads/{id}/events`, `/threads/{id}/{project,approval,
+  read,agent,context}`, `/threads/{id}/pending/{messageId}/steer`,
+  `/threads/{id}/compact`, `/threads/{id}/approvals/{callId}`,
+  `/threads/{id}/attachments`, `/threads/{id}/tool_artifacts`. The
+  `/api/v1/gateway/chat/*` forms remain as aliases for older clients.
+- Agents: `POST|GET /api/v1/agents`, `GET|PATCH|DELETE /api/v1/agents/{id}`,
+  `.../agents/{id}/{threads,routines,files,runs}`, `GET /api/v1/agents/tools`,
+  `GET /api/v1/inbox`, `GET /api/v1/runs/{id}`.
+- Activity: `GET /api/v1/activity/{traces,spans,sessions,summary}`.
+- Skills: `/api/v1/skills*` (incl. `installs`, `sync-payload`, `teams`,
+  `activity`).
+- MCP: `/api/v1/mcp/{servers,probe}`.
+- Me: `/api/v1/me/{approval,onboarded,settings}`; machines:
+  `GET /api/v1/machines`.
 - Projects: `POST|GET /api/v1/projects`, `PUT|DELETE /api/v1/projects/{id}`.
-- Gateway: `GET /api/v1/gateway/models`, `POST /api/v1/gateway/chat`, 
-  `POST /api/v1/gateway/chat/{id}/{stop,compact}`, 
-  `POST /api/v1/gateway/chat/{id}/approvals/{call_id}`.
+- Gateway: `GET /api/v1/gateway/models`, `GET /api/v1/models`,
+  `POST /api/v1/gateway/chat`,
+  `POST /api/v1/gateway/chat/{id}/{stop,compact}`,
+  `POST /api/v1/gateway/chat/{id}/approvals/{callId}`.
 - Attachments/artifacts: `GET|POST /api/v1/attachments*`, 
   `GET /api/v1/tool_artifacts/{id}`.
 - Registry: `POST|GET /api/v1/registry/{kind}`, 
@@ -325,15 +360,15 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
 - Integrations script API: `GET /api/v1/integrations`, 
   `GET /api/v1/integrations/{slug}/tools`, 
   `POST /api/v1/integrations/{slug}/tools/{tool}`.
-- Routines: `POST|GET /api/v1/routines`, `PUT|DELETE /api/v1/routines/{id}`, 
-  `GET /api/v1/routines/{id}/runs`, `POST /api/v1/hooks/{org_id}/{slug}`.
+- Agent routines: `GET|POST /api/v1/agents/{id}/routines`,
+  `GET|PATCH|DELETE /api/v1/agents/{id}/routines/{rid}`,
+  `POST .../routines/{rid}/run`, `GET .../routines/{rid}/runs`.
 - Usage: `GET /api/v1/usage{,/summary,/series}`.
 - Org events: `GET /api/v1/events`.
 - Admin: `/api/v1/admin/{users,teams,api-keys,oidc,gateway/*,integrations*}` — 
   integrations include `GET|PUT .../{id}/tools[/{tool}]` (curation) and 
   `GET .../{id}/secrets` (masked), plus 
   `/api/v1/admin/{approval-policy-prompt,assistant-prompt}`.
-- Internal (Restate worker callbacks): `/api/v1/internal/{routines/{id},runs,runs/finish,completion,storage}`.
 - WebSocket: `POST /api/v1/ws/ticket`, `GET /api/v1/ws` (upgrade).
 
 ## 9. Daemon JSON-RPC verbs
@@ -356,11 +391,11 @@ handshake in `daemon.hello`). Dispatch table in
 Unknown methods return a standard RPC error. Server-push events ride the
 same connection (`agent.text`, `agent.tool_call`, `agent.tool_result`, 
 `agent.approval_request`, `agent.done`, `agent.error` — the mapping in
-`agent_start.rs::map_frame`).
+`crates/app-server/src/agent_start.rs::map_frame`).
 
 ## 10. Tool artifacts
 
-Per `crates/server/src/worker/spill.rs`, `crates/guild-core/src/tools/artifacts.rs`, 
+Per `apps/server/src/chats/spill.ts`, `crates/guild-core/src/tools/artifacts.rs`,
 `crates/app-server/src/artifacts.rs`.
 
 **SRS-35 — Spill trigger and ceilings.**
@@ -402,7 +437,7 @@ ordinary tools reach it with no special policy.
 
 Per `apps/desktop/src/lib/context.ts` + `skill-mention.ts` (TS owns the
 logic; Rust only touches bytes through `fs.*`), with the server as the
-enforcement cap (`crates/server/src/worker/restate.rs`).
+enforcement cap (`apps/server/src/harness/runtime.ts`).
 
 **SRS-39 — Bundle format and scopes.**
 A skill is a SKILL.md directory; Guild metadata lives in the
@@ -421,7 +456,8 @@ mention appends a context block (`### Skill: <name> (<path>)` + full
 SKILL.md body) to the turn's prompt. Unknown tokens pass through.
 
 **SRS-41 — Index budget.**
-The rendered index (name — description per skill) is capped at 8,000 bytes:
+The rendered index (name — description per skill) is capped at 8 KiB
+(8192 bytes):
 description clipping first (120/60/24 chars tiers), then tail-dropping with
 an "N skills omitted" notice. The server re-caps client-sent `skills_index`
 at the same budget before rendering — the server stays the enforcement
@@ -433,23 +469,24 @@ The chain is the global config-dir file (`AGENTS.override.md` beats
 `AGENTS.md`) plus one file per directory from the git root down to the
 working dir (override beats plain; empty file stops that directory's
 contribution), joined under a shared 32 KiB budget with byte-truncation;
-the server caps it again (`AGENTS_MD_CAP = 32 KiB`). Browser tabs assemble
-nothing locally; a project-bound web chat's chain is fetched machine-
-mediated through one journaled `read_file` dispatch at turn start, cached
-per project folder under a 10-minute TTL, with the turn proceeding without
-it when the machine is offline.
+`PROJECT_DOC_MAX_BYTES = 32 KiB` is the cap (`context.ts`). The engine reads
+the chain for local engine chats. Cloud turns do not: the server builds a
+thread's instructions from its agent workspace files
+(`docs/specs/2026-10-21-workspace-agent-config.md`), so
+`agents_md` on the turn body is accepted but unused by the TS server.
 
 ## 12. Integrations
 
-Per `crates/server/src/integrations.rs`, `crates/server/src/integrations/*`, 
-`worker/mcp_pool.rs`, `http/integration_tools.rs`.
+Per `apps/server/src/platform/integrations/` and
+`apps/server/src/platform/http/integration_tools.ts`.
 
 **SRS-43 — One resolution path.**
 Turn start resolves every enabled integration row into the same journaled
 `PluginTurn` snapshot (namespaced tool specs `int_<slug>_<tool>`, classes,
 row config, secret names, identity key) regardless of kind. Built-in
 connectors execute in-process; MCP tools execute through the pooled MCP
-connection (`mcp_pool.rs`: PoolKey {slug, url, acting_as, secrets
+connection (`apps/server/src/platform/integrations/mcp.ts`: the pool key is
+{slug, url, acting_as, secrets
 fingerprint}, 600 s TTL, 10 s connect timeout) — MCP is a special case of
 the one interface, not a parallel path. A broken integration contributes
 nothing to the turn and logs a warning.
@@ -503,7 +540,8 @@ integration is a 404/403, never a data leak.
 
 **SRS-49 — One policy surface.**
 Exec policy, approvals, curation, and audit exist only inside the gateway
-workflow (the funnel's gate step + the journaled approval gate). No client
+workflow (`apps/server/src/harness/runtime.ts` plus the journaled
+approval gate). No client
 path, engine path, or admin path re-implements them; client-sent system
 prompts are forbidden (additive, server-capped context fields only).
 
@@ -511,9 +549,8 @@ prompts are forbidden (additive, server-capped context fields only).
 The webview's only filesystem surface is the `fs.*` bridge allowlist
 (SRS-15); model tool execution is scoped by the workdir (project folder or
 per-chat sandbox dir); shell tools require the server allowlist flag;
-exec-policy rules are compiled into the server binary from the checked-in
-rule files (Starlark never links into the server runtime — the rules are
-parsed at build time).
+exec-policy rules are parsed at server start from the checked-in rule file
+(`apps/server/assets/exec_policy_base.rules`, `apps/server/src/execpolicy/`).
 
 **SRS-51 — Token and ticket hygiene.**
 Session tokens are opaque, sha256-hashed at rest, 30-day expiry, revocable;
@@ -525,13 +562,14 @@ server); error details go to the log, not the response body.
 ## 14. Error handling + testing requirements
 
 **SRS-52 — Typed errors.**
-Each crate has typed error enums; stringly errors do not cross boundaries.
-Tool failures surface to the model as tool results (the model reacts)
-instead of crashing the run.
+Each Rust crate has typed error enums, and the TS server throws `ApiError`
+with a code; stringly errors do not cross boundaries. Tool failures surface
+to the model as tool results (the model reacts) instead of crashing the
+run.
 
 **SRS-53 — One HTTP error envelope.**
 Every `/api/v1` error is `{"error": {"code", "message"}}` with an accurate
-status (`crates/server/src/http/error.rs`); JSON-RPC uses standard error
+status (`apps/server/src/platform/http/error.ts`); JSON-RPC uses standard error
 codes plus an app base code, with protocol errors distinguishable from tool
 errors.
 

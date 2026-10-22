@@ -117,12 +117,13 @@ A chat sent from a desktop app with no project bound is fully unbound.
 The server issues each machine's identity at pairing, and exactly one live
 connection per machine exists at any time.
 
-- A second connection for the same machine displaces the first; the
-  displaced instance is told explicitly and stops reconnect-fighting.
+- A live slot is held, not displaced: a second instance's connect is
+  rejected and the holder keeps the machine. A reconnect of the same
+  instance replaces its own zombie slot.
 - Machine liveness equals its live connection; there is no separate
   heartbeat notion for the user.
-- A machine's identity persists across app restarts, including with no GUI
-  open.
+- A machine's identity persists across app restarts; the link runs in the
+  app process, or in the `Guild daemon` user unit on a headless host.
 
 **PRD-9 — Re-pair adoption.**
 Pairing again on a machine the org already knows takes over the existing
@@ -186,15 +187,18 @@ invoke a skill explicitly.
 - Typing `/` at word start opens the skill autocomplete.
 - A `/name` mention injects the full SKILL.md body as context for that turn.
 
-**PRD-15 — AGENTS.md chain.**
-The agent receives the project's instruction chain assembled from the
-workspace.
+**PRD-15 — Agent instructions.**
+An agent thread's instructions come from the agent workspace, and a local
+engine chat still gets the project's AGENTS.md chain.
 
-- The global config-dir instructions file applies first, then one file per
-  directory from the repo root down to the working directory.
-- An override file beats the plain file in the same directory; an empty file
-  silences its directory's contribution.
-- The assembled chain is delivered under a shared byte budget.
+- Agent threads read `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`,
+  `MEMORY.md` and `BOOTSTRAP.md` from the agent workspace on every turn,
+  under a per-file and total byte budget.
+- A local engine chat gets the global config-dir instructions file first,
+  then one file per directory from the repo root down to the working
+  directory; an override file beats the plain file, and an empty file
+  silences its directory.
+- The chain is assembled under a shared byte budget.
 
 ### 3.6 Integrations
 
