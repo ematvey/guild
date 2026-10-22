@@ -210,6 +210,16 @@ export function threadEventWire(event: ThreadEvent): string {
       });
     case "turn_error":
       return obj({ type: "turn_error", message: event.message });
+    case "child_result":
+      return obj({
+        type: "child_result",
+        thread_id: event.thread_id,
+        run_id: event.run_id,
+        status: event.status,
+        reason: event.reason,
+        final_text: event.final_text,
+        attachments: event.attachments ?? [],
+      });
     default:
       throw new Error(`unknown thread event type ${(event as { type?: string }).type}`);
   }
@@ -335,6 +345,16 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
       };
     case "turn_error":
       return { type: "turn_error", message: String(payload["message"] ?? "") };
+    case "child_result":
+      return {
+        type: "child_result",
+        thread_id: String(payload["thread_id"] ?? ""),
+        run_id: String(payload["run_id"] ?? ""),
+        status: String(payload["status"] ?? ""),
+        ...(payload["reason"] === undefined || payload["reason"] === null ? {} : { reason: String(payload["reason"]) }),
+        final_text: String(payload["final_text"] ?? ""),
+        attachments: Array.isArray(payload["attachments"]) ? (payload["attachments"] as MessageAttachment[]) : [],
+      };
     default:
       return undefined;
   }

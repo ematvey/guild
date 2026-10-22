@@ -758,15 +758,15 @@ export class AgentStore {
   }
 
   /** The caller's threads with this agent: default first, then most recent
-   *  activity. Routine-run threads are execution transcripts and stay out of
-   *  the user-facing list unless explicitly requested. */
+   *  activity. Routine-run and delegated threads are execution transcripts
+   *  and stay out of the user-facing list unless explicitly requested. */
   async listThreads(
     agentId: string,
     userId: string,
     options: { includeRoutineRuns?: boolean } = {},
   ): Promise<AgentThread[]> {
     let where = "t.agent_id = $1 AND t.user_id = $2";
-    if (options.includeRoutineRuns !== true) where += " AND t.kind <> 'routine_run'";
+    if (options.includeRoutineRuns !== true) where += " AND t.kind NOT IN ('routine_run', 'delegated')";
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
        WHERE ${where}

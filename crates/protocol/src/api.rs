@@ -668,6 +668,21 @@ pub enum ThreadEvent {
     /// thread shows it as a terminal error card; excluded from model-facing
     /// history derivation.
     TurnError { message: String },
+    /// A child run ended: the delivery the parent drains at its next
+    /// boundary (docs/specs/2026-10-22-agent-to-agent.md). Log-only: the
+    /// delivery reaches the parent as a user message, not as this event.
+    ChildResult {
+        thread_id: Uuid,
+        run_id: Uuid,
+        /// The child run's terminal status; `cancelled` is a user stop.
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default)]
+        final_text: String,
+        #[serde(default)]
+        attachments: Vec<MessageAttachment>,
+    },
 }
 
 /// The fixed set of machine tools executed by the attached client. This is
