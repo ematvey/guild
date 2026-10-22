@@ -123,4 +123,28 @@ describe("composeAgentInstructions", () => {
     expect(text).not.toContain('path="/workspace/MEMORY.md"');
     expect(text.length).toBeLessThan(30 * 1024);
   });
+
+  it("gives a spawned child its tree context and the reply rule", () => {
+    const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, false, {
+      parent_name: "Parent",
+      depth: 2,
+      can_spawn: true,
+    });
+    expect(text).toContain('<spawned_by agent="Parent" depth="2">');
+    expect(text).toContain("Ending your turn is how you reply to the spawner");
+    expect(text).toContain("To ask a question, end your turn with the question.");
+    expect(text).toContain("You can spawn further child agents.");
+    expect(text).not.toContain("You cannot spawn further child agents.");
+    expect(text.indexOf("<spawned_by")).toBeGreaterThan(text.indexOf("</agent_workspace>"));
+
+    const capped = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, false, {
+      parent_name: "Parent",
+      depth: 3,
+      can_spawn: false,
+    });
+    expect(capped).toContain("You cannot spawn further child agents.");
+
+    const root = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
+    expect(root).not.toContain("<spawned_by");
+  });
 });

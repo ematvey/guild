@@ -21,14 +21,12 @@ import {
   scheduleReminder,
   updateRoutine,
 } from "./routines.js";
-import { createDelegateTool, type DelegationToolContext } from "./delegation.js";
+import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
+import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, type Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
-const MAX_READ_EVENTS = 200;
-const MAX_READ_CHARS = 20_000;
-const MAX_EVENT_CHARS = 4_000;
 
 export interface AgentToolDeps {
   pool: PlatformPool;
@@ -38,14 +36,14 @@ export interface AgentToolDeps {
   /** The user whose private thread this run serves: a thread this tool
    *  creates belongs to them. */
   userId: string;
-  /** Present only when this chat has a running run and the delegation limits
-   *  still allow spawning. */
-  delegation?: DelegationToolContext;
+  /** Present only when this chat has a running run and the subagent tree is
+   *  addressable. */
+  subagents?: SubagentsToolContext;
   /** Present when this chat has a running agent turn. */
   sendFile?: SendFileContext;
 }
 
-export { createDelegateTool } from "./delegation.js";
+export { createSubagentTools } from "./subagents.js";
 export { createSendFileTool } from "./send-file.js";
 
 export interface AgentMessageResult {
@@ -111,29 +109,7 @@ export async function searchAgentConversations(
   return store.searchThreads(agentId, query, capped);
 }
 
-function eventText(type: string, payload: Record<string, unknown>): string {
-  if (type === "user_message" || type === "system_message" || type === "tool_result") {
-    return typeof payload.content === "string" ? payload.content : "";
-  }
-  if (type === "assistant_message" && Array.isArray(payload.blocks)) {
-    return (payload.blocks as { type?: string; text?: string }[])
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text!)
-      .join("\n");
-  }
-  return "";
-}
-
-function clip(text: string, max = MAX_EVENT_CHARS): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`;
-}
-
-export interface AgentConversationRead {
-  thread_id: string;
-  thread_title: string;
-  events: { seq: number; type: string; ts: string; text: string }[];
-  truncated: boolean;
-}
+export type AgentConversationRead = ThreadReadResult;
 
 /** Bounded read of one of the agent's own threads. A foreign thread id is
  *  the same not-found answer as a missing one. */
@@ -149,49 +125,13 @@ export async function readAgentConversation(
   );
   const thread = owned.rows[0];
   if (thread === undefined) return null;
-  const params: unknown[] = [thread.chat_id];
-  let where = "e.chat_id = $1";
-  if (args.fromSeq !== undefined) {
-    params.push(args.fromSeq);
-    where += ` AND e.seq >= $${params.length}`;
-  }
-  if (args.toSeq !== undefined) {
-    params.push(args.toSeq);
-    where += ` AND e.seq <= $${params.length}`;
-  }
-  const ascending = args.fromSeq !== undefined || args.toSeq !== undefined;
-  const res = await pool.query<{
-    seq: string;
-    type: string;
-    payload: Record<string, unknown>;
-    created_at: Date;
-  }>(
-    `SELECT e.seq, e.type, e.payload, e.created_at
-     FROM thread_events e
-     WHERE ${where}
-     ORDER BY e.seq ${ascending ? "ASC" : "DESC"}
-     LIMIT ${MAX_READ_EVENTS + 1}`,
-    params,
-  );
-  const truncated = res.rows.length > MAX_READ_EVENTS;
-  let rows = truncated ? res.rows.slice(0, MAX_READ_EVENTS) : res.rows;
-  if (!ascending) rows = [...rows].reverse();
-  let used = 0;
-  const events: AgentConversationRead["events"] = [];
-  for (const row of rows) {
-    const text = clip(eventText(row.type, row.payload));
-    const room = MAX_READ_CHARS - used;
-    if (room <= 0) break;
-    const clipped = clip(text, Math.min(MAX_EVENT_CHARS, room));
-    used += clipped.length;
-    events.push({
-      seq: Number(row.seq),
-      type: row.type,
-      ts: row.created_at.toISOString(),
-      text: clipped,
-    });
-  }
-  return { thread_id: args.threadId, thread_title: thread.title, events, truncated };
+  return readThreadTranscript(pool, {
+    threadId: args.threadId,
+    chatId: thread.chat_id,
+    title: thread.title,
+    ...(args.fromSeq === undefined ? {} : { fromSeq: args.fromSeq }),
+    ...(args.toSeq === undefined ? {} : { toSeq: args.toSeq }),
+  });
 }
 
 const textErr = (text: string): ToolExecutionResult => ({ output: [{ type: "text", text }], isError: true });
@@ -458,8 +398,8 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
     );
   }
 
-  if (allowed.has("delegate") && deps.delegation?.can_spawn === true) {
-    tools.push(createDelegateTool(deps.delegation));
+  if (allowed.has("subagents") && deps.subagents !== undefined) {
+    tools.push(...createSubagentTools(deps.subagents));
   }
 
   if (allowed.has("send_file") && deps.sendFile !== undefined) {

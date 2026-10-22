@@ -42,7 +42,7 @@ export type AgentToolName =
   | "create_routine"
   | "update_routine"
   | "delete_routine"
-  | "delegate"
+  | "subagents"
   | "send_file";
 
 /** Every tool an agent can be given. `tools_mode = 'all'` means this set,
@@ -65,7 +65,7 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "create_routine",
   "update_routine",
   "delete_routine",
-  "delegate",
+  "subagents",
   "send_file",
 ];
 

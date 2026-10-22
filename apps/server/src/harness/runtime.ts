@@ -76,7 +76,7 @@ import { ChildResultDelivery, assistantTextForRun, type ChildRunFinished } from 
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { createTraceHook } from "../agents/trace-hook.js";
-import { delegationContextForChat } from "../agents/delegation.js";
+import { subagentsContextForChat } from "../agents/subagents.js";
 import { appendToPendingSteer } from "./inbox-merge.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import {
@@ -133,6 +133,7 @@ export function composeAgentInstructions(
   config: AgentConfigFiles,
   projectInstructions?: string,
   machineBound = false,
+  spawnedBy?: { parent_name: string; depth: number; can_spawn: boolean },
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -170,6 +171,21 @@ export function composeAgentInstructions(
   parts.push(
     `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
+  if (spawnedBy !== undefined) {
+    const spawner = spawnedBy.parent_name.replace(/"/g, "&quot;");
+    parts.push(
+      [
+        `<spawned_by agent="${spawner}" depth="${spawnedBy.depth}">`,
+        `This thread was spawned by the agent ${spawnedBy.parent_name}.`,
+        "Ending your turn is how you reply to the spawner: your final text, plus any files you attach with send_file, " +
+          "is delivered to the parent thread. To ask a question, end your turn with the question.",
+        spawnedBy.can_spawn
+          ? "You can spawn further child agents."
+          : "You cannot spawn further child agents.",
+        "</spawned_by>",
+      ].join("\n"),
+    );
+  }
   if (machineBound) {
     parts.push(
       "This chat is bound to the user's project, so `read`, `write`, `edit` and `bash` act on their machine " +
@@ -1216,6 +1232,7 @@ export class GuildRuntime {
     agent: Agent,
     projectInstructions?: string,
     machineBound = false,
+    chatId?: string,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
@@ -1226,7 +1243,35 @@ export class GuildRuntime {
       this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name), identity: { name: null, vibe: null, emoji: null, avatar: null } };
     }
-    return composeAgentInstructions(agent, config, projectInstructions, machineBound);
+    const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
+    return composeAgentInstructions(agent, config, projectInstructions, machineBound, spawnedBy);
+  }
+
+  /** The tree context of a spawned child thread, or undefined for a root. */
+  private async spawnedByFor(
+    chatId: string,
+  ): Promise<{ parent_name: string; depth: number; can_spawn: boolean } | undefined> {
+    const res = await this.pool.query<{
+      thread_id: string;
+      parent_thread_id: string | null;
+      depth: number;
+      parent_name: string | null;
+    }>(
+      `SELECT t.id AS thread_id, t.parent_thread_id, t.depth, pa.name AS parent_name
+       FROM agent_threads t
+       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
+       LEFT JOIN agents pa ON pa.id = pt.agent_id
+       WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined || row.parent_thread_id === null) return undefined;
+    const children = await this.agents.childCount(row.thread_id);
+    return {
+      parent_name: row.parent_name ?? "another agent",
+      depth: Number(row.depth),
+      can_spawn: Number(row.depth) < this.config.agentMaxDepth && children < this.config.agentMaxChildrenPerNode,
+    };
   }
 
   private async provisionTurnTools(
@@ -1313,6 +1358,7 @@ export class GuildRuntime {
                 agent,
                 this.projectInstructions.get(Number(conversation.id)),
                 workspaceTools.length > 0,
+                chatId,
               ),
             }),
       },
@@ -1518,10 +1564,9 @@ export class GuildRuntime {
     this.log.info({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
     if (ref === null) return [];
     const agent = await this.agents.fetchAgent(ref.agent_id);
-    const delegation = await delegationContextForChat({
+    const subagents = await subagentsContextForChat({
       pool: this.pool,
       store: this.agents,
-      threads: this.threads,
       agent,
       chatId,
       maxDepth: this.config.agentMaxDepth,
@@ -1535,16 +1580,18 @@ export class GuildRuntime {
             images: input.images,
             model: input.model,
           }),
+        stopChat: (childChatId) => this.stopChat(childChatId),
+        canStopChat: (childChatId) => this.canStopChat(childChatId),
       },
     });
     const sendFile =
-      delegation === null || this.objects === undefined
+      subagents === null || this.objects === undefined
         ? undefined
         : {
             attachments: this.attachments,
             objects: this.objects,
             agent,
-            run: delegation.parentRun,
+            run: subagents.parentRun,
             chatId,
             workspaceRoot: this.config.agentWorkspaceWriteRoot,
           };
@@ -1554,7 +1601,7 @@ export class GuildRuntime {
       threads: this.threads,
       agent,
       userId: ref.user_id,
-      ...(delegation === null ? {} : { delegation }),
+      ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });
     this.log.info({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
@@ -1748,6 +1795,13 @@ export class GuildRuntime {
       orgId,
       infos,
     );
+  }
+
+  /** Whether this process can stop the chat's in-flight turn. A worker
+   *  owns exactly one chat; another chat needs the remoteStop IPC that does
+   *  not exist yet. */
+  canStopChat(chatId: string): boolean {
+    return this.workerScope === undefined || this.workerScope.chatId === chatId;
   }
 
   /** Stops the chat's in-flight generation: withdraws queued inputs, aborts
