@@ -32,7 +32,7 @@ export const MAX_ARTIFACTS = 20;
 export const MAX_INBOX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_DELEGATION_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
-const TERMINAL: ReadonlySet<AgentRunStatus> = new Set(["succeeded", "failed", "silent", "skipped"]);
+const TERMINAL: ReadonlySet<AgentRunStatus> = new Set(["succeeded", "failed", "silent", "skipped", "cancelled"]);
 
 export interface DelegationRuntime {
   submitTurn(

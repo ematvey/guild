@@ -4,14 +4,15 @@
 export type AgentVisibility = "private" | "team" | "org";
 export type AgentRole = "owner" | "editor" | "user" | "viewer";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
-export type AgentThreadKind = "default" | "thread" | "routine_run";
+export type AgentThreadKind = "default" | "thread" | "routine_run" | "delegated";
 export type AgentRunStatus =
   | "queued"
   | "running"
   | "succeeded"
   | "failed"
   | "silent"
-  | "skipped";
+  | "skipped"
+  | "cancelled";
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 export type AgentRoutineKind = "cron" | "once";
 export type AgentRoutineContext = "isolated";

@@ -75,7 +75,7 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
  *  conversations: they stay out of the sidebar lists. */
 const NOT_EXECUTION_TRANSCRIPT = `NOT EXISTS (
     SELECT 1 FROM agent_threads xt
-    WHERE xt.chat_id = c.id AND xt.kind = 'routine_run'
+    WHERE xt.chat_id = c.id AND xt.kind IN ('routine_run', 'delegated')
   )`;
 
 /** The sidebar lists sort by recent activity, not creation: a chat's place

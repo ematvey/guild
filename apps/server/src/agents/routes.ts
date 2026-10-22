@@ -83,7 +83,7 @@ async function integrationToolCatalog(
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
-const RUN_STATUSES = new Set<AgentRunStatus>(["queued", "running", "succeeded", "failed", "silent", "skipped"]);
+const RUN_STATUSES = new Set<AgentRunStatus>(["queued", "running", "succeeded", "failed", "silent", "skipped", "cancelled"]);
 const TRIGGERS = new Set<AgentTrigger>(["message", "routine", "manual", "delegation"]);
 
 function sendJson(reply: FastifyReply, value: unknown): FastifyReply {
