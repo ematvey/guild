@@ -324,7 +324,7 @@ describe("submitTurn skills_index plumbing", () => {
 
   it("appends a desktop turn's agents_md to the agent's instructions", async () => {
     const chatId = await createChat("agents-md-plumbing");
-    const chain = "# AGENTS.md\n\nUse pnpm, never npm.";
+    const chain = '<project_instructions path="/repo/AGENTS.md">\nUse pnpm, never npm.\n</project_instructions>';
     const res = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/gateway/chat",
@@ -345,7 +345,7 @@ describe("submitTurn skills_index plumbing", () => {
     const orgId = (JSON.parse(chat.body) as { org_id: string }).org_id;
     const conversation = await runtime.conversationForChat(chatId, orgId);
     const instructions = (await conversation.agent(BACKGROUND_CONTEXT)).instructions ?? "";
-    expect(instructions).toContain("## Project instructions");
+    expect(instructions).toContain("<project_context>");
     expect(instructions).toContain("Use pnpm, never npm.");
   });
 

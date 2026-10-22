@@ -473,9 +473,19 @@ the server on every turn under a per-file and total cap
 client-assembled chain: the global config-dir file (`AGENTS.override.md`
 beats `AGENTS.md`) plus one file per directory from the git root down to
 the working dir, joined under `PROJECT_DOC_MAX_BYTES = 32 KiB`
-(`context.ts`). The server appends that chain as `## Project instructions`
-after the workspace files and cuts it at 32 KiB itself
-(`PROJECT_INSTRUCTIONS_MAX_CHARS`); the last chain is kept per
+(`context.ts`). The client renders it in pi's context syntax, one tagged
+block per file with its path:
+
+```
+<project_instructions path="/repo/AGENTS.md">
+...file body...
+</project_instructions>
+```
+
+The server wraps the blocks in a `<project_context>` section with the
+`Project-specific instructions and guidelines:` header, appends it after
+the workspace files, and cuts it at 32 KiB itself
+(`PROJECT_INSTRUCTIONS_MAX_CHARS`). The last chain is kept per
 conversation, so a resumed run renders the same instructions. Browser and
 server turns send no chain and get the workspace files alone.
 

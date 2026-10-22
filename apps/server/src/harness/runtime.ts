@@ -160,8 +160,10 @@ export function composeAgentInstructions(
 export const PROJECT_INSTRUCTIONS_MAX_CHARS = 32 * 1024;
 
 /** The desktop project's instruction chain, appended after the workspace
- *  files. The text is client-supplied, so it is cut here regardless of what
- *  the client did; empty or whitespace-only input yields no block. */
+ *  files in pi's context syntax: the client sends `<project_instructions
+ *  path="...">` blocks, this wraps them in the `<project_context>` section.
+ *  The text is client-supplied, so it is cut here regardless of what the
+ *  client did; empty or whitespace-only input yields no block. */
 function projectBlock(text: string | undefined): string | null {
   const trimmed = (text ?? "").trim();
   if (trimmed === "") return null;
@@ -170,10 +172,12 @@ function projectBlock(text: string | undefined): string | null {
       ? trimmed
       : `${trimmed.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS)}\n\n(truncated)`;
   return [
-    "## Project instructions",
-    "The user's desktop project supplies these instructions (the global config file plus the project's AGENTS.md chain). Follow them alongside your workspace files; where they conflict, the project wins for work in that project.",
+    "<project_context>",
+    "Project-specific instructions and guidelines:",
+    "",
     cut,
-  ].join("\n\n");
+    "</project_context>",
+  ].join("\n");
 }
 
 /** Guild-side chat ↔ durable-conversation mapping (spec decision 6). Kept
