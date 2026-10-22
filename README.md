@@ -20,8 +20,7 @@ crates/protocol     shared types (JSON-RPC + cloud API)
 crates/guild-core   agent loop, tools, provider clients
 crates/app-server   local engine binary
 apps/server         TS cloud server (Fastify + pi-durable) + SQL migrations
-apps/desktop        Tauri desktop client
-apps/webui          web UI (later milestone)
+apps/desktop        Tauri desktop client (also the web SPA)
 deploy/compose      docker compose bundle
 docs/specs          design docs
 docs/plans          implementation plans
@@ -92,8 +91,8 @@ Named agents own a durable workspace, threads, and routines. The design is in
 
 Single client binary (GUI + engine in one executable) packaged as a Windows
 NSIS installer, a Linux AppImage, and macOS DMGs — cross-built on Linux,
-published to the server's Downloads view, ed25519-signed.
-Full process: `docs/clients.md`.
+published to the server's release registry and updater manifest,
+minisign-signed. Full process: `docs/clients.md`.
 
 ## SSO, quotas, attachments, events (M7)
 

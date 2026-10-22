@@ -1,8 +1,13 @@
 # Guild — Software Requirements Specification (SRS)
 
 The system-level contracts that satisfy `docs/PRD.md`. Every claim is
-verified against the code (paths in each section). Present-tense
-requirements only; identifiers are stable (`SRS-n`) for citation.
+verified against the code. Present-tense requirements only; identifiers are
+stable (`SRS-n`) for citation.
+
+> **Status (2026-10-22):** the contracts below are current. The Rust server
+> was replaced by the TypeScript server (`apps/server`) on 2026-10-04.
+> `crates/server/src/...` paths in this document are historical; read them as
+> "the server" and look in `apps/server/src/...` for the live code.
 
 Group index:
 

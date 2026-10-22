@@ -60,25 +60,21 @@ requires in-GUI binary handling. No session token travels from the GUI.
 The socket/pipe path can be overridden for development with
 `GUILD_DAEMON_SOCKET`.
 
-## 2. Web mode + admin console (product flow)
+## 2. Web mode + admin sections (product flow)
 
 The same chat frontend runs in two hosts:
 
 - **Desktop (Tauri)**: engine login → full agent view (project, tools,
-  approvals). The header has an **Admin console ↗** link that opens the
-  system browser at `<server>/admin/#tk=<session-token>` — the token travels
-  in the URL fragment (never sent to the server), the console stores it
-  locally, so no re-login (pin/re-login happens only if the session is
-  revoked).
+  approvals).
 - **Web** (served by the TS server): the SAME frontend at `/` —
   it detects the browser (no `__TAURI_INTERNALS__`), uses same-origin
   fetch/SSE instead of the engine, and runs in **chat mode** (streaming
   gateway chat; agent mode with local tools stays desktop-only — tools run
   on the machine that has the project).
-- **Admin console**: the separate webui app at `/admin` (Users, Usage,
-  Registry, Gateway, Downloads). Same origin + the same localStorage token
-  key → auth is shared with the chat app seamlessly in web mode; its
-  "Guild" title links back to `/`.
+- **Admin sections**: workspace-wide Settings pages (General, Usage,
+  Assistant, Users, Teams, Models, Integrations, SSO, Registry) are
+  admin-gated and share the app's session. There is no separate admin app;
+  `/admin` falls through to the chat SPA.
 
 Serving: the TS server embeds the frontend (`/` = chat app from
 `apps/desktop/dist`, built in the webui stage of `Dockerfile.server-ts`).
