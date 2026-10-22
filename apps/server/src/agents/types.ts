@@ -43,7 +43,7 @@ export type AgentToolName =
   | "update_routine"
   | "delete_routine"
   | "delegate"
-  | "release_artifacts";
+  | "send_file";
 
 /** Every tool an agent can be given. `tools_mode = 'all'` means this set,
  *  plus every integration tool the org enables (resolved at turn time, so a
@@ -66,7 +66,7 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "update_routine",
   "delete_routine",
   "delegate",
-  "release_artifacts",
+  "send_file",
 ];
 
 /** How an agent's tool allowlist is resolved. */

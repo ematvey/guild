@@ -72,6 +72,75 @@ export class AttachmentStore {
     return toRow(res.rows[0]!);
   }
 
+  /** Inserts an agent-authored attachment bound to the running turn: the
+   *  event id stays null until the turn ends and the lifecycle publishes it. */
+  async createAgentFile(input: {
+    id: string;
+    orgId: string;
+    chatId: string;
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    objectKey: string;
+    authorId: string;
+    sourcePath: string;
+  }): Promise<AttachmentRow> {
+    const res = await this.pool.query<AttachmentDbRow>(
+      `INSERT INTO attachments
+         (id, org_id, chat_id, filename, content_type, size_bytes, object_key,
+          author_kind, author_id, source_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'agent', $8, $9)
+       RETURNING ${ATTACHMENT_COLUMNS},
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+      [
+        input.id,
+        input.orgId,
+        input.chatId,
+        input.filename,
+        input.contentType,
+        input.sizeBytes,
+        input.objectKey,
+        input.authorId,
+        input.sourcePath,
+      ],
+    );
+    return toRow(res.rows[0]!);
+  }
+
+  /** Binds every unpublished agent attachment of a chat to its assistant
+   *  event. Called once when the run reaches a terminal assistant event. */
+  async publishAgentAttachments(chatId: string, eventId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE attachments SET event_id = $2
+       WHERE chat_id = $1 AND author_kind = 'agent' AND event_id IS NULL`,
+      [chatId, eventId],
+    );
+  }
+
+  async byIds(orgId: string, ids: readonly string[]): Promise<AttachmentRow[]> {
+    if (ids.length === 0) return [];
+    const res = await this.pool.query<AttachmentDbRow>(
+      `SELECT ${ATTACHMENT_COLUMNS},
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM attachments WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+      [orgId, ids],
+    );
+    return res.rows.map(toRow);
+  }
+
+  async listAgentFiles(chatId: string, authorId: string, since: string): Promise<AttachmentRow[]> {
+    const res = await this.pool.query<AttachmentDbRow>(
+      `SELECT ${ATTACHMENT_COLUMNS},
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM attachments
+       WHERE chat_id = $1 AND author_kind = 'agent' AND author_id = $2
+         AND created_at >= $3::timestamptz
+       ORDER BY created_at ASC, id ASC`,
+      [chatId, authorId, since],
+    );
+    return res.rows.map(toRow);
+  }
+
   async list(orgId: string, chatId: string): Promise<AttachmentRow[]> {
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},

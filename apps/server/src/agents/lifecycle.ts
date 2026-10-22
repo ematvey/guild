@@ -10,6 +10,7 @@ import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import { insertChunks } from "./search.js";
 import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
+import type { AttachmentStore } from "../platform/store/attachments.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -36,6 +37,8 @@ export interface AgentRunLifecycleDeps {
   journal?: AgentConflictJournal;
   /** Mirrors the terminal run row into ClickHouse. */
   trace?: TraceStore;
+  /** Binds the turn's pending agent attachments to its assistant event. */
+  attachments?: Pick<AttachmentStore, "publishAgentAttachments">;
 }
 
 function blocksOf(payload: Record<string, unknown>): { type?: string; text?: string }[] {
@@ -74,6 +77,7 @@ export class AgentRunLifecycle {
       error,
       summary: clip(firstTextOf(payload), MAX_SUMMARY_CHARS) || null,
       finalSeq: row.seq,
+      eventId: row.id,
     });
   }
 
@@ -85,7 +89,7 @@ export class AgentRunLifecycle {
 
   private async finish(
     chatId: string,
-    info: { error: string | null; summary: string | null; finalSeq?: number },
+    info: { error: string | null; summary: string | null; finalSeq?: number; eventId?: string },
   ): Promise<void> {
     const run = await this.runningRun(chatId);
     if (run === null) return;
@@ -150,6 +154,11 @@ export class AgentRunLifecycle {
         ],
       );
       if (updated.rowCount === 0) return;
+      if (info.eventId !== undefined) {
+        await this.deps.attachments?.publishAgentAttachments(run.chat_id, info.eventId).catch((error: unknown) => {
+          this.deps.log.warn({ err: error, runId: run.id, chatId }, "attachment publish failed");
+        });
+      }
       await this.deps.journal?.finishRun(run.id);
       this.mirrorFinishedRun(run.id);
       await this.indexTurn(run, turnEvents);

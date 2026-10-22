@@ -1,9 +1,6 @@
-// Delegation limits, authorization, child execution and artifact transfer.
+// Delegation limits, authorization, child execution and sent-file ids.
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
 import { ThreadStore } from "../../platform/store/thread.js";
@@ -13,8 +10,6 @@ import {
   delegate,
   delegationContextForChat,
   DelegationError,
-  releaseArtifacts,
-  transferArtifacts,
 } from "../../agents/delegation.js";
 import type { AgentRun } from "../../agents/types.js";
 import { createAgentsTestEnv } from "./harness.js";
@@ -47,7 +42,6 @@ dbDescribe("agent delegation", () => {
   let parentAgent: Awaited<ReturnType<AgentStore["create"]>>;
   let targetAgent: Awaited<ReturnType<AgentStore["create"]>>;
   let privateTarget: Awaited<ReturnType<AgentStore["create"]>>;
-  let root: string;
 
   async function makeRun(args: {
     agentId: string;
@@ -78,11 +72,9 @@ dbDescribe("agent delegation", () => {
     parentAgent = await store.create(owner, { name: "Parent", model: "GLM-Test", visibility: "org" });
     targetAgent = await store.create(owner, { name: "Researcher", model: "GLM-Test", visibility: "org" });
     privateTarget = await store.create(outsider, { name: "Private", model: "GLM-Test", visibility: "private" });
-    root = await mkdtemp(path.join(tmpdir(), "guild-delegation-"));
   }, 60_000);
 
   afterAll(async () => {
-    await rm(root, { recursive: true, force: true }).catch(() => {});
     await env?.cleanup();
   });
 
@@ -135,21 +127,21 @@ dbDescribe("agent delegation", () => {
     expect(target.id).toBe(privateTarget.id);
   });
 
-  it("runs the child in a routine_run thread and copies declared artifacts to the inbox", async () => {
+  it("runs the child in a routine_run thread and returns its text and sent file ids", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Delegation flow");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
-    const targetRoot = path.join(root, "agents", orgId, targetAgent.id);
-    await mkdir(targetRoot, { recursive: true });
-    await writeFile(path.join(targetRoot, "report.txt"), "the report\n");
+    const attachmentId = randomUUID();
 
     const runtime = {
       submitTurn: async (chatId: string): Promise<number> => {
         const child = await store.runningRunForChat(chatId);
         if (child === null) throw new Error("child run missing");
         await env!.db.query(
-          `INSERT INTO agent_workspace_turns (id, agent_id, thread_id, run_id, started_at, finished_at, paths)
-           VALUES ($1, $2, $3, $4, now(), now(), $5::text[])`,
-          [randomUUID(), targetAgent.id, child.thread_id, child.id, ["report.txt"]],
+          `INSERT INTO attachments
+             (id, org_id, chat_id, filename, content_type, size_bytes, object_key,
+              author_kind, author_id, source_path)
+           VALUES ($1, $2, $3, 'report.txt', 'text/plain', 11, $4, 'agent', $5, 'report.txt')`,
+          [attachmentId, orgId, chatId, `attachments/${orgId}/${attachmentId}/report.txt`, targetAgent.id],
         );
         await store.updateRun(child.id, {
           status: "succeeded",
@@ -166,8 +158,6 @@ dbDescribe("agent delegation", () => {
       agent: parentAgent,
       chatId: thread.chat_id,
       runtime,
-      workspaceRoot: root,
-      stagingRoot: path.join(root, "staging"),
       timeoutMs: 2_000,
     });
     expect(context).not.toBeNull();
@@ -180,53 +170,8 @@ dbDescribe("agent delegation", () => {
     const childThread = await store.getThread(targetAgent.id, owner.id, child.thread_id!);
     expect(childThread.kind).toBe("routine_run");
     expect(result.text).toBe("The report is ready.");
-    expect(result.artifacts).toHaveLength(1);
-    expect(result.artifacts[0]!.status).toBe("inbox");
-    const copied = path.join(root, "agents", orgId, parentAgent.id, "inbox", result.run_id, "report.txt");
-    expect(await readFile(copied, "utf8")).toBe("the report\n");
+    expect(result.attachments).toEqual([attachmentId]);
     expect(await store.childRuns(parentRun.id)).toHaveLength(1);
-    const artifacts = await store.listArtifacts(result.run_id);
-    expect(artifacts[0]).toMatchObject({ status: "inbox", inbox_path: `inbox/${result.run_id}/report.txt` });
-  });
-
-  it("stages files over the threshold and release_artifacts deletes the staging dir", async () => {
-    const thread = (await store.listThreads(parentAgent.id, owner.id))[0]!;
-    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
-    const childRun = await makeRun({
-      agentId: targetAgent.id,
-      threadId: thread.id,
-      parentRunId: parentRun.id,
-      depth: 1,
-    });
-    const childRoot = path.join(root, "child-artifacts");
-    const parentRoot = path.join(root, "parent-artifacts");
-    const stagingRoot = path.join(root, "staging-artifacts");
-    await mkdir(childRoot, { recursive: true });
-    await writeFile(path.join(childRoot, "small.txt"), "small");
-    await writeFile(path.join(childRoot, "large.bin"), "this is large");
-    const artifacts = await transferArtifacts({
-      store,
-      parentAgentId: parentAgent.id,
-      parentRunId: parentRun.id,
-      childRunId: childRun.id,
-      childAgentId: targetAgent.id,
-      childRoot,
-      parentRoot,
-      stagingRoot,
-      declared: ["small.txt", "large.bin"],
-      maxInboxBytes: 6,
-    });
-    expect(artifacts.find((item) => item.path === "small.txt")?.status).toBe("inbox");
-    const staged = artifacts.find((item) => item.path === "large.bin");
-    expect(staged?.status).toBe("staged");
-    expect(staged?.staging_path).toContain(path.join(stagingRoot, childRun.id));
-    expect((await stat(staged!.staging_path!)).size).toBeGreaterThan(0);
-    const released = await releaseArtifacts(store, stagingRoot, childRun.id);
-    expect(released.released).toHaveLength(1);
-    expect(await stat(path.join(stagingRoot, childRun.id)).catch(() => null)).toBeNull();
-    const rows = await store.listArtifacts(childRun.id);
-    expect(rows.find((item) => item.path === "large.bin")?.status).toBe("released");
-    expect(rows.find((item) => item.path === "small.txt")?.status).toBe("inbox");
   });
 
   it("exposes a structured error when the child run times out", async () => {
@@ -239,7 +184,6 @@ dbDescribe("agent delegation", () => {
       agent: parentAgent,
       chatId: thread.chat_id,
       runtime: { submitTurn: async () => 1 },
-      workspaceRoot: root,
       timeoutMs: 50,
     });
     await expect(
