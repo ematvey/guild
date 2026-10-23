@@ -29,6 +29,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
   }, [row.status, row.finishedAt]);
 
   const live = status === "running" || status === "queued";
+  const closed = status === "closed";
   useEffect(() => {
     if (!live) return;
     setNow(Date.now());
@@ -47,7 +48,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
     const result = await childThreadAction(chatId, action);
     setBusy(null);
     if (result.ok) {
-      setStatus("cancelled");
+      setStatus(action === "close" ? "closed" : "cancelled");
       setEndedAt(new Date().toISOString());
       if (action === "close") setNotice("Closed");
       return;
@@ -75,6 +76,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
         chatId
           ? "cursor-pointer hover:bg-accent/40 focus-visible:bg-accent/40"
           : "cursor-default opacity-70",
+        closed && "opacity-60",
       )}
     >
       <span
@@ -82,7 +84,12 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
         title={childStatusLabel(status)}
         aria-label={childStatusLabel(status)}
       />
-      <span className="max-w-72 truncate font-medium text-foreground/80">
+      <span
+        className={cn(
+          "max-w-72 truncate font-medium",
+          closed ? "text-muted-foreground" : "text-foreground/80",
+        )}
+      >
         {row.title || row.agentName || "Subagent"}
       </span>
       {row.title && row.agentName && (
@@ -110,7 +117,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
           type="button"
           title="Close child thread"
           aria-label="Close child thread"
-          disabled={busy !== null || !chatId}
+          disabled={busy !== null || !chatId || closed}
           onClick={(e) => {
             e.stopPropagation();
             void act("close");
