@@ -219,6 +219,7 @@ export function threadEventWire(event: ThreadEvent): string {
         agent_name: event.agent_name,
         title: event.title,
         status: event.status,
+        task: event.task,
       });
     case "child_result":
       return obj({
@@ -370,6 +371,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         agent_name: String(payload["agent_name"] ?? ""),
         title: String(payload["title"] ?? ""),
         status: String(payload["status"] ?? ""),
+        task: String(payload["task"] ?? ""),
       };
     case "child_result":
       return {

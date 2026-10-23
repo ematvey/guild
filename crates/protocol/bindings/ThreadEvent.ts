@@ -73,7 +73,11 @@ judge?: JudgeVerdict | null, } | { "type": "approval_decision", call_id: string,
  * Nobody was waiting when the decision landed: the turn is gone, so
  * the call can never execute. The card stays visible as expired.
  */
-expired?: boolean, } | { "type": "turn_error", message: string, } | { "type": "child_spawned", thread_id: string, run_id: string, chat_id: string, agent_name: string, title: string, status: string, } | { "type": "child_result", thread_id: string, run_id: string, 
+expired?: boolean, } | { "type": "turn_error", message: string, } | { "type": "child_spawned", thread_id: string, run_id: string, chat_id: string, agent_name: string, title: string, status: string, 
+/**
+ * the request the parent sent, so the parent transcript can show it
+ */
+task: string, } | { "type": "child_result", thread_id: string, run_id: string, 
 /**
  * The child thread's chat: the row navigates to `/thread/<chat_id>`.
  */
