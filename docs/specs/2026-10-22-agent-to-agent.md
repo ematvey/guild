@@ -396,3 +396,9 @@ parent-to-child only.
 42. **The subagent panel collapses.** The strip keeps its header (`Subagents`,
     count, running count) when collapsed, and the choice persists in
     `localStorage`.
+43. **A close is durable, and the pane can filter.** `close` appends
+    `child_closed {thread_id}` to the parent chat, so the row stays Closed
+    after a reload instead of reverting to the status of its last result.
+    `child_result` carries `started_at`, so a row rebuilt from the result
+    alone still shows its duration rather than `0s`. The pane switches between
+    `Active` (closed rows hidden) and `All`, and the choice persists.
