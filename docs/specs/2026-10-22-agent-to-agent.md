@@ -402,3 +402,15 @@ parent-to-child only.
     `child_result` carries `started_at`, so a row rebuilt from the result
     alone still shows its duration rather than `0s`. The pane switches between
     `Active` (closed rows hidden) and `All`, and the choice persists.
+44. **The parent sees what it sent and what came back.** `child_spawned`
+    carries `task`, and `child_result` already carries `final_text`. The
+    parent transcript renders both as compact secondary entries, so a subagent
+    is readable in the conversation, not only in the pane. An event without a
+    task (older rows) renders nothing extra.
+45. **The pane appears when it has something to say.** It renders when the
+    current mode shows at least one row. The chat's settings menu carries
+    "Always show subagents" (off by default, persisted) for when the closed
+    history matters.
+46. **The agent name leads the row.** A row reads `<agent name> · <session
+    title> · <elapsed>`; the spawner's session name is the second element, not
+    the first.
