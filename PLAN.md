@@ -23,8 +23,9 @@ first. Code comments describe only the present.
   execution-transcript predicate; the WebSocket `thread_list` push was missing
   it, which is how they reached the sidebar. `child_result` and the spawn/send
   result carry `chat_id`, so the child row opens the real child chat instead of
-  treating a thread id as a chat id. Subagent rows render as an indented block
-  with a count, and a child thread opens read-only. Spec decisions 30-37.
+  treating a thread id as a chat id. Subagent rows are pinned above the
+  composer, the spawner names each session (the row shows that name plus the
+  agent's own), and a child thread opens read-only. Spec decisions 30-37a.
 
 - **The mobile drawer carries the tab rail (2026-10-23).** The drawer showed
   the chats list only, so mobile had no route to inbox, agents, projects,
