@@ -367,3 +367,21 @@ chat. Child chats leak into the user's sidebar.
 Out of scope, recorded for later: an org agent or another user's agent sending
 a message to a person's assistant as a notification. The tree stays
 parent-to-child only.
+
+## Addendum: the strip is server truth
+
+38. **A child row exists because the server said so.** `spawn` and `send` write a
+    `child_spawned` event into the parent chat after the child turn is admitted:
+    `{thread_id, run_id, chat_id, agent_name, title, status}`. The client builds
+    the strip from that event and updates it from `child_result`. A tool block
+    never creates a row, so a spawn that failed, was retried, or ran inside a
+    codemode script cannot leave a row stuck at "running".
+39. **A child chat carries the request that started it.** `spawn` and `send`
+    append the task text as a `user_message` in the child chat before submitting
+    the turn, so the child thread opens with the parent's request as its first
+    message instead of an answer with no question.
+40. **A child thread's header is the navigation.** The header shows, left to
+    right: a back control labelled with the parent chat's title, the child's
+    session name, its agent name, and the run status. The data comes from
+    `GET /api/v1/chats/:id/tree` — `{chat_id, kind, title, agent_id,
+    agent_name, status, depth, parent}`. A plain chat keeps its normal header.
