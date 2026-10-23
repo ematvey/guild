@@ -3561,6 +3561,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setSidebarTab(projectBound ? "work" : "chats");
   }, [route.chatId, chats]);
 
+  // Mobile: a route page (agents, skills, settings) replaces the whole main
+  // column and has no drawer control of its own, so it gets this bar. The
+  // chat view already carries the drawer button in its header.
+  const mobileNavBar = (title?: string) =>
+    isMobile ? (
+      <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
+        <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
+          <Menu />
+        </Button>
+        {title !== undefined && <span className="min-w-0 flex-1 truncate font-medium">{title}</span>}
+      </header>
+    ) : null;
+
   // The Settings tab's main pane renders the picked section inline instead
   // of the chat thread — on mobile too, so the drawer's Settings tab leads
   // to a page (the drawer closes on the section pick).
@@ -3794,22 +3807,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           </div>
         )}
         {inlineAgents ? (
-          inlineAgents
+          <>
+            {mobileNavBar()}
+            {inlineAgents}
+          </>
         ) : inlineSkills ? (
-          inlineSkills
+          <>
+            {mobileNavBar("Skills")}
+            {inlineSkills}
+          </>
         ) : inlineSettings ? (
           <>
-            {/* Mobile: the settings page owns the whole main column, so it
-                carries its own way back to the drawer (desktop keeps the
-                rail). */}
-            {isMobile && (
-              <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
-                <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
-                  <Menu />
-                </Button>
-                <span className="min-w-0 flex-1 truncate font-medium">Settings</span>
-              </header>
-            )}
+            {mobileNavBar("Settings")}
             {inlineSettings}
           </>
         ) : (
