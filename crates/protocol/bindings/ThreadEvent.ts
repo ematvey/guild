@@ -83,6 +83,10 @@ chat_id: string,
  */
 agent_name: string, 
 /**
+ * The child thread's title: the session name its spawner chose.
+ */
+title: string, 
+/**
  * The child run's terminal status; `cancelled` is a user stop.
  */
 status: string, reason?: string | null, final_text: string, attachments: Array<MessageAttachment>, };

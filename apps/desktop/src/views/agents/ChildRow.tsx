@@ -62,7 +62,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
       role="button"
       tabIndex={chatId ? 0 : -1}
       aria-disabled={chatId ? undefined : true}
-      aria-label={`Open ${row.agentName || "subagent"} chat`}
+      aria-label={`Open ${row.title || row.agentName || "subagent"} chat`}
       onClick={openers.row}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -83,8 +83,11 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
         aria-label={childStatusLabel(status)}
       />
       <span className="max-w-72 truncate font-medium text-foreground/80">
-        {row.agentName || "Subagent"}
+        {row.title || row.agentName || "Subagent"}
       </span>
+      {row.title && row.agentName && (
+        <span className="max-w-40 shrink-0 truncate text-2xs text-muted-foreground">{row.agentName}</span>
+      )}
       {elapsed && <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">{elapsed}</span>}
       {notice && <span className="shrink-0 text-2xs text-muted-foreground">{notice}</span>}
       <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -120,7 +123,7 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
       <button
         type="button"
         title="Open child chat"
-        aria-label={`Open ${row.agentName || "subagent"} chat`}
+        aria-label={`Open ${row.title || row.agentName || "subagent"} chat`}
         disabled={!chatId}
         onClick={(e) => {
           e.stopPropagation();

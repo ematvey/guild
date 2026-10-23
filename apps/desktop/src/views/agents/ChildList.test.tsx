@@ -76,3 +76,50 @@ describe("ChildList", () => {
     expect(html).toBe("");
   });
 });
+
+describe("child row labels", () => {
+  it("shows the spawner's session name first and the agent name beside it", () => {
+    const html = renderToStaticMarkup(
+      <ChildList
+        rows={[
+          {
+            key: "thread-a",
+            row: {
+              threadId: "thread-a",
+              chatId: "chat-a",
+              agentName: "Echo",
+              title: "market scan",
+              status: "running",
+              startedAt: new Date().toISOString(),
+            },
+          },
+        ]}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("market scan");
+    expect(html).toContain("Echo");
+  });
+
+  it("falls back to the agent name when the spawner gave no session name", () => {
+    const html = renderToStaticMarkup(
+      <ChildList
+        rows={[
+          {
+            key: "thread-b",
+            row: {
+              threadId: "thread-b",
+              chatId: "chat-b",
+              agentName: "Scout",
+              title: null,
+              status: "succeeded",
+              startedAt: new Date().toISOString(),
+            },
+          },
+        ]}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("Scout");
+  });
+});

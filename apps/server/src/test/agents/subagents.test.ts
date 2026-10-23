@@ -140,8 +140,9 @@ dbDescribe("subagent tree tools", () => {
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
 
-    const result = await spawn(context, { agent: targetAgent.name, task: "Write the report" });
+    const result = await spawn(context, { agent: targetAgent.name, task: "Write the report", name: "quarterly report" });
     expect(result.agent_name).toBe(targetAgent.name);
+    expect(result.title).toBe("quarterly report");
     expect(result.status).toBe("running");
     const childRun = await store.getRun(result.run_id);
     expect(childRun.status).toBe("running");
@@ -156,7 +157,28 @@ dbDescribe("subagent tree tools", () => {
     expect(childThread?.depth).toBe(1);
     expect(childThread?.closed_at).toBeNull();
     expect(result.chat_id).toBe(childThread!.chat_id);
+    expect(childThread?.title).toBe("quarterly report");
+    expect(childThread?.title_locked).toBe(true);
     expect(fake.submitted).toEqual([{ chatId: childThread!.chat_id, content: "Write the report" }]);
+  });
+
+  it("falls back to the task's first line when the spawner gives no name", async () => {
+    const thread = await store.createThread(parentAgent.id, owner.id, "Unnamed child");
+    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
+    const context = await contextFor({ thread, run: parentRun, fake: fakeRuntime() });
+    const result = await spawn(context, { agent: targetAgent.name, task: "Check the inbox\nthen report" });
+    const child = await store.threadById(result.thread_id);
+    expect(result.title).toBe("Spawned: Check the inbox");
+    expect(child?.title_locked).toBe(false);
+  });
+
+  it("rejects a session name over the limit", async () => {
+    const thread = await store.createThread(parentAgent.id, owner.id, "Long name");
+    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
+    const context = await contextFor({ thread, run: parentRun, fake: fakeRuntime() });
+    await expect(
+      spawn(context, { agent: targetAgent.name, task: "x", name: "n".repeat(81) }),
+    ).rejects.toThrow(/at most 80 characters/);
   });
 
   it("enforces the depth and per-node child limits", async () => {

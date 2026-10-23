@@ -769,6 +769,7 @@ export class AgentStore {
     agentId: string,
     userId: string,
     title: string,
+    titleLocked = false,
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const parent = await this.pool.query<{ depth: number; closed_at: Date | null }>(
@@ -793,8 +794,8 @@ export class AgentStore {
       await client.query(
         `INSERT INTO agent_threads
            (id, agent_id, user_id, chat_id, title, title_locked, kind, parent_thread_id, depth)
-         VALUES ($1, $2, $3, $4, $5, false, 'delegated', $6, $7)`,
-        [id, agentId, userId, chat.id, title, parentThreadId, depth],
+         VALUES ($1, $2, $3, $4, $5, $8, 'delegated', $6, $7)`,
+        [id, agentId, userId, chat.id, title, parentThreadId, depth, titleLocked],
       );
       await client.query("COMMIT");
     } catch (error) {

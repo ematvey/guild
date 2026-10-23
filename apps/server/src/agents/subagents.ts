@@ -49,6 +49,9 @@ export interface SubagentsToolContext {
   maxChildrenPerNode: number;
 }
 
+/** Longest spawner-chosen session name. */
+export const MAX_CHILD_NAME_CHARS = 80;
+
 export class SubagentError extends Error {
   constructor(
     readonly code: string,
@@ -189,6 +192,7 @@ export interface SpawnResult {
   thread_id: string;
   run_id: string;
   chat_id: string;
+  title: string;
   agent_name: string;
   status: "running";
 }
@@ -197,6 +201,7 @@ export interface SendResult {
   thread_id: string;
   run_id: string;
   chat_id: string;
+  title: string;
   agent_name: string;
   status: "running";
 }
@@ -233,9 +238,16 @@ export interface CloseResult {
 
 /** Creates the child thread and its first run, posts the task turn, and
  *  returns immediately. It never waits for the child and copies no files. */
-export async function spawn(context: SubagentsToolContext, args: { agent: string; task: string }): Promise<SpawnResult> {
+export async function spawn(
+  context: SubagentsToolContext,
+  args: { agent: string; task: string; name?: string },
+): Promise<SpawnResult> {
   const task = args.task.trim();
   if (task === "") throw new SubagentError("invalid_task", "task must not be empty");
+  const requestedName = (args.name ?? "").trim();
+  if (requestedName.length > MAX_CHILD_NAME_CHARS) {
+    throw new SubagentError("invalid_name", `name must be at most ${MAX_CHILD_NAME_CHARS} characters`);
+  }
   const parentThreadId = callerThreadId(context);
   const parentThread = await context.store.threadById(parentThreadId);
   if (parentThread === null) throw new SubagentError("no_parent_thread", "the calling thread is gone");
@@ -260,9 +272,13 @@ export async function spawn(context: SubagentsToolContext, args: { agent: string
     requester: context.requester,
     targetRef: args.agent,
   });
-  const title = `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}`;
+  // The spawner names the session; without one the task's first line is the
+  // fallback label. The title is locked when the spawner chose it.
+  const title =
+    requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
+  const titleLocked = requestedName !== "";
   const userId = context.parentRun.user_id ?? context.requester.id;
-  const thread = await context.store.createChildThread(parentThreadId, target.id, userId, title);
+  const thread = await context.store.createChildThread(parentThreadId, target.id, userId, title, titleLocked);
   const childRun = await context.store.createRun({
     agent_id: target.id,
     user_id: userId,
@@ -298,6 +314,7 @@ export async function spawn(context: SubagentsToolContext, args: { agent: string
     thread_id: thread.id,
     run_id: childRun.id,
     chat_id: thread.chat_id,
+    title: thread.title ?? title,
     agent_name: target.name,
     status: "running",
   };
@@ -348,6 +365,7 @@ export async function send(
     thread_id: thread.id,
     run_id: run.id,
     chat_id: thread.chat_id,
+    title: thread.title ?? "",
     agent_name: target.name,
     status: "running",
   };
@@ -487,6 +505,7 @@ const spawnOutput = Type.Object({
   thread_id: Type.String(),
   run_id: Type.String(),
   chat_id: Type.String(),
+  title: Type.String(),
   agent_name: Type.String(),
   status: Type.String(),
 });
@@ -495,6 +514,7 @@ const sendOutput = Type.Object({
   thread_id: Type.String(),
   run_id: Type.String(),
   chat_id: Type.String(),
+  title: Type.String(),
   agent_name: Type.String(),
   status: Type.String(),
 });
@@ -557,11 +577,17 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
     defineTool({
       name: "spawn",
       description:
-        "Spawn a child agent thread and post its first task. Returns the child thread, run and chat ids at once; the " +
-        "child reports back by ending its turn. Depth and child count limits come from the deployment config. " +
-        "Call list_agents first when the target name is uncertain.",
+        "Spawn a child agent thread and post its first task. Give the session a short `name`: it labels the row the " +
+        "user sees and the child thread itself, so several children stay distinguishable. Returns the child thread, " +
+        "run and chat ids at once; the child reports back by ending its turn. Depth and child count limits come from " +
+        "the deployment config. Call list_agents first when the target name is uncertain.",
       parameters: Type.Object({
         agent: Type.String({ description: "Target agent id or exact name within this organization" }),
+        name: Type.Optional(
+          Type.String({
+            description: `Short session name the row and the child thread show, at most ${MAX_CHILD_NAME_CHARS} characters`,
+          }),
+        ),
         task: Type.String({ description: "The task for the child agent" }),
       }),
       structuredOutputSchema: spawnOutput,

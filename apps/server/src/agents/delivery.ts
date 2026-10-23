@@ -109,8 +109,9 @@ export class ChildResultDelivery {
       closed_at: Date | null;
       chat_id: string;
       agent_name: string;
+      title: string;
     }>(
-      `SELECT t.parent_thread_id, t.closed_at, t.chat_id, a.name AS agent_name
+      `SELECT t.parent_thread_id, t.closed_at, t.chat_id, t.title, a.name AS agent_name
        FROM agent_threads t JOIN agents a ON a.id = t.agent_id WHERE t.id = $1`,
       [input.child_thread_id],
     );
@@ -138,6 +139,7 @@ export class ChildResultDelivery {
       run_id: input.run_id,
       chat_id: childRow.chat_id,
       agent_name: childRow.agent_name,
+      title: childRow.title,
       status: input.status,
       reason: input.reason,
       final_text: input.final_text,

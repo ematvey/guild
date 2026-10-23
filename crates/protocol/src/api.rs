@@ -679,6 +679,9 @@ pub enum ThreadEvent {
         /// The child thread's agent name, for the row label.
         #[serde(default)]
         agent_name: String,
+        /// The child thread's title: the session name its spawner chose.
+        #[serde(default)]
+        title: String,
         /// The child run's terminal status; `cancelled` is a user stop.
         status: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
