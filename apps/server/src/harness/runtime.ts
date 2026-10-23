@@ -73,6 +73,7 @@ import type { Agent } from "../agents/types.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { ChildResultDelivery, assistantTextForRun, type ChildRunFinished } from "../agents/delivery.js";
+import { failStaleRuns } from "../agents/reconcile.js";
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { createTraceHook } from "../agents/trace-hook.js";
@@ -315,6 +316,8 @@ export class GuildRuntime {
   private policyInstance: ExecPolicy | undefined;
   private starting: Promise<void> | undefined;
   private stopped = false;
+  private reconcileStarted = false;
+  private reconcileTimer: NodeJS.Timeout | undefined;
 
   readonly toolArtifacts: ToolArtifactStore;
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
@@ -779,6 +782,33 @@ export class GuildRuntime {
     await this.starting;
     await this.reopening;
     if (this.stopped) throw new Error("runtime is closed");
+    // Runs left open by a dead process are failed once the harness is up, so
+    // the stop path can reach it. Workers skip this: the server owns the
+    // whole database.
+    if (!this.workerScope && !this.reconcileStarted) {
+      this.reconcileStarted = true;
+      await this.reconcileStaleRuns();
+      this.reconcileTimer = setInterval(() => {
+        void this.reconcileStaleRuns();
+      }, 5 * 60 * 1000);
+      this.reconcileTimer.unref();
+    }
+  }
+
+  private async reconcileStaleRuns(): Promise<void> {
+    await failStaleRuns(
+      {
+        pool: this.pool,
+        threads: this.threads,
+        log: this.log,
+        runtime: {
+          stopChat: (chatId) => this.stopChat(chatId),
+          canStopChat: (chatId) => this.canStopChat(chatId),
+        },
+      },
+    ).catch((error: unknown) => {
+      this.log.warn({ err: error }, "stale run reconcile failed");
+    });
   }
 
   private async startOnce(): Promise<void> {
@@ -1555,6 +1585,18 @@ export class GuildRuntime {
   /** Opens the run row for an adopted chat turn; the run lifecycle closes it
    *  from the transcript like any other agent turn. */
   async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
+    // A delivery may have opened a run for this thread while the chat had no
+    // live turn. Adopt it; a second run would stay open forever.
+    const open = await this.agents.runningRunForThread(threadId);
+    if (open !== null) {
+      if (open.status === "queued") {
+        await this.agents.updateRun(open.id, {
+          status: "running",
+          started_at: new Date().toISOString(),
+        });
+      }
+      return open.id;
+    }
     const run = await this.agents.createRun({
       agent_id: agentId,
       user_id: userId,
@@ -1871,6 +1913,8 @@ export class GuildRuntime {
   async close(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    if (this.reconcileTimer !== undefined) clearInterval(this.reconcileTimer);
+    this.reconcileTimer = undefined;
     await this.admissions.close();
     await this.supervisor?.close();
     await this.host.close();
