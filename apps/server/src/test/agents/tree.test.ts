@@ -188,8 +188,49 @@ describe("thread stop actions", () => {
     expect(run.rows[0]?.status).toBe("cancelled");
   });
 
+  it("close writes child_closed to the parent chat once", async () => {
+    const child = await delegatedChild();
+    const parentChat = await stack.env.db.query<{ chat_id: string }>(
+      "SELECT chat_id FROM agent_threads WHERE id = (SELECT parent_thread_id FROM agent_threads WHERE id = $1)",
+      [child.threadId],
+    );
+    const parentChatId = parentChat.rows[0]!.chat_id;
+
+    const first = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${child.chatId}/close`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(first.statusCode, first.body).toBe(200);
+    const closedEvents = await stack.env.db.query<{ payload: { thread_id: string } }>(
+      "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_closed' ORDER BY seq",
+      [parentChatId],
+    );
+    expect(closedEvents.rows).toHaveLength(1);
+    expect(closedEvents.rows[0]!.payload.thread_id).toBe(child.threadId);
+
+    const second = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${child.chatId}/close`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(second.statusCode, second.body).toBe(200);
+    expect(JSON.parse(second.body).closed).toBe(0);
+    const afterSecond = await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_closed'",
+      [parentChatId],
+    );
+    expect(afterSecond.rows).toHaveLength(1);
+  });
+
   it("cancel stops the run and leaves the thread open", async () => {
     const child = await delegatedChild();
+    const parentChat = await stack.env.db.query<{ chat_id: string }>(
+      "SELECT chat_id FROM agent_threads WHERE id = (SELECT parent_thread_id FROM agent_threads WHERE id = $1)",
+      [child.threadId],
+    );
     const res = await stack.env.app.inject({
       method: "POST",
       url: `/api/v1/threads/${child.chatId}/cancel`,
@@ -203,6 +244,11 @@ describe("thread stop actions", () => {
       [child.threadId],
     );
     expect(thread.rows[0]?.closed_at).toBeNull();
+    const closedEvents = await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_closed'",
+      [parentChat.rows[0]!.chat_id],
+    );
+    expect(closedEvents.rows).toHaveLength(0);
   });
 
   it("refuses to close a root thread", async () => {

@@ -229,10 +229,13 @@ export function threadEventWire(event: ThreadEvent): string {
         agent_name: event.agent_name,
         title: event.title,
         status: event.status,
+        started_at: event.started_at,
         reason: event.reason,
         final_text: event.final_text,
         attachments: event.attachments ?? [],
       });
+    case "child_closed":
+      return obj({ type: "child_closed", thread_id: event.thread_id });
     default:
       throw new Error(`unknown thread event type ${(event as { type?: string }).type}`);
   }
@@ -377,10 +380,15 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         agent_name: String(payload["agent_name"] ?? ""),
         title: String(payload["title"] ?? ""),
         status: String(payload["status"] ?? ""),
+        ...(payload["started_at"] === undefined || payload["started_at"] === null
+          ? {}
+          : { started_at: String(payload["started_at"]) }),
         ...(payload["reason"] === undefined || payload["reason"] === null ? {} : { reason: String(payload["reason"]) }),
         final_text: String(payload["final_text"] ?? ""),
         attachments: Array.isArray(payload["attachments"]) ? (payload["attachments"] as MessageAttachment[]) : [],
       };
+    case "child_closed":
+      return { type: "child_closed", thread_id: String(payload["thread_id"] ?? "") };
     default:
       return undefined;
   }
