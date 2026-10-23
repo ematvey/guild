@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { highlightJs } from "./js-highlight";
 import { WorkedForBlock, viewEntries } from "./worked-for-block";
+import { childElapsedLabel, childStatusLabel, childStatusTone } from "./agents/child-row";
 export { workRunLabel, viewEntries } from "./worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../lib/chat-width";
@@ -181,8 +182,8 @@ import {
   type ApprovalBlock,
   type ArtifactCard,
   type Block,
-  type ChildMessage,
   type ChildRow,
+  type ChildSpan,
   type CodemodeCallRow,
   type CompactionBlock,
   type ThreadReducer,
@@ -1130,24 +1131,60 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
   );
 }
 
-/// One child message in the parent transcript: what the parent sent, or
-/// what the child returned. Compact and muted — the subagent pane carries
-/// the controls; this is the conversation's record of the exchange.
-function ChildMessageEntry({ m }: { m: ChildMessage }) {
-  const sent = m.direction === "sent";
+/// One child span in the parent transcript, rendered like a trace span: a
+/// left rail nests it under the tool call that spawned it, a one-line
+/// header carries identity and status, and the request/answer read as
+/// labelled span attributes. The subagent pane carries the controls.
+const childSpanDotClass: Record<ReturnType<typeof childStatusTone>, string> = {
+  running: "animate-pulse bg-sky-500",
+  success: "bg-emerald-500",
+  danger: "bg-destructive",
+  muted: "bg-muted-foreground/50",
+};
+
+function ChildSpanBlock({ span }: { span: ChildSpan }) {
+  const tone = childStatusTone(span.status);
+  const label = childStatusLabel(span.status);
+  const elapsed = childElapsedLabel(span);
+  const task = (span.task ?? "").trim();
+  const returned = (span.finalText ?? "").trim();
   return (
-    <div className="w-full rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs">
-      <div className="flex min-w-0 items-center gap-1.5 text-2xs uppercase tracking-wider text-muted-foreground">
-        {sent ? <ArrowUp className="size-3 shrink-0" /> : <CornerDownRight className="size-3 shrink-0" />}
-        <span>{sent ? "Sent" : "Returned"}</span>
-        <span className="truncate font-medium normal-case tracking-normal text-foreground/70">{m.agentName}</span>
-        {m.title && (
-          <span className="truncate normal-case tracking-normal text-muted-foreground/70">{m.title}</span>
+    <div className="border-l border-border/60 pl-3">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs">
+        <span
+          className={`size-2 shrink-0 rounded-full ${childSpanDotClass[tone]}`}
+          title={label}
+          aria-label={label}
+        />
+        <span className="truncate font-medium">{span.agentName}</span>
+        {span.title && (
+          <>
+            <span className="shrink-0 text-muted-foreground">·</span>
+            <span className="truncate text-muted-foreground">{span.title}</span>
+          </>
         )}
+        <span className="shrink-0 rounded border border-border/60 px-1 text-3xs uppercase tracking-wider text-muted-foreground">
+          AGENT
+        </span>
+        {elapsed && <span className="shrink-0 tabular-nums text-muted-foreground">{elapsed}</span>}
+        <span className="shrink-0 text-muted-foreground">{label}</span>
       </div>
-      <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
-        {m.text}
-      </div>
+      {task && (
+        <div className="mt-1 flex gap-2">
+          <span className="w-14 shrink-0 text-3xs uppercase tracking-wider text-muted-foreground">TASK</span>
+          <div className="max-h-40 min-w-0 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed">
+            {task}
+          </div>
+        </div>
+      )}
+      {returned && (
+        <div className="mt-1 flex gap-2">
+          <span className="w-14 shrink-0 text-3xs uppercase tracking-wider text-muted-foreground">RETURN</span>
+          <div className="max-h-40 min-w-0 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 px-2 py-1.5 text-xs leading-relaxed">
+            {returned}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3477,7 +3514,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ) : e.b.kind === "approval" && e.b.approval ? (
             <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
           ) : e.b.kind === "child" && e.b.child ? (
-            <ChildMessageEntry key={e.b.key} m={e.b.child} />
+            <ChildSpanBlock key={e.b.key} span={e.b.child} />
           ) : e.b.kind === "compaction" && e.b.compaction ? (
             <CompactionCard key={e.b.key} c={e.b.compaction} />
           ) : e.b.kind === "error" ? (
