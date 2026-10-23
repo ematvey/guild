@@ -35,6 +35,13 @@ const remoteSubmit = (targetChatId: string, _orgId: string, input: SubmitTurnWir
     send({ t: "remote-submit", ref, chatId: targetChatId, input });
   });
 };
+const remoteDeliverSteer = (targetChatId: string, orgId: string, text: string, model: string | null): Promise<void> => {
+  const ref = 1_000_000 + (remoteSeq += 1);
+  return new Promise<void>((resolve, reject) => {
+    remotePending.set(ref, { resolve: () => resolve(), reject });
+    send({ t: "remote-deliver-steer", ref, chatId: targetChatId, orgId, text, model });
+  });
+};
 // The worker owns its chat's run lifecycle and tool calls, so it writes the
 // same traces and spans the server does (the gateway writes the LLM spans).
 const clickhouse = new ClickhouseClient({
@@ -48,6 +55,7 @@ const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefine
   chatId,
   dispatch: ipcDispatch,
   remoteSubmit,
+  remoteDeliverSteer,
 });
 let mirrored: LiveBuffers = { text: "", thinking: "" };
 const bufferUpdate = (previous: string, current: string): BufferUpdate | undefined =>

@@ -374,6 +374,8 @@ export class GuildRuntime {
       /** Admission for a chat this worker does not own: proxied to the
        *  server, which owns every chat's worker (delegation). */
       remoteSubmit?: (chatId: string, orgId: string, input: SubmitTurnInput) => Promise<number>;
+      /** Steer delivery for a chat this worker does not own. */
+      remoteDeliverSteer?: (chatId: string, orgId: string, text: string, model: string | null) => Promise<void>;
     },
   ) {
     this.objects = objects;
@@ -1511,7 +1513,15 @@ export class GuildRuntime {
    *  follow-up turn. */
   async deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
     // The conversation handle is invocation-bound: only the worker that owns
-    // the chat can open it. The server forwards the steer to that worker.
+    // the chat can open it. A worker forwards to the owner; the server
+    // forwards to the supervisor.
+    if (this.workerScope !== undefined && chatId !== this.workerScope.chatId) {
+      if (this.workerScope.remoteDeliverSteer === undefined) {
+        throw new Error("this worker cannot deliver a steer to another chat");
+      }
+      await this.workerScope.remoteDeliverSteer(chatId, orgId, text, model);
+      return;
+    }
     if (this.supervisor !== undefined) {
       await this.supervisor.deliverSteer(chatId, orgId, text, model);
       return;
