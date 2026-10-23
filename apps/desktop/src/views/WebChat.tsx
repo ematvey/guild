@@ -2094,7 +2094,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Child rows come from the reducer's child events, not from tool blocks.
   const [children, setChildren] = useState<ChildRow[]>([]);
   // The open chat's thread-tree node: a child header renders from its parent.
-  const [childTree, setChildTree] = useState<ChatTree | null>(null);
+  // The node keeps the chat it describes, so a switch never applies the
+  // previous chat's parent and a sync refresh never blanks the header.
+  const [childTreeNode, setChildTreeNode] = useState<{ chatId: string; tree: ChatTree | null } | null>(null);
+  const childTree = childTreeNode !== null && childTreeNode.chatId === chatId ? childTreeNode.tree : null;
   // Older-page loader: the server sends a bounded tail of the durable log in
   // each ThreadState frame, and scrolling to the top prepends the page
   // before the loaded window.
@@ -2297,18 +2300,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // a refresh whenever the thread's event log moves so the status stays live.
   const threadEventSeq = contextRevision?.chatId === chatId ? contextRevision.seq : -1;
   useEffect(() => {
-    if (!chatId) {
-      setChildTree(null);
-      return;
-    }
+    if (!chatId) return;
     let live = true;
     const controller = new AbortController();
     void fetchChatTree(chatId, controller.signal)
       .then((tree) => {
-        if (live) setChildTree(tree);
+        if (live) setChildTreeNode({ chatId, tree });
       })
       .catch(() => {
-        if (live) setChildTree(null);
+        if (live) setChildTreeNode({ chatId, tree: null });
       });
     return () => {
       live = false;
@@ -3311,7 +3311,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const activeChat = chats?.find((c) => c.id === chatId);
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
-  const readOnlyThread = isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
+  // The tree node is checked first because it survives a state sync: a
+  // sync's begin/done bracket must never flash a composer into a child
+  // thread.
+  const childThreadNode = childTree !== null && childTree.parent !== null;
+  const readOnlyThread =
+    childThreadNode || isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
   const activeTitle = readOnlyThread
     ? childTree?.title ?? "Subagent thread"
     : activeChat?.title ?? "New chat";
