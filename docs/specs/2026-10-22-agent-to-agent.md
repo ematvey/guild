@@ -349,9 +349,13 @@ chat. Child chats leak into the user's sidebar.
     the `spawn`/`send` tool result carries `chat_id`, `agent_name` and `status`.
     The reducer never uses a thread id as a chat id; the row navigates to
     `/thread/<chatId>`.
-37. **Subagent rows are a block, not inline chips.** They render as an indented
-    full-width list under the turn that spawned them. The whole row opens the
-    child chat; cancel and close stay on hover.
+37. **Subagent rows are pinned above the composer.** The children of the open
+    chat render as one quiet strip directly above the composer, with a count,
+    a height cap and its own scroll, so they stay visible while the
+    conversation scrolls. The thread body keeps only the turn's text and tool
+    cards. The whole row opens the child chat; cancel and close stay on hover.
+    A child thread opened on its own shows a read-only notice instead of the
+    composer, because only the parent agent drives it.
 
 Out of scope, recorded for later: an org agent or another user's agent sending
 a message to a person's assistant as a notification. The tree stays
