@@ -14,6 +14,7 @@ import type { ChatsCtx } from "../platform/contexts.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
+import { NOT_EXECUTION_TRANSCRIPT } from "../platform/store/chats.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
 import type { GenerationStreamSink } from "../chats/bridge.js";
@@ -440,6 +441,7 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
        SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
      ) le ON true
      WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
+       AND ${NOT_EXECUTION_TRANSCRIPT}
      ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC`,
     [user.org_id, user.id],
   );

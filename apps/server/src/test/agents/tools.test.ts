@@ -86,6 +86,38 @@ dbDescribe("agent conversation tools", () => {
     expect(names).toContain("delete_routine");
   });
 
+  it("set_description rewrites only the caller's own description", async () => {
+    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
+    const setDescription = tools.find((tool) => tool.name === "set_description");
+    expect(setDescription).toBeDefined();
+    const call = (args: Record<string, unknown>) =>
+      setDescription!.execute(args as never, {} as never, {} as never) as Promise<{
+        structuredOutput?: { description: string };
+        isError?: boolean;
+      }>;
+
+    const written = await call({ description: "  Writes launch notes.  " });
+    expect(written.structuredOutput).toEqual({ description: "Writes launch notes." });
+    expect((await store.fetchAgent(agent.id)).description).toBe("Writes launch notes.");
+
+    const cleared = await call({ description: "   " });
+    expect(cleared.structuredOutput).toEqual({ description: "" });
+    expect((await store.fetchAgent(agent.id)).description).toBe("");
+
+    const atCap = "d".repeat(500);
+    const boundary = await call({ description: atCap });
+    expect(boundary.structuredOutput).toEqual({ description: atCap });
+
+    const tooLong = await call({ description: "d".repeat(501) });
+    expect(tooLong.isError).toBe(true);
+    expect((await store.fetchAgent(agent.id)).description).toBe(atCap);
+
+    // No agent argument exists; a stray one must not redirect the write.
+    await call({ description: "Mine", agent_id: other.id });
+    expect((await store.fetchAgent(agent.id)).description).toBe("Mine");
+    expect((await store.fetchAgent(other.id)).description).toBe("");
+  });
+
   it("search and read are scoped to the calling agent", async () => {
     const ownThread = (await store.listThreads(agent.id, owner.id))[0]!;
     const otherThread = (await store.listThreads(other.id, owner.id))[0]!;
