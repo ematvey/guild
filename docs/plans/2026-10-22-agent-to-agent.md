@@ -203,5 +203,13 @@ four at a time against the 500-connection Postgres. Wall time ~150 s -> ~49 s.
   nothing.
 - **No budget.** The tree is bounded by shape only (depth 3, 16 children per
   node). A parent turn can spawn more children each time it is woken.
+- **`worker-mode.test.ts` is load-sensitive.** "killing one chat's worker
+  mid-turn" fails about one run in four when the host is busy (a docker build,
+  another agent). The cause is the durable scheduler: a killed turn marked
+  `restart` is settled as `orphaned` instead of resumed when its definition is
+  not registered yet, and `ConversationRecovery.failures` then writes a
+  `turn_error` for a turn that did resume. It passes 9 of 9 runs alone and
+  under CPU load, and 5 of 5 full-suite runs on an idle host; it predates this
+  branch. The assertion was left strict on purpose.
 - **Overall cleanup** is out of scope: nothing deletes attachment objects or
   archived subtree rows yet.
