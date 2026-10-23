@@ -385,3 +385,14 @@ parent-to-child only.
     session name, its agent name, and the run status. The data comes from
     `GET /api/v1/chats/:id/tree` — `{chat_id, kind, title, agent_id,
     agent_name, status, depth, parent}`. A plain chat keeps its normal header.
+41. **The chat owns the stop.** `POST /api/v1/threads/:id/cancel` stops the
+    subtree's turns and leaves the nodes addressable; `POST
+    /api/v1/threads/:id/close` also stamps `closed_at`, which drops late
+    results. Both authorize the chat first. `close` refuses a root thread —
+    the conversation the caller is having is stopped, not closed. A cancel
+    that cannot interrupt a turn in another worker still marks the run
+    cancelled, and delivery reports that run as `cancelled` whatever the
+    worker later says.
+42. **The subagent panel collapses.** The strip keeps its header (`Subagents`,
+    count, running count) when collapsed, and the choice persists in
+    `localStorage`.
