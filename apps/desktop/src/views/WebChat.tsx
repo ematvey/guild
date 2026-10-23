@@ -225,6 +225,26 @@ export function offlineMachine(
   return { label: row.machine_label ?? row.machine_id };
 }
 
+/** A thread is read-only when it is absent from both the active and the
+ * archived chat lists after those lists and the thread have loaded. Child
+ * chats are execution transcripts: the sidebar filters them out by design,
+ * so absence means "read-only child", never "new chat". The loading guards
+ * keep a freshly created chat writable while its row is still in flight. */
+export function isReadOnlyThread(input: {
+  chatId: string | null;
+  chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
+  archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
+  threadLoading: boolean;
+}): boolean {
+  const { chatId, chats, archivedChats, threadLoading } = input;
+  if (chatId === null || chats === null || archivedChats === null || threadLoading) {
+    return false;
+  }
+  if (chats.some((c) => c.id === chatId)) return false;
+  if (archivedChats.some((c) => c.id === chatId)) return false;
+  return true;
+}
+
 /** Whether the open chat shows busy after a thread-list push: while a
  * send's HTTP round trip is in flight the pushed list predates the
  * server's generating flag, so its false must not clear the optimistic
@@ -1822,6 +1842,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // composer picks which, and the choice binds the chat.
   const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
   const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
+  const [threadAgentName, setThreadAgentName] = useState<string | null>(null);
   const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);
   const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
@@ -2248,15 +2269,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   useEffect(() => {
     if (chatId === null) {
       setAgentLocked(false);
+      setThreadAgentName(null);
       return;
     }
     let live = true;
+    setThreadAgentName(null);
     void chatAgentBinding(chatId)
       .then(({ agent, switcheable }) => {
         if (!live) return;
         setAgentLocked(!switcheable);
         if (agent === null) return;
-        setPickedAgent(agent as Agent);
+        const bound = agent as Agent;
+        setPickedAgent(bound);
+        setThreadAgentName(bound.name || null);
       })
       .catch(() => {});
     return () => {
@@ -3249,7 +3274,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [chats, chatStatus]);
 
   const activeChat = chats?.find((c) => c.id === chatId);
-  const activeTitle = activeChat?.title ?? "New chat";
+  // A child chat is an execution transcript, not a sidebar chat: the lists
+  // omit it, so it reads as read-only and never falls back to "New chat".
+  const readOnlyThread = isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
+  const activeTitle = readOnlyThread
+    ? threadAgentName
+      ? `${threadAgentName} · subagent thread`
+      : "Subagent thread"
+    : activeChat?.title ?? "New chat";
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
   const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
@@ -3857,7 +3889,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               activeTitle
             )}
           </span>
-          {chatId && (
+          {chatId && !readOnlyThread && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -4081,6 +4113,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
+          {readOnlyThread ? (
+            <div
+              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
+              style={{ maxWidth: chatWidth }}
+            >
+              Subagent thread. Read-only — the parent agent drives this conversation.
+            </div>
+          ) : (
           <div
             className={`pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm ${
               chatResizing ? "" : "transition-[max-width] duration-150"
@@ -4552,6 +4592,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </div>
             </div>
           </div>
+          )}
         </div>
           </>
         )}
