@@ -5,6 +5,7 @@ import type { ChildRow } from "../../lib/thread-reducer";
 
 /** "0s", "42s", "3m 07s", "2h 05m" — compact, one unit pair at most. */
 export function childElapsedLabel(row: ChildRow, now: number = Date.now()): string {
+  if (row.status === "closed" && !row.startedAt) return "";
   const start = Date.parse(row.startedAt);
   if (Number.isNaN(start)) return "";
   const end = row.finishedAt ? Date.parse(row.finishedAt) : now;
@@ -34,6 +35,7 @@ export function childStatusLabel(status: string): string {
   if (status === "queued") return "Queued";
   if (status === "silent") return "Silent";
   if (status === "skipped") return "Skipped";
+  if (status === "closed") return "Closed";
   return status;
 }
 
