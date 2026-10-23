@@ -305,6 +305,28 @@ dbDescribe("subagent tree tools", () => {
     expect(out.structuredOutput?.agents.map((entry) => entry.id)).toContain(described.id);
   });
 
+  it("send to a grandchild writes its row in the grandchild's own parent chat", async () => {
+    const thread = await store.createThread(parentAgent.id, owner.id, "Send deep");
+    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
+    const fake = fakeRuntime();
+    const context = await contextFor({ thread, run: parentRun, fake });
+    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const childThread = (await store.threadById(child.thread_id))!;
+    const grandchild = await store.createChildThread(child.thread_id, targetAgent.id, owner.id, "Grandchild");
+
+    const sent = await send(context, { thread_id: grandchild.id, text: "next step" });
+    expect(sent.thread_id).toBe(grandchild.id);
+
+    const rootRows = (await threads.listEvents(orgId, thread.chat_id)).filter(
+      (row) => row.event.type === "child_spawned" && row.event.thread_id === grandchild.id,
+    );
+    expect(rootRows).toHaveLength(0);
+    const parentRows = (await threads.listEvents(orgId, childThread.chat_id)).filter(
+      (row) => row.event.type === "child_spawned" && row.event.thread_id === grandchild.id,
+    );
+    expect(parentRows).toHaveLength(1);
+  });
+
   it("send posts a turn and rejects a closed, foreign or self thread", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Send");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });

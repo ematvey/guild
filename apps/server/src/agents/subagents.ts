@@ -376,9 +376,15 @@ export async function send(
       .catch(() => {});
     throw new SubagentError("submit_failed", message);
   }
-  const parentThread = await context.store.threadById(callerThreadId(context));
-  if (parentThread !== null) {
-    await context.threads.appendEvent(parentThread.chat_id, {
+  // The row lives in the child's own parent chat, whichever ancestor sent
+  // the message: the child's result is delivered there, so a row written in
+  // the caller's chat would never receive one.
+  const rowThread =
+    thread.parent_thread_id === null
+      ? await context.store.threadById(callerThreadId(context))
+      : await context.store.threadById(thread.parent_thread_id);
+  if (rowThread !== null) {
+    await context.threads.appendEvent(rowThread.chat_id, {
       type: "child_spawned",
       thread_id: thread.id,
       run_id: run.id,
