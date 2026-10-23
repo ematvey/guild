@@ -45,6 +45,13 @@ export type WorkerRequest =
       ref: number;
       input: SubmitTurnWireInput;
     }
+  | {
+      t: "deliver-steer";
+      ref: number;
+      orgId: string;
+      text: string;
+      model: string | null;
+    }
   | { t: "steer"; ref: number; submissionId: number }
   | { t: "withdraw"; ref: number; submissionId: number }
   | { t: "stop"; ref: number }

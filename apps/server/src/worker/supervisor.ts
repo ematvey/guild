@@ -510,6 +510,10 @@ export class ForkSupervisor {
     return this.request<number>(chatId, { t: "submit", input });
   }
 
+  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    return this.request<void>(chatId, { t: "deliver-steer", orgId, text, model });
+  }
+
   steer(chatId: string, submissionId: number): Promise<boolean> {
     return this.request<boolean>(chatId, { t: "steer", submissionId });
   }
