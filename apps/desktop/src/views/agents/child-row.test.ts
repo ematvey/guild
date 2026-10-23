@@ -30,7 +30,18 @@ describe("child row formatting", () => {
     expect(childStatusTone("succeeded")).toBe("success");
     expect(childStatusTone("failed")).toBe("danger");
     expect(childStatusTone("cancelled")).toBe("muted");
+    expect(childStatusTone("closed")).toBe("muted");
     expect(childStatusLabel("cancelled")).toBe("Cancelled");
+    expect(childStatusLabel("closed")).toBe("Closed");
+  });
+
+  it("shows no elapsed time for a closed row without a start", () => {
+    expect(
+      childElapsedLabel(
+        { ...row, status: "closed", startedAt: "" },
+        Date.parse("2026-10-22T10:00:42.000Z"),
+      ),
+    ).toBe("");
   });
 });
 

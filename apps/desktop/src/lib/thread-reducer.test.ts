@@ -885,6 +885,17 @@ describe("subagent rows (child events)", () => {
     final_text: "done",
     ...over,
   });
+  const closed = (over: Partial<Extract<ThreadEvent, { type: "child_closed" }>> = {}): ThreadEvent => ({
+    type: "child_closed",
+    thread_id: "child-thread",
+    ...over,
+  });
+  const rowAt = (seq: number, event: ThreadEvent, at: string): ThreadEventRow => ({
+    id: `e${seq}`,
+    seq,
+    event,
+    created_at: at,
+  });
   const spawnTool = (name = "spawn"): ThreadEvent => ({
     type: "assistant_message",
     turn: 1,
@@ -934,6 +945,68 @@ describe("subagent rows (child events)", () => {
       chatId: "child-chat",
       status: "cancelled",
     });
+  });
+
+  it("marks a row closed from child_closed and keeps it after a reload", () => {
+    const events = [
+      rowAt(1, spawned(), "2026-10-22T10:00:00.000Z"),
+      rowAt(2, closed(), "2026-10-22T10:00:10.000Z"),
+    ];
+    const derived = deriveThread(events);
+    expect(derived.children[0]).toMatchObject({
+      threadId: "child-thread",
+      status: "closed",
+      finishedAt: "2026-10-22T10:00:10.000Z",
+    });
+
+    const r = createThreadReducer();
+    r.open("chat");
+    const applied = r.applyState(state("chat", 2, events));
+    expect(applied.children[0]).toMatchObject({
+      threadId: "child-thread",
+      status: "closed",
+      finishedAt: "2026-10-22T10:00:10.000Z",
+    });
+  });
+
+  it("applies child_closed through the incremental event lane", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState(state("chat", 1, [rowAt(1, spawned(), "2026-10-22T10:00:00.000Z")]));
+    const applied = r.applyThreadEvents("chat", 2, [
+      rowAt(2, closed(), "2026-10-22T10:00:10.000Z"),
+    ]);
+    expect(applied.children[0]).toMatchObject({ status: "closed" });
+  });
+
+  it("creates nothing from child_closed without a matching row", () => {
+    const events = [row(1, closed({ thread_id: "never-spawned" }))];
+    expect(deriveThread(events).children).toEqual([]);
+
+    const r = createThreadReducer();
+    r.open("chat");
+    expect(r.applyState(state("chat", 1, events)).children).toEqual([]);
+  });
+
+  it("uses started_at from a child_result as the row start", () => {
+    const startedAt = "2026-10-22T09:59:00.000Z";
+    const derived = deriveThread([
+      rowAt(9, result({ chat_id: "child-chat", started_at: startedAt }), "2026-10-22T10:00:00.000Z"),
+    ]);
+    expect(derived.children[0]).toMatchObject({
+      threadId: "child-thread",
+      startedAt,
+      finishedAt: "2026-10-22T10:00:00.000Z",
+    });
+  });
+
+  it("prefers started_at from a result over the spawn event time", () => {
+    const startedAt = "2026-10-22T09:59:00.000Z";
+    const derived = deriveThread([
+      rowAt(1, spawned(), "2026-10-22T10:00:00.000Z"),
+      rowAt(2, result({ started_at: startedAt }), "2026-10-22T10:00:10.000Z"),
+    ]);
+    expect(derived.children[0]!.startedAt).toBe(startedAt);
   });
 
   it("never creates a row from a tool block without an event", () => {
