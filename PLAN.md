@@ -12,6 +12,13 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Projects archive like chats (2026-10-23).** The project row menu's
+  Archive moves the project into a collapsed Archived section in the
+  Projects panel; its row expands to its chats and its menu offers
+  Unarchive. `GET /api/v1/projects?archived=1` lists the archived rows
+  (most recently archived first), mirroring the thread list's `archived`
+  query. Archiving still frees the folder for a new project.
+
 - **An agent has an identity and a directory (2026-10-23).** `agents.description`
   is owner-editable, max 500 characters, and becomes the first line of the
   agent's own prompt. Every agent may rewrite its own description with

@@ -134,6 +134,7 @@ import {
   fetchThreadEventsPage,
   getChatApproval,
   listArchivedChats,
+  listArchivedProjects,
   listChats,
   listMachines,
   listModels,
@@ -2544,6 +2545,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     void listMachines().then(setMachines).catch(() => {});
   }, [refreshProjects]);
 
+  // Archived projects: the sidebar's Archived section, collapsed by default.
+  const [archivedProjects, setArchivedProjects] = useState<Project[] | null>(null);
+  const refreshArchivedProjects = useCallback(async () => {
+    const p = await listArchivedProjects();
+    if (p !== null) setArchivedProjects(p);
+  }, []);
+  useEffect(() => {
+    void refreshArchivedProjects();
+  }, [refreshArchivedProjects]);
+
   // The composer's project binding. The chip renders only when a project
   // is actually bound or pre-picked (project context) — a plain chat-mode
   // chat shows no project affordance at all. On a new (unsent) chat the
@@ -2620,11 +2631,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const archiveProject = useCallback(async (id: string) => {
     try {
       await updateProject(id, { archived: true });
-      await Promise.all([refreshProjects(), refreshChats()]);
+      await Promise.all([refreshProjects(), refreshArchivedProjects(), refreshChats()]);
     } catch {
       toast.error("Could not archive the project");
     }
-  }, [refreshChats, refreshProjects]);
+  }, [refreshChats, refreshProjects, refreshArchivedProjects]);
+  const unarchiveProject = useCallback(async (id: string) => {
+    try {
+      await updateProject(id, { archived: false });
+      await Promise.all([refreshProjects(), refreshArchivedProjects(), refreshChats()]);
+    } catch {
+      toast.error("Could not unarchive the project");
+    }
+  }, [refreshChats, refreshProjects, refreshArchivedProjects]);
 
   // The member socket owns thread reconciliation in both browser and Tauri
   // webview mode. The desktop app process keeps the separate machine socket.
@@ -3588,6 +3607,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         loadingChats={chats === null}
         grouping={grouping}
         projects={projects}
+        archivedProjects={archivedProjects}
         machines={machines}
         chatId={chatId}
         onOpenChat={openChat}
@@ -3599,6 +3619,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onArchiveChat={(id) => void archiveChat(id)}
         onRenameProject={(id, name) => void renameProject(id, name)}
         onArchiveProject={(id) => void archiveProject(id)}
+        onUnarchiveProject={(id) => void unarchiveProject(id)}
       />
     ) : sidebarTab === "settings" ? (
       <SettingsPanel

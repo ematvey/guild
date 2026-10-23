@@ -101,10 +101,20 @@ export class ProjectStore {
     return this.fetchById(id);
   }
 
-  /** Lists the caller's projects — owner-only, admins included. */
+  /** Lists the caller's live projects — owner-only, admins included. */
   async list(orgId: string, userId: string): Promise<ProjectRow[]> {
     const res = await this.pool.query(
       `SELECT ${ROW_COLUMNS} FROM ${ROW_FROM} WHERE p.org_id = $1 AND p.user_id = $2 AND p.archived_at IS NULL ORDER BY p.created_at DESC`,
+      [orgId, userId],
+    );
+    return res.rows.map((r: Record<string, unknown>) => row(r));
+  }
+
+  /** Lists the caller's archived projects, most recently archived first —
+   *  the sidebar's Archived section. */
+  async listArchived(orgId: string, userId: string): Promise<ProjectRow[]> {
+    const res = await this.pool.query(
+      `SELECT ${ROW_COLUMNS} FROM ${ROW_FROM} WHERE p.org_id = $1 AND p.user_id = $2 AND p.archived_at IS NOT NULL ORDER BY p.archived_at DESC`,
       [orgId, userId],
     );
     return res.rows.map((r: Record<string, unknown>) => row(r));
