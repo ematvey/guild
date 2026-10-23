@@ -421,3 +421,18 @@ parent-to-child only.
     under the call that spawned it. The span is merged in place as the child
     progresses (spawn, result, close), never appended twice. The casual view
     hides it — there the subagent pane is the only surface.
+48. **Specialists are ordinary agents in a pack.** `Source`, `Ops` and
+    `Clients` are org-visibility agents with `tools_mode: selected` and a
+    focused allowlist — Source has no `bash`, which is what keeps repositories
+    out of its workspace. Their descriptions read as an invitation to
+    delegate, and each workspace carries a playbook (`AGENTS.md`) plus a
+    `notes/` knowledge tree. `POST /api/v1/agents/specialists` installs or
+    refreshes the pack idempotently, keyed by `resources.specialist`, and
+    never overwrites existing notes.
+49. **A run is owned by its chat, and a stale run settles.** A child row
+    belongs in the child's own parent chat, whichever ancestor sent the
+    message — a row written in the caller's chat would never receive its
+    result. `beginChatRun` adopts an open run for the thread instead of
+    opening a second one, and a startup sweep fails runs whose chat has shown
+    no event for ten minutes, writing a `child_result` with reason `orphaned`
+    so the pane stops counting.
