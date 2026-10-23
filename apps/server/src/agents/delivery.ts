@@ -132,6 +132,18 @@ export class ChildResultDelivery {
     const parentRow = parent.rows[0];
     if (parentRow === undefined || parentRow.parent_closed_at !== null) return;
 
+    // The store outranks the worker: a run the parent cancelled can still
+    // finish somewhere it could not be interrupted, and its completion must
+    // not reach the parent as a success. A user stop of the child keeps its
+    // own reason and still delivers.
+    const run = await pool.query<{ status: string }>(
+      "SELECT status FROM agent_runs WHERE id = $1",
+      [input.run_id],
+    );
+    const cancelled = run.rows[0]?.status === "cancelled";
+    const status = cancelled ? "cancelled" : input.status;
+    const reason = cancelled && input.status !== "cancelled" ? "parent" : input.reason;
+
     const attachments = await this.attachmentsOf(input.attachment_event_id ?? null);
     await threads.appendChildResult(parentRow.chat_id, {
       type: "child_result",
@@ -140,8 +152,8 @@ export class ChildResultDelivery {
       chat_id: childRow.chat_id,
       agent_name: childRow.agent_name,
       title: childRow.title,
-      status: input.status,
-      reason: input.reason,
+      status,
+      reason,
       final_text: input.final_text,
       attachments,
     });

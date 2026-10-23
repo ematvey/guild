@@ -449,47 +449,58 @@ export async function list(context: SubagentsToolContext): Promise<ChildListEntr
   });
 }
 
-/** Fails before any mutation when an in-flight chat is not reachable from
- *  this process. */
-function assertReachable(context: SubagentsToolContext, active: { chat_id: string }[]): void {
-  const unreachable = active.filter((run) => !context.runtime.canStopChat(run.chat_id));
-  if (unreachable.length > 0) {
-    throw new SubagentError(
-      "cancel_unreachable",
-      "this worker cannot stop a turn in another worker; remoteStop IPC is not implemented",
-    );
+/** Stops the in-flight turns of a subtree and cancels their runs. A turn
+ *  owned by another worker cannot be interrupted from here: its run is
+ *  cancelled in the store, and delivery drops a cancelled run's result, so
+ *  the parent sees a cancelled child either way. */
+async function stopSubtree(
+  context: Pick<SubagentsToolContext, "store" | "runtime">,
+  threadId: string,
+): Promise<number> {
+  const active = await context.store.activeRunsInSubtree(threadId);
+  const cancelled = await context.store.cancelSubtree(threadId);
+  for (const chatId of new Set(active.map((run) => run.chat_id))) {
+    if (!context.runtime.canStopChat(chatId)) continue;
+    await context.runtime.stopChat(chatId);
   }
+  return cancelled;
 }
 
 /** Stops in-flight turns in the subtree. The nodes stay addressable. */
+export async function cancelThread(
+  context: Pick<SubagentsToolContext, "store" | "runtime">,
+  threadId: string,
+): Promise<CancelResult> {
+  return { thread_id: threadId, cancelled: await stopSubtree(context, threadId) };
+}
+
+/** Cancels the subtree and stamps closed_at on every node. Rows and
+ *  attachments stay, and deliveries stop. */
+export async function closeThread(
+  context: Pick<SubagentsToolContext, "store" | "runtime">,
+  threadId: string,
+): Promise<CloseResult> {
+  const cancelled = await stopSubtree(context, threadId);
+  const closed = await context.store.closeSubtree(threadId);
+  return { thread_id: threadId, closed, cancelled };
+}
+
+/** Cancels the subtree rooted at a child the caller owns. */
 export async function cancel(
   context: SubagentsToolContext,
   args: { thread_id: string },
 ): Promise<CancelResult> {
   const thread = await childThread(context, args.thread_id);
-  const active = await context.store.activeRunsInSubtree(thread.id);
-  assertReachable(context, active);
-  const cancelled = await context.store.cancelSubtree(thread.id);
-  for (const chatId of new Set(active.map((run) => run.chat_id))) {
-    await context.runtime.stopChat(chatId);
-  }
-  return { thread_id: thread.id, cancelled };
+  return cancelThread(context, thread.id);
 }
 
-/** Cancels the subtree and stamps closed_at on every node. Rows and
- *  attachments stay, and deliveries stop. */
+/** Closes the subtree rooted at a child the caller owns. */
 export async function close(
   context: SubagentsToolContext,
   args: { thread_id: string },
 ): Promise<CloseResult> {
   const thread = await childThread(context, args.thread_id);
-  const active = await context.store.activeRunsInSubtree(thread.id);
-  assertReachable(context, active);
-  const closed = await context.store.closeSubtree(thread.id);
-  for (const chatId of new Set(active.map((run) => run.chat_id))) {
-    await context.runtime.stopChat(chatId);
-  }
-  return { thread_id: thread.id, closed, cancelled: active.length };
+  return closeThread(context, thread.id);
 }
 
 /** Builds the per-run subagent context; null when the chat has no running

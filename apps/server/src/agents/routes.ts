@@ -16,6 +16,7 @@ import { agentWorkspaceDir, readIdentity, type AgentIdentity } from "./workspace
 import { runRoutineNow } from "./scheduler.js";
 import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
+import { cancelThread, closeThread } from "./subagents.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
 import type {
   Agent,
@@ -539,6 +540,26 @@ export function registerAgentRoutes(
   };
   app.get("/api/v1/chats/:id/tree", chatTree);
   app.get("/api/v1/threads/:id/tree", chatTree);
+
+  /** Stop or close the thread behind a chat, from the chat's own UI. The
+   *  chat is authorized first; a chat with no thread row has nothing to act
+   *  on. `close` marks the subtree closed, which also drops late results. */
+  const threadAction =
+    (action: "cancel" | "close") => async (req: FastifyRequest, reply: FastifyReply) => {
+      const user = await requireUser(auth, req);
+      const chatId = parseUuidParam(req, "id");
+      await chats.chats.getChat(user.org_id, chatId, user);
+      const thread = await store.threadByChatId(chatId);
+      if (thread === null) throw ApiError.notFound("no such thread");
+      const context = { store, runtime: chats.runtime };
+      const result =
+        action === "cancel"
+          ? await cancelThread(context, thread.id)
+          : await closeThread(context, thread.id);
+      return sendJson(reply, result);
+    };
+  app.post("/api/v1/threads/:id/cancel", threadAction("cancel"));
+  app.post("/api/v1/threads/:id/close", threadAction("close"));
 
   app.get("/api/v1/agents/:id/files", async (req, reply) => {
     const user = await requireUser(auth, req);

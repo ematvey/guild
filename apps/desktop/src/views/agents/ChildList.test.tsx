@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChildRow as ChildRowData } from "../../lib/thread-reducer";
-import { ChildList, childRowsOf } from "./ChildList";
+import { ChildList, childRowsOf, subagentsCollapsed } from "./ChildList";
 
 function childRow(threadId: string, chatId: string | null, over: Partial<ChildRowData> = {}): ChildRowData {
   return {
@@ -90,5 +90,30 @@ describe("child row labels", () => {
       />,
     );
     expect(html).toContain("Scout");
+  });
+});
+
+describe("subagent panel collapse", () => {
+  it("reads the stored choice", () => {
+    expect(subagentsCollapsed("1")).toBe(true);
+    expect(subagentsCollapsed("0")).toBe(false);
+    expect(subagentsCollapsed(null)).toBe(false);
+  });
+
+  it("renders the header as a toggle that controls the rows", () => {
+    const rows = childRowsOf([childRow("thread-a", "chat-a")]);
+    const html = renderToStaticMarkup(<ChildList rows={rows} onOpen={() => {}} />);
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-controls="subagent-rows"');
+    expect(html).toContain('id="subagent-rows"');
+  });
+
+  it("counts the running children in the header", () => {
+    const rows = childRowsOf([
+      childRow("thread-a", "chat-a", { status: "running", finishedAt: undefined }),
+      childRow("thread-b", "chat-b"),
+    ]);
+    const html = renderToStaticMarkup(<ChildList rows={rows} onOpen={() => {}} />);
+    expect(html).toContain("1 running");
   });
 });
