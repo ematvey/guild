@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
-import { parseUuidParam, requireUser } from "./error.js";
+import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import type { ProjectRow } from "../store/projects.js";
 
@@ -64,7 +64,10 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
 
   app.get("/api/v1/projects", async (req, reply) => {
     const user = await requireUser(ctx, req);
-    const rows = await gateway.projects.list(user.org_id, user.id);
+    const archived = ["1", "true"].includes(queryParam(req, "archived") ?? "");
+    const rows = archived
+      ? await gateway.projects.listArchived(user.org_id, user.id)
+      : await gateway.projects.list(user.org_id, user.id);
     // json!-built body: sorted keys.
     reply.type("application/json").send(rustJsonText({ projects: rows }));
     return reply;

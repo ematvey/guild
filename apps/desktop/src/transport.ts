@@ -1461,6 +1461,24 @@ export async function listProjects(): Promise<Project[] | null> {
 }
 
 
+/** Lists the caller's archived projects (the sidebar's Archived section).
+ *  Null on failure, same contract as `listProjects`. */
+export async function listArchivedProjects(): Promise<Project[] | null> {
+  try {
+    const res = await fetch(apiUrl("/api/v1/projects?archived=1"), {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v.projects ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
+}
+
+
 /** Creates a project; throws with the API message (409 = name taken). */
 export async function createProject(req: CreateProjectRequest): Promise<Project> {
   const res = await fetch(apiUrl("/api/v1/projects"), {

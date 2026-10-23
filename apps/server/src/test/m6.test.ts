@@ -469,6 +469,20 @@ describe("M6 projects", () => {
     expect(adminList.statusCode).toBe(200);
     expect(((json(adminList)["projects"] ?? []) as { id: string }[]).some((p) => p.id === pid)).toBe(false);
 
+    // Archived projects drop out of the live list and show up in the
+    // Archived section (GET ?archived=1); unarchive returns them.
+    const archived = await inject("PUT", `/api/v1/projects/${pid}`, e.memberToken, { archived: true });
+    expect(archived.statusCode).toBe(200);
+    const live = await inject("GET", "/api/v1/projects", e.memberToken);
+    expect(((json(live)["projects"] ?? []) as { id: string }[]).some((p) => p.id === pid)).toBe(false);
+    const archivedList = await inject("GET", "/api/v1/projects?archived=1", e.memberToken);
+    expect(archivedList.statusCode).toBe(200);
+    expect(((json(archivedList)["projects"] ?? []) as { id: string }[]).some((p) => p.id === pid)).toBe(true);
+    const restored = await inject("PUT", `/api/v1/projects/${pid}`, e.memberToken, { archived: false });
+    expect(restored.statusCode).toBe(200);
+    const afterRestore = await inject("GET", "/api/v1/projects", e.memberToken);
+    expect(((json(afterRestore)["projects"] ?? []) as { id: string }[]).some((p) => p.id === pid)).toBe(true);
+
     const del = await inject("DELETE", `/api/v1/projects/${pid}`, e.memberToken);
     expect(del.statusCode).toBe(200);
     expect(json(del)).toEqual({ ok: true });
