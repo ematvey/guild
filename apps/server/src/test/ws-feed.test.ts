@@ -485,6 +485,37 @@ describe("member-socket feed", () => {
     expect(await onlineOf()).toBe(false);
   });
 
+  it("keeps a delegated child chat out of the thread_list push and the HTTP list", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("delegated child");
+    const agentId = crypto.randomUUID();
+    await stack.env.db.query(
+      "INSERT INTO agents (id, org_id, owner_user_id, name, model) VALUES ($1, $2, $3, 'Child agent', 'GLM-Slow-Model')",
+      [agentId, stack.orgId, stack.memberId],
+    );
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, chat_id, title, kind, user_id, depth)
+       VALUES ($1, $2, $3, 'Child thread', 'delegated', $4, 1)`,
+      [crypto.randomUUID(), agentId, chat.id, stack.memberId],
+    );
+
+    const ws = await memberSocket();
+    const list = textFrames(ws).find((frame) => frame.type === "thread_list") as
+      | { chats: { id: string }[] }
+      | undefined;
+    expect(list).toBeDefined();
+    expect(list!.chats.map((row) => row.id)).not.toContain(chat.id);
+    ws.end();
+
+    const http = await stack.env.app.inject({
+      method: "GET",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+    });
+    expect(http.statusCode).toBe(200);
+    const chats = (JSON.parse(http.body) as { chats: { id: string }[] }).chats;
+    expect(chats.map((row) => row.id)).not.toContain(chat.id);
+  });
+
   it("the duplex read-mark moves the caller's marker without an HTTP round trip", async () => {
     const chat = await createChat("read duplex");
     const eventId = crypto.randomUUID();

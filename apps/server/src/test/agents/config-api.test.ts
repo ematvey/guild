@@ -84,6 +84,62 @@ describe("agent workspace config over HTTP", () => {
     expect(JSON.parse(patched.body).agent).not.toHaveProperty("instructions");
   });
 
+  it("creates and patches a description with the 500-character cap", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Described agent", model: "GLM-Test-Model", description: "  Writes launch notes.  " },
+    });
+    expect(created.statusCode).toBe(200);
+    const agent = (JSON.parse(created.body) as { agent: { id: string; description: string } }).agent;
+    expect(agent.description).toBe("Writes launch notes.");
+
+    const patched = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: auth(),
+      payload: { description: "  Reviews launch notes.  " },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect((JSON.parse(patched.body) as { agent: { description: string } }).agent.description).toBe(
+      "Reviews launch notes.",
+    );
+
+    const atCap = "d".repeat(500);
+    const boundary = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: auth(),
+      payload: { description: atCap },
+    });
+    expect(boundary.statusCode).toBe(200);
+    expect((JSON.parse(boundary.body) as { agent: { description: string } }).agent.description).toBe(atCap);
+
+    const tooLong = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: auth(),
+      payload: { description: "d".repeat(501) },
+    });
+    expect(tooLong.statusCode).toBe(400);
+    const detail = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: auth(),
+    });
+    expect((JSON.parse(detail.body) as { agent: { description: string } }).agent.description).toBe(atCap);
+
+    const cleared = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: auth(),
+      payload: { description: "" },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect((JSON.parse(cleared.body) as { agent: { description: string } }).agent.description).toBe("");
+  });
+
   it("reports null identity fields when IDENTITY.md is blank", async () => {
     const created = await stack.env.app.inject({
       method: "POST",

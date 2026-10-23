@@ -552,6 +552,18 @@ export class AgentStore {
     return updated;
   }
 
+  /** Writes the agent's own description. The caller is the agent itself, so
+   *  this path checks no grant. */
+  async setDescription(agentId: string, description: string): Promise<string> {
+    const res = await this.pool.query<{ description: string }>(
+      "UPDATE agents SET description = $2, updated_at = now() WHERE id = $1 RETURNING description",
+      [agentId, description],
+    );
+    const row = res.rows[0];
+    if (row === undefined) throw ApiError.notFound("no such agent");
+    return row.description;
+  }
+
   /** Replaces an agent's team grants after checking every team belongs to
    *  the same organization. */
   private async replaceTeamGrants(

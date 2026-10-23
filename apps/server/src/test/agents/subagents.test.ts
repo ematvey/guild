@@ -10,7 +10,9 @@ import { AgentStore } from "../../agents/store.js";
 import {
   cancel,
   close,
+  createSubagentTools,
   list,
+  listAgents,
   read,
   send,
   spawn,
@@ -139,6 +141,8 @@ dbDescribe("subagent tree tools", () => {
     const context = await contextFor({ thread, run: parentRun, fake });
 
     const result = await spawn(context, { agent: targetAgent.name, task: "Write the report" });
+    expect(result.agent_name).toBe(targetAgent.name);
+    expect(result.status).toBe("running");
     const childRun = await store.getRun(result.run_id);
     expect(childRun.status).toBe("running");
     expect(childRun.trigger).toBe("delegation");
@@ -151,6 +155,7 @@ dbDescribe("subagent tree tools", () => {
     expect(childThread?.parent_thread_id).toBe(thread.id);
     expect(childThread?.depth).toBe(1);
     expect(childThread?.closed_at).toBeNull();
+    expect(result.chat_id).toBe(childThread!.chat_id);
     expect(fake.submitted).toEqual([{ chatId: childThread!.chat_id, content: "Write the report" }]);
   });
 
@@ -185,6 +190,66 @@ dbDescribe("subagent tree tools", () => {
     await expect(spawn(context, { agent: privateTarget.name, task: "secret" })).rejects.toMatchObject({
       code: "forbidden",
     });
+    await expect(spawn(context, { agent: "No Such Agent", task: "x" })).rejects.toMatchObject({
+      code: "target_not_found",
+      message: expect.stringContaining("list_agents"),
+    });
+  });
+
+  it("list_agents is the caller user's directory and never leaks another personal agent", async () => {
+    const admin = await makeUser(orgId, "subagents-admin@example.test", "admin");
+    await env!.db.query(
+      `INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd)
+       VALUES ($1, 'GLM-Test', 'guild', true, 0, 0)`,
+      [orgId],
+    );
+    const ownerPersonal = (await store.ensurePersonalAgent(owner))!;
+    const outsiderPersonal = (await store.ensurePersonalAgent(outsider))!;
+    expect(ownerPersonal.is_personal).toBe(true);
+    const described = await store.create(outsider, {
+      name: "Directory described",
+      model: "GLM-Test",
+      description: "Writes launch notes.",
+      visibility: "org",
+    });
+
+    const ownerThread = await store.createThread(parentAgent.id, owner.id, "Directory owner");
+    const ownerRun = await makeRun({ agentId: parentAgent.id, threadId: ownerThread.id });
+    const fake = fakeRuntime();
+    const ownerContext = await contextFor({ thread: ownerThread, run: ownerRun, fake });
+    const ownerDirectory = await listAgents(ownerContext);
+    const ownerIds = ownerDirectory.map((entry) => entry.id);
+    expect(ownerIds).toContain(ownerPersonal.id);
+    expect(ownerIds).toContain(described.id);
+    expect(ownerIds).not.toContain(outsiderPersonal.id);
+    expect(ownerIds).not.toContain(privateTarget.id);
+    expect(ownerDirectory.find((entry) => entry.id === described.id)).toEqual({
+      id: described.id,
+      name: "Directory described",
+      description: "Writes launch notes.",
+      personal: false,
+    });
+    expect(ownerDirectory.find((entry) => entry.id === ownerPersonal.id)?.personal).toBe(true);
+    expect(ownerDirectory.map((entry) => entry.name)).toEqual(
+      [...ownerDirectory.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b)),
+    );
+
+    // An admin sees every non-personal agent, but no other user's personal one.
+    const adminThread = await store.createThread(parentAgent.id, admin.id, "Directory admin");
+    const adminRun = await makeRun({ agentId: parentAgent.id, threadId: adminThread.id });
+    const adminContext = await contextFor({ thread: adminThread, run: adminRun, fake });
+    const adminIds = (await listAgents(adminContext)).map((entry) => entry.id);
+    expect(adminIds).toContain(described.id);
+    expect(adminIds).toContain(privateTarget.id);
+    expect(adminIds).not.toContain(outsiderPersonal.id);
+    expect(adminIds).not.toContain(ownerPersonal.id);
+
+    const tool = createSubagentTools(ownerContext).find((entry) => entry.name === "list_agents");
+    expect(tool).toBeDefined();
+    const out = (await tool!.execute({}, {} as never, {} as never)) as {
+      structuredOutput?: { agents: { id: string }[] };
+    };
+    expect(out.structuredOutput?.agents.map((entry) => entry.id)).toContain(described.id);
   });
 
   it("send posts a turn and rejects a closed, foreign or self thread", async () => {
@@ -195,10 +260,17 @@ dbDescribe("subagent tree tools", () => {
     const child = await spawn(context, { agent: targetAgent.name, task: "start" });
 
     const sent = await send(context, { thread_id: child.thread_id, text: "next step" });
+    const childThread = (await store.threadById(child.thread_id))!;
+    expect(sent).toMatchObject({
+      thread_id: child.thread_id,
+      chat_id: childThread.chat_id,
+      agent_name: targetAgent.name,
+      status: "running",
+    });
     const run = await store.getRun(sent.run_id);
     expect(run.thread_id).toBe(child.thread_id);
     expect(run.parent_run_id).toBe(parentRun.id);
-    expect(fake.submitted.at(-1)).toEqual({ chatId: (await store.threadById(child.thread_id))!.chat_id, content: "next step" });
+    expect(fake.submitted.at(-1)).toEqual({ chatId: childThread.chat_id, content: "next step" });
 
     await store.closeSubtree(child.thread_id);
     await expect(send(context, { thread_id: child.thread_id, text: "too late" })).rejects.toMatchObject({

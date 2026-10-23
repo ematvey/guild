@@ -75,6 +75,10 @@ judge?: JudgeVerdict | null, } | { "type": "approval_decision", call_id: string,
  */
 expired?: boolean, } | { "type": "turn_error", message: string, } | { "type": "child_result", thread_id: string, run_id: string, 
 /**
+ * The child thread's chat: the row navigates to `/thread/<chat_id>`.
+ */
+chat_id: string, 
+/**
  * The child run's terminal status; `cancelled` is a user stop.
  */
 status: string, reason?: string | null, final_text: string, attachments: Array<MessageAttachment>, };
