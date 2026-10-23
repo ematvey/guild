@@ -1121,7 +1121,7 @@ describe("child thread navigation", () => {
     expect(parseChatRoute(path).agents).toBeNull();
   });
 
-  it("keeps a child row visible in the casual transcript", () => {
+  it("folds a spawn tool block into the casual work summary", () => {
     const blocks = eventsToBlocks([
       {
         id: "e1",
@@ -1153,6 +1153,10 @@ describe("child thread navigation", () => {
       },
     ]);
     const entries = viewEntries(blocks, "casual");
-    expect(entries.some((e) => e.kind === "plain" && e.b.kind === "tool" && e.b.tool?.child)).toBe(true);
+    expect(
+      entries.some((e) => e.kind === "plain" && e.b.kind === "tool" && e.b.tool?.child),
+    ).toBe(false);
+    const work = entries.find((e) => e.kind === "work");
+    expect(work?.kind === "work" && work.run.some((b) => b.kind === "tool" && b.tool?.child)).toBe(true);
   });
 });

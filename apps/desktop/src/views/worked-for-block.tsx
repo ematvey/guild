@@ -28,10 +28,7 @@ export function viewEntries(blocks: Block[], view: ChatViewMode): ViewEntry[] {
   };
   blocks.forEach((b, i) => {
     if (b.kind === "user") turnStart = b.ts;
-    // A child row is navigation, not work detail: it stays visible in both
-    // views instead of folding into the casual work summary.
-    const childRow = b.kind === "tool" && b.tool?.child !== undefined;
-    if (view === "casual" && !childRow && (b.kind === "reasoning" || b.kind === "tool")) {
+    if (view === "casual" && (b.kind === "reasoning" || b.kind === "tool")) {
       run.push(b);
       return;
     }
