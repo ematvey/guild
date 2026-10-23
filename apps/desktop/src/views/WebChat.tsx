@@ -3463,6 +3463,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // to see it, so the panel re-expands on the newly picked tab.
     if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
   };
+  // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
+  // route tabs (inbox / agents / activity) render in the main column, so the
+  // sheet gets out of the way. Picking the already-active panel tab does
+  // nothing — it must not clear the open chat.
+  const mobileSwitchTab = (tab: SidebarTab) => {
+    if (tab === "inbox" || tab === "agents" || tab === "activity") {
+      switchTab(tab);
+      setOpen(false);
+      return;
+    }
+    if (tab === railTab) return;
+    switchTab(tab);
+  };
   const openSettingsSection = (id: string) => {
     // Navigation: the section pick owns its /settings/<section> address, so
     // back/forward walks the sections and a reload restores the pick.
@@ -3475,10 +3488,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   };
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
-  // The mobile drawer has no rail, so it always shows the Chats panel — the
-  // persisted tab must not leak into it. Its header carries the sheet's
-  // close button (the built-in corner close is suppressed: it would sit on
-  // top of the header's new-thread plus).
+  // The mobile drawer carries the rail too, so every panel tab renders there;
+  // its header X closes the sheet (the built-in corner close is suppressed:
+  // it would sit on top of the header's new-thread plus).
+  const sidebarClose = isMobile ? () => setOpen(false) : undefined;
   const chatsPanel = (
     <ChatsPanel
       grouping={grouping}
@@ -3488,6 +3501,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onNewChat={newChat}
       onOpenChat={openChat}
       onCollapse={sidebarCollapse}
+      onClose={sidebarClose}
       onRenameChat={(id, title) => void renameChat(id, title)}
       onArchiveChat={(id) => void archiveChat(id)}
       onUnarchiveChat={(id) => void unarchiveChat(id)}
@@ -3503,6 +3517,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         chatId={chatId}
         onOpenChat={openChat}
         onCollapse={sidebarCollapse}
+        onClose={sidebarClose}
         onNewChatInProject={newChatInProject}
         onNewProject={openCreateProject}
         onRenameChat={(id, title) => void renameChat(id, title)}
@@ -3516,6 +3531,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         activeSection={settingsSection}
         onSelectSection={openSettingsSection}
         onCollapse={sidebarCollapse}
+        onClose={sidebarClose}
       />
     ) : (
       chatsPanel
@@ -3699,19 +3715,32 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent side="left" className="w-72 p-0" hideClose>
-            <SheetTitle className="sr-only">Chats</SheetTitle>
-            <ChatsPanel
-              grouping={grouping}
-              loadingChats={chats === null}
-              chatId={chatId}
-              archivedChats={archivedChats}
-              onNewChat={newChat}
-              onOpenChat={openChat}
-              onClose={() => setOpen(false)}
-              onRenameChat={(id, title) => void renameChat(id, title)}
-              onArchiveChat={(id) => void archiveChat(id)}
-              onUnarchiveChat={(id) => void unarchiveChat(id)}
-            />
+            <SheetTitle className="sr-only">Sidebar</SheetTitle>
+            <div className="flex min-h-0 flex-1">
+              <SidebarRail
+                activeTab={railTab}
+                onTabChange={mobileSwitchTab}
+                onOpenHelp={() =>
+                  pushRoute({
+                    chatId: null,
+                    projectId: null,
+                    skills: null,
+                    newChat: false,
+                    overlay: { kind: "onboard" },
+                  })
+                }
+                email={email}
+                displayName={displayName}
+                avatarUrl={avatarUrl}
+                onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
+                onSignOut={signOut}
+                onAddWorkspace={onAddWorkspace}
+                inboxUnread={inboxUnread}
+                role={role}
+                isMobile
+              />
+              <div className="flex min-w-0 flex-1 flex-col">{sidebar}</div>
+            </div>
           </SheetContent>
         </Sheet>
       ) : skillsRoute !== null || agentsRoute !== null ? null : (

@@ -98,6 +98,7 @@ export function SidebarRail({
   onAddWorkspace,
   inboxUnread,
   role,
+  isMobile,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
@@ -114,8 +115,13 @@ export function SidebarRail({
   onAddWorkspace?: () => void;
   /** Activity is an admin surface; members never see its rail entry. */
   role?: string;
+  /** Mobile drawer: the skills page is a desktop-only surface (its main
+   *  column does not render on mobile), so its tab is dropped. */
+  isMobile?: boolean;
 }) {
-  const tabs = role === "admin" ? TABS : TABS.filter((tab) => tab.id !== "activity");
+  const tabs = (role === "admin" ? TABS : TABS.filter((tab) => tab.id !== "activity")).filter(
+    (tab) => !(isMobile && tab.id === "skills"),
+  );
   return (
     <nav className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 text-sidebar-foreground">
       <div className="flex flex-col items-center gap-1">
