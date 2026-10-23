@@ -517,8 +517,9 @@ export class GuildRuntime {
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
-    // The catalog lists the agent tools as far as this budget allows; the
-    // directory and self-description tools belong in it.
+    // The default 3000-char inline budget drops the tail of the callable
+    // list (thread_history) once the agent tool set grows, so the section
+    // gets 500 more characters.
     this.codemodeExtension = createCodemodeExtension({
       sandbox: this.codemodeSandbox,
       models: false,

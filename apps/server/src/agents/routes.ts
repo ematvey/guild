@@ -44,7 +44,7 @@ const AGENT_TOOL_CATALOG = [
   { name: "create_routine", label: "Create routine", group: "Routines", description: "Create a recurring routine from a cron or interval schedule.", safe: true },
   { name: "update_routine", label: "Update routine", group: "Routines", description: "Change a routine's schedule, prompt or enabled state.", safe: true },
   { name: "delete_routine", label: "Delete routine", group: "Routines", description: "Delete a routine and stop its schedule.", safe: true },
-  { name: "subagents", label: "Subagents", group: "Agents", description: "Spawn child agent threads and send, read, list, cancel or close them.", safe: false },
+  { name: "subagents", label: "Subagents", group: "Agents", description: "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.", safe: false },
   { name: "send_file", label: "Send file", group: "Files", description: "Attach a workspace file to the turn's response.", safe: false },
   { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
 ];
