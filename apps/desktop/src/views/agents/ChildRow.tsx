@@ -57,13 +57,15 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
   };
 
   const openers = childRowOpeners(row, onOpen);
+  const openLabel = `Open ${row.agentName || "subagent"}${row.title ? `: ${row.title}` : ""} chat`;
 
   return (
     <div
       role="button"
       tabIndex={chatId ? 0 : -1}
       aria-disabled={chatId ? undefined : true}
-      aria-label={`Open ${row.title || row.agentName || "subagent"} chat`}
+      aria-label={openLabel}
+      title={openLabel}
       onClick={openers.row}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -90,10 +92,10 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
           closed ? "text-muted-foreground" : "text-foreground/80",
         )}
       >
-        {row.title || row.agentName || "Subagent"}
+        {row.agentName || "Subagent"}
       </span>
-      {row.title && row.agentName && (
-        <span className="max-w-40 shrink-0 truncate text-2xs text-muted-foreground">{row.agentName}</span>
+      {row.title && (
+        <span className="max-w-40 shrink-0 truncate text-2xs text-muted-foreground">{row.title}</span>
       )}
       {elapsed && <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">{elapsed}</span>}
       {notice && <span className="shrink-0 text-2xs text-muted-foreground">{notice}</span>}
@@ -129,8 +131,8 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
       </div>
       <button
         type="button"
-        title="Open child chat"
-        aria-label={`Open ${row.title || row.agentName || "subagent"} chat`}
+        title={openLabel}
+        aria-label={openLabel}
         disabled={!chatId}
         onClick={(e) => {
           e.stopPropagation();

@@ -27,12 +27,45 @@ export interface ChildRow {
    *  supplied one. */
   chatId?: string | null;
   agentName: string;
-  /** The session name its spawner chose; the row shows it first. */
+  /** The session name its spawner chose; the row shows it after the agent
+   *  name. */
   title?: string | null;
   status: string;
   reason?: string;
+  /** The request the parent sent to this child (empty when the event is
+   *  older than the task field). */
+  task?: string;
+  /** The child's final answer, when it returned one. */
+  finalText?: string;
   startedAt: string;
   finishedAt?: string;
+}
+
+/** One child message in the parent transcript: the request the parent sent,
+ *  or the child's final answer. Rendered as a compact secondary entry. */
+export interface ChildMessage {
+  direction: "sent" | "returned";
+  agentName: string;
+  title?: string | null;
+  text: string;
+}
+
+/** A child message entry only exists when it has text; an empty task or an
+ *  empty final answer yields none. */
+function childMessageEntry(
+  direction: ChildMessage["direction"],
+  text: string | null | undefined,
+  agentName: string | null | undefined,
+  title: string | null | undefined,
+): ChildMessage | null {
+  const body = (text ?? "").trim();
+  if (!body) return null;
+  return {
+    direction,
+    agentName: agentName || "Subagent",
+    title: title || null,
+    text: body,
+  };
 }
 
 export interface ToolBlock {
@@ -63,6 +96,7 @@ function childRowFromSpawned(
     chat_id?: string | null;
     agent_name?: string | null;
     title?: string | null;
+    task?: string | null;
     status: string;
   },
   createdAt: string,
@@ -73,6 +107,7 @@ function childRowFromSpawned(
     chatId: ev.chat_id ?? null,
     agentName: ev.agent_name || "Subagent",
     title: ev.title || null,
+    task: ev.task || undefined,
     status: ev.status,
     startedAt: createdAt,
   };
@@ -91,6 +126,7 @@ function childRowFromResult(
     status: string;
     reason?: string | null;
     started_at?: string | null;
+    final_text?: string | null;
   },
   createdAt: string,
 ): ChildRow {
@@ -102,6 +138,7 @@ function childRowFromResult(
     title: ev.title || null,
     status: ev.status,
     reason: ev.reason ?? undefined,
+    finalText: ev.final_text || undefined,
     startedAt: ev.started_at || createdAt,
     finishedAt: createdAt,
   };
@@ -132,6 +169,7 @@ function applyChildResult(children: ChildRow[], ev: Extract<ThreadEvent, { type:
           title: ev.title || current.title,
           status: ev.status,
           reason: ev.reason ?? undefined,
+          finalText: ev.final_text || undefined,
           startedAt: ev.started_at || current.startedAt,
           finishedAt: createdAt,
         }
@@ -244,7 +282,7 @@ export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | nul
 }
 
 export interface Block {
-  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
+  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction" | "child";
   text: string;
   /// Stable React key. Derived blocks use the source event's seq (plus an
   /// in-event index); streaming-built blocks use a live counter.
@@ -276,6 +314,8 @@ export interface Block {
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
+  /// kind === "child": one child message in the transcript.
+  child?: ChildMessage;
 }
 
 export interface PendingSend {
@@ -502,12 +542,28 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
       case "turn_error":
         blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(inEvent++) });
         break;
-      case "child_spawned":
+      case "child_spawned": {
         children = applyChildSpawned(children, ev, row.created_at);
+        const message = childMessageEntry("sent", ev.task, ev.agent_name, ev.title);
+        if (message) {
+          blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(inEvent++) });
+        }
         break;
-      case "child_result":
+      }
+      case "child_result": {
         children = applyChildResult(children, ev, row.created_at);
+        const child = children.find((c) => c.threadId === ev.thread_id);
+        const message = childMessageEntry(
+          "returned",
+          ev.final_text,
+          ev.agent_name || child?.agentName,
+          ev.title || child?.title,
+        );
+        if (message) {
+          blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(inEvent++) });
+        }
         break;
+      }
       case "child_closed":
         children = applyChildClosed(children, ev, row.created_at);
         break;
@@ -1022,12 +1078,28 @@ export function createThreadReducer(): ThreadReducer {
       case "turn_error":
         v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
         break;
-      case "child_spawned":
+      case "child_spawned": {
         v.children = applyChildSpawned(v.children, ev, row.created_at);
+        const message = childMessageEntry("sent", ev.task, ev.agent_name, ev.title);
+        if (message) {
+          v.blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(0) });
+        }
         break;
-      case "child_result":
+      }
+      case "child_result": {
         v.children = applyChildResult(v.children, ev, row.created_at);
+        const child = v.children.find((c) => c.threadId === ev.thread_id);
+        const message = childMessageEntry(
+          "returned",
+          ev.final_text,
+          ev.agent_name || child?.agentName,
+          ev.title || child?.title,
+        );
+        if (message) {
+          v.blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(0) });
+        }
         break;
+      }
       case "child_closed":
         v.children = applyChildClosed(v.children, ev, row.created_at);
         break;

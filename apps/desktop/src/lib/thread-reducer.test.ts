@@ -874,6 +874,7 @@ describe("subagent rows (child events)", () => {
     chat_id: "child-chat",
     agent_name: "Researcher",
     title: "market scan",
+    task: "",
     status: "running",
     ...over,
   });
@@ -1045,5 +1046,54 @@ describe("subagent rows (child events)", () => {
     r.open("chat");
     const applied = r.applyState(state("chat", 3, events));
     expect(applied.children).toEqual(deriveThread(events).children);
+  });
+
+  it("adds a sent entry for a spawn with a task", () => {
+    const derived = deriveThread([row(1, spawned({ task: "scan the market" }))]);
+    const entries = derived.blocks.filter((b) => b.kind === "child");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.child).toMatchObject({
+      direction: "sent",
+      agentName: "Researcher",
+      title: "market scan",
+      text: "scan the market",
+    });
+    expect(derived.children[0]!.task).toBe("scan the market");
+  });
+
+  it("adds a returned entry for a result with final text", () => {
+    const derived = deriveThread([
+      row(1, spawned()),
+      row(2, result({ final_text: "found three" })),
+    ]);
+    const entries = derived.blocks.filter((b) => b.kind === "child");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.child).toMatchObject({
+      direction: "returned",
+      agentName: "Researcher",
+      title: "market scan",
+      text: "found three",
+    });
+    expect(derived.children[0]!.finalText).toBe("found three");
+  });
+
+  it("adds no entry for an empty task or final text", () => {
+    const derived = deriveThread([
+      row(1, spawned({ task: "" })),
+      row(2, result({ final_text: "" })),
+    ]);
+    expect(derived.blocks.filter((b) => b.kind === "child")).toEqual([]);
+  });
+
+  it("adds child entries through the incremental event lane", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState(state("chat", 1, [rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z")]));
+    const applied = r.applyThreadEvents("chat", 2, [
+      rowAt(2, result({ final_text: "found three" }), "2026-10-22T10:00:10.000Z"),
+    ]);
+    expect(
+      applied.blocks.filter((b) => b.kind === "child").map((b) => b.child?.direction),
+    ).toEqual(["sent", "returned"]);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChildRow as ChildRowData } from "../../lib/thread-reducer";
-import { ChildList, childRowsOf, subagentsActiveOnly, subagentsCollapsed } from "./ChildList";
+import { ChildList, childRowsOf, subagentRowsForMode, subagentsActiveOnly, subagentsAlwaysShow, subagentsCollapsed } from "./ChildList";
 
 function childRow(threadId: string, chatId: string | null, over: Partial<ChildRowData> = {}): ChildRowData {
   return {
@@ -67,7 +67,7 @@ describe("ChildList", () => {
 });
 
 describe("child row labels", () => {
-  it("shows the spawner's session name first and the agent name beside it", () => {
+  it("shows the agent name first and the session title second", () => {
     const html = renderToStaticMarkup(
       <ChildList
         rows={childRowsOf([
@@ -76,8 +76,8 @@ describe("child row labels", () => {
         onOpen={() => {}}
       />,
     );
-    expect(html).toContain("market scan");
-    expect(html).toContain("Echo");
+    expect(html.indexOf("Echo")).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf("Echo")).toBeLessThan(html.indexOf("market scan"));
   });
 
   it("falls back to the agent name when the spawner gave no session name", () => {
@@ -192,5 +192,35 @@ describe("subagent active/all switch", () => {
     expect(toggle).not.toContain("Active");
     expect(toggle).not.toContain("All");
     expect(html).toContain('aria-expanded="true"');
+  });
+});
+
+describe("subagent always-show setting", () => {
+  it("reads the stored choice, off by default", () => {
+    expect(subagentsAlwaysShow("1")).toBe(true);
+    expect(subagentsAlwaysShow("0")).toBe(false);
+    expect(subagentsAlwaysShow(null)).toBe(false);
+  });
+
+  it("renders the header and hint with no rows when always show is on", () => {
+    const html = renderToStaticMarkup(<ChildList rows={[]} onOpen={() => {}} alwaysShow />);
+    expect(html).toContain("Subagents");
+    expect(html).toContain("No active subagents");
+    expect(html).toContain("Active");
+    expect(html).toContain("All");
+  });
+
+  it("renders nothing with no rows when always show is off", () => {
+    const html = renderToStaticMarkup(<ChildList rows={[]} onOpen={() => {}} />);
+    expect(html).toBe("");
+  });
+
+  it("filters the rows by the current mode", () => {
+    const rows = childRowsOf([
+      childRow("thread-live", "chat-live", { status: "running" }),
+      childRow("thread-closed", "chat-closed", { status: "closed" }),
+    ]);
+    expect(subagentRowsForMode(rows, true).map((r) => r.key)).toEqual(["thread-live"]);
+    expect(subagentRowsForMode(rows, false).map((r) => r.key)).toEqual(["thread-live", "thread-closed"]);
   });
 });

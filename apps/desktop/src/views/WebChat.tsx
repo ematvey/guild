@@ -104,7 +104,7 @@ import {
   type AgentsRoute,
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
-import { ChildList, childRowsOf } from "./agents/ChildList";
+import { ChildList, childRowsOf, readSubagentsActiveOnly, readSubagentsAlwaysShow, subagentRowsForMode, writeSubagentsAlwaysShow } from "./agents/ChildList";
 import { ChildThreadHeader } from "./agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
@@ -181,6 +181,7 @@ import {
   type ApprovalBlock,
   type ArtifactCard,
   type Block,
+  type ChildMessage,
   type ChildRow,
   type CodemodeCallRow,
   type CompactionBlock,
@@ -1126,6 +1127,28 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
     </Frame>
+  );
+}
+
+/// One child message in the parent transcript: what the parent sent, or
+/// what the child returned. Compact and muted — the subagent pane carries
+/// the controls; this is the conversation's record of the exchange.
+function ChildMessageEntry({ m }: { m: ChildMessage }) {
+  const sent = m.direction === "sent";
+  return (
+    <div className="w-full rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-center gap-1.5 text-2xs uppercase tracking-wider text-muted-foreground">
+        {sent ? <ArrowUp className="size-3 shrink-0" /> : <CornerDownRight className="size-3 shrink-0" />}
+        <span>{sent ? "Sent" : "Returned"}</span>
+        <span className="truncate font-medium normal-case tracking-normal text-foreground/70">{m.agentName}</span>
+        {m.title && (
+          <span className="truncate normal-case tracking-normal text-muted-foreground/70">{m.title}</span>
+        )}
+      </div>
+      <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
+        {m.text}
+      </div>
+    </div>
   );
 }
 
@@ -3375,6 +3398,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setChatView(m);
     void saveChatViewMode(m);
   }, []);
+  // Subagent pane preferences: the mode decides which rows are visible, and
+  // "always show" keeps the pane reachable with no rows.
+  const [subagentsAlwaysShow, setSubagentsAlwaysShow] = useState(readSubagentsAlwaysShow);
+  const [subagentsActiveOnly, setSubagentsActiveOnly] = useState(readSubagentsActiveOnly);
   // View entries: the two views differ ONLY in thinking/tool runs —
   // technical renders each block 1:1, casual replaces each contiguous run
   // with one WorkedForBlock. Everything else (user, text, errors,
@@ -3449,6 +3476,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             <ToolFrame key={e.b.key} t={e.b.tool} />
           ) : e.b.kind === "approval" && e.b.approval ? (
             <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
+          ) : e.b.kind === "child" && e.b.child ? (
+            <ChildMessageEntry key={e.b.key} m={e.b.child} />
           ) : e.b.kind === "compaction" && e.b.compaction ? (
             <CompactionCard key={e.b.key} c={e.b.compaction} />
           ) : e.b.kind === "error" ? (
@@ -3480,6 +3509,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Child rows live in a pinned strip above the composer and come from the
   // reducer's live child list, independent of the transcript view.
   const childRows = useMemo(() => childRowsOf(children), [children]);
+  const visibleChildRows = useMemo(
+    () => subagentRowsForMode(childRows, subagentsActiveOnly),
+    [childRows, subagentsActiveOnly],
+  );
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -3977,6 +4010,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   {chatArchived ? "Unarchive" : "Archive"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    const next = !subagentsAlwaysShow;
+                    setSubagentsAlwaysShow(next);
+                    writeSubagentsAlwaysShow(next);
+                  }}
+                >
+                  <Check className={`size-4 ${subagentsAlwaysShow ? "" : "opacity-0"}`} />
+                  Always show subagents
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
                   <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
                   Casual view
@@ -4174,12 +4218,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
-          {childRows.length > 0 && (
+          {(visibleChildRows.length > 0 || subagentsAlwaysShow) && (
             <div
               className="pointer-events-auto mx-auto w-full pb-1.5"
               style={{ maxWidth: chatWidth }}
             >
-              <ChildList rows={childRows} onOpen={openChildChat} />
+              <ChildList
+                rows={childRows}
+                onOpen={openChildChat}
+                activeOnly={subagentsActiveOnly}
+                onActiveOnlyChange={setSubagentsActiveOnly}
+                alwaysShow={subagentsAlwaysShow}
+              />
             </div>
           )}
           {readOnlyThread ? (
