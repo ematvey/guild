@@ -172,6 +172,7 @@ dbDescribe("subagent tree tools", () => {
       agent_name: targetAgent.name,
       title: "quarterly report",
       status: "running",
+      task: "Write the report",
     });
     const childEvents = await threads.listEvents(orgId, childThread!.chat_id);
     expect(childEvents[0]?.event).toMatchObject({
@@ -335,6 +336,7 @@ dbDescribe("subagent tree tools", () => {
       agent_name: targetAgent.name,
       title: childThread.title,
       status: "running",
+      task: "next step",
     });
     const childEvents = await threads.listEvents(orgId, childThread.chat_id);
     expect(

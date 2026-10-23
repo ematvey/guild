@@ -322,6 +322,7 @@ export async function spawn(
     agent_name: target.name,
     title: thread.title ?? title,
     status: "running",
+    task,
   });
   return {
     thread_id: thread.id,
@@ -385,6 +386,7 @@ export async function send(
       agent_name: target.name,
       title: thread.title ?? "",
       status: "running",
+      task: text,
     });
   }
   return {

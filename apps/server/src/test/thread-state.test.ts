@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeThreadEvent, threadEventRowWire } from "../platform/domain/thread-events.js";
+import { normalizeThreadEvent, threadEventRowWire, threadEventWire } from "../platform/domain/thread-events.js";
 import { threadStateWire } from "../chats/thread-state.js";
 
 const FINAL_FRAME = readFileSync(new URL("./fixtures/m3-live/final-thread-state.txt", import.meta.url), "utf8").trim();
@@ -172,5 +172,28 @@ describe("ThreadState wire fidelity (live Rust bytes)", () => {
     });
     expect(plainWire).toContain('"model":"GLM-5.3-Flash"');
     expect(plainWire).not.toContain('"error"');
+  });
+});
+
+describe("child_spawned task field", () => {
+  const base = {
+    type: "child_spawned",
+    thread_id: "01900000-0000-7000-8000-000000000000",
+    run_id: "01900000-0000-7000-8000-000000000001",
+    chat_id: "01900000-0000-7000-8000-000000000002",
+    agent_name: "researcher",
+    title: "quarterly report",
+    status: "running",
+  };
+
+  it("parses an event without the field to an empty task", () => {
+    const event = normalizeThreadEvent(base);
+    expect(event).toMatchObject({ type: "child_spawned", task: "" });
+  });
+
+  it("round-trips the task text", () => {
+    const event = normalizeThreadEvent({ ...base, task: "Write the report" });
+    expect(event).toMatchObject({ type: "child_spawned", task: "Write the report" });
+    expect(threadEventWire(event!)).toContain('"task":"Write the report"');
   });
 });

@@ -677,6 +677,9 @@ pub enum ThreadEvent {
         agent_name: String,
         title: String,
         status: String,
+        /// the request the parent sent, so the parent transcript can show it
+        #[serde(default)]
+        task: String,
     },
     /// A child run ended: the delivery the parent drains at its next
     /// boundary (docs/specs/2026-10-22-agent-to-agent.md). Log-only: the
