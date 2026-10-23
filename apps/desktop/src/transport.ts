@@ -1023,6 +1023,8 @@ export type ThreadEvent =
       chat_id?: string | null;
       /** The child thread's agent name, for the row label. */
       agent_name?: string | null;
+      /** The child thread's title: the session name its spawner chose. */
+      title?: string | null;
       run_id: string;
       /** The child run's terminal status; `cancelled` is a user stop. */
       status: string;

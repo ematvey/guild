@@ -231,6 +231,7 @@ describe("child result delivery", () => {
       childAgents.rows[0]!.name,
       childAgents.rows[0]!.name,
     ]);
+    expect(delivered.rows.map((row) => row.payload.title)).toEqual(["Child child one result", "Child child two result"]);
 
     const runs = await stack.env.db.query("SELECT id FROM agent_runs WHERE thread_id = $1", [parent.threadId]);
     expect(runs.rows).toHaveLength(1);

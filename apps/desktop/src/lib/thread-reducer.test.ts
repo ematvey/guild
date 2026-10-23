@@ -954,6 +954,36 @@ describe("subagent rows (child_result)", () => {
     expect(child?.chatId).not.toBe(child?.threadId);
   });
 
+  it("names a spawn that ran inside a codemode script", () => {
+    const blocks = eventsToBlocks([
+      row(1, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        blocks: [{ type: "tool_call", id: "call-code", name: "codemode", arguments: '{"code":"tools.spawn(...)"}' }],
+      }),
+      row(2, {
+        type: "tool_result",
+        turn: 1,
+        step: 0,
+        call_id: "call-code",
+        name: "codemode",
+        content: "Script completed",
+        is_error: false,
+        meta: {
+          calls: [
+            { id: 1, name: "spawn", args: '{"agent":"Echo","name":"market scan","task":"look"}', status: "ok" },
+          ],
+        },
+      }),
+    ]);
+    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
+    expect(child?.agentName).toBe("Echo");
+    expect(child?.title).toBe("market scan");
+  });
+
   it("keeps the spawn tool result's chat_id when the child_result disagrees", () => {
     const blocks = eventsToBlocks([
       row(1, spawnStep()),

@@ -26,6 +26,8 @@ export interface ChildRow {
    *  tool result supplied one. */
   chatId?: string | null;
   agentName: string;
+  /** The session name its spawner chose; the row shows it first. */
+  title?: string | null;
   status: string;
   reason?: string;
   startedAt: string;
@@ -89,10 +91,27 @@ function childRowFromArgs(args: string, startedAt: string): ChildRow {
   const request = jsonObject(args);
   return {
     threadId: "",
-    agentName: stringOf(request, "agent", "agent_name", "agentName", "name") ?? "Subagent",
+    agentName: stringOf(request, "agent", "agent_name", "agentName") ?? "Subagent",
+    title: stringOf(request, "name", "title"),
     status: "running",
     startedAt,
   };
+}
+
+/** The spawn call inside a codemode script: the tool block is `codemode`, so
+ *  the target agent only exists in the nested call's arguments. */
+function nestedChildRequest(meta: Record<string, unknown> | null): Record<string, unknown> | null {
+  const calls = meta?.["calls"];
+  if (!Array.isArray(calls)) return null;
+  for (const call of calls) {
+    const entry = recordOf(call);
+    const name = entry?.["name"];
+    if (typeof name !== "string" || !isChildToolName(name)) continue;
+    const args = entry?.["args"];
+    const parsed = typeof args === "string" ? jsonObject(args) : recordOf(args);
+    if (parsed !== null) return parsed;
+  }
+  return null;
 }
 
 /** Child metadata from a spawn tool result. The server owns the wire shape;
@@ -105,8 +124,18 @@ export function childRowFromTool(t: ToolBlock, existing?: ChildRow): ChildRow | 
     ? { ...content, ...meta, ...nested }
     : { ...content, ...meta };
   const request = jsonObject(t.args);
-  const threadId = stringOf(source, "thread_id", "threadId") ?? existing?.threadId ?? "";
-  if (threadId === "" && existing === undefined) return null;
+  const nestedRequest = nestedChildRequest(meta);
+  const requestAgent =
+    stringOf(request, "agent", "agent_name", "agentName", "name") ??
+    stringOf(nestedRequest, "agent", "agent_name", "agentName", "name");
+  const requestThread =
+    stringOf(request, "thread_id", "threadId") ?? stringOf(nestedRequest, "thread_id", "threadId");
+  const threadId =
+    stringOf(source, "thread_id", "threadId") ?? requestThread ?? existing?.threadId ?? "";
+  // A nested spawn names its agent but not the thread it will get; the row
+  // exists from the moment the script reports the call.
+  const nestedChild = nestedRequest !== null && requestAgent !== undefined;
+  if (threadId === "" && existing === undefined && !nestedChild) return null;
   return {
     threadId,
     runId: stringOf(source, "run_id", "runId") ?? existing?.runId,
@@ -116,9 +145,14 @@ export function childRowFromTool(t: ToolBlock, existing?: ChildRow): ChildRow | 
       null,
     agentName:
       stringOf(source, "agent_name", "agentName", "agent") ??
-      stringOf(request, "agent", "agent_name", "agentName", "name") ??
+      requestAgent ??
       existing?.agentName ??
       "Subagent",
+    title:
+      stringOf(source, "title", "name") ??
+      stringOf(nestedRequest, "name", "title") ??
+      existing?.title ??
+      null,
     status: stringOf(source, "status") ?? existing?.status ?? "running",
     reason: stringOf(source, "reason") ?? existing?.reason,
     startedAt:
@@ -139,6 +173,7 @@ function childRowFromEvent(
     thread_id: string;
     chat_id?: string | null;
     agent_name?: string | null;
+    title?: string | null;
     run_id: string;
     status: string;
     reason?: string | null;
@@ -150,6 +185,7 @@ function childRowFromEvent(
     runId: ev.run_id,
     chatId: ev.chat_id ?? null,
     agentName: ev.agent_name || "Subagent",
+    title: ev.title || null,
     status: ev.status,
     reason: ev.reason ?? undefined,
     startedAt: createdAt,
@@ -457,7 +493,9 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           tb.meta = meta;
           tb.kind = kind;
           tb.endTs = row.created_at;
-          if (tb.child || isChildToolName(ev.name)) {
+          // A spawn nested in a codemode script leaves the block named
+          // `codemode`; its calls carry the target agent.
+          if (tb.child || isChildToolName(ev.name) || nestedChildRequest(recordOf(meta)) !== null) {
             const child = childRowFromTool(tb, tb.child);
             if (child) tb.child = child;
           }
@@ -998,7 +1036,9 @@ export function createThreadReducer(): ThreadReducer {
           tb.meta = meta;
           tb.kind = kind;
           tb.endTs = row.created_at;
-          if (tb.child || isChildToolName(ev.name)) {
+          // A spawn nested in a codemode script leaves the block named
+          // `codemode`; its calls carry the target agent.
+          if (tb.child || isChildToolName(ev.name) || nestedChildRequest(recordOf(meta)) !== null) {
             const child = childRowFromTool(tb, tb.child);
             if (child) tb.child = child;
           }

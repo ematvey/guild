@@ -18,15 +18,16 @@ function childRowOf(entry: ViewEntry): ChildListRow | null {
 }
 
 /** Every child row in transcript order, deduped by thread id: a
- *  `child_result` can repeat a spawn's row, and the newest copy wins. */
+ *  `child_result` can repeat a spawn's row, and the newest copy wins. A row
+ *  from a nested spawn has no thread id yet, so its block key stands in. */
 export function childRowsOf(entries: ViewEntry[]): ChildListRow[] {
   const rows = new Map<string, ChildListRow>();
   for (const entry of entries) {
     const child = childRowOf(entry);
     if (!child) continue;
-    const threadId = child.row.threadId;
-    rows.delete(threadId);
-    rows.set(threadId, { key: threadId, row: child.row });
+    const id = child.row.threadId === "" ? child.key : child.row.threadId;
+    rows.delete(id);
+    rows.set(id, { key: id, row: child.row });
   }
   return [...rows.values()];
 }
