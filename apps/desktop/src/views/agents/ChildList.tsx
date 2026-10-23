@@ -21,12 +21,43 @@ const COLLAPSED_KEY = "guild.subagentsCollapsed";
 /** The Active/All choice outlives a reload; active only is the default. */
 const ACTIVE_ONLY_KEY = "guild.subagentsActiveOnly";
 
+/** "Always show subagents" keeps the pane mounted with no visible rows. */
+export const SUBAGENTS_ALWAYS_SHOW_KEY = "guild.subagentsAlwaysShow";
+
 export function subagentsCollapsed(stored: string | null): boolean {
   return stored === "1";
 }
 
 export function subagentsActiveOnly(stored: string | null): boolean {
   return stored !== "0";
+}
+
+export function subagentsAlwaysShow(stored: string | null): boolean {
+  return stored === "1";
+}
+
+export function readSubagentsActiveOnly(): boolean {
+  try {
+    return subagentsActiveOnly(localStorage.getItem(ACTIVE_ONLY_KEY));
+  } catch {
+    return true;
+  }
+}
+
+export function readSubagentsAlwaysShow(): boolean {
+  try {
+    return subagentsAlwaysShow(localStorage.getItem(SUBAGENTS_ALWAYS_SHOW_KEY));
+  } catch {
+    return false;
+  }
+}
+
+export function writeSubagentsAlwaysShow(alwaysShow: boolean): void {
+  try {
+    localStorage.setItem(SUBAGENTS_ALWAYS_SHOW_KEY, alwaysShow ? "1" : "0");
+  } catch {
+    // A browser without storage keeps the choice for this session only.
+  }
 }
 
 function readCollapsed(): boolean {
@@ -46,11 +77,7 @@ function writeCollapsed(collapsed: boolean): void {
 }
 
 function readActiveOnly(): boolean {
-  try {
-    return subagentsActiveOnly(localStorage.getItem(ACTIVE_ONLY_KEY));
-  } catch {
-    return true;
-  }
+  return readSubagentsActiveOnly();
 }
 
 function writeActiveOnly(activeOnly: boolean): void {
@@ -78,20 +105,30 @@ export function childRowsOf(children: ChildRowData[]): ChildListRow[] {
   return rows.filter((entry) => !!entry.row.chatId);
 }
 
+/** The rows the current Active/All mode would show. */
+export function subagentRowsForMode(rows: ChildListRow[], activeOnly: boolean): ChildListRow[] {
+  return activeOnly ? rows.filter((entry) => entry.row.status !== "closed") : rows;
+}
+
 export function ChildList({
   rows,
   onOpen,
+  activeOnly: controlledActiveOnly,
+  onActiveOnlyChange,
+  alwaysShow = false,
 }: {
   rows: ChildListRow[];
   onOpen: (chatId: string) => void;
+  activeOnly?: boolean;
+  onActiveOnlyChange?: (activeOnly: boolean) => void;
+  alwaysShow?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
-  const [activeOnly, setActiveOnly] = useState(readActiveOnly);
-  if (rows.length === 0) return null;
+  const [localActiveOnly, setLocalActiveOnly] = useState(readActiveOnly);
+  const activeOnly = controlledActiveOnly ?? localActiveOnly;
+  if (rows.length === 0 && !alwaysShow) return null;
   const live = rows.filter((entry) => entry.row.status === "running" || entry.row.status === "queued").length;
-  const visible = activeOnly
-    ? rows.filter((entry) => entry.row.status !== "closed")
-    : rows;
+  const visible = subagentRowsForMode(rows, activeOnly);
   const toggle = () => {
     setCollapsed((prev) => {
       writeCollapsed(!prev);
@@ -100,7 +137,8 @@ export function ChildList({
   };
   const setMode = (nextActiveOnly: boolean) => {
     writeActiveOnly(nextActiveOnly);
-    setActiveOnly(nextActiveOnly);
+    setLocalActiveOnly(nextActiveOnly);
+    onActiveOnlyChange?.(nextActiveOnly);
   };
   const switchClass = (selected: boolean) =>
     cn(

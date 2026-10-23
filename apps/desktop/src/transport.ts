@@ -1049,6 +1049,9 @@ export type ThreadEvent =
       agent_name: string;
       /** The child thread's title: the session name its spawner chose. */
       title: string;
+      /** The request the parent sent to the child. Older events carry an
+       *  empty string. */
+      task: string;
       /** The child run's status at spawn time. */
       status: string;
     }
