@@ -105,6 +105,7 @@ import {
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
 import { ChildList, childRowsOf } from "./agents/ChildList";
+import { ChildThreadHeader } from "./agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -128,6 +129,7 @@ import {
   apiUrl,
   apiOnboarded,
   createChat,
+  fetchChatTree,
   fetchChatViewMode,
   fetchThreadEventsPage,
   getChatApproval,
@@ -153,6 +155,7 @@ import {
   type ApprovalPolicy,
   type ChatApprovalMode,
   type ChatSummary,
+  type ChatTree,
   type ChatViewMode,
   type MachineInfo,
   type MessageAttachmentMeta,
@@ -177,6 +180,7 @@ import {
   type ApprovalBlock,
   type ArtifactCard,
   type Block,
+  type ChildRow,
   type CodemodeCallRow,
   type CompactionBlock,
   type ThreadReducer,
@@ -1842,7 +1846,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // composer picks which, and the choice binds the chat.
   const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
   const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
-  const [threadAgentName, setThreadAgentName] = useState<string | null>(null);
   const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);
   const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
@@ -2088,6 +2091,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ]);
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
+  // Child rows come from the reducer's child events, not from tool blocks.
+  const [children, setChildren] = useState<ChildRow[]>([]);
+  // The open chat's thread-tree node: a child header renders from its parent.
+  const [childTree, setChildTree] = useState<ChatTree | null>(null);
   // Older-page loader: the server sends a bounded tail of the durable log in
   // each ThreadState frame, and scrolling to the top prepends the page
   // before the loaded window.
@@ -2269,11 +2276,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   useEffect(() => {
     if (chatId === null) {
       setAgentLocked(false);
-      setThreadAgentName(null);
       return;
     }
     let live = true;
-    setThreadAgentName(null);
     void chatAgentBinding(chatId)
       .then(({ agent, switcheable }) => {
         if (!live) return;
@@ -2281,13 +2286,35 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         if (agent === null) return;
         const bound = agent as Agent;
         setPickedAgent(bound);
-        setThreadAgentName(bound.name || null);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
   }, [chatId]);
+
+  // The tree node rides with the thread load: one request per chat id, then
+  // a refresh whenever the thread's event log moves so the status stays live.
+  const threadEventSeq = contextRevision?.chatId === chatId ? contextRevision.seq : -1;
+  useEffect(() => {
+    if (!chatId) {
+      setChildTree(null);
+      return;
+    }
+    let live = true;
+    const controller = new AbortController();
+    void fetchChatTree(chatId, controller.signal)
+      .then((tree) => {
+        if (live) setChildTree(tree);
+      })
+      .catch(() => {
+        if (live) setChildTree(null);
+      });
+    return () => {
+      live = false;
+      controller.abort();
+    };
+  }, [chatId, threadEventSeq]);
 
   useEffect(() => {
     listModels().then((m) => {
@@ -2471,6 +2498,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       oldestSeqRef.current = applied.oldestSeq;
       setHasMore(applied.hasMore);
       setBlocks(applied.blocks);
+      setChildren(applied.children);
     } catch {
       if (!controller.signal.aborted) toast.error("Could not load earlier messages");
     } finally {
@@ -2689,6 +2717,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     updateContextRevision(cid, state.events);
     setBusy(state.generating);
     setBlocks(applied.blocks);
+    setChildren(applied.children);
     hasMoreRef.current = applied.hasMore;
     oldestSeqRef.current = applied.oldestSeq;
     setHasMore(applied.hasMore);
@@ -2736,6 +2765,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
+      setChildren(opened.children);
       hasMoreRef.current = false;
       oldestSeqRef.current = -1;
       setHasMore(false);
@@ -2749,6 +2779,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
+      setChildren(opened.children);
       hasMoreRef.current = opened.hasMore;
       oldestSeqRef.current = opened.oldestSeq;
       setHasMore(opened.hasMore);
@@ -2906,6 +2937,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         if (cid === openChatIdRef.current) {
           updateContextRevision(cid, events);
           setBlocks(applied.blocks);
+          setChildren(applied.children);
           hasMoreRef.current = applied.hasMore;
           oldestSeqRef.current = applied.oldestSeq;
           setHasMore(applied.hasMore);
@@ -2932,7 +2964,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onFrame: (frame) => {
         if (frame.chat_id === openChatIdRef.current) {
           const applied = reducerRef.current.applyFrame(frame.event);
-          if (!applied.stale) setBlocks(applied.blocks);
+          if (!applied.stale) {
+            setBlocks(applied.blocks);
+            setChildren(applied.children);
+          }
           if (frame.event.type === "error") {
             toast.error(frame.event.message ?? "Model error");
           }
@@ -3278,9 +3313,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // omit it, so it reads as read-only and never falls back to "New chat".
   const readOnlyThread = isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
   const activeTitle = readOnlyThread
-    ? threadAgentName
-      ? `${threadAgentName} · subagent thread`
-      : "Subagent thread"
+    ? childTree?.title ?? "Subagent thread"
     : activeChat?.title ?? "New chat";
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
@@ -3420,13 +3453,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       }),
     [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex],
   );
-  // Child rows live in a pinned strip above the composer, so they are
-  // collected from every block regardless of the transcript view (casual
-  // folds spawn tool blocks into the work summary).
-  const childRows = useMemo(
-    () => childRowsOf(viewEntries(blocks, "technical")),
-    [blocks],
-  );
+  // Child rows live in a pinned strip above the composer and come from the
+  // reducer's live child list, independent of the transcript view.
+  const childRows = useMemo(() => childRowsOf(children), [children]);
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -3884,13 +3913,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </DesktopTooltip>
             )
           )}
-          <span className="min-w-0 flex-1 truncate font-medium">
-            {threadLoading && blocks.length === 0 ? (
-              <Skeleton className="h-4 w-28 rounded-md" />
-            ) : (
-              activeTitle
-            )}
-          </span>
+          {readOnlyThread && childTree?.parent ? (
+            <ChildThreadHeader tree={childTree} onBack={openChat} />
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {threadLoading && blocks.length === 0 ? (
+                <Skeleton className="h-4 w-28 rounded-md" />
+              ) : (
+                activeTitle
+              )}
+            </span>
+          )}
           {chatId && !readOnlyThread && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
