@@ -12,6 +12,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **An agent has an identity and a directory (2026-10-23).** `agents.description`
+  is owner-editable, max 500 characters, and becomes the first line of the
+  agent's own prompt. Every agent may rewrite its own description with
+  `set_description`, which is outside the tool allowlist. The `subagents` group
+  gains `list_agents`: the agents the caller's user may use, which is every
+  non-personal agent visible to that user plus that user's own personal agent -
+  another user's personal agent never appears. A failed spawn names the
+  directory tool. Child chats stay out of every chat list through one shared
+  execution-transcript predicate; the WebSocket `thread_list` push was missing
+  it, which is how they reached the sidebar. `child_result` and the spawn/send
+  result carry `chat_id`, so the child row opens the real child chat instead of
+  treating a thread id as a chat id. Subagent rows render as an indented block
+  with a count, and a child thread opens read-only. Spec decisions 30-37.
+
 - **The mobile drawer carries the tab rail (2026-10-23).** The drawer showed
   the chats list only, so mobile had no route to inbox, agents, projects,
   activity or settings. It now renders the same rail beside the same panel
