@@ -3480,6 +3480,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // Navigation: the section pick owns its /settings/<section> address, so
     // back/forward walks the sections and a reload restores the pick.
     pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
+    // The section renders in the main column, behind the drawer.
+    if (isMobile) setOpen(false);
   };
   const openSettingsDetail = (detail: string | null) => {
     // Navigation: a sub-page opens on /settings/<section>/<detail>; closing
@@ -3560,10 +3562,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [route.chatId, chats]);
 
   // The Settings tab's main pane renders the picked section inline instead
-  // of the chat thread (desktop only — the mobile drawer has no settings
-  // tab).
+  // of the chat thread — on mobile too, so the drawer's Settings tab leads
+  // to a page (the drawer closes on the section pick).
   const inlineSettings =
-    !isMobile && sidebarTab === "settings" && settingsSection !== null ? (
+    sidebarTab === "settings" && settingsSection !== null ? (
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <SettingsSectionPane
           sectionId={settingsSection}
