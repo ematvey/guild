@@ -436,3 +436,10 @@ parent-to-child only.
     opening a second one, and a startup sweep fails runs whose chat has shown
     no event for ten minutes, writing a `child_result` with reason `orphaned`
     so the pane stops counting.
+50. **A delivery runs where the conversation lives.** The pi-durable
+    conversation handle is invocation-bound: only the worker that owns a chat
+    can open it. A child's completion therefore hops worker → server →
+    owning worker (`remote-deliver-steer` → supervisor `deliverSteer`) and
+    never calls `conversationForChat` for a foreign chat. A specialist ends
+    its turn after a spawn and answers when the result arrives; polling
+    `read_thread` wastes a turn and delays the answer.
