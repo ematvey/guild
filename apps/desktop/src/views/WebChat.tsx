@@ -104,7 +104,7 @@ import {
   type AgentsRoute,
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
-import { ChildList, groupChildEntries } from "./agents/ChildList";
+import { ChildList, childRowsOf } from "./agents/ChildList";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -2766,8 +2766,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
   };
 
-  // A stable opener for the memoized transcript: the child row's chevron
-  // must not force the whole block list to re-render on every composer key.
+  // A stable opener for the pinned child list: the chevron must not rebuild
+  // the rows on every composer key.
   const openChatRef = useRef(openChat);
   openChatRef.current = openChat;
   const openChildChat = useCallback((id: string) => openChatRef.current(id), []);
@@ -3354,12 +3354,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const lastBlockIndex = blocks.length - 1;
   const transcriptEntries = useMemo(
     () =>
-      groupChildEntries(displayEntries).map((g) => {
-        if (g.kind === "child") {
-          return <ChildList key={g.key} rows={g.rows} onOpen={openChildChat} />;
-        }
-        const e = g.entry;
-        const i = g.index;
+      displayEntries.map((e, i) => {
         return (
           e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
           e.kind === "work" ? (
@@ -3423,7 +3418,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           )
         );
       }),
-    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
+    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex],
+  );
+  // Child rows live in a pinned strip above the composer, so they are
+  // collected from every block regardless of the transcript view (casual
+  // folds spawn tool blocks into the work summary).
+  const childRows = useMemo(
+    () => childRowsOf(viewEntries(blocks, "technical")),
+    [blocks],
   );
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
@@ -4113,6 +4115,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
+          {childRows.length > 0 && (
+            <div
+              className="pointer-events-auto mx-auto w-full pb-1.5"
+              style={{ maxWidth: chatWidth }}
+            >
+              <ChildList rows={childRows} onOpen={openChildChat} />
+            </div>
+          )}
           {readOnlyThread ? (
             <div
               className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"

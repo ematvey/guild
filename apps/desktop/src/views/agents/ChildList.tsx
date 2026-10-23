@@ -1,6 +1,6 @@
-// A block of consecutive child rows (decision 37): one indented, full-width
-// list under the turn that spawned the children, with a compact header.
-// Any non-child entry between two rows starts a new list.
+// Child rows are collected from the transcript and pinned above the composer:
+// the children of the current chat stay visible while the conversation
+// scrolls, and the thread body keeps only the turn's text and tool cards.
 
 import type { ViewEntry } from "../worked-for-block";
 import type { ChildRow as ChildRowData } from "../../lib/thread-reducer";
@@ -11,35 +11,24 @@ export interface ChildListRow {
   row: ChildRowData;
 }
 
-export type ChildEntryGroup =
-  | { kind: "child"; key: string; rows: ChildListRow[] }
-  | { kind: "entry"; entry: ViewEntry; index: number };
-
 function childRowOf(entry: ViewEntry): ChildListRow | null {
   if (entry.kind !== "plain" || entry.b.kind !== "tool") return null;
   const child = entry.b.tool?.child;
   return child ? { key: entry.b.key, row: child } : null;
 }
 
-/** Fold consecutive child rows into list groups; every other entry stays
- *  as its own group so the transcript keeps its order. */
-export function groupChildEntries(entries: ViewEntry[]): ChildEntryGroup[] {
-  const groups: ChildEntryGroup[] = [];
-  let current: Extract<ChildEntryGroup, { kind: "child" }> | null = null;
-  entries.forEach((entry, index) => {
+/** Every child row in transcript order, deduped by thread id: a
+ *  `child_result` can repeat a spawn's row, and the newest copy wins. */
+export function childRowsOf(entries: ViewEntry[]): ChildListRow[] {
+  const rows = new Map<string, ChildListRow>();
+  for (const entry of entries) {
     const child = childRowOf(entry);
-    if (child) {
-      if (current === null) {
-        current = { kind: "child", key: `children-${child.key}`, rows: [] };
-        groups.push(current);
-      }
-      current.rows.push(child);
-      return;
-    }
-    current = null;
-    groups.push({ kind: "entry", entry, index });
-  });
-  return groups;
+    if (!child) continue;
+    const threadId = child.row.threadId;
+    rows.delete(threadId);
+    rows.set(threadId, { key: threadId, row: child.row });
+  }
+  return [...rows.values()];
 }
 
 export function ChildList({
@@ -49,13 +38,14 @@ export function ChildList({
   rows: ChildListRow[];
   onOpen: (chatId: string) => void;
 }) {
+  if (rows.length === 0) return null;
   return (
-    <div className="my-2 w-full">
-      <div className="mb-1 flex items-center gap-2 pl-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="w-full overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+      <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         <span>Subagents</span>
         <span className="tabular-nums">{rows.length}</span>
       </div>
-      <div className="ml-1 border-l border-border pl-1.5">
+      <div className="max-h-56 overflow-y-auto px-1.5 pb-1.5">
         {rows.map(({ key, row }) => (
           <ChildRow key={key} row={row} onOpen={onOpen} />
         ))}
