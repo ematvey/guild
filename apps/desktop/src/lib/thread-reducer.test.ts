@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   artifactCardOf,
   createThreadReducer,
+  deriveThread,
   eventsToBlocks,
   reconcilePendingSend,
   threadStateBlocks,
@@ -865,8 +866,26 @@ describe("older-page loading (bounded tail + prepend)", () => {
   });
 });
 
-describe("subagent rows (child_result)", () => {
-  const spawnStep = (name = "spawn"): ThreadEvent => ({
+describe("subagent rows (child events)", () => {
+  const spawned = (over: Partial<Extract<ThreadEvent, { type: "child_spawned" }>> = {}): ThreadEvent => ({
+    type: "child_spawned",
+    thread_id: "child-thread",
+    run_id: "child-run",
+    chat_id: "child-chat",
+    agent_name: "Researcher",
+    title: "market scan",
+    status: "running",
+    ...over,
+  });
+  const result = (over: Partial<Extract<ThreadEvent, { type: "child_result" }>> = {}): ThreadEvent => ({
+    type: "child_result",
+    thread_id: "child-thread",
+    run_id: "child-run",
+    status: "succeeded",
+    final_text: "done",
+    ...over,
+  });
+  const spawnTool = (name = "spawn"): ThreadEvent => ({
     type: "assistant_message",
     turn: 1,
     step: 0,
@@ -874,143 +893,84 @@ describe("subagent rows (child_result)", () => {
     usage,
     blocks: [{ type: "tool_call", id: "call-spawn", name, arguments: '{"agent":"Researcher","task":"look"}' }],
   });
-  const spawnResult = (meta: Record<string, unknown>): ThreadEvent => ({
-    type: "tool_result",
-    turn: 1,
-    step: 0,
-    call_id: "call-spawn",
-    name: "spawn",
-    content: "",
-    is_error: false,
-    meta,
-  });
-  const childResult = (status: string, chatId?: string): ThreadEvent => ({
-    type: "child_result",
-    thread_id: "child-thread",
-    ...(chatId ? { chat_id: chatId } : {}),
-    run_id: "child-run",
-    status,
-    final_text: "done",
+
+  it("inserts a row from child_spawned", () => {
+    const derived = deriveThread([row(1, spawned())]);
+    expect(derived.children).toHaveLength(1);
+    expect(derived.children[0]).toMatchObject({
+      threadId: "child-thread",
+      runId: "child-run",
+      chatId: "child-chat",
+      agentName: "Researcher",
+      title: "market scan",
+      status: "running",
+      startedAt: "t",
+    });
   });
 
-  it("turns a spawn result into one child row and updates it from child_result", () => {
-    const blocks = eventsToBlocks([
-      row(1, spawnStep()),
-      row(2, spawnResult({
-        thread_id: "child-thread",
-        chat_id: "child-chat",
-        run_id: "child-run",
-        agent_name: "Researcher",
-        started_at: "2026-10-22T10:00:00.000Z",
-        status: "running",
-      })),
-      row(3, childResult("succeeded")),
+  it("updates the same row from child_result", () => {
+    const derived = deriveThread([
+      row(1, spawned()),
+      row(2, result({ status: "failed", reason: "boom", title: "renamed", agent_name: "Echo" })),
     ]);
-    const tools = blocks.filter((b) => b.kind === "tool");
-    expect(tools).toHaveLength(1);
-    const child = tools[0]!.tool?.child;
-    expect(child).toMatchObject({
+    expect(derived.children).toHaveLength(1);
+    expect(derived.children[0]).toMatchObject({
       threadId: "child-thread",
       chatId: "child-chat",
-      runId: "child-run",
-      agentName: "Researcher",
-      status: "succeeded",
-      startedAt: "2026-10-22T10:00:00.000Z",
+      agentName: "Echo",
+      title: "renamed",
+      status: "failed",
+      reason: "boom",
+      startedAt: "t",
+      finishedAt: "t",
     });
-    expect(child?.finishedAt).toBe("t");
   });
 
-  it("matches the incremental reducer to the full derivation", () => {
-    const events = [
-      row(1, spawnStep()),
-      row(2, spawnResult({ thread_id: "child-thread", chat_id: "child-chat", agent_name: "Researcher", status: "running" })),
-      row(3, childResult("failed")),
-    ];
-    const r = createThreadReducer();
-    r.open("chat");
-    const applied = r.applyState(state("chat", 3, events));
-    expect(applied.blocks).toEqual(eventsToBlocks(events));
-    expect(applied.blocks.find((b) => b.kind === "tool")?.tool?.child?.status).toBe("failed");
-  });
-
-  it("creates a fallback row when the spawn result is outside the loaded window", () => {
-    const blocks = eventsToBlocks([row(9, childResult("cancelled"))]);
-    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
-    expect(child).toMatchObject({
+  it("creates a row from child_result when no spawn event is loaded", () => {
+    const derived = deriveThread([row(9, result({ status: "cancelled", chat_id: "child-chat" }))]);
+    expect(derived.children).toHaveLength(1);
+    expect(derived.children[0]).toMatchObject({
       threadId: "child-thread",
-      runId: "child-run",
-      chatId: null,
+      chatId: "child-chat",
       status: "cancelled",
     });
   });
 
-  it("reads chat_id from the event and never uses the thread id as a chat id", () => {
-    const withChat = eventsToBlocks([row(9, childResult("succeeded", "child-chat"))]);
-    expect(withChat.find((b) => b.kind === "tool")?.tool?.child?.chatId).toBe("child-chat");
-
-    const withoutChat = eventsToBlocks([row(9, childResult("succeeded"))]);
-    const child = withoutChat.find((b) => b.kind === "tool")?.tool?.child;
-    expect(child?.chatId).toBeNull();
-    expect(child?.chatId).not.toBe(child?.threadId);
-  });
-
-  it("names a spawn that ran inside a codemode script", () => {
-    const blocks = eventsToBlocks([
-      row(1, {
-        type: "assistant_message",
-        turn: 1,
-        step: 0,
-        model: "m",
-        usage,
-        blocks: [{ type: "tool_call", id: "call-code", name: "codemode", arguments: '{"code":"tools.spawn(...)"}' }],
-      }),
+  it("never creates a row from a tool block without an event", () => {
+    const derived = deriveThread([
+      row(1, spawnTool()),
       row(2, {
         type: "tool_result",
         turn: 1,
         step: 0,
-        call_id: "call-code",
-        name: "codemode",
-        content: "Script completed",
+        call_id: "call-spawn",
+        name: "spawn",
+        content: "",
         is_error: false,
-        meta: {
-          calls: [
-            { id: 1, name: "spawn", args: '{"agent":"Echo","name":"market scan","task":"look"}', status: "ok" },
-          ],
-        },
+        meta: { thread_id: "child-thread", chat_id: "child-chat", status: "running" },
       }),
     ]);
-    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
-    expect(child?.agentName).toBe("Echo");
-    expect(child?.title).toBe("market scan");
+    expect(derived.children).toEqual([]);
   });
 
-  it("keeps the spawn tool result's chat_id when the child_result disagrees", () => {
-    const blocks = eventsToBlocks([
-      row(1, spawnStep()),
-      row(2, spawnResult({
-        thread_id: "child-thread",
-        chat_id: "spawn-chat",
-        agent_name: "Researcher",
-        status: "running",
-      })),
-      row(3, childResult("succeeded", "event-chat")),
+  it("keeps two children of the same agent separate", () => {
+    const derived = deriveThread([
+      row(1, spawned({ thread_id: "child-1", chat_id: "chat-1", title: "first" })),
+      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
     ]);
-    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
-    expect(child?.chatId).toBe("spawn-chat");
-    expect(child?.chatId).not.toBe("child-thread");
+    expect(derived.children).toHaveLength(2);
+    expect(derived.children.map((c) => c.chatId)).toEqual(["chat-1", "chat-2"]);
   });
 
-  it("fills the chat id from the event when the spawn result did not carry one", () => {
-    const blocks = eventsToBlocks([
-      row(1, spawnStep()),
-      row(2, spawnResult({
-        thread_id: "child-thread",
-        agent_name: "Researcher",
-        status: "running",
-      })),
-      row(3, childResult("succeeded", "event-chat")),
-    ]);
-    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
-    expect(child?.chatId).toBe("event-chat");
+  it("matches the incremental reducer's children to the full derivation", () => {
+    const events = [
+      row(1, spawned()),
+      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
+      row(3, result({ status: "failed" })),
+    ];
+    const r = createThreadReducer();
+    r.open("chat");
+    const applied = r.applyState(state("chat", 3, events));
+    expect(applied.children).toEqual(deriveThread(events).children);
   });
 });

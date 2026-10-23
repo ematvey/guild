@@ -484,6 +484,62 @@ export function registerAgentRoutes(
     return agentTurn(req, reply, user, agent, await store.ensureDefaultThread(agentId, user.id));
   });
 
+  /** The chat header's tree facts: the chat's thread node, its latest run
+   *  status and its parent chat. A chat with no thread row is a plain chat. */
+  const chatTree = async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    const chat = await chats.chats.getChat(user.org_id, chatId, user);
+    const res = await infra.pool.query<{
+      kind: string;
+      title: string;
+      depth: number;
+      agent_id: string;
+      agent_name: string;
+      run_status: string | null;
+      parent_chat_id: string | null;
+      parent_title: string | null;
+    }>(
+      `SELECT t.kind, t.title, t.depth, t.agent_id, a.name AS agent_name,
+              (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
+               ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
+              p.chat_id AS parent_chat_id, p.title AS parent_title
+       FROM agent_threads t
+       JOIN agents a ON a.id = t.agent_id
+       LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+       WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) {
+      return sendJson(reply, {
+        chat_id: chatId,
+        kind: "chat",
+        title: chat.title ?? "",
+        agent_id: null,
+        agent_name: null,
+        status: null,
+        depth: 0,
+        parent: null,
+      });
+    }
+    return sendJson(reply, {
+      chat_id: chatId,
+      kind: row.kind,
+      title: row.title,
+      agent_id: row.agent_id,
+      agent_name: row.agent_name,
+      status: row.run_status,
+      depth: Number(row.depth),
+      parent:
+        row.parent_chat_id === null
+          ? null
+          : { chat_id: row.parent_chat_id, title: row.parent_title ?? "" },
+    });
+  };
+  app.get("/api/v1/chats/:id/tree", chatTree);
+  app.get("/api/v1/threads/:id/tree", chatTree);
+
   app.get("/api/v1/agents/:id/files", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
