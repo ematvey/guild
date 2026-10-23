@@ -668,6 +668,16 @@ pub enum ThreadEvent {
     /// thread shows it as a terminal error card; excluded from model-facing
     /// history derivation.
     TurnError { message: String },
+    /// Written to the parent chat when a spawn or send posts a child turn,
+    /// so the row exists before the child finishes.
+    ChildSpawned {
+        thread_id: Uuid,
+        run_id: Uuid,
+        chat_id: Uuid,
+        agent_name: String,
+        title: String,
+        status: String,
+    },
     /// A child run ended: the delivery the parent drains at its next
     /// boundary (docs/specs/2026-10-22-agent-to-agent.md). Log-only: the
     /// delivery reaches the parent as a user message, not as this event.

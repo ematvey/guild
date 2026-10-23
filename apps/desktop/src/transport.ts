@@ -825,6 +825,28 @@ export interface ChatSummary {
   last_activity_at?: string;
 }
 
+/** One node of the thread tree: the open chat, its kind, status and parent. */
+export interface ChatTree {
+  chat_id: string;
+  kind: string;
+  title: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  status: string | null;
+  depth: number;
+  parent: { chat_id: string; title: string } | null;
+}
+
+/** The open chat's position in the thread tree, for the child thread header. */
+export async function fetchChatTree(chatId: string, signal: AbortSignal): Promise<ChatTree | null> {
+  const response = await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(chatId)}/tree`), {
+    headers: { authorization: `Bearer ${getToken()}` },
+    signal,
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
 export interface MachineInfo {
   machine_id: string;
   name: string;
@@ -1015,6 +1037,21 @@ export type ThreadEvent =
       expired?: boolean;
     }
   | { type: "turn_error"; message: string }
+  | {
+      type: "child_spawned";
+      /** The child agent thread id. */
+      thread_id: string;
+      /** The child run id. */
+      run_id: string;
+      /** The durable chat id the child thread projects into. */
+      chat_id: string;
+      /** The child thread's agent name, for the row label. */
+      agent_name: string;
+      /** The child thread's title: the session name its spawner chose. */
+      title: string;
+      /** The child run's status at spawn time. */
+      status: string;
+    }
   | {
       type: "child_result";
       /** The child agent thread id. */
