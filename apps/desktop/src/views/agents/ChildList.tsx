@@ -17,19 +17,42 @@ function childRowOf(entry: ViewEntry): ChildListRow | null {
   return child ? { key: entry.b.key, row: child } : null;
 }
 
-/** Every child row in transcript order, deduped by thread id: a
- *  `child_result` can repeat a spawn's row, and the newest copy wins. A row
- *  from a nested spawn has no thread id yet, so its block key stands in. */
+/** Every child row in transcript order, one row per child. A spawn call
+ *  inside a codemode script reports its target before the child has a thread
+ *  id; the later `child_result` supplies the id, chat, title and status, so
+ *  the two are merged instead of listed twice. Rows are matched by agent name
+ *  in arrival order, then by thread id. */
 export function childRowsOf(entries: ViewEntry[]): ChildListRow[] {
-  const rows = new Map<string, ChildListRow>();
+  const rows: ChildListRow[] = [];
+  const pending = new Map<string, number>();
   for (const entry of entries) {
     const child = childRowOf(entry);
     if (!child) continue;
-    const id = child.row.threadId === "" ? child.key : child.row.threadId;
-    rows.delete(id);
-    rows.set(id, { key: id, row: child.row });
+    const row = child.row;
+    if (row.threadId === "") {
+      const existing = pending.get(row.agentName);
+      if (existing === undefined) {
+        pending.set(row.agentName, rows.length);
+        rows.push({ key: child.key, row });
+      } else {
+        rows[existing] = { key: rows[existing]!.key, row: { ...rows[existing]!.row, ...row } };
+      }
+      continue;
+    }
+    const waiting = pending.get(row.agentName);
+    if (waiting !== undefined) {
+      pending.delete(row.agentName);
+      rows[waiting] = { key: rows[waiting]!.key, row: { ...rows[waiting]!.row, ...row } };
+      continue;
+    }
+    const known = rows.findIndex((candidate) => candidate.row.threadId === row.threadId);
+    if (known >= 0) {
+      rows[known] = { key: rows[known]!.key, row: { ...rows[known]!.row, ...row } };
+    } else {
+      rows.push({ key: row.threadId, row });
+    }
   }
-  return [...rows.values()];
+  return rows;
 }
 
 export function ChildList({

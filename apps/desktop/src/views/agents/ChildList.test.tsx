@@ -47,13 +47,13 @@ describe("childRowsOf", () => {
     expect(rows.map((r) => r.key)).toEqual(["thread-a", "thread-b"]);
   });
 
-  it("dedupes by thread id and keeps the newest copy last", () => {
+  it("dedupes by thread id and keeps the child in its spawn position", () => {
     const rows = childRowsOf([
       childEntry("a", "thread-a"),
       childEntry("b", "thread-b"),
       childEntry("c", "thread-a"),
     ]);
-    expect(rows.map((r) => r.row.threadId)).toEqual(["thread-b", "thread-a"]);
+    expect(rows.map((r) => r.row.threadId)).toEqual(["thread-a", "thread-b"]);
   });
 
   it("returns no rows when there are no children", () => {
@@ -121,5 +121,47 @@ describe("child row labels", () => {
       />,
     );
     expect(html).toContain("Scout");
+  });
+});
+
+function childEntryWith(key: string, row: Record<string, unknown>): ViewEntry {
+  return {
+    kind: "plain",
+    b: {
+      kind: "tool",
+      key,
+      tool: { callId: key, name: "codemode", args: "", executor: "server", status: "done", child: row },
+    },
+    i: 0,
+  } as unknown as ViewEntry;
+}
+
+describe("child row merging", () => {
+  const child = (over: Record<string, unknown>) => ({
+    threadId: "",
+    agentName: "Echo",
+    status: "running",
+    startedAt: "2026-10-23T00:00:00Z",
+    ...over,
+  });
+
+  it("merges a spawn call with its later child_result", () => {
+    const rows = childRowsOf([
+      childEntryWith("a", child({ title: "market scan" })),
+      childEntryWith("b", child({ threadId: "thread-a", chatId: "chat-a", title: "market scan", status: "succeeded" })),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.row).toMatchObject({ threadId: "thread-a", chatId: "chat-a", status: "succeeded" });
+  });
+
+  it("keeps two children of the same agent apart", () => {
+    const rows = childRowsOf([
+      childEntryWith("a", child({ title: "first" })),
+      childEntryWith("b", child({ title: "second" })),
+      childEntryWith("c", child({ threadId: "thread-1", chatId: "chat-1", title: "first", status: "succeeded" })),
+      childEntryWith("d", child({ threadId: "thread-2", chatId: "chat-2", title: "second", status: "succeeded" })),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.row.chatId)).toEqual(["chat-1", "chat-2"]);
   });
 });
