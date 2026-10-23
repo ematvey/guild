@@ -106,6 +106,7 @@ dbDescribe("subagent tree tools", () => {
     const context = await subagentsContextForChat({
       pool: env!.db,
       store,
+      threads,
       agent: parentAgent,
       chatId: args.thread.chat_id,
       runtime: args.fake.runtime,
@@ -160,6 +161,24 @@ dbDescribe("subagent tree tools", () => {
     expect(childThread?.title).toBe("quarterly report");
     expect(childThread?.title_locked).toBe(true);
     expect(fake.submitted).toEqual([{ chatId: childThread!.chat_id, content: "Write the report" }]);
+
+    const parentEvents = await threads.listEvents(orgId, thread.chat_id);
+    const spawned = parentEvents.find((row) => row.event.type === "child_spawned");
+    expect(spawned?.event).toMatchObject({
+      type: "child_spawned",
+      thread_id: result.thread_id,
+      run_id: result.run_id,
+      chat_id: result.chat_id,
+      agent_name: targetAgent.name,
+      title: "quarterly report",
+      status: "running",
+    });
+    const childEvents = await threads.listEvents(orgId, childThread!.chat_id);
+    expect(childEvents[0]?.event).toMatchObject({
+      type: "user_message",
+      content: "Write the report",
+      attachments: [],
+    });
   });
 
   it("falls back to the task's first line when the spawner gives no name", async () => {
@@ -216,6 +235,17 @@ dbDescribe("subagent tree tools", () => {
       code: "target_not_found",
       message: expect.stringContaining("list_agents"),
     });
+
+    const failedThread = await store.createThread(parentAgent.id, owner.id, "Failed spawn");
+    const failedRun = await makeRun({ agentId: parentAgent.id, threadId: failedThread.id });
+    const failedContext = await contextFor({ thread: failedThread, run: failedRun, fake });
+    const before = await threads.listEvents(orgId, failedThread.chat_id);
+    await expect(spawn(failedContext, { agent: "No Such Agent", task: "x" })).rejects.toMatchObject({
+      code: "target_not_found",
+    });
+    const after = await threads.listEvents(orgId, failedThread.chat_id);
+    expect(after).toHaveLength(before.length);
+    expect(after.some((row) => row.event.type === "child_spawned")).toBe(false);
   });
 
   it("list_agents is the caller user's directory and never leaks another personal agent", async () => {
@@ -293,6 +323,25 @@ dbDescribe("subagent tree tools", () => {
     expect(run.thread_id).toBe(child.thread_id);
     expect(run.parent_run_id).toBe(parentRun.id);
     expect(fake.submitted.at(-1)).toEqual({ chatId: childThread.chat_id, content: "next step" });
+
+    const parentEvents = await threads.listEvents(orgId, thread.chat_id);
+    const spawned = parentEvents.filter((row) => row.event.type === "child_spawned");
+    expect(spawned).toHaveLength(2);
+    expect(spawned.at(-1)?.event).toMatchObject({
+      type: "child_spawned",
+      thread_id: child.thread_id,
+      run_id: sent.run_id,
+      chat_id: childThread.chat_id,
+      agent_name: targetAgent.name,
+      title: childThread.title,
+      status: "running",
+    });
+    const childEvents = await threads.listEvents(orgId, childThread.chat_id);
+    expect(
+      childEvents
+        .filter((row) => row.event.type === "user_message")
+        .map((row) => (row.event.type === "user_message" ? row.event.content : "")),
+    ).toEqual(["start", "next step"]);
 
     await store.closeSubtree(child.thread_id);
     await expect(send(context, { thread_id: child.thread_id, text: "too late" })).rejects.toMatchObject({

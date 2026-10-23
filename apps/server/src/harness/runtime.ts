@@ -1577,6 +1577,7 @@ export class GuildRuntime {
     const subagents = await subagentsContextForChat({
       pool: this.pool,
       store: this.agents,
+      threads: this.threads,
       agent,
       chatId,
       maxDepth: this.config.agentMaxDepth,

@@ -13,6 +13,8 @@ import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { isUuid, uuidv7 } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { readThreadTranscript } from "./thread-read.js";
 import type { Agent, AgentRun, AgentThread } from "./types.js";
 
@@ -39,6 +41,7 @@ export interface SubagentsRuntime {
 export interface SubagentsToolContext {
   pool: PlatformPool;
   store: AgentStore;
+  threads: ThreadStore;
   /** The calling agent (the parent). */
   agent: Agent;
   parentRun: AgentRun;
@@ -291,6 +294,7 @@ export async function spawn(
     started_at: new Date().toISOString(),
   });
   try {
+    await context.threads.appendEvent(thread.chat_id, userMessageEvent(task));
     await context.runtime.submitTurn(thread.chat_id, target.org_id, {
       orgId: target.org_id,
       requestId: uuidv7(),
@@ -310,6 +314,15 @@ export async function spawn(
       .catch(() => {});
     throw new SubagentError("submit_failed", message);
   }
+  await context.threads.appendEvent(parentThread.chat_id, {
+    type: "child_spawned",
+    thread_id: thread.id,
+    run_id: childRun.id,
+    chat_id: thread.chat_id,
+    agent_name: target.name,
+    title: thread.title ?? title,
+    status: "running",
+  });
   return {
     thread_id: thread.id,
     run_id: childRun.id,
@@ -342,6 +355,7 @@ export async function send(
     started_at: new Date().toISOString(),
   });
   try {
+    await context.threads.appendEvent(thread.chat_id, userMessageEvent(text));
     await context.runtime.submitTurn(thread.chat_id, target.org_id, {
       orgId: target.org_id,
       requestId: uuidv7(),
@@ -360,6 +374,18 @@ export async function send(
       })
       .catch(() => {});
     throw new SubagentError("submit_failed", message);
+  }
+  const parentThread = await context.store.threadById(callerThreadId(context));
+  if (parentThread !== null) {
+    await context.threads.appendEvent(parentThread.chat_id, {
+      type: "child_spawned",
+      thread_id: thread.id,
+      run_id: run.id,
+      chat_id: thread.chat_id,
+      agent_name: target.name,
+      title: thread.title ?? "",
+      status: "running",
+    });
   }
   return {
     thread_id: thread.id,
@@ -471,6 +497,7 @@ export async function close(
 export async function subagentsContextForChat(args: {
   pool: PlatformPool;
   store: AgentStore;
+  threads: ThreadStore;
   agent: Agent;
   chatId: string;
   runtime: SubagentsRuntime;
@@ -484,6 +511,7 @@ export async function subagentsContextForChat(args: {
   return {
     pool: args.pool,
     store: args.store,
+    threads: args.threads,
     agent: args.agent,
     parentRun,
     requester,
