@@ -1042,6 +1042,24 @@ describe("viewEntries (casual work runs)", () => {
     const blocks = [user, tool(1), tool(2), text(3)];
     expect(shape(blocks, "technical")).toEqual(["u", "t1", "t2", "x3"]);
   });
+
+  it("drops a child span in casual and keeps it in technical", () => {
+    const child: Block = {
+      kind: "child",
+      text: "",
+      key: "child:child-thread",
+      child: {
+        threadId: "child-thread",
+        agentName: "Researcher",
+        status: "succeeded",
+        startedAt: "2026-10-15T12:00:00.000Z",
+        finishedAt: "2026-10-15T12:00:01.000Z",
+      },
+    };
+    const blocks = [user, tool(1), child, text(2)];
+    expect(shape(blocks, "casual")).toEqual(["u", "work(t1)", "x2"]);
+    expect(shape(blocks, "technical")).toEqual(["u", "t1", "child:child-thread", "x2"]);
+  });
 });
 
 describe("workRunLabel (casual worked-for entry)", () => {

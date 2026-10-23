@@ -28,6 +28,10 @@ export function viewEntries(blocks: Block[], view: ChatViewMode): ViewEntry[] {
   };
   blocks.forEach((b, i) => {
     if (b.kind === "user") turnStart = b.ts;
+    // A child span is the technical view's record of a subagent: casual
+    // drops it (the subagent pane is that view's surface), it is not
+    // absorbed into a work entry.
+    if (view === "casual" && b.kind === "child") return;
     if (view === "casual" && (b.kind === "reasoning" || b.kind === "tool")) {
       run.push(b);
       return;

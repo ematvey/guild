@@ -41,31 +41,51 @@ export interface ChildRow {
   finishedAt?: string;
 }
 
-/** One child message in the parent transcript: the request the parent sent,
- *  or the child's final answer. Rendered as a compact secondary entry. */
-export interface ChildMessage {
-  direction: "sent" | "returned";
+/** One child span in the parent transcript: the whole child turn as a trace
+ *  span. The spawn opens it, the result fills its answer and finish time. */
+export interface ChildSpan {
+  threadId: string;
+  chatId?: string | null;
   agentName: string;
   title?: string | null;
-  text: string;
+  /** The request the parent sent (empty for events older than the task field). */
+  task?: string;
+  /** The child's final answer, when it returned one. */
+  finalText?: string;
+  status: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
-/** A child message entry only exists when it has text; an empty task or an
- *  empty final answer yields none. */
-function childMessageEntry(
-  direction: ChildMessage["direction"],
-  text: string | null | undefined,
-  agentName: string | null | undefined,
-  title: string | null | undefined,
-): ChildMessage | null {
-  const body = (text ?? "").trim();
-  if (!body) return null;
+/** Stable span block key: one block per child thread, however many events
+ *  the child posts. */
+function childSpanKey(threadId: string): string {
+  return `child:${threadId}`;
+}
+
+/** The span view of a child row: same merge state, minus the pane-only
+ *  fields (run id, reason). */
+function spanFromRow(row: ChildRow): ChildSpan {
   return {
-    direction,
-    agentName: agentName || "Subagent",
-    title: title || null,
-    text: body,
+    threadId: row.threadId,
+    chatId: row.chatId ?? null,
+    agentName: row.agentName,
+    title: row.title ?? null,
+    task: row.task,
+    finalText: row.finalText,
+    status: row.status,
+    startedAt: row.startedAt,
+    finishedAt: row.finishedAt,
   };
+}
+
+/** Merges a span into its block in place. A child without a block yet (the
+ *  spawn fell outside the loaded window) opens one at the current position. */
+function upsertChildSpanBlock(blocks: Block[], span: ChildSpan, ts: string): Block[] {
+  const key = childSpanKey(span.threadId);
+  const index = blocks.findIndex((b) => b.kind === "child" && b.key === key);
+  if (index < 0) return [...blocks, { kind: "child", text: "", child: span, ts, key }];
+  return blocks.map((b, i) => (i === index ? { ...b, child: span } : b));
 }
 
 export interface ToolBlock {
@@ -314,8 +334,8 @@ export interface Block {
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
-  /// kind === "child": one child message in the transcript.
-  child?: ChildMessage;
+  /// kind === "child": one child span in the transcript (technical view).
+  child?: ChildSpan;
 }
 
 export interface PendingSend {
@@ -410,7 +430,7 @@ interface DerivedThread {
 /// maps the incremental reducer needs to join later events.
 export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
-  const blocks: Block[] = [];
+  let blocks: Block[] = [];
   let children: ChildRow[] = [];
   const toolsByCall = new Map<string, ToolBlock>();
   const approvalsByCall = new Map<string, ApprovalBlock>();
@@ -544,29 +564,25 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
         break;
       case "child_spawned": {
         children = applyChildSpawned(children, ev, row.created_at);
-        const message = childMessageEntry("sent", ev.task, ev.agent_name, ev.title);
-        if (message) {
-          blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(inEvent++) });
-        }
+        const child = children.find((c) => c.threadId === ev.thread_id);
+        if (child) blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
         break;
       }
       case "child_result": {
         children = applyChildResult(children, ev, row.created_at);
         const child = children.find((c) => c.threadId === ev.thread_id);
-        const message = childMessageEntry(
-          "returned",
-          ev.final_text,
-          ev.agent_name || child?.agentName,
-          ev.title || child?.title,
-        );
-        if (message) {
-          blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(inEvent++) });
+        if (child) blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
+        break;
+      }
+      case "child_closed": {
+        children = applyChildClosed(children, ev, row.created_at);
+        const child = children.find((c) => c.threadId === ev.thread_id);
+        const key = child ? childSpanKey(child.threadId) : null;
+        if (child && key && blocks.some((b) => b.kind === "child" && b.key === key)) {
+          blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
         }
         break;
       }
-      case "child_closed":
-        children = applyChildClosed(children, ev, row.created_at);
-        break;
     }
   }
   // Resolved approvals are decisions, not conversation content: a card whose
@@ -1080,29 +1096,25 @@ export function createThreadReducer(): ThreadReducer {
         break;
       case "child_spawned": {
         v.children = applyChildSpawned(v.children, ev, row.created_at);
-        const message = childMessageEntry("sent", ev.task, ev.agent_name, ev.title);
-        if (message) {
-          v.blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(0) });
-        }
+        const child = v.children.find((c) => c.threadId === ev.thread_id);
+        if (child) v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
         break;
       }
       case "child_result": {
         v.children = applyChildResult(v.children, ev, row.created_at);
         const child = v.children.find((c) => c.threadId === ev.thread_id);
-        const message = childMessageEntry(
-          "returned",
-          ev.final_text,
-          ev.agent_name || child?.agentName,
-          ev.title || child?.title,
-        );
-        if (message) {
-          v.blocks.push({ kind: "child", text: "", child: message, ts: row.created_at, key: seqKey(0) });
+        if (child) v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
+        break;
+      }
+      case "child_closed": {
+        v.children = applyChildClosed(v.children, ev, row.created_at);
+        const child = v.children.find((c) => c.threadId === ev.thread_id);
+        const key = child ? childSpanKey(child.threadId) : null;
+        if (child && key && v.blocks.some((b) => b.kind === "child" && b.key === key)) {
+          v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
         }
         break;
       }
-      case "child_closed":
-        v.children = applyChildClosed(v.children, ev, row.created_at);
-        break;
     }
     // A new event supersedes a shown error: prune keeps the error visible
     // only while it stays the thread's latest block.
