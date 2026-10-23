@@ -694,6 +694,10 @@ pub enum ThreadEvent {
         title: String,
         /// The child run's terminal status; `cancelled` is a user stop.
         status: String,
+        /// The run's start, so a row rebuilt from the result alone still
+        /// shows its duration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         #[serde(default)]
@@ -701,6 +705,9 @@ pub enum ThreadEvent {
         #[serde(default)]
         attachments: Vec<MessageAttachment>,
     },
+    /// Written to the parent chat when a child thread is closed, so the row
+    /// stays closed after a reload.
+    ChildClosed { thread_id: Uuid },
 }
 
 /// The fixed set of machine tools executed by the attached client. This is

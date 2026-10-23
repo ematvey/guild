@@ -8,6 +8,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
 import { modalityOf } from "../chats/turn-text.js";
+import { pgTimestampToRfc3339 } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
 
 export interface ChildRunFinished {
@@ -136,13 +137,16 @@ export class ChildResultDelivery {
     // finish somewhere it could not be interrupted, and its completion must
     // not reach the parent as a success. A user stop of the child keeps its
     // own reason and still delivers.
-    const run = await pool.query<{ status: string }>(
-      "SELECT status FROM agent_runs WHERE id = $1",
+    const run = await pool.query<{ status: string; started_at: string | null }>(
+      `SELECT status,
+              to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
+       FROM agent_runs WHERE id = $1`,
       [input.run_id],
     );
     const cancelled = run.rows[0]?.status === "cancelled";
     const status = cancelled ? "cancelled" : input.status;
     const reason = cancelled && input.status !== "cancelled" ? "parent" : input.reason;
+    const startedAt = run.rows[0]?.started_at ?? null;
 
     const attachments = await this.attachmentsOf(input.attachment_event_id ?? null);
     await threads.appendChildResult(parentRow.chat_id, {
@@ -153,6 +157,7 @@ export class ChildResultDelivery {
       agent_name: childRow.agent_name,
       title: childRow.title,
       status,
+      ...(startedAt === null ? {} : { started_at: pgTimestampToRfc3339(startedAt) }),
       reason,
       final_text: input.final_text,
       attachments,
