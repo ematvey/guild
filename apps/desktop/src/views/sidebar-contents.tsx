@@ -478,6 +478,7 @@ export function WorkPanel({
   chatId,
   onOpenChat,
   onCollapse,
+  onClose,
   onNewChatInProject,
   onNewProject,
   onRenameChat,
@@ -494,6 +495,8 @@ export function WorkPanel({
   chatId: string | null;
   onOpenChat: (id: string) => void;
   onCollapse?: () => void;
+  /** Mobile drawer only: close the sheet from the panel header. */
+  onClose?: () => void;
   /** New chat with this project pre-picked (project row's hover "+"). */
   onNewChatInProject?: (project: PickedProject) => void;
   onNewProject: () => void;
@@ -525,6 +528,7 @@ export function WorkPanel({
             <Plus className="size-4" />
           </span>
           <CollapseButton onCollapse={onCollapse} />
+          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
@@ -610,6 +614,7 @@ export function SettingsPanel({
   activeSection,
   onSelectSection,
   onCollapse,
+  onClose,
 }: {
   /** "admin" turns on the workspace sections, same as the rail menu. */
   role: string;
@@ -619,6 +624,8 @@ export function SettingsPanel({
   /** A section pick renders that section inline in the main pane. */
   onSelectSection: (id: string) => void;
   onCollapse?: () => void;
+  /** Mobile drawer only: close the sheet from the panel header. */
+  onClose?: () => void;
 }) {
   const isAdmin = role === "admin";
   const visible = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
@@ -630,7 +637,10 @@ export function SettingsPanel({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="font-semibold">Settings</span>
-        <CollapseButton onCollapse={onCollapse} />
+        <span className="flex items-center gap-1">
+          <CollapseButton onCollapse={onCollapse} />
+          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {groups.map((g) => {
