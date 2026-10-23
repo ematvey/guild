@@ -1067,6 +1067,18 @@ export class AgentStore {
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }
 
+  /** The oldest queued/running run for one agent thread. A chat turn adopts
+   *  an open run instead of opening a second one. */
+  async runningRunForThread(threadId: string): Promise<AgentRun | null> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${RUN_COLUMNS} FROM agent_runs r
+       WHERE r.thread_id = $1 AND r.status IN ('queued', 'running')
+       ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
+      [threadId],
+    );
+    return res.rows[0] === undefined ? null : toRun(res.rows[0]);
+  }
+
   /** Direct children of one run, oldest first. */
   async childRuns(parentRunId: string): Promise<AgentRun[]> {
     const res = await this.pool.query<Record<string, unknown>>(
