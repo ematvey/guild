@@ -91,7 +91,9 @@ describe("specialist pack", () => {
       expect(agent!.model).toBe("GLM-Test-Model");
 
       const dir = agentWorkspaceDir(root, orgId, agent!.id);
-      expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toBe(spec.playbook);
+      const playbook = readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+      expect(playbook.startsWith(spec.playbook)).toBe(true);
+      expect(playbook).toContain("## Stop rule");
       expect(readFileSync(path.join(dir, "notes", "README.md"), "utf8")).toBe(spec.notesIndex);
       expect(readFileSync(path.join(dir, "SOUL.md"), "utf8")).toBe(SOUL_TEMPLATE);
     }
@@ -124,7 +126,7 @@ describe("specialist pack", () => {
 
     expect(readFileSync(index, "utf8")).toBe("# Notes — edited by a human\n");
     expect(readFileSync(account, "utf8")).toBe("# Acme\n\nRenewal in May.\n");
-    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toBe(
+    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain(
       SPECIALIST_PACK.find((spec) => spec.key === "clients")!.playbook,
     );
 

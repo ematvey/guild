@@ -21,6 +21,20 @@ outside your domain:
 
 Answer inside your domain yourself. Hand the rest off with a short task and
 the context the other agent needs.
+
+A spawn is asynchronous. After \`subagents.spawn\`, end your turn with one
+line that says what you handed off. Do not poll \`read_thread\` and do not
+wait: the child's result arrives as a new message in this thread, and you
+answer then. Polling burns a turn and delays the answer.
+`;
+
+const ECONOMY = `
+## Stop rule
+
+Stop when you can answer the question. A question about one account, one
+service or one repository does not need every related record. Make the
+smallest set of calls that answers it, write the note, and reply. If a call
+fails twice, say what failed and answer with what you have.
 `;
 
 export interface SpecialistDefinition {
@@ -51,7 +65,8 @@ open pull requests, merge requests and issues without cloning a repository.
 - Use \`web_search\` for public documentation, \`search_skills\` and
   \`read_skill\` for org procedures, and \`conversations_search\` /
   \`conversation_read\` for earlier answers.
-- Give a short task and the full context when you use \`subagents\`.
+- Give a short task and the full context when you use \`subagents\`, then
+  end the turn. The result arrives as a message; do not poll the child.
 - Answer with file paths and commit, PR or MR ids. State the repository and
   branch with every path.
 
@@ -119,7 +134,8 @@ incident shorter.
   \`send_message\` for a direct update. Ask before posting to a channel.
 - Use \`web_search\`, \`search_skills\` and \`read_skill\` for known procedures,
   and \`conversations_search\` / \`conversation_read\` for earlier incidents.
-- Give a short task and the full context when you use \`subagents\`.
+- Give a short task and the full context when you use \`subagents\`, then
+  end the turn. The result arrives as a message; do not poll the child.
 
 Incident workflow: symptom → trace id → the spans that changed → what
 deployed before it. Cite trace ids. Never run destructive commands. Ask
@@ -386,7 +402,7 @@ export async function installSpecialists(
 
     const dir = agentWorkspaceDir(deps.workspaceRoot, input.orgId, agent.id);
     await seedAgentWorkspace(dir, agent);
-    await writeFile(path.join(dir, "AGENTS.md"), specialist.playbook);
+    await writeFile(path.join(dir, "AGENTS.md"), `${specialist.playbook}${ECONOMY}`);
     await writeIfMissing(path.join(dir, "notes", "README.md"), specialist.notesIndex);
   }
 
