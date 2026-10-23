@@ -10,6 +10,7 @@ import {
   compareVersions,
   eventsToBlocks,
   isImeEnter,
+  isReadOnlyThread,
   mentionCandidates,
   composerSkills,
   parseChatRoute,
@@ -38,6 +39,34 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 }
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
+
+describe("read-only transcript threads", () => {
+  const base = {
+    chatId: "child-chat",
+    chats: [{ id: "parent-chat" }],
+    archivedChats: [{ id: "archived-chat" }],
+    threadLoading: false,
+  };
+
+  it("marks a chat absent from both lists as read-only", () => {
+    expect(isReadOnlyThread(base)).toBe(true);
+  });
+
+  it("keeps active and archived chats writable", () => {
+    expect(isReadOnlyThread({ ...base, chats: [{ id: "child-chat" }] })).toBe(false);
+    expect(isReadOnlyThread({ ...base, archivedChats: [{ id: "child-chat" }] })).toBe(false);
+  });
+
+  it("does not decide while the lists or the thread are loading", () => {
+    expect(isReadOnlyThread({ ...base, chats: null })).toBe(false);
+    expect(isReadOnlyThread({ ...base, archivedChats: null })).toBe(false);
+    expect(isReadOnlyThread({ ...base, threadLoading: true })).toBe(false);
+  });
+
+  it("never marks the scratch composer read-only", () => {
+    expect(isReadOnlyThread({ ...base, chatId: null })).toBe(false);
+  });
+});
 
 describe("parseChatRoute / chatRoutePath", () => {
   const roundTrip = (path: string) => {
