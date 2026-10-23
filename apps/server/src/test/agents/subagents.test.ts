@@ -420,17 +420,16 @@ dbDescribe("subagent tree tools", () => {
     expect(new Set(fake.stopped)).toEqual(new Set([childThread!.chat_id, grandchildThread.chat_id]));
   });
 
-  it("cancel fails before any mutation when a worker cannot reach the chat", async () => {
+  it("cancel marks a turn it cannot interrupt as cancelled and delivers nothing", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Cancel remote");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime({ canStopChat: () => false });
     const context = await contextFor({ thread, run: parentRun, fake });
     const child = await spawn(context, { agent: targetAgent.name, task: "start" });
 
-    await expect(cancel(context, { thread_id: child.thread_id })).rejects.toMatchObject({
-      code: "cancel_unreachable",
-    });
-    expect((await store.getRun(child.run_id)).status).toBe("running");
+    const result = await cancel(context, { thread_id: child.thread_id });
+    expect(result.cancelled).toBe(1);
+    expect((await store.getRun(child.run_id)).status).toBe("cancelled");
     expect(fake.stopped).toHaveLength(0);
   });
 

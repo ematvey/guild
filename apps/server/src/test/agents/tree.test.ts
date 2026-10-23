@@ -134,3 +134,85 @@ describe("chat tree", () => {
     });
   });
 });
+
+describe("thread stop actions", () => {
+  async function delegatedChild(): Promise<{ chatId: string; threadId: string; runId: string }> {
+    const agentId = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model)
+       VALUES ($1, $2, $3, 'Stop agent', 'GLM-Test-Model')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const parentChat = await insertChat("Stop parent");
+    const parentThread = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
+       VALUES ($1, $2, $3, $4, 'Stop parent session', 'thread')`,
+      [parentThread, agentId, stack.memberId, parentChat],
+    );
+    const childChat = await insertChat("Stop child");
+    const childThread = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Stop child session', 'delegated', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat, parentThread],
+    );
+    const runId = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, thread_id, status, trigger)
+       VALUES ($1, $2, $3, $4, 'running', 'delegation')`,
+      [runId, agentId, stack.memberId, childThread],
+    );
+    return { chatId: childChat, threadId: childThread, runId };
+  }
+
+  it("close marks the child thread closed and cancels its run", async () => {
+    const child = await delegatedChild();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${child.chatId}/close`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ thread_id: child.threadId, closed: 1, cancelled: 1 });
+    const thread = await stack.env.db.query<{ closed_at: Date | null }>(
+      "SELECT closed_at FROM agent_threads WHERE id = $1",
+      [child.threadId],
+    );
+    expect(thread.rows[0]?.closed_at).not.toBeNull();
+    const run = await stack.env.db.query<{ status: string }>(
+      "SELECT status FROM agent_runs WHERE id = $1",
+      [child.runId],
+    );
+    expect(run.rows[0]?.status).toBe("cancelled");
+  });
+
+  it("cancel stops the run and leaves the thread open", async () => {
+    const child = await delegatedChild();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${child.chatId}/cancel`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ thread_id: child.threadId, cancelled: 1 });
+    const thread = await stack.env.db.query<{ closed_at: Date | null }>(
+      "SELECT closed_at FROM agent_threads WHERE id = $1",
+      [child.threadId],
+    );
+    expect(thread.rows[0]?.closed_at).toBeNull();
+  });
+
+  it("404s for a chat with no thread row", async () => {
+    const chatId = await insertChat("No thread");
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/close`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(404);
+  });
+});

@@ -866,6 +866,17 @@ export class AgentStore {
     return row === undefined ? null : toThread(row);
   }
 
+  /** One thread row by its chat, without caller scoping: the thread routes
+   *  authorize the chat first and then act on the thread behind it. */
+  async threadByChatId(chatId: string): Promise<AgentThread | null> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    return row === undefined ? null : toThread(row);
+  }
+
   /** Renames a thread and locks the title against regeneration. */
   async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
     const client = await this.pool.connect();

@@ -384,9 +384,11 @@ export async function childThreadAction(
   action: ChildThreadAction,
 ): Promise<ChildThreadActionResult> {
   try {
+    // An empty JSON body: the server parses every POST body as JSON and
+    // rejects a bodyless request before the route runs.
     await request<void>(
       `/api/v1/threads/${encodeURIComponent(chatId)}/${action}`,
-      { method: "POST" },
+      { method: "POST", body: "{}" },
     );
     return { ok: true };
   } catch (error) {
