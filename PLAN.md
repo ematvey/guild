@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The mobile drawer carries the tab rail (2026-10-23).** The drawer showed
+  the chats list only, so mobile had no route to inbox, agents, projects,
+  activity or settings. It now renders the same rail beside the same panel
+  as the desktop sidebar: panel tabs keep the sheet open, route tabs close
+  it and render in the main column, and each panel header carries the drawer
+  close. The skills tab is dropped on mobile (its page is desktop-only).
+  Settings sections render inline on mobile too, and route pages (agents,
+  skills, settings) get a drawer button because they own the whole column.
+
 - **Agents talk to agents through the thread tree (2026-10-22).** `delegate`
   and `release_artifacts` are gone. A spawn creates exactly one child thread
   (`kind = 'delegated'`, `parent_thread_id`, `depth`); downward traffic is a
