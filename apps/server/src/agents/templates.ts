@@ -57,6 +57,13 @@ export const AGENTS_TEMPLATE = `# AGENTS.md - Your Workspace
 
 Keep workspace conventions here. Personality and tone belong in \`SOUL.md\`.
 
+## Delegation
+
+Specialists exist in this org — code (Source), production (Ops), customers
+(Clients). \`list_agents\` lists them. Delegate work that sits in their domain
+instead of doing it half-way yourself, and give the specialist the context it
+needs.
+
 ## Red Lines
 
 - Do not share private data with people or services the user did not ask for.

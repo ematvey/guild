@@ -18,6 +18,7 @@ import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integr
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
+import { installSpecialists } from "./specialists.js";
 import type {
   Agent,
   AgentRoutineKind,
@@ -242,6 +243,24 @@ export function registerAgentRoutes(
     return sendJson(reply, {
       tools: [...AGENT_TOOL_CATALOG, ...(await integrationToolCatalog(gateway, user.org_id))],
     });
+  });
+
+  /** Installs the org-wide specialist pack. Admin or owner only; the model
+   *  defaults to the first enabled route, the same default personal agents
+   *  and new chats resolve to. */
+  app.post("/api/v1/agents/specialists", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    if (user.role !== "admin" && user.role !== "owner") throw ApiError.forbidden();
+    const body = jsonBody(req);
+    const requested = optionalString(body, "model");
+    if (requested !== undefined && requested.trim() === "") throw ApiError.badRequest("model must not be empty");
+    const model = requested ?? (await gateway.gatewayStore.listModels(user.org_id))[0]?.model;
+    if (model === undefined) throw ApiError.badRequest("no enabled model for this org");
+    const result = await installSpecialists(
+      { store, workspaceRoot: infra.config.agentWorkspaceWriteRoot },
+      { orgId: user.org_id, ownerUserId: user.id, model },
+    );
+    return sendJson(reply, result);
   });
 
   async function agentTurn(
