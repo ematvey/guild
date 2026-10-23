@@ -251,7 +251,7 @@ Object key follows the existing shape: `attachments/<org>/<id>/<filename>`
 
 | tool | meaning |
 |---|---|
-| `spawn(agent, task)` | create a child thread, post the first turn, return `{thread_id, run_id}` at once |
+| `spawn(agent, task, name?)` | create a child thread, post the first turn, return `{thread_id, run_id, chat_id, title}` at once |
 | `send(thread_id, text)` | post a turn into a child thread |
 | `read_thread(thread_id)` | read a bounded excerpt of a child thread |
 | `list()` | list children with status, depth and elapsed time |
@@ -349,6 +349,13 @@ chat. Child chats leak into the user's sidebar.
     the `spawn`/`send` tool result carries `chat_id`, `agent_name` and `status`.
     The reducer never uses a thread id as a chat id; the row navigates to
     `/thread/<chatId>`.
+37a. **The spawner names the session.** `spawn` takes an optional `name` of at
+    most 80 characters; it becomes the child thread's title and is locked, so a
+    later title regeneration cannot overwrite it. Without a name the first line
+    of the task is the fallback label. The row shows the session name first and
+    the agent's own name beside it, so two children of the same agent stay
+    distinguishable.
+
 37. **Subagent rows are pinned above the composer.** The children of the open
     chat render as one quiet strip directly above the composer, with a count,
     a height cap and its own scroll, so they stay visible while the
