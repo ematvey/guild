@@ -11,6 +11,7 @@ import {
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
+import { Textarea } from "@guild/ui/components/textarea";
 import { listModels, modelLabel, type ModelOption } from "../../transport";
 import {
   SAFE_BASELINE_NAMES,
@@ -21,6 +22,7 @@ import {
   listMyTeams,
   type Agent,
   type AgentToolInfo,
+  type CreateAgentInput,
   type TeamOption,
 } from "./agents-api";
 import type { AgentVisibility, AgentsRoute } from "./agents-route";
@@ -47,6 +49,7 @@ export function validateAgentStep(
   step: Step,
   value: {
     name: string;
+    description: string;
     model: string;
     tools: string[];
     toolsMode: "selected" | "all";
@@ -58,6 +61,7 @@ export function validateAgentStep(
     case "name":
       if (value.name.trim() === "") return "Enter a name.";
       if (value.name.trim().length > 80) return "Use 80 characters or fewer.";
+      if (value.description.trim().length > 500) return "Use 500 characters or fewer.";
       return null;
     case "model":
       return value.model === "" ? "Pick a model." : null;
@@ -73,6 +77,28 @@ export function validateAgentStep(
   }
 }
 
+/** The create request. The description is optional and trimmed; the name
+ *  step caps it at 500 characters. */
+export function createAgentPayload(value: {
+  name: string;
+  description: string;
+  model: string;
+  tools: string[];
+  toolsMode: "selected" | "all";
+  visibility: AgentVisibility;
+  teamIds: string[];
+}): CreateAgentInput {
+  return {
+    name: value.name.trim(),
+    description: value.description.trim(),
+    model: value.model,
+    tools: value.tools,
+    tools_mode: value.toolsMode,
+    visibility: value.visibility,
+    ...(value.visibility === "team" ? { team_ids: value.teamIds } : {}),
+  };
+}
+
 export function AgentCreate({
   onNavigate,
   onCreated,
@@ -82,6 +108,7 @@ export function AgentCreate({
 }) {
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [model, setModel] = useState("");
   const [tools, setTools] = useState<string[]>(SAFE_BASELINE_NAMES);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">("selected");
@@ -111,6 +138,7 @@ export function AgentCreate({
   const stepIndex = STEPS.findIndex(([id]) => id === step);
   const currentError = validateAgentStep(step, {
     name,
+    description,
     model,
     tools,
     toolsMode,
@@ -145,14 +173,17 @@ export function AgentCreate({
     setSubmitting(true);
     setError(null);
     try {
-      const agent = await createAgent({
-        name: name.trim(),
-        model,
-        tools,
-        tools_mode: toolsMode,
-        visibility,
-        ...(visibility === "team" ? { team_ids: teamIds } : {}),
-      });
+      const agent = await createAgent(
+        createAgentPayload({
+          name,
+          description,
+          model,
+          tools,
+          toolsMode,
+          visibility,
+          teamIds,
+        }),
+      );
       onCreated?.(agent);
       onNavigate({ view: "agent", agentId: agent.id, tab: "overview" });
     } catch (err) {
@@ -233,6 +264,20 @@ export function AgentCreate({
               />
               <p className="text-xs text-muted-foreground">
                 Agents are user-named and never renamed automatically.
+              </p>
+              <label htmlFor="agent-description" className="pt-2 text-sm font-medium">
+                Description
+              </label>
+              <Textarea
+                id="agent-description"
+                value={description}
+                maxLength={500}
+                rows={3}
+                placeholder="What this agent does and when to spawn it."
+                onChange={(e) => setDescription(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Other agents read this to decide whom to spawn. Optional, 500 characters max.
               </p>
             </div>
           )}

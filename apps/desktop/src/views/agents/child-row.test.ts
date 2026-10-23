@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { childElapsedLabel, childStatusLabel, childStatusTone } from "./child-row";
+import { childElapsedLabel, childRowOpeners, childStatusLabel, childStatusTone } from "./child-row";
 import type { ChildRow } from "../../lib/thread-reducer";
 
 const row: ChildRow = {
@@ -31,5 +31,29 @@ describe("child row formatting", () => {
     expect(childStatusTone("failed")).toBe("danger");
     expect(childStatusTone("cancelled")).toBe("muted");
     expect(childStatusLabel("cancelled")).toBe("Cancelled");
+  });
+});
+
+describe("child row navigation", () => {
+  it("opens the child chat from the row click and the chevron", () => {
+    const calls: string[] = [];
+    const openers = childRowOpeners(
+      { ...row, chatId: "child-chat" },
+      (chatId) => calls.push(chatId),
+    );
+    openers.row();
+    openers.chevron();
+    expect(calls).toEqual(["child-chat", "child-chat"]);
+  });
+
+  it("stays inert without a chat id", () => {
+    const calls: string[] = [];
+    const openers = childRowOpeners(
+      { ...row, chatId: null, threadId: "child-thread" },
+      (chatId) => calls.push(chatId),
+    );
+    openers.row();
+    openers.chevron();
+    expect(calls).toEqual([]);
   });
 });

@@ -104,7 +104,7 @@ import {
   type AgentsRoute,
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
-import { ChildRow } from "./agents/ChildRow";
+import { ChildList, groupChildEntries } from "./agents/ChildList";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
@@ -3322,70 +3322,75 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const lastBlockIndex = blocks.length - 1;
   const transcriptEntries = useMemo(
     () =>
-      displayEntries.map((e, i) =>
-        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
-        e.kind === "work" ? (
-          <WorkedForBlock
-            key={`work-${e.run[0]!.key}`}
-            run={e.run}
-            active={streaming && i === displayEntries.length - 1}
-            stopping={!!(chatId && stopping[chatId])}
-            turnStart={e.turnStart}
-          />
-        ) : e.b.kind === "user" ? (
-          <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
-            <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
-              {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
-              {e.b.attachments && e.b.attachments.length > 0 && (
-                <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
-                  {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
-                    <AttachmentImageThumb key={a.id} att={a} />
-                  ))}
-                  {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
-                    <AttachmentFileChip key={a.id} att={a} />
-                  ))}
-                </div>
+      groupChildEntries(displayEntries).map((g) => {
+        if (g.kind === "child") {
+          return <ChildList key={g.key} rows={g.rows} onOpen={openChildChat} />;
+        }
+        const e = g.entry;
+        const i = g.index;
+        return (
+          e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
+          e.kind === "work" ? (
+            <WorkedForBlock
+              key={`work-${e.run[0]!.key}`}
+              run={e.run}
+              active={streaming && i === displayEntries.length - 1}
+              stopping={!!(chatId && stopping[chatId])}
+              turnStart={e.turnStart}
+            />
+          ) : e.b.kind === "user" ? (
+            <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
+              <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
+                {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
+                {e.b.attachments && e.b.attachments.length > 0 && (
+                  <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
+                    {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
+                      <AttachmentImageThumb key={a.id} att={a} />
+                    ))}
+                    {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
+                      <AttachmentFileChip key={a.id} att={a} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <HoverStamp ts={e.b.ts} side="right" />
+            </div>
+          ) : e.b.kind === "reasoning" ? (
+            <ReasoningFrame
+              key={e.b.key}
+              text={e.b.reasoningText ?? ""}
+              live={streaming && e.i === lastBlockIndex}
+            />
+          ) : e.b.kind === "tool" && e.b.tool ? (
+            <ToolFrame key={e.b.key} t={e.b.tool} />
+          ) : e.b.kind === "approval" && e.b.approval ? (
+            <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
+          ) : e.b.kind === "compaction" && e.b.compaction ? (
+            <CompactionCard key={e.b.key} c={e.b.compaction} />
+          ) : e.b.kind === "error" ? (
+            <div
+              key={e.b.key}
+              className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
+            >
+              {e.b.text}
+            </div>
+          ) : (
+            <div key={e.b.key} className="group relative">
+              <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+                <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {e.b.text}
+                </Markdown>
+                {e.b.interrupted && !streaming && (
+                  <div className="text-xs text-muted-foreground">stopped</div>
+                )}
+              </div>
+              {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
+                <HoverStamp ts={e.b.ts} side="left" />
               )}
             </div>
-            <HoverStamp ts={e.b.ts} side="right" />
-          </div>
-        ) : e.b.kind === "reasoning" ? (
-          <ReasoningFrame
-            key={e.b.key}
-            text={e.b.reasoningText ?? ""}
-            live={streaming && e.i === lastBlockIndex}
-          />
-        ) : e.b.kind === "tool" && e.b.tool?.child ? (
-          <ChildRow key={e.b.key} row={e.b.tool.child} onOpen={openChildChat} />
-        ) : e.b.kind === "tool" && e.b.tool ? (
-          <ToolFrame key={e.b.key} t={e.b.tool} />
-        ) : e.b.kind === "approval" && e.b.approval ? (
-          <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
-        ) : e.b.kind === "compaction" && e.b.compaction ? (
-          <CompactionCard key={e.b.key} c={e.b.compaction} />
-        ) : e.b.kind === "error" ? (
-          <div
-            key={e.b.key}
-            className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
-          >
-            {e.b.text}
-          </div>
-        ) : (
-          <div key={e.b.key} className="group relative">
-            <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {e.b.text}
-              </Markdown>
-              {e.b.interrupted && !streaming && (
-                <div className="text-xs text-muted-foreground">stopped</div>
-              )}
-            </div>
-            {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
-              <HoverStamp ts={e.b.ts} side="left" />
-            )}
-          </div>
-        ),
-      ),
+          )
+        );
+      }),
     [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
   );
   // A first send's create round trip on the scratch surface: the composer

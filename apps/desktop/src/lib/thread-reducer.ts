@@ -21,8 +21,9 @@ export interface ChildRow {
   /** The child agent thread id (the child_result event's thread_id). */
   threadId: string;
   runId?: string;
-  /** The durable chat id the child thread projects into; the row's chevron
-   *  opens this chat at its canonical /thread/<chatId> address. */
+  /** The durable chat id the child thread projects into; the row opens this
+   *  chat at its canonical /thread/<chatId> address. Null when no event or
+   *  tool result supplied one. */
   chatId?: string | null;
   agentName: string;
   status: string;
@@ -131,16 +132,22 @@ export function childRowFromTool(t: ToolBlock, existing?: ChildRow): ChildRow | 
 }
 
 /** The fallback row for a child_result with no spawn tool result in the
- *  loaded window. The event names the agent thread, not its chat, so the
- *  row opens the thread id until a spawn result supplies the chat id. */
+ *  loaded window. Only the event's chat_id can open a chat; a thread id is
+ *  never a chat id. */
 function childRowFromEvent(
-  ev: { thread_id: string; run_id: string; status: string; reason?: string | null },
+  ev: {
+    thread_id: string;
+    chat_id?: string | null;
+    run_id: string;
+    status: string;
+    reason?: string | null;
+  },
   createdAt: string,
 ): ChildRow {
   return {
     threadId: ev.thread_id,
     runId: ev.run_id,
-    chatId: ev.thread_id,
+    chatId: ev.chat_id ?? null,
     agentName: "Subagent",
     status: ev.status,
     reason: ev.reason ?? undefined,
@@ -521,6 +528,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
         if (target?.child) {
           target.child = {
             ...target.child,
+            chatId: target.child.chatId ?? ev.chat_id ?? null,
             runId: ev.run_id,
             status: ev.status,
             reason: ev.reason ?? undefined,
@@ -1068,6 +1076,7 @@ export function createThreadReducer(): ThreadReducer {
         if (target?.child) {
           target.child = {
             ...target.child,
+            chatId: target.child.chatId ?? ev.chat_id ?? null,
             runId: ev.run_id,
             status: ev.status,
             reason: ev.reason ?? undefined,
