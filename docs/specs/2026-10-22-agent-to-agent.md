@@ -314,3 +314,45 @@ agent_runs
   (`runtime.ts:1575`), but worker mode has `remoteSubmit` and no `remoteStop`
   (`apps/server/src/platform/context.ts:200`). `cancel` across workers needs
   that IPC.
+
+## Addendum: identity, directory, child chat ownership
+
+First use of the tree showed three gaps. A spawner cannot discover what exists:
+`spawn` takes a name and fails silently when the name is wrong, and the only
+spawnable agent is the caller's own copy. The child row does not open the child
+chat. Child chats leak into the user's sidebar.
+
+30. **An agent has a description.** `agents.description text NOT NULL DEFAULT ''`,
+    at most 500 characters, set by its owner in the create form and in the agent
+    settings. The description is how another agent identifies what this agent is
+    for; the name alone is not enough.
+31. **The description is part of the agent's own prompt.** The first line of the
+    instructions becomes `You are <name>, <description>.` The owner writes the
+    starting text; the agent lives with it.
+32. **An agent may rewrite its own description** with `set_description`. The tool
+    is outside the allowlist and available to every agent. It writes
+    `agents.description` for the calling agent only, so a spawner can steer a
+    child's identity and a child can correct what it learned about itself.
+33. **`list_agents` is the directory, inside the `subagents` group.** It returns
+    every agent the caller's user may use: all non-personal agents visible to
+    that user, plus that user's own personal agent. Another user's personal agent
+    never appears, not even to an admin. Each entry is
+    `{id, name, description, personal}`.
+34. **A failed spawn names the directory.** `target_not_found` and
+    `target_unavailable` carry the hint to call `list_agents` first.
+35. **A child chat belongs to its parent thread, not to the user's chat list.**
+    `chats.user_id` stays the run owner, so the child runs as that user. Every
+    chat list excludes a chat whose thread is `delegated`: the HTTP list and the
+    WebSocket `thread_list` push use one predicate. Today the push does not
+    filter, which is why child chats reach the sidebar.
+36. **The child row opens the child chat.** `child_result` carries `chat_id`, and
+    the `spawn`/`send` tool result carries `chat_id`, `agent_name` and `status`.
+    The reducer never uses a thread id as a chat id; the row navigates to
+    `/thread/<chatId>`.
+37. **Subagent rows are a block, not inline chips.** They render as an indented
+    full-width list under the turn that spawned them. The whole row opens the
+    child chat; cancel and close stay on hover.
+
+Out of scope, recorded for later: an org agent or another user's agent sending
+a message to a person's assistant as a notification. The tree stays
+parent-to-child only.
