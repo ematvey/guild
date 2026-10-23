@@ -230,6 +230,11 @@ the child chat, and child chats leak into the sidebar. Spec addendum decisions
 Order: WP7 and WP8 land on the server first (WP8 needs the description column),
 WP9 follows the wire change. WP9's UI work can start from the contract.
 
+Follow-up from the same review: the rows moved out of the thread body into a
+strip pinned above the composer (decision 37), and `child_result` carries the
+child's agent name so the row label is right even when the spawn ran inside a
+codemode script.
+
 Risk: `threadListSnapshot` and `ChatStore.listChats` duplicate the list query.
 The fix is one exported predicate; if they drift again the sidebar leaks child
 chats with no failing test. The WS push test is the guard.
