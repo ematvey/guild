@@ -210,6 +210,16 @@ export function threadEventWire(event: ThreadEvent): string {
       });
     case "turn_error":
       return obj({ type: "turn_error", message: event.message });
+    case "child_spawned":
+      return obj({
+        type: "child_spawned",
+        thread_id: event.thread_id,
+        run_id: event.run_id,
+        chat_id: event.chat_id,
+        agent_name: event.agent_name,
+        title: event.title,
+        status: event.status,
+      });
     case "child_result":
       return obj({
         type: "child_result",
@@ -348,6 +358,16 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
       };
     case "turn_error":
       return { type: "turn_error", message: String(payload["message"] ?? "") };
+    case "child_spawned":
+      return {
+        type: "child_spawned",
+        thread_id: String(payload["thread_id"] ?? ""),
+        run_id: String(payload["run_id"] ?? ""),
+        chat_id: String(payload["chat_id"] ?? ""),
+        agent_name: String(payload["agent_name"] ?? ""),
+        title: String(payload["title"] ?? ""),
+        status: String(payload["status"] ?? ""),
+      };
     case "child_result":
       return {
         type: "child_result",
