@@ -1066,8 +1066,16 @@ export type ThreadEvent =
       /** The child run's terminal status; `cancelled` is a user stop. */
       status: string;
       reason?: string | null;
+      /** The run's start (RFC3339): the elapsed anchor when no
+       *  child_spawned row is loaded. */
+      started_at?: string | null;
       final_text: string;
       attachments?: MessageAttachmentMeta[];
+    }
+  | {
+      type: "child_closed";
+      /** The child agent thread id the user closed. */
+      thread_id: string;
     };
 
 export interface ThreadEventRow {

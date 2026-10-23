@@ -557,10 +557,21 @@ export function registerAgentRoutes(
         throw ApiError.badRequest("the root thread cannot be closed");
       }
       const context = { store, runtime: chats.runtime };
-      const result =
-        action === "cancel"
-          ? await cancelThread(context, thread.id)
-          : await closeThread(context, thread.id);
+      if (action === "cancel") {
+        return sendJson(reply, await cancelThread(context, thread.id));
+      }
+      const result = await closeThread(context, thread.id);
+      // A close leaves a row in the parent chat, so the child row stays
+      // closed after a reload. A repeat close writes nothing.
+      if (result.closed > 0 && thread.parent_thread_id !== null) {
+        const parent = await store.threadById(thread.parent_thread_id);
+        if (parent !== null) {
+          await chats.threads.appendEvent(parent.chat_id, {
+            type: "child_closed",
+            thread_id: thread.id,
+          });
+        }
+      }
       return sendJson(reply, result);
     };
   app.post("/api/v1/threads/:id/cancel", threadAction("cancel"));

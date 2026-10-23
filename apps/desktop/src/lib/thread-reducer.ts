@@ -90,6 +90,7 @@ function childRowFromResult(
     run_id: string;
     status: string;
     reason?: string | null;
+    started_at?: string | null;
   },
   createdAt: string,
 ): ChildRow {
@@ -101,7 +102,7 @@ function childRowFromResult(
     title: ev.title || null,
     status: ev.status,
     reason: ev.reason ?? undefined,
-    startedAt: createdAt,
+    startedAt: ev.started_at || createdAt,
     finishedAt: createdAt,
   };
 }
@@ -131,9 +132,20 @@ function applyChildResult(children: ChildRow[], ev: Extract<ThreadEvent, { type:
           title: ev.title || current.title,
           status: ev.status,
           reason: ev.reason ?? undefined,
+          startedAt: ev.started_at || current.startedAt,
           finishedAt: createdAt,
         }
       : child,
+  );
+}
+
+/// A close of a row the window never spawned is ignored: it must not
+/// invent a row.
+function applyChildClosed(children: ChildRow[], ev: Extract<ThreadEvent, { type: "child_closed" }>, createdAt: string): ChildRow[] {
+  const index = children.findIndex((child) => child.threadId === ev.thread_id);
+  if (index < 0) return children;
+  return children.map((child, i) =>
+    i === index ? { ...child, status: "closed", finishedAt: createdAt } : child,
   );
 }
 
@@ -495,6 +507,9 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
         break;
       case "child_result":
         children = applyChildResult(children, ev, row.created_at);
+        break;
+      case "child_closed":
+        children = applyChildClosed(children, ev, row.created_at);
         break;
     }
   }
@@ -1012,6 +1027,9 @@ export function createThreadReducer(): ThreadReducer {
         break;
       case "child_result":
         v.children = applyChildResult(v.children, ev, row.created_at);
+        break;
+      case "child_closed":
+        v.children = applyChildClosed(v.children, ev, row.created_at);
         break;
     }
     // A new event supersedes a shown error: prune keeps the error visible

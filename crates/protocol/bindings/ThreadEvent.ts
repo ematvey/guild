@@ -89,4 +89,9 @@ title: string,
 /**
  * The child run's terminal status; `cancelled` is a user stop.
  */
-status: string, reason?: string | null, final_text: string, attachments: Array<MessageAttachment>, };
+status: string, 
+/**
+ * The run's start, so a row rebuilt from the result alone still
+ * shows its duration.
+ */
+started_at?: string | null, reason?: string | null, final_text: string, attachments: Array<MessageAttachment>, } | { "type": "child_closed", thread_id: string, };

@@ -1177,7 +1177,7 @@ export class AgentStore {
          SELECT child.id FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
        )
        UPDATE agent_threads SET closed_at = COALESCE(closed_at, now())
-       WHERE id IN (SELECT id FROM tree)`,
+       WHERE id IN (SELECT id FROM tree) AND closed_at IS NULL`,
       [threadId],
     );
     return res.rowCount ?? 0;

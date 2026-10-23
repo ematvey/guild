@@ -12,6 +12,7 @@ import { AgentStore } from "../../agents/store.js";
 import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
+import { pgTimestampToRfc3339 } from "../../platform/time.js";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
 
 const answer = {
@@ -232,6 +233,15 @@ describe("child result delivery", () => {
       childAgents.rows[0]!.name,
     ]);
     expect(delivered.rows.map((row) => row.payload.title)).toEqual(["Child child one result", "Child child two result"]);
+    // The row rebuilt from the result alone carries the run's start.
+    const starts = await stack.env.db.query<{ started_at: string }>(
+      `SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
+       FROM agent_runs WHERE id = ANY($1::uuid[]) ORDER BY created_at ASC, id ASC`,
+      [[first.runId, second.runId]],
+    );
+    expect(delivered.rows.map((row) => row.payload.started_at)).toEqual(
+      starts.rows.map((row) => pgTimestampToRfc3339(row.started_at)),
+    );
 
     const runs = await stack.env.db.query("SELECT id FROM agent_runs WHERE thread_id = $1", [parent.threadId]);
     expect(runs.rows).toHaveLength(1);
@@ -285,5 +295,40 @@ describe("child result delivery", () => {
     expect(cancelled.length).toBeGreaterThanOrEqual(1);
     const done = await store.getRun(run.id);
     expect(done.status).toBe("cancelled");
+  }, 30_000);
+
+  it("drops the result of a closed child", async () => {
+    const parent = await startBusyParent("Closed child");
+    const child = await store.createChildThread(
+      parent.threadId,
+      parent.agentId,
+      stack.memberId,
+      "Closed child",
+    );
+    const run = await store.createRun({
+      agent_id: parent.agentId,
+      user_id: stack.memberId,
+      thread_id: child.id,
+      parent_run_id: parent.runId,
+      delegate_agent_id: parent.agentId,
+      depth: child.depth,
+      trigger: "delegation",
+      status: "running",
+      started_at: new Date().toISOString(),
+    });
+    await store.closeSubtree(child.id);
+    const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
+    await runtime.deliverChildResult({
+      child_thread_id: child.id,
+      run_id: run.id,
+      status: "succeeded",
+      reason: null,
+      final_text: "too late",
+    });
+    const rows = await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
+      [parent.chatId],
+    );
+    expect(rows.rows).toHaveLength(0);
   }, 30_000);
 });
