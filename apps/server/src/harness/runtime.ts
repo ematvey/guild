@@ -129,7 +129,7 @@ export class ThreadAgentLocked extends Error {
  *  Each file is a tagged block carrying its full path, so the two sources
  *  stay distinguishable. Pure over the files it is given. */
 export function composeAgentInstructions(
-  agent: { name: string; is_personal: boolean },
+  agent: { name: string; description?: string; is_personal: boolean },
   config: AgentConfigFiles,
   projectInstructions?: string,
   machineBound = false,
@@ -138,8 +138,11 @@ export function composeAgentInstructions(
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
     : "Every thread is private to the user you are talking to. The workspace is shared with everyone who can use this agent.";
+  const description = agent.description?.trim() ?? "";
   const parts: string[] = [
-    `You are ${agent.name}, a persistent agent in Guild.`,
+    description === ""
+      ? `You are ${agent.name}, a persistent agent in Guild.`
+      : `You are ${agent.name}, ${description}.`,
     "Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.",
     sharing,
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
@@ -514,7 +517,14 @@ export class GuildRuntime {
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
-    this.codemodeExtension = createCodemodeExtension({ sandbox: this.codemodeSandbox, models: false });
+    // The default 3000-char inline budget drops the tail of the callable
+    // list (thread_history) once the agent tool set grows, so the section
+    // gets 500 more characters.
+    this.codemodeExtension = createCodemodeExtension({
+      sandbox: this.codemodeSandbox,
+      models: false,
+      inlineBudget: 3500,
+    });
     this.registry.install(this.codemodeExtension);
   }
 

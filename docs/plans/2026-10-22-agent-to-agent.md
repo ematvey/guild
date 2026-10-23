@@ -213,3 +213,23 @@ four at a time against the 500-connection Postgres. Wall time ~150 s -> ~49 s.
   branch. The assertion was left strict on purpose.
 - **Overall cleanup** is out of scope: nothing deletes attachment objects or
   archived subtree rows yet.
+
+## Second round: identity, directory, child chat ownership
+
+The first live use found what the tree was missing: a spawner cannot discover
+what exists, an agent has no identity beyond a name, the child row does not open
+the child chat, and child chats leak into the sidebar. Spec addendum decisions
+30-37.
+
+| package | work | files |
+|---|---|---|
+| WP7 identity | `agents.description`, owner-editable, in the prompt, `set_description` for the agent itself | migration 0089, `agents/store.ts`, `agents/routes.ts`, `harness/runtime.ts`, `agents/tools.ts` |
+| WP8 directory | `list_agents` in the `subagents` group, spawn failures name it | `agents/subagents.ts`, `agents/tools.ts` |
+| WP9 child chat | `chat_id` on `child_result` and on the spawn/send result, the row opens `/thread/<chatId>`, rows render as a block, the WS `thread_list` push applies the execution-transcript filter | `crates/protocol/src/api.rs` + bindings, `agents/delivery.ts`, `hub/feed.ts`, `lib/thread-reducer.ts`, `views/agents/ChildRow.tsx`, `views/WebChat.tsx` |
+
+Order: WP7 and WP8 land on the server first (WP8 needs the description column),
+WP9 follows the wire change. WP9's UI work can start from the contract.
+
+Risk: `threadListSnapshot` and `ChatStore.listChats` duplicate the list query.
+The fix is one exported predicate; if they drift again the sidebar leaks child
+chats with no failing test. The WS push test is the guard.

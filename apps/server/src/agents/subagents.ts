@@ -72,7 +72,8 @@ export async function resolveSpawnTarget(
     ? "a.org_id = $1 AND a.id = $2"
     : "a.org_id = $1 AND lower(a.name) = lower($2)";
   const res = await pool.query<Record<string, unknown>>(
-    `SELECT a.id, a.org_id, a.owner_user_id, a.name, a.model, a.tools_mode,
+    `SELECT a.id, a.org_id, a.owner_user_id, a.name, a.description, a.model, a.tools_mode,
+            a.is_personal,
             (SELECT r.alias FROM model_routes r WHERE r.org_id = a.org_id AND r.model = a.model LIMIT 1) AS model_alias,
             a.tools, a.visibility, a.resources, a.status,
             to_char(a.deleted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS deleted_at,
@@ -84,13 +85,24 @@ export async function resolveSpawnTarget(
     params,
   );
   const row = res.rows[0];
-  if (row === undefined) throw new SubagentError("target_not_found", "no such agent in this organization");
-  if (row.status !== "active") throw new SubagentError("target_unavailable", "target agent is not active");
+  if (row === undefined) {
+    throw new SubagentError(
+      "target_not_found",
+      "no such agent in this organization; call list_agents first to see the agents you can use",
+    );
+  }
+  if (row.status !== "active") {
+    throw new SubagentError(
+      "target_unavailable",
+      "target agent is not active; call list_agents first to see the agents you can use",
+    );
+  }
   return {
     id: row.id as string,
     org_id: row.org_id as string,
     owner_user_id: row.owner_user_id as string,
     name: row.name as string,
+    description: (row.description as string | null) ?? "",
     model: row.model as string,
     model_alias: (row.model_alias as string | null) ?? null,
     is_personal: Boolean(row.is_personal),
@@ -176,11 +188,24 @@ async function childThread(
 export interface SpawnResult {
   thread_id: string;
   run_id: string;
+  chat_id: string;
+  agent_name: string;
+  status: "running";
 }
 
 export interface SendResult {
   thread_id: string;
   run_id: string;
+  chat_id: string;
+  agent_name: string;
+  status: "running";
+}
+
+export interface AgentDirectoryEntry {
+  id: string;
+  name: string;
+  description: string;
+  personal: boolean;
 }
 
 export interface ChildListEntry {
@@ -269,7 +294,13 @@ export async function spawn(context: SubagentsToolContext, args: { agent: string
       .catch(() => {});
     throw new SubagentError("submit_failed", message);
   }
-  return { thread_id: thread.id, run_id: childRun.id };
+  return {
+    thread_id: thread.id,
+    run_id: childRun.id,
+    chat_id: thread.chat_id,
+    agent_name: target.name,
+    status: "running",
+  };
 }
 
 /** Posts one turn into a descendant thread. The thread must be open. */
@@ -313,7 +344,27 @@ export async function send(
       .catch(() => {});
     throw new SubagentError("submit_failed", message);
   }
-  return { thread_id: thread.id, run_id: run.id };
+  return {
+    thread_id: thread.id,
+    run_id: run.id,
+    chat_id: thread.chat_id,
+    agent_name: target.name,
+    status: "running",
+  };
+}
+
+/** The directory the caller's user may use: every non-personal agent visible
+ *  to that user plus their own personal agent, sorted by name. */
+export async function listAgents(context: SubagentsToolContext): Promise<AgentDirectoryEntry[]> {
+  const agents = await context.store.list(context.requester);
+  return agents
+    .map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      personal: agent.is_personal,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Bounded excerpt of a descendant thread, same limits as
@@ -435,11 +486,28 @@ function errorResult(error: unknown): ToolExecutionResult {
 const spawnOutput = Type.Object({
   thread_id: Type.String(),
   run_id: Type.String(),
+  chat_id: Type.String(),
+  agent_name: Type.String(),
+  status: Type.String(),
 });
 
 const sendOutput = Type.Object({
   thread_id: Type.String(),
   run_id: Type.String(),
+  chat_id: Type.String(),
+  agent_name: Type.String(),
+  status: Type.String(),
+});
+
+const directoryOutput = Type.Object({
+  agents: Type.Array(
+    Type.Object({
+      id: Type.String(),
+      name: Type.String(),
+      description: Type.String(),
+      personal: Type.Boolean(),
+    }),
+  ),
 });
 
 const readOutput = Type.Object({
@@ -489,8 +557,9 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
     defineTool({
       name: "spawn",
       description:
-        "Spawn a child agent thread and post its first task. Returns the child thread and run ids at once; the child " +
-        "reports back by ending its turn. Depth and child count limits come from the deployment config.",
+        "Spawn a child agent thread and post its first task. Returns the child thread, run and chat ids at once; the " +
+        "child reports back by ending its turn. Depth and child count limits come from the deployment config. " +
+        "Call list_agents first when the target name is uncertain.",
       parameters: Type.Object({
         agent: Type.String({ description: "Target agent id or exact name within this organization" }),
         task: Type.String({ description: "The task for the child agent" }),
@@ -522,6 +591,24 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       execute: async (args) => {
         try {
           return { structuredOutput: (await send(context, args)) as unknown as JsonValue };
+        } catch (error) {
+          return errorResult(error);
+        }
+      },
+    }),
+    defineTool({
+      name: "list_agents",
+      description:
+        "List the agents you may spawn by name: every non-personal agent visible to your user plus your own " +
+        "personal agent. Each entry carries id, name, description and the personal flag.",
+      parameters: Type.Object({}),
+      structuredOutputSchema: directoryOutput,
+      replay: "safe",
+      callers: ["tools"],
+      outputLimits: { maxBytes: 32 * 1024 },
+      execute: async () => {
+        try {
+          return { structuredOutput: { agents: await listAgents(context) } as unknown as JsonValue };
         } catch (error) {
           return errorResult(error);
         }

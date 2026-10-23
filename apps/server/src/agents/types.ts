@@ -72,6 +72,9 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
 /** How an agent's tool allowlist is resolved. */
 export type AgentToolsMode = "selected" | "all";
 
+/** Longest accepted agent description, in characters. */
+export const MAX_AGENT_DESCRIPTION_CHARS = 500;
+
 export interface Agent {
   id: string;
   org_id: string;
@@ -80,6 +83,8 @@ export interface Agent {
   owner_email?: string | null;
   owner_avatar_url?: string | null;
   name: string;
+  /** What this agent is for; another agent reads it to pick a target. */
+  description: string;
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;

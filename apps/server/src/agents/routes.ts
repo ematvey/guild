@@ -16,6 +16,7 @@ import { agentWorkspaceDir, readIdentity, type AgentIdentity } from "./workspace
 import { runRoutineNow } from "./scheduler.js";
 import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
+import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
 import type {
   Agent,
   AgentRoutineKind,
@@ -43,7 +44,7 @@ const AGENT_TOOL_CATALOG = [
   { name: "create_routine", label: "Create routine", group: "Routines", description: "Create a recurring routine from a cron or interval schedule.", safe: true },
   { name: "update_routine", label: "Update routine", group: "Routines", description: "Change a routine's schedule, prompt or enabled state.", safe: true },
   { name: "delete_routine", label: "Delete routine", group: "Routines", description: "Delete a routine and stop its schedule.", safe: true },
-  { name: "subagents", label: "Subagents", group: "Agents", description: "Spawn child agent threads and send, read, list, cancel or close them.", safe: false },
+  { name: "subagents", label: "Subagents", group: "Agents", description: "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.", safe: false },
   { name: "send_file", label: "Send file", group: "Files", description: "Attach a workspace file to the turn's response.", safe: false },
   { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
 ];
@@ -121,6 +122,16 @@ function visibilityField(body: Record<string, unknown>): AgentVisibility | undef
   if (value === undefined) return undefined;
   if (!VISIBILITIES.has(value as AgentVisibility)) throw ApiError.badRequest("invalid visibility");
   return value as AgentVisibility;
+}
+
+function descriptionField(body: Record<string, unknown>): string | undefined {
+  const value = optionalString(body, "description");
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_AGENT_DESCRIPTION_CHARS) {
+    throw ApiError.badRequest(`description must be at most ${MAX_AGENT_DESCRIPTION_CHARS} characters`);
+  }
+  return trimmed;
 }
 
 function teamIdsField(body: Record<string, unknown>): string[] | undefined {
@@ -306,6 +317,7 @@ export function registerAgentRoutes(
     const body = jsonBody(req);
     const agent = await store.create(user, {
       name: requiredString(body, "name"),
+      description: descriptionField(body),
       model: requiredString(body, "model"),
       tools: toolsField(body),
       tools_mode: toolsModeField(body),
@@ -348,6 +360,8 @@ export function registerAgentRoutes(
       if (name.trim() === "") throw ApiError.badRequest("name must not be empty");
       patch.name = name;
     }
+    const description = descriptionField(body);
+    if (description !== undefined) patch.description = description;
     const model = optionalString(body, "model");
     if (model !== undefined) {
       if (model.trim() === "") throw ApiError.badRequest("model must not be empty");

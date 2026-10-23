@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Input } from "@guild/ui/components/input";
+import { Textarea } from "@guild/ui/components/textarea";
 import {
   Select,
   SelectContent,
@@ -691,6 +692,7 @@ function AgentSettings({
   onDeleted: () => void;
 }) {
   const [name, setName] = useState(agent.name);
+  const [description, setDescription] = useState(agent.description);
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
@@ -736,6 +738,7 @@ function AgentSettings({
     try {
       await updateAgent(agent.id, {
         name: name.trim(),
+        description: description.trim(),
         model,
         tools,
         tools_mode: toolsMode,
@@ -789,6 +792,19 @@ function AgentSettings({
                 )}
               </SelectContent>
             </Select>
+          </label>
+          <label className="space-y-1.5 sm:col-span-2">
+            <span className="text-xs font-medium">Description</span>
+            <Textarea
+              value={description}
+              maxLength={500}
+              rows={3}
+              placeholder="What this agent does and when to spawn it."
+              onChange={(e) => setDescription(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              Other agents read this to decide whom to spawn.
+            </span>
           </label>
         </div>
         <div className="mt-3 space-y-1.5">

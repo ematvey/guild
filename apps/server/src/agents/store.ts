@@ -50,6 +50,7 @@ const DEFAULT_GRACE_DAYS = 30;
 export interface CreateAgentInput {
   tools_mode?: AgentToolsMode;
   name: string;
+  description?: string;
   model: string;
   tools?: AgentToolName[];
   visibility?: AgentVisibility;
@@ -60,6 +61,7 @@ export interface CreateAgentInput {
 export interface UpdateAgentInput {
   tools_mode?: AgentToolsMode;
   name?: string;
+  description?: string;
   model?: string;
   tools?: AgentToolName[];
   visibility?: AgentVisibility;
@@ -129,7 +131,7 @@ export interface CreateNoticeInput {
 const TS = (column: string): string =>
   `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
-const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.model,
+const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a.model,
   a.tools, a.tools_mode, a.visibility, a.resources, a.status, a.is_personal,
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
@@ -186,6 +188,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     owner_email: (row.owner_email as string | null) ?? null,
     owner_avatar_url: (row.owner_avatar_url as string | null) ?? null,
     name: row.name as string,
+    description: (row.description as string | null) ?? "",
     model: row.model as string,
     model_alias: (row.model_alias as string | null) ?? null,
     tools: (row.tools as AgentToolName[] | null) ?? [],
@@ -344,13 +347,14 @@ export class AgentStore {
     try {
       await client.query("BEGIN");
       await client.query(
-        `INSERT INTO agents (id, org_id, owner_user_id, name, model, tools, tools_mode, visibility, resources)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb)`,
+        `INSERT INTO agents (id, org_id, owner_user_id, name, description, model, tools, tools_mode, visibility, resources)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)`,
         [
           id,
           user.org_id,
           user.id,
           input.name,
+          input.description ?? "",
           input.model,
           JSON.stringify(input.tools ?? DEFAULT_AGENT_TOOLS),
           input.tools_mode ?? "selected",
@@ -514,6 +518,7 @@ export class AgentStore {
       sets.push(`${column} = $${params.length}${cast}`);
     };
     if (patch.name !== undefined) add("name", patch.name);
+    if (patch.description !== undefined) add("description", patch.description);
     if (patch.tools_mode !== undefined) add("tools_mode", patch.tools_mode);
     if (patch.model !== undefined) add("model", patch.model);
     if (patch.tools !== undefined) add("tools", JSON.stringify(patch.tools), "::jsonb");
@@ -545,6 +550,18 @@ export class AgentStore {
     const updated = await this.fetchById(agent.org_id, agentId);
     if (updated === null) throw ApiError.notFound("no such agent");
     return updated;
+  }
+
+  /** Writes the agent's own description. The caller is the agent itself, so
+   *  this path checks no grant. */
+  async setDescription(agentId: string, description: string): Promise<string> {
+    const res = await this.pool.query<{ description: string }>(
+      "UPDATE agents SET description = $2, updated_at = now() WHERE id = $1 RETURNING description",
+      [agentId, description],
+    );
+    const row = res.rows[0];
+    if (row === undefined) throw ApiError.notFound("no such agent");
+    return row.description;
   }
 
   /** Replaces an agent's team grants after checking every team belongs to

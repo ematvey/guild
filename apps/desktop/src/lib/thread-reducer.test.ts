@@ -884,9 +884,10 @@ describe("subagent rows (child_result)", () => {
     is_error: false,
     meta,
   });
-  const childResult = (status: string): ThreadEvent => ({
+  const childResult = (status: string, chatId?: string): ThreadEvent => ({
     type: "child_result",
     thread_id: "child-thread",
+    ...(chatId ? { chat_id: chatId } : {}),
     run_id: "child-run",
     status,
     final_text: "done",
@@ -938,8 +939,48 @@ describe("subagent rows (child_result)", () => {
     expect(child).toMatchObject({
       threadId: "child-thread",
       runId: "child-run",
-      chatId: "child-thread",
+      chatId: null,
       status: "cancelled",
     });
+  });
+
+  it("reads chat_id from the event and never uses the thread id as a chat id", () => {
+    const withChat = eventsToBlocks([row(9, childResult("succeeded", "child-chat"))]);
+    expect(withChat.find((b) => b.kind === "tool")?.tool?.child?.chatId).toBe("child-chat");
+
+    const withoutChat = eventsToBlocks([row(9, childResult("succeeded"))]);
+    const child = withoutChat.find((b) => b.kind === "tool")?.tool?.child;
+    expect(child?.chatId).toBeNull();
+    expect(child?.chatId).not.toBe(child?.threadId);
+  });
+
+  it("keeps the spawn tool result's chat_id when the child_result disagrees", () => {
+    const blocks = eventsToBlocks([
+      row(1, spawnStep()),
+      row(2, spawnResult({
+        thread_id: "child-thread",
+        chat_id: "spawn-chat",
+        agent_name: "Researcher",
+        status: "running",
+      })),
+      row(3, childResult("succeeded", "event-chat")),
+    ]);
+    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
+    expect(child?.chatId).toBe("spawn-chat");
+    expect(child?.chatId).not.toBe("child-thread");
+  });
+
+  it("fills the chat id from the event when the spawn result did not carry one", () => {
+    const blocks = eventsToBlocks([
+      row(1, spawnStep()),
+      row(2, spawnResult({
+        thread_id: "child-thread",
+        agent_name: "Researcher",
+        status: "running",
+      })),
+      row(3, childResult("succeeded", "event-chat")),
+    ]);
+    const child = blocks.find((b) => b.kind === "tool")?.tool?.child;
+    expect(child?.chatId).toBe("event-chat");
   });
 });

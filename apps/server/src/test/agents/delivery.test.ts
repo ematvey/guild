@@ -121,7 +121,7 @@ describe("child result delivery", () => {
     parentRunId: string;
     agentId: string;
     text: string;
-  }): Promise<{ threadId: string; runId: string }> {
+  }): Promise<{ threadId: string; runId: string; chatId: string }> {
     const child = await store.createChildThread(
       args.parentThreadId,
       args.agentId,
@@ -151,7 +151,7 @@ describe("child result delivery", () => {
       ),
     );
     await lifecycle.assistantEvent(child.chat_id, row);
-    return { threadId: child.id, runId: run.id };
+    return { threadId: child.id, runId: run.id, chatId: child.chat_id };
   }
 
   function userTexts(body: Record<string, unknown>): string[] {
@@ -220,6 +220,7 @@ describe("child result delivery", () => {
       "child two result",
     ]);
     expect(delivered.rows.every((row) => typeof row.payload.thread_id === "string")).toBe(true);
+    expect(delivered.rows.map((row) => row.payload.chat_id)).toEqual([first.chatId, second.chatId]);
 
     const runs = await stack.env.db.query("SELECT id FROM agent_runs WHERE thread_id = $1", [parent.threadId]);
     expect(runs.rows).toHaveLength(1);

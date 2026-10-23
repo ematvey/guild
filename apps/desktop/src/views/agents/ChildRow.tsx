@@ -1,12 +1,12 @@
 // One compact transcript row per spawn (decision 16): agent name, status
-// dot, client-computed elapsed time, one chevron into the child thread, and
-// the cancel/close actions. No card, no nested transcript, no header strip.
+// dot, client-computed elapsed time, and the cancel/close actions on hover.
+// The whole row opens the child chat; a row without a chat id is inert.
 
 import { useEffect, useState } from "react";
 import { ChevronRight, X, XCircle } from "lucide-react";
 import { cn } from "@guild/ui/lib/utils";
 import type { ChildRow as ChildRowData } from "../../lib/thread-reducer";
-import { childElapsedLabel, childStatusLabel, childStatusTone } from "./child-row";
+import { childElapsedLabel, childRowOpeners, childStatusLabel, childStatusTone } from "./child-row";
 import { childThreadAction } from "./agents-api";
 
 const dotClass: Record<ReturnType<typeof childStatusTone>, string> = {
@@ -36,18 +36,18 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
     return () => window.clearInterval(timer);
   }, [live]);
 
-  const target = row.chatId ?? row.threadId;
+  const chatId = row.chatId ?? null;
   const elapsed = childElapsedLabel({ ...row, status, finishedAt: endedAt }, now);
   const tone = childStatusTone(status);
 
   const act = async (action: "cancel" | "close") => {
-    if (!target || busy !== null) return;
+    if (!chatId || busy !== null) return;
     setBusy(action);
     setNotice(null);
-    const result = await childThreadAction(target, action);
+    const result = await childThreadAction(chatId, action);
     setBusy(null);
     if (result.ok) {
-      setStatus(action === "close" ? "cancelled" : "cancelled");
+      setStatus("cancelled");
       setEndedAt(new Date().toISOString());
       if (action === "close") setNotice("Closed");
       return;
@@ -55,8 +55,28 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
     setNotice(result.unavailable ? "Not available yet" : result.error);
   };
 
+  const openers = childRowOpeners(row, onOpen);
+
   return (
-    <div className="group flex w-fit max-w-full items-center gap-2 py-1 text-xs">
+    <div
+      role="button"
+      tabIndex={chatId ? 0 : -1}
+      aria-disabled={chatId ? undefined : true}
+      aria-label={`Open ${row.agentName || "subagent"} chat`}
+      onClick={openers.row}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openers.row();
+        }
+      }}
+      className={cn(
+        "group flex w-full items-center gap-2 rounded px-1.5 py-1 text-xs outline-none",
+        chatId
+          ? "cursor-pointer hover:bg-accent/40 focus-visible:bg-accent/40"
+          : "cursor-default opacity-70",
+      )}
+    >
       <span
         className={cn("size-2 shrink-0 rounded-full", dotClass[tone])}
         title={childStatusLabel(status)}
@@ -67,14 +87,17 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
       </span>
       {elapsed && <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">{elapsed}</span>}
       {notice && <span className="shrink-0 text-2xs text-muted-foreground">{notice}</span>}
-      <div className="ml-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+      <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         {live && (
           <button
             type="button"
             title="Cancel child thread"
             aria-label="Cancel child thread"
-            disabled={busy !== null}
-            onClick={() => void act("cancel")}
+            disabled={busy !== null || !chatId}
+            onClick={(e) => {
+              e.stopPropagation();
+              void act("cancel");
+            }}
             className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
             <XCircle className="size-3.5" />
@@ -84,8 +107,11 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
           type="button"
           title="Close child thread"
           aria-label="Close child thread"
-          disabled={busy !== null}
-          onClick={() => void act("close")}
+          disabled={busy !== null || !chatId}
+          onClick={(e) => {
+            e.stopPropagation();
+            void act("close");
+          }}
           className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
         >
           <X className="size-3.5" />
@@ -93,11 +119,14 @@ export function ChildRow({ row, onOpen }: { row: ChildRowData; onOpen: (chatId: 
       </div>
       <button
         type="button"
-        title="Open child thread"
-        aria-label={`Open ${row.agentName || "subagent"} thread`}
-        disabled={!target}
-        onClick={() => target && onOpen(target)}
-        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+        title="Open child chat"
+        aria-label={`Open ${row.agentName || "subagent"} chat`}
+        disabled={!chatId}
+        onClick={(e) => {
+          e.stopPropagation();
+          openers.chevron();
+        }}
+        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
       >
         <ChevronRight className="size-4" />
       </button>
