@@ -414,3 +414,10 @@ parent-to-child only.
 46. **The agent name leads the row.** A row reads `<agent name> · <session
     title> · <elapsed>`; the spawner's session name is the second element, not
     the first.
+47. **Subagent traffic is technical-view content.** A child renders as one
+    span block, not as chat messages: the agent name, the session title, an
+    `AGENT` chip, the elapsed time and the status on one line, then `TASK` and
+    `RETURN` rows under it, hung off a left rail so the span reads as nested
+    under the call that spawned it. The span is merged in place as the child
+    progresses (spawn, result, close), never appended twice. The casual view
+    hides it — there the subagent pane is the only surface.
