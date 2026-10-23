@@ -64,7 +64,17 @@ export type WorkerResponse =
   | { t: "result"; ref: number; ok: false; error: string; status?: number; code?: string }
   /** A worker admitting a turn for a chat it does not own (delegation):
    *  the server owns every other chat's worker, so it forwards this. */
-  | { t: "remote-submit"; ref: number; chatId: string; input: SubmitTurnWireInput };
+  | { t: "remote-submit"; ref: number; chatId: string; input: SubmitTurnWireInput }
+  /** A worker delivering a child result into a chat it does not own: the
+   *  conversation handle is invocation-bound, so the owning worker does it. */
+  | {
+      t: "remote-deliver-steer";
+      ref: number;
+      chatId: string;
+      orgId: string;
+      text: string;
+      model: string | null;
+    };
 
 export type WorkerEvent = { t: "ready" } | { t: "heartbeat" } | WorkerStreamEvent;
 

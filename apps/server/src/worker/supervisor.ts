@@ -365,6 +365,25 @@ export class ForkSupervisor {
       handle.lastBeat = Date.now();
       return;
     }
+    if (message.t === "remote-deliver-steer") {
+      const reply = (response: WorkerResponse) => {
+        if (handle.child.connected) handle.child.send(response, () => {});
+      };
+      void (async () => {
+        try {
+          await this.deliverSteer(message.chatId, message.orgId, message.text, message.model);
+          reply({ t: "result", ref: message.ref, ok: true, data: null });
+        } catch (error) {
+          reply({
+            t: "result",
+            ref: message.ref,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+      return;
+    }
     if (message.t === "remote-submit") {
       const reply = (response: WorkerResponse) => {
         if (handle.child.connected) handle.child.send(response, () => {});
