@@ -177,7 +177,7 @@ function AgentGroup({
   );
 }
 
-function AgentCard({
+export function AgentCard({
   agent,
   onNavigate,
 }: {
@@ -205,6 +205,9 @@ function AgentCard({
         </div>
         <AgentStatusBadge status={agent.status} />
       </div>
+      {agent.description && (
+        <p className="line-clamp-2 text-xs text-muted-foreground">{agent.description}</p>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         <VisibilityBadge visibility={agent.visibility} />
         <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">

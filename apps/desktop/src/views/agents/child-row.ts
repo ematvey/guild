@@ -36,3 +36,20 @@ export function childStatusLabel(status: string): string {
   if (status === "skipped") return "Skipped";
   return status;
 }
+
+/** A child row navigates only to a real chat id. A thread id is not a chat
+ *  id, so a row without one stays inert. */
+export function openChildChat(row: ChildRow, onOpen: (chatId: string) => void): void {
+  const chatId = row.chatId ?? null;
+  if (chatId) onOpen(chatId);
+}
+
+/** The row click and the chevron both open the child chat. One handler
+ *  pair keeps the two activations on the same inert rule. */
+export function childRowOpeners(
+  row: ChildRow,
+  onOpen: (chatId: string) => void,
+): { row: () => void; chevron: () => void } {
+  const open = () => openChildChat(row, onOpen);
+  return { row: open, chevron: open };
+}
