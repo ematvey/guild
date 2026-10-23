@@ -674,6 +674,8 @@ pub enum ThreadEvent {
     ChildResult {
         thread_id: Uuid,
         run_id: Uuid,
+        /// The child thread's chat: the row navigates to `/thread/<chat_id>`.
+        chat_id: Uuid,
         /// The child run's terminal status; `cancelled` is a user stop.
         status: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

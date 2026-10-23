@@ -72,8 +72,9 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
   ) le ON true`;
 
 /** Routine runs and delegation children are execution transcripts, not
- *  conversations: they stay out of the sidebar lists. */
-const NOT_EXECUTION_TRANSCRIPT = `NOT EXISTS (
+ *  conversations: they stay out of the sidebar lists. The HTTP lists and the
+ *  WebSocket thread_list push share this one predicate. */
+export const NOT_EXECUTION_TRANSCRIPT = `NOT EXISTS (
     SELECT 1 FROM agent_threads xt
     WHERE xt.chat_id = c.id AND xt.kind IN ('routine_run', 'delegated')
   )`;

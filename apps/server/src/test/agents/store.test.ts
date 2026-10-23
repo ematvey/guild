@@ -56,6 +56,7 @@ dbDescribe("AgentStore", () => {
     expect(agent.owner_user_id).toBe(owner.id);
     expect(agent.visibility).toBe("private");
     expect(agent.status).toBe("active");
+    expect(agent.description).toBe("");
     expect(agent.tools).toContain("send_message");
 
     const threads = await store.listThreads(agent.id, owner.id);
@@ -65,6 +66,21 @@ dbDescribe("AgentStore", () => {
     const chat = await env!.db.query("SELECT user_id, title FROM chats WHERE id = $1", [threads[0]!.chat_id]);
     expect(chat.rows[0]!.user_id).toBe(owner.id);
     expect(chat.rows[0]!.title).toBe("Main thread");
+  });
+
+  it("stores a description on create and update", async () => {
+    const agent = await store.create(owner, {
+      name: "Described",
+      model: "GLM-Test",
+      description: "Writes launch notes.",
+    });
+    expect(agent.description).toBe("Writes launch notes.");
+    expect((await store.fetchAgent(agent.id)).description).toBe("Writes launch notes.");
+
+    const updated = await store.update(owner, agent.id, { description: "Reviews launch notes." });
+    expect(updated.description).toBe("Reviews launch notes.");
+    const cleared = await store.update(owner, agent.id, { description: "" });
+    expect(cleared.description).toBe("");
   });
 
   it("derives a short, word-bounded title from the first line", () => {

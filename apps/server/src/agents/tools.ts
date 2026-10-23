@@ -24,7 +24,7 @@ import {
 import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
-import { ALL_AGENT_TOOLS, type Agent } from "./types.js";
+import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
 
 const MAX_SEARCH_RESULTS = 20;
 
@@ -193,7 +193,36 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
   // `all` follows the catalog, so a tool added in a later release reaches
   // the agent without an edit.
   const allowed = new Set(deps.agent.tools_mode === "all" ? ALL_AGENT_TOOLS : deps.agent.tools);
-  const tools: ToolRegistration[] = [];
+  // Outside the allowlist: every agent owns its own description.
+  const tools: ToolRegistration[] = [
+    defineTool({
+      name: "set_description",
+      description:
+        "Rewrite your own description: the short text other agents read to know what you are for. " +
+        `At most ${MAX_AGENT_DESCRIPTION_CHARS} characters; an empty string clears it. This never changes another agent.`,
+      parameters: Type.Object({
+        description: Type.String({
+          description: `Your new description, at most ${MAX_AGENT_DESCRIPTION_CHARS} characters; empty clears it`,
+        }),
+      }),
+      structuredOutputSchema: Type.Object({ description: Type.String() }),
+      replay: "unsafe",
+      callers: ["tools"],
+      outputLimits: { maxBytes: 4 * 1024 },
+      execute: async (args) => {
+        const description = args.description.trim();
+        if (description.length > MAX_AGENT_DESCRIPTION_CHARS) {
+          return textErr(`description must be at most ${MAX_AGENT_DESCRIPTION_CHARS} characters`);
+        }
+        try {
+          const stored = await deps.store.setDescription(deps.agent.id, description);
+          return { structuredOutput: { description: stored } as unknown as JsonValue };
+        } catch (error) {
+          return textErr(error instanceof Error ? error.message : String(error));
+        }
+      },
+    }),
+  ];
 
   if (allowed.has("send_message")) {
     tools.push(
