@@ -159,6 +159,21 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(stack.env.app.platform.supervisor!.pidOf(chatId)).toBeDefined();
   }, 90_000);
 
+  it("delivers a child steer into the chat's own worker", async () => {
+    const chatId = await createChat("child steer chat");
+    stack.mock.setResponses([
+      { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("first answer") + sseDone() },
+    ]);
+    await submit(chatId, "start");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("first answer"));
+
+    stack.mock.setResponses([
+      { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("steered answer") + sseDone() },
+    ]);
+    await stack.env.app.platform.runtime.deliverChildSteer(chatId, stack.orgId, "a child reported back", null);
+    await waitFor(async () => (await lastAssistant(chatId)).includes("steered answer"));
+  }, 90_000);
+
   it("rebuilds a poisoned projection on worker restart and completes the next turn", async () => {
     const chatId = await createChat("recover live projection");
     stack.mock.setResponses([{ body: finalSse("before projection repair") }]);

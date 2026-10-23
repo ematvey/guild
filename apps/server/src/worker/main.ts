@@ -120,6 +120,10 @@ process.on("message", (raw: unknown) => {
         case "submit":
           data = await runtime.submitTurn(chatId, request.input.orgId, request.input);
           break;
+        case "deliver-steer":
+          await runtime.deliverChildSteer(chatId, request.orgId, request.text, request.model);
+          data = null;
+          break;
         case "steer":
           data = await runtime.steerQueued(chatId, request.submissionId);
           break;

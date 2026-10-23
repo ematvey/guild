@@ -1510,6 +1510,12 @@ export class GuildRuntime {
    *  pending unplaced steer item, else submit a new steer. Never enqueues a
    *  follow-up turn. */
   async deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    // The conversation handle is invocation-bound: only the worker that owns
+    // the chat can open it. The server forwards the steer to that worker.
+    if (this.supervisor !== undefined) {
+      await this.supervisor.deliverSteer(chatId, orgId, text, model);
+      return;
+    }
     await this.start();
     const conversation = await this.conversationForChat(chatId, orgId);
     const pending = await conversation.commit(async (tx) => {
