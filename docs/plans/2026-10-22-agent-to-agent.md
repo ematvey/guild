@@ -235,6 +235,11 @@ strip pinned above the composer (decision 37), and `child_result` carries the
 child's agent name so the row label is right even when the spawn ran inside a
 codemode script.
 
+Third round: the strip was rebuilt on `child_spawned` events because a row
+derived from a tool block could not tell a real child from a failed spawn, and
+it stayed "running" forever. The child chat gained the request that started it,
+and the child header gained the way back to the parent (decision 38-40).
+
 Risk: `threadListSnapshot` and `ChatStore.listChats` duplicate the list query.
 The fix is one exported predicate; if they drift again the sidebar leaks child
 chats with no failing test. The WS push test is the guard.
