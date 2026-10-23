@@ -221,6 +221,16 @@ describe("child result delivery", () => {
     ]);
     expect(delivered.rows.every((row) => typeof row.payload.thread_id === "string")).toBe(true);
     expect(delivered.rows.map((row) => row.payload.chat_id)).toEqual([first.chatId, second.chatId]);
+    // The child thread's agent name labels the row; both children share it.
+    const childAgents = await stack.env.db.query<{ name: string }>(
+      "SELECT DISTINCT a.name FROM agent_threads t JOIN agents a ON a.id = t.agent_id WHERE t.id = ANY($1::uuid[])",
+      [[first.threadId, second.threadId]],
+    );
+    expect(childAgents.rows).toHaveLength(1);
+    expect(delivered.rows.map((row) => row.payload.agent_name)).toEqual([
+      childAgents.rows[0]!.name,
+      childAgents.rows[0]!.name,
+    ]);
 
     const runs = await stack.env.db.query("SELECT id FROM agent_runs WHERE thread_id = $1", [parent.threadId]);
     expect(runs.rows).toHaveLength(1);

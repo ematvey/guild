@@ -1021,6 +1021,8 @@ export type ThreadEvent =
       thread_id: string;
       /** The durable chat id the child thread projects into. */
       chat_id?: string | null;
+      /** The child thread's agent name, for the row label. */
+      agent_name?: string | null;
       run_id: string;
       /** The child run's terminal status; `cancelled` is a user stop. */
       status: string;
