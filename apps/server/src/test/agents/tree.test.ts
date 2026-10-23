@@ -205,6 +205,21 @@ describe("thread stop actions", () => {
     expect(thread.rows[0]?.closed_at).toBeNull();
   });
 
+  it("refuses to close a root thread", async () => {
+    const child = await delegatedChild();
+    const parentChat = await stack.env.db.query<{ chat_id: string }>(
+      "SELECT chat_id FROM agent_threads WHERE id = (SELECT parent_thread_id FROM agent_threads WHERE id = $1)",
+      [child.threadId],
+    );
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${parentChat.rows[0]!.chat_id}/close`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(400);
+  });
+
   it("404s for a chat with no thread row", async () => {
     const chatId = await insertChat("No thread");
     const res = await stack.env.app.inject({

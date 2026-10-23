@@ -551,6 +551,11 @@ export function registerAgentRoutes(
       await chats.chats.getChat(user.org_id, chatId, user);
       const thread = await store.threadByChatId(chatId);
       if (thread === null) throw ApiError.notFound("no such thread");
+      // Closing is a child-only act: the root thread is the conversation the
+      // caller is having, and stopping its turn is `cancel`.
+      if (action === "close" && thread.parent_thread_id === null) {
+        throw ApiError.badRequest("the root thread cannot be closed");
+      }
       const context = { store, runtime: chats.runtime };
       const result =
         action === "cancel"
