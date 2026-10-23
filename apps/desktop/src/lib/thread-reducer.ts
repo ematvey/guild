@@ -138,6 +138,7 @@ function childRowFromEvent(
   ev: {
     thread_id: string;
     chat_id?: string | null;
+    agent_name?: string | null;
     run_id: string;
     status: string;
     reason?: string | null;
@@ -148,7 +149,7 @@ function childRowFromEvent(
     threadId: ev.thread_id,
     runId: ev.run_id,
     chatId: ev.chat_id ?? null,
-    agentName: "Subagent",
+    agentName: ev.agent_name || "Subagent",
     status: ev.status,
     reason: ev.reason ?? undefined,
     startedAt: createdAt,
@@ -529,6 +530,8 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           target.child = {
             ...target.child,
             chatId: target.child.chatId ?? ev.chat_id ?? null,
+            agentName:
+              target.child.agentName === "Subagent" && ev.agent_name ? ev.agent_name : target.child.agentName,
             runId: ev.run_id,
             status: ev.status,
             reason: ev.reason ?? undefined,
@@ -1077,6 +1080,8 @@ export function createThreadReducer(): ThreadReducer {
           target.child = {
             ...target.child,
             chatId: target.child.chatId ?? ev.chat_id ?? null,
+            agentName:
+              target.child.agentName === "Subagent" && ev.agent_name ? ev.agent_name : target.child.agentName,
             runId: ev.run_id,
             status: ev.status,
             reason: ev.reason ?? undefined,

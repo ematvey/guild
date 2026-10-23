@@ -104,8 +104,14 @@ export class ChildResultDelivery {
 
   async deliver(input: ChildRunFinished): Promise<void> {
     const { pool, store, threads, runtime, log } = this.deps;
-    const child = await pool.query<{ parent_thread_id: string | null; closed_at: Date | null; chat_id: string }>(
-      "SELECT parent_thread_id, closed_at, chat_id FROM agent_threads WHERE id = $1",
+    const child = await pool.query<{
+      parent_thread_id: string | null;
+      closed_at: Date | null;
+      chat_id: string;
+      agent_name: string;
+    }>(
+      `SELECT t.parent_thread_id, t.closed_at, t.chat_id, a.name AS agent_name
+       FROM agent_threads t JOIN agents a ON a.id = t.agent_id WHERE t.id = $1`,
       [input.child_thread_id],
     );
     const childRow = child.rows[0];
@@ -131,6 +137,7 @@ export class ChildResultDelivery {
       thread_id: input.child_thread_id,
       run_id: input.run_id,
       chat_id: childRow.chat_id,
+      agent_name: childRow.agent_name,
       status: input.status,
       reason: input.reason,
       final_text: input.final_text,
