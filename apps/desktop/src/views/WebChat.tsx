@@ -3798,7 +3798,20 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         ) : inlineSkills ? (
           inlineSkills
         ) : inlineSettings ? (
-          inlineSettings
+          <>
+            {/* Mobile: the settings page owns the whole main column, so it
+                carries its own way back to the drawer (desktop keeps the
+                rail). */}
+            {isMobile && (
+              <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
+                <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
+                  <Menu />
+                </Button>
+                <span className="min-w-0 flex-1 truncate font-medium">Settings</span>
+              </header>
+            )}
+            {inlineSettings}
+          </>
         ) : (
           <>
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
