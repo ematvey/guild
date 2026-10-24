@@ -17,7 +17,8 @@ import {
 import { toast } from "sonner";
 import { rpcCall } from "../../transport";
 import { resolveProjectDir } from "../settings/resolve-project-dir";
-import { daemonFs, listSkills, setSkillDisabled } from "../../lib/context";
+import { daemonFs } from "../../lib/fs-bridge";
+import { listSkills, setSkillDisabled } from "../../lib/skills";
 import {
   displayVersion,
   fetchInstalls,

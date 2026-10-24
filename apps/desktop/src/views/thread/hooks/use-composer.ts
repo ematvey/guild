@@ -3,7 +3,8 @@
 // carries unsent sends across a reload.
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { daemonFs, listSkills } from "../../../lib/context";
+import { daemonFs } from "../../../lib/fs-bridge";
+import { listSkills } from "../../../lib/skills";
 import { applyMention, detectMention } from "../../../lib/skill-mention";
 import {
   BrowserSendStore,
