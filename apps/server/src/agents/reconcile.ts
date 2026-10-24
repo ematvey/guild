@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
+import { notifySubagentTree } from "./tree.js";
 
 export interface ReconcileDeps {
   pool: PlatformPool;
@@ -80,6 +81,7 @@ export async function failStaleRuns(
     );
     if (updated.rowCount === 0) continue;
     failed += 1;
+    await notifySubagentTree(deps.pool, run.thread_id);
 
     if (run.parent_thread_id !== null && run.closed_at === null && run.parent_chat_id !== null) {
       await deps.threads
