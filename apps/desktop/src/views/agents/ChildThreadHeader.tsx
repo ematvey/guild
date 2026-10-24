@@ -1,18 +1,8 @@
 // The child thread header: the way back to the parent chat, the child's
-// session name, its agent and its run status. A plain chat renders none of
-// this.
+// session name and its agent. A plain chat renders none of this.
 
 import { ArrowLeft } from "lucide-react";
-import { cn } from "@guild/ui/lib/utils";
 import type { ChatTree } from "../../transport";
-import { childStatusLabel, childStatusTone } from "./child-status";
-
-const dotClass: Record<ReturnType<typeof childStatusTone>, string> = {
-  running: "animate-pulse bg-sky-500",
-  success: "bg-emerald-500",
-  danger: "bg-destructive",
-  muted: "bg-muted-foreground/50",
-};
 
 export function ChildThreadHeader({
   tree,
@@ -23,8 +13,6 @@ export function ChildThreadHeader({
 }) {
   const parent = tree?.parent ?? null;
   if (!tree || !parent) return null;
-  const tone = childStatusTone(tree.status ?? "unknown");
-  const status = childStatusLabel(tree.status ?? "unknown");
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <button
@@ -41,14 +29,6 @@ export function ChildThreadHeader({
       {tree.agent_name && (
         <span className="max-w-40 shrink-0 truncate text-2xs text-muted-foreground">{tree.agent_name}</span>
       )}
-      <span className="flex shrink-0 items-center gap-1 text-2xs text-muted-foreground">
-        <span
-          className={cn("size-2 rounded-full", dotClass[tone])}
-          title={status}
-          aria-label={status}
-        />
-        {status}
-      </span>
     </div>
   );
 }

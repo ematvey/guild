@@ -15,7 +15,7 @@ const childTree: ChatTree = {
 };
 
 describe("ChildThreadHeader", () => {
-  it("renders the back control, child title, agent name and status", () => {
+  it("renders the back control, child title and agent name", () => {
     const html = renderToStaticMarkup(
       <ChildThreadHeader tree={childTree} onBack={() => {}} />,
     );
@@ -23,7 +23,10 @@ describe("ChildThreadHeader", () => {
     expect(html).toContain("Back to Parent session");
     expect(html).toContain("market scan");
     expect(html).toContain("Echo");
-    expect(html).toContain("Running");
+    // The header carries no status: the running tree below the transcript is
+    // the only place a subagent's state shows.
+    expect(html).not.toContain("Running");
+    expect(html).not.toContain("Succeeded");
   });
 
   it("renders nothing for a plain chat", () => {
