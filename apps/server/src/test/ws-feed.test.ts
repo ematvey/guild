@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, startMockUpstream, type M2Stack } from "./platform/m2-harness.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
+import { notifySubagentTree } from "../agents/tree.js";
 import type { PlatformContext } from "../platform/context.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
@@ -541,6 +542,67 @@ describe("member-socket feed", () => {
       if (marker === undefined) await new Promise((r) => setTimeout(r, 100));
     }
     expect(marker?.last_read_seq).toBe(seq);
+    ws.end();
+  });
+
+  it("pushes the chat's thread subtree on sync and on every tree change", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("tree push");
+    const agentId = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model)
+       VALUES ($1, $2, $3, 'Tree push agent', 'GLM-Test-Model')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const rootThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
+       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      [rootThread, agentId, stack.memberId, chat.id],
+    );
+
+    const ws = await memberSocket();
+    ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+    const syncTree = await waitFrame(
+      ws,
+      (f) => f.type === "subagent_tree" && f.chat_id === chat.id,
+    );
+    expect((syncTree.nodes as { thread_id: string }[]).map((n) => n.thread_id)).toEqual([rootThread]);
+
+    // A child thread + run changes the subtree: the NOTIFY pushes it whole.
+    const childChat = await createChat("tree push child");
+    const childThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat.id, rootThread],
+    );
+    const runId = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, thread_id, trigger, status, started_at)
+       VALUES ($1, $2, $3, $4, 'delegation', 'running', now())`,
+      [runId, agentId, stack.memberId, childThread],
+    );
+    await notifySubagentTree(platform.pool, childThread);
+    const pushed = await waitFrame(
+      ws,
+      (f) => f.type === "subagent_tree" && f.chat_id === chat.id
+        && (f.nodes as unknown[]).length === 2,
+    );
+    const nodes = pushed.nodes as { thread_id: string; parent_thread_id: string | null; status: string | null }[];
+    expect(nodes.map((n) => [n.thread_id, n.parent_thread_id, n.status])).toEqual([
+      [rootThread, null, null],
+      [childThread, rootThread, "running"],
+    ]);
+
+    // A status flip moves the same tree.
+    await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded' WHERE id = $1", [runId]);
+    await notifySubagentTree(platform.pool, childThread);
+    const done = await waitFrame(
+      ws,
+      (f) => f.type === "subagent_tree" && f.chat_id === chat.id
+        && (f.nodes as { status: string | null }[]).some((n) => n.status === "succeeded"),
+    );
+    expect((done.nodes as { status: string | null }[])[1]!.status).toBe("succeeded");
     ws.end();
   });
 });

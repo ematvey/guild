@@ -63,6 +63,8 @@ Every device viewing a chat renders the same authoritative content.
   from local merge logic.
 - A generation's progress (text, tool calls, approvals) is visible while it
   runs, from any device.
+- Every live view update arrives on the member socket. A client does not
+  poll for state the socket can push.
 
 **PRD-3 — Durable runs.**
 An in-flight run survives a server restart and resumes from its recorded

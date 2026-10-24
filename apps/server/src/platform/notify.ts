@@ -13,6 +13,7 @@ export const NOTIFY_CHANNELS = [
   "guild_thread_committed",
   "guild_chat_status",
   "guild_events",
+  "guild_subagent_tree",
 ] as const;
 
 export class NotifyHub {

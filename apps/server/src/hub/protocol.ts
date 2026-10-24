@@ -62,7 +62,12 @@ export type WsServerMsg =
       machine_id: string | null;
       event: StreamWireEvent | unknown;
     }
-  | { type: "org_event"; event: unknown };
+  | { type: "org_event"; event: unknown }
+  | {
+      type: "subagent_tree";
+      chat_id: string;
+      nodes: unknown[];
+    };
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
@@ -280,6 +285,13 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       ]);
     case "org_event":
       return JSON.stringify(frame("org_event", [["event", msg.event]]));
+    case "subagent_tree":
+      return JSON.stringify(
+        frame("subagent_tree", [
+          ["chat_id", msg.chat_id],
+          ["nodes", msg.nodes],
+        ]),
+      );
   }
 }
 

@@ -60,6 +60,18 @@ function firstTextOf(payload: Record<string, unknown>): string {
   return block?.text ?? "";
 }
 
+/** The terminal assistant message of a turn: the one with no tool call. Only
+ *  that message is the run's answer; earlier assistant rows are narration
+ *  around tool calls. */
+function terminalAssistantEvent(events: readonly TurnEvent[]): TurnEvent | null {
+  const assistant = events.filter((event) => event.type === "assistant_message");
+  for (let i = assistant.length - 1; i >= 0; i--) {
+    const event = assistant[i]!;
+    if (!blocksOf(event.payload).some((block) => block.type === "tool_call")) return event;
+  }
+  return null;
+}
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max);
 }
@@ -117,11 +129,10 @@ export class AgentRunLifecycle {
         payload: row.payload,
         created_at: row.created_at,
       }));
-      const assistantText = turnEvents
-        .filter((event) => event.type === "assistant_message")
-        .map((event) => textOf(event.payload))
-        .filter((text) => text.trim() !== "")
-        .join("\n\n");
+      const finalText = (() => {
+        const terminal = terminalAssistantEvent(turnEvents);
+        return terminal === null ? "" : textOf(terminal.payload).trim();
+      })();
       const tokens = turnEvents.reduce((sum, event) => {
         if (event.type !== "assistant_message") return sum;
         const usage = event.payload.usage as { tokens_in?: number; tokens_out?: number } | undefined;
@@ -131,13 +142,13 @@ export class AgentRunLifecycle {
       const status =
         info.error !== null
           ? "failed"
-          : assistantText.trim() !== "" || sentMessage
+          : finalText !== "" || sentMessage
             ? "succeeded"
             : "silent";
       const summary =
         info.summary ??
-        (assistantText.trim() !== ""
-          ? clip(firstTextOf(turnEvents.find((event) => event.type === "assistant_message")?.payload ?? {}), MAX_SUMMARY_CHARS)
+        (finalText !== ""
+          ? clip(finalText, MAX_SUMMARY_CHARS)
           : sentMessage
             ? "Sent a message"
             : null);
@@ -171,7 +182,7 @@ export class AgentRunLifecycle {
           run_id: run.id,
           status,
           reason: info.error === null ? null : "error",
-          final_text: assistantText,
+          final_text: finalText,
           attachment_event_id: info.eventId ?? null,
         };
         await this.deps.delivery.deliver(finished).catch((error: unknown) => {

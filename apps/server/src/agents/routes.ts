@@ -17,6 +17,7 @@ import { runRoutineNow } from "./scheduler.js";
 import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
+import { chatSubagentNodes } from "./tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
 import { installSpecialists } from "./specialists.js";
 import type {
@@ -566,41 +567,9 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
-    const res = await infra.pool.query<{
-      thread_id: string;
-      chat_id: string;
-      parent_thread_id: string | null;
-      agent_name: string;
-      title: string;
-      depth: number;
-      status: string | null;
-    }>(
-      `WITH RECURSIVE subtree AS (
-         SELECT t.id, t.chat_id, t.parent_thread_id, t.agent_id, t.title, t.depth
-         FROM agent_threads t WHERE t.chat_id = $1
-         UNION ALL
-         SELECT c.id, c.chat_id, c.parent_thread_id, c.agent_id, c.title, c.depth
-         FROM agent_threads c JOIN subtree p ON c.parent_thread_id = p.id
-       )
-       SELECT s.id AS thread_id, s.chat_id, s.parent_thread_id, a.name AS agent_name,
-              s.title, s.depth,
-              (SELECT r.status FROM agent_runs r WHERE r.thread_id = s.id
-               ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS status
-       FROM subtree s JOIN agents a ON a.id = s.agent_id
-       ORDER BY s.depth, s.id`,
-      [chatId],
-    );
     return sendJson(reply, {
       chat_id: chatId,
-      nodes: res.rows.map((row) => ({
-        thread_id: row.thread_id,
-        chat_id: row.chat_id,
-        parent_thread_id: row.parent_thread_id,
-        agent_name: row.agent_name,
-        title: row.title,
-        depth: Number(row.depth),
-        status: row.status,
-      })),
+      nodes: await chatSubagentNodes(infra.pool, chatId),
     });
   };
   app.get("/api/v1/chats/:id/subagents", chatSubagents);
@@ -620,7 +589,7 @@ export function registerAgentRoutes(
       if (action === "close" && thread.parent_thread_id === null) {
         throw ApiError.badRequest("the root thread cannot be closed");
       }
-      const context = { store, runtime: chats.runtime };
+      const context = { store, runtime: chats.runtime, pool: infra.pool };
       if (action === "cancel") {
         return sendJson(reply, await cancelThread(context, thread.id));
       }

@@ -251,6 +251,8 @@ export interface SocketHandlers {
   /** Incremental durable-log fan-out: rows appended since the client's
    *  last view, rendered through the same replay rules a sync uses. */
   onThreadEvents?: (chat_id: string, seq: number, events: ThreadEventRow[]) => void;
+  /** The open chat's thread subtree with each node's latest run status. */
+  onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
   onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
@@ -355,6 +357,9 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       return;
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);
+      return;
+    case "subagent_tree":
+      handlers.onSubagentTree?.(message.chat_id, message.nodes as unknown as ChatSubagentNode[]);
       return;
     case "chat_status":
       handlers.onChatStatus({ chat_id: message.chat_id, generating: message.generating });
@@ -856,21 +861,6 @@ export interface ChatSubagentNode {
   title: string;
   depth: number;
   status: string | null;
-}
-
-/** The chat's thread subtree: the chat's own thread (parent null) and every
- *  descendant thread. */
-export async function fetchChatSubagents(
-  chatId: string,
-  signal: AbortSignal,
-): Promise<ChatSubagentNode[]> {
-  const response = await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(chatId)}/subagents`), {
-    headers: { authorization: `Bearer ${getToken()}` },
-    signal,
-  });
-  if (!response.ok) return [];
-  const body = (await response.json()) as { nodes?: ChatSubagentNode[] };
-  return body.nodes ?? [];
 }
 
 export interface MachineInfo {

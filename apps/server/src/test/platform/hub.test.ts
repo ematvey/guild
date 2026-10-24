@@ -329,6 +329,13 @@ describe("wire codec", () => {
     ).toBe('{"type":"tool_dispatch","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"c1","name":"execute","arguments":"{}","workdir":"/w"}');
     expect(serializeServerMsg({ type: "error", message: "x" })).toBe('{"type":"error","message":"x"}');
     expect(serializeServerMsg({ type: "thread_list", chats: [] })).toBe('{"type":"thread_list","chats":[]}');
+    expect(
+      serializeServerMsg({
+        type: "subagent_tree",
+        chat_id: "00000000-0000-0000-0000-000000000000",
+        nodes: [{ thread_id: "t1" }],
+      }),
+    ).toBe('{"type":"subagent_tree","chat_id":"00000000-0000-0000-0000-000000000000","nodes":[{"thread_id":"t1"}]}');
   });
 });
 

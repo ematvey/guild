@@ -16,6 +16,7 @@ import type { AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { readThreadTranscript } from "./thread-read.js";
+import { notifySubagentTree } from "./tree.js";
 import type { Agent, AgentRun, AgentThread } from "./types.js";
 
 export interface SubagentsRuntime {
@@ -476,20 +477,23 @@ async function stopSubtree(
 
 /** Stops in-flight turns in the subtree. The nodes stay addressable. */
 export async function cancelThread(
-  context: Pick<SubagentsToolContext, "store" | "runtime">,
+  context: Pick<SubagentsToolContext, "store" | "runtime" | "pool">,
   threadId: string,
 ): Promise<CancelResult> {
-  return { thread_id: threadId, cancelled: await stopSubtree(context, threadId) };
+  const cancelled = await stopSubtree(context, threadId);
+  await notifySubagentTree(context.pool, threadId);
+  return { thread_id: threadId, cancelled };
 }
 
 /** Cancels the subtree and stamps closed_at on every node. Rows and
  *  attachments stay, and deliveries stop. */
 export async function closeThread(
-  context: Pick<SubagentsToolContext, "store" | "runtime">,
+  context: Pick<SubagentsToolContext, "store" | "runtime" | "pool">,
   threadId: string,
 ): Promise<CloseResult> {
   const cancelled = await stopSubtree(context, threadId);
   const closed = await context.store.closeSubtree(threadId);
+  await notifySubagentTree(context.pool, threadId);
   return { thread_id: threadId, closed, cancelled };
 }
 

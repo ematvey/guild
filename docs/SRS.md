@@ -26,6 +26,7 @@ Group index:
 | 12 | Integrations | SRS-43 … SRS-47 |
 | 13 | Security invariants | SRS-48 … SRS-51 |
 | 14 | Error handling + testing | SRS-52 … SRS-55 |
+| 15 | Realtime UI | SRS-56 |
 
 ---
 
@@ -217,10 +218,12 @@ endpoint.
 **SRS-24 — State sync on every connect.**
 A (re)connect is a stateless client: server pushes `thread_list`, the client
 declares its open chat with `sync`, and the server answers
-`sync_begin → thread_state → sync_done`, where `thread_state` is the atomic
-authoritative view (the newest 120 durable events with `has_more_events`,
-in-flight buffers, project fields) under a `seq` watermark. Older events
-come from `GET /api/v1/threads/{id}/events?before=&limit=`. Clients apply a
+`sync_begin → thread_state → subagent_tree → sync_done`, where `thread_state`
+is the atomic authoritative view (the newest 120 durable events with
+`has_more_events`, in-flight buffers, project fields) under a `seq` watermark,
+and `subagent_tree` is the chat's thread subtree with each node's latest run
+status. Older events come from
+`GET /api/v1/threads/{id}/events?before=&limit=`. Clients apply a
 `thread_state` only when its watermark is strictly newer than the last
 applied view.
 
@@ -315,6 +318,7 @@ Server → client:
 | `thread_state` | `chat_id, seq, events[], text, thinking, generating, project_id?, project_name?, project_machine_label?` | The only rendered-content source; atomic authoritative view under a watermark. |
 | `live_frame` | `chat_id, generation_id, seq, machine_id?, event` | Non-replayable generation stream for command consumers; view clients use `thread_state` exclusively. |
 | `org_event` | `event` | Org-scoped event from the `guild_events` NOTIFY channel. |
+| `subagent_tree` | `chat_id, nodes[]` | The chat's thread subtree with each node's latest run status; pushed on sync and on every create, status change or close in the subtree. |
 
 **SRS-31 — Lifecycle.**
 Connect: mint ticket → upgrade (query: `ticket`, `client_id`, and for
@@ -625,3 +629,16 @@ first use) — never testcontainers. Protocol round-trip tests keep the Rust
 and TS types in lockstep; the engine stdio suite is the contract test for
 the daemon verbs; the TS modules carry pure unit tests (thread reducer,
 context assembly, mention detection).
+
+## 15. Realtime UI
+
+**SRS-56 — Every live UI update rides the member socket.**
+Any state a user sees change in a chat or thread is pushed as a
+`WsServerMsg` frame on the member socket: the first view inside the `sync`
+bracket, later changes on a Postgres NOTIFY. This covers messages
+(`thread_state`, `thread_events`), generation progress, chat status, the
+chat list, presence, and the thread subtree (`subagent_tree`). A client
+never polls an HTTP endpoint for state the socket carries; a reconnect
+re-syncs the open chat. A change in a child thread is pushed to every
+ancestor chat that displays it, because each of those chats may be open on
+some device.

@@ -72,8 +72,10 @@ function formatChildResults(rows: readonly ChildResultRecord[]): string {
     .join("\n\n");
 }
 
-/** The last assistant text of one child run, used when a user stop ends a
- *  run without a terminal assistant event. */
+/** The terminal assistant text of one child run (the message with no tool
+ *  call), used when a user stop ends a run without a terminal assistant
+ *  event. A stopped run usually has none: the parent gets no partial
+ *  narration. */
 export async function assistantTextForRun(
   pool: PlatformPool,
   chatId: string,
@@ -83,21 +85,21 @@ export async function assistantTextForRun(
     `SELECT payload FROM thread_events
      WHERE chat_id = $1 AND type = 'assistant_message'
        AND created_at >= $2::timestamptz
-     ORDER BY seq ASC`,
+     ORDER BY seq DESC`,
     [chatId, since],
   );
-  const texts: string[] = [];
   for (const row of res.rows) {
     const blocks = Array.isArray(row.payload.blocks)
       ? (row.payload.blocks as { type?: string; text?: string }[])
       : [];
-    for (const block of blocks) {
-      if (block.type === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-        texts.push(block.text);
-      }
-    }
+    if (blocks.some((block) => block.type === "tool_call")) continue;
+    return blocks
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text!)
+      .join("\n")
+      .trim();
   }
-  return texts.join("\n\n").trim();
+  return "";
 }
 
 export class ChildResultDelivery {
