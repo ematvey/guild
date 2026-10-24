@@ -75,7 +75,10 @@ import {
   sidebarGrouping,
   type PickedProject,
 } from "../projects/projects";
-import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "../sidebar-contents";
+import { ChatsPanel } from "../sidebar/chats-panel";
+import { FadeTitle } from "../sidebar/chrome";
+import { SettingsPanel } from "../sidebar/settings-panel";
+import { WorkPanel } from "../sidebar/work-panel";
 import { SkillsPanel } from "../skills/SkillsPanel";
 import { clampSkillsRoute, SKILLS_CATALOG } from "../skills/skills-route";
 import { AgentsPanel } from "../agents/AgentsPanel";
