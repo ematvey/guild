@@ -498,6 +498,49 @@ export class ChatStore {
     ]);
   }
 
+  /** Fills an empty chat title with a generated name and mirrors it onto
+   *  the thread. A locked or already-named thread is left alone; the first
+   *  writer wins, so two queued runs cannot race a title in. */
+  async setGeneratedTitle(
+    orgId: string,
+    chatId: string,
+    threadId: string,
+    title: string,
+  ): Promise<void> {
+    const clean = title.trim();
+    if (clean === "") return;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const chat = await client.query<{ user_id: string }>(
+        `UPDATE chats SET title = $3
+         WHERE org_id = $1 AND id = $2 AND (title IS NULL OR title = '')
+         RETURNING user_id`,
+        [orgId, chatId, clean],
+      );
+      const row = chat.rows[0];
+      if (row === undefined) {
+        await client.query("ROLLBACK");
+        return;
+      }
+      await client.query(
+        `UPDATE agent_threads SET title = $3
+         WHERE id = $1 AND chat_id = $2 AND title_locked = false
+           AND (title IS NULL OR title = '')`,
+        [threadId, chatId, clean],
+      );
+      await client.query("COMMIT");
+      await this.pool.query("SELECT pg_notify('guild_thread_title', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: row.user_id, chat_id: chatId }),
+      ]);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   /** Marks the chat read for the caller: the marker moves to the newest
    *  thread event's `seq` (migration 0066 shape — event ids cannot order
    *  events; the BIGSERIAL write order is the comparison space). A chat
