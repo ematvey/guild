@@ -2,7 +2,7 @@
 // and the workspace config files read at thread start.
 
 import { describe, expect, it } from "vitest";
-import { composeAgentInstructions, PROJECT_INSTRUCTIONS_MAX_CHARS } from "../../harness/runtime.js";
+import { composeAgentInstructions, PROJECT_INSTRUCTIONS_MAX_CHARS } from "../../harness/instructions.js";
 import type { AgentConfigFiles } from "../../agents/workspace-config.js";
 
 function config(files: Record<string, string>, missing: string[] = []): AgentConfigFiles {

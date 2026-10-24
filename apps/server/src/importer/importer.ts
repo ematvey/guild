@@ -38,7 +38,7 @@ import {
 import type { AssistantMessage, JsonObject, Models, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
-import { SharedPoolDatabase, applyChatMappingMigration } from "../harness/runtime.js";
+import { SharedPoolDatabase, applyChatMappingMigration } from "./durable.js";
 import type { PlatformPool } from "../platform/db.js";
 import { ObjectStore } from "../platform/s3.js";
 import { attachmentObjectKey } from "../platform/store/attachments.js";

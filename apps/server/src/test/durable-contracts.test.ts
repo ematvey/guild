@@ -21,7 +21,8 @@ import type { Conversation, ToolRegistration } from "@earendil-works/pi-durable"
 import { ChatBridge } from "../chats/bridge.js";
 import { createApprovalGate } from "../harness/approvals.js";
 import { SkillRuntime } from "../harness/skills.js";
-import { GuildRuntime, SharedPoolDatabase } from "../harness/runtime.js";
+import { GuildRuntime } from "../harness/runtime.js";
+import { SharedPoolDatabase } from "../importer/durable.js";
 import { UserMcpRuntime } from "../harness/userMcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ChatStore } from "../platform/store/chats.js";

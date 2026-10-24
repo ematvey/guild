@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, Harness, type ConversationId, type TaskId } from "@earendil-works/pi-durable";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
-import { SharedPoolDatabase } from "../harness/runtime.js";
+import { SharedPoolDatabase } from "../importer/durable.js";
 import { PostgresDurableStorage } from "../storage/postgres/storage.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
 

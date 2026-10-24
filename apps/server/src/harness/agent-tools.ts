@@ -55,3 +55,16 @@ export function createAgentWorkspaceTools(env: ExecutionEnv): ToolRegistration[]
     execute: (args, api, context) => tool.execute(args, withEnv(api, env), context),
   })) as ToolRegistration[];
 }
+
+
+/** The direct tool surface for an agent: its allowlist narrows the coding
+ *  and skill tools, and codemode is always present (the only path to the
+ *  script-only integration and thread-history tools). */
+export function directBaseTools<T extends { name: string }>(
+  base: readonly T[],
+  agent: { tools: string[]; tools_mode: string } | null,
+): readonly T[] {
+  if (agent === null || agent.tools_mode === "all") return base;
+  const allowed = new Set(agent.tools);
+  return base.filter((tool) => tool.name === "codemode" || allowed.has(tool.name));
+}

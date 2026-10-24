@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanGeneratedTitle } from "../../harness/runtime.js";
+import { cleanGeneratedTitle } from "../../harness/title.js";
 
 describe("cleanGeneratedTitle", () => {
   it("uses the first line and strips wrappers a chat model adds", () => {

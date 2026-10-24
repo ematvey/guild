@@ -3,7 +3,7 @@
 // narrows what is offered.
 
 import { describe, expect, it } from "vitest";
-import { directBaseTools } from "../../harness/runtime.js";
+import { directBaseTools } from "../../harness/agent-tools.js";
 
 const base = [
   { name: "read" },
