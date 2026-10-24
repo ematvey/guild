@@ -41,6 +41,17 @@ describe("runningSubagentTree", () => {
     expect(tree?.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
   });
 
+  it("finds the root of a child chat's own subtree", () => {
+    // The chat's own thread names its parent thread, which is outside the
+    // returned subtree: the running tree must still start below it.
+    const tree = runningSubagentTree([
+      node({ thread_id: "child", parent_thread_id: "parent-thread", status: "running", depth: 1 }),
+      node({ thread_id: "grand", parent_thread_id: "child", status: "running", depth: 2 }),
+    ]);
+    expect(tree?.node.thread_id).toBe("child");
+    expect(tree?.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
+  });
+
   it("is null when nothing runs", () => {
     expect(
       runningSubagentTree([
