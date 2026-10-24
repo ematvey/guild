@@ -22,7 +22,6 @@ import { ReleaseStore } from "./store/releases.js";
 import { ProjectStore } from "./store/projects.js";
 import { TeamStore } from "./store/teams.js";
 import { OrgKvStore, KvStore } from "./store/org_kv.js";
-import { UserKvStore } from "./store/user_kv.js";
 import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
 import { UserMcpStore } from "./store/userMcp.js";
 import { LiveHub } from "../hub/live.js";
@@ -84,8 +83,6 @@ export class PlatformContext {
   readonly teams: TeamStore;
   readonly orgKv: OrgKvStore;
   readonly kv: KvStore;
-  /** Per-user preference rows (user_kv): the chat view mode. */
-  readonly userKv: UserKvStore;
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
   /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
@@ -168,7 +165,6 @@ export class PlatformContext {
     this.teams = new TeamStore(this.pool);
     this.orgKv = new OrgKvStore(this.pool);
     this.kv = new KvStore(this.pool);
-    this.userKv = new UserKvStore(this.pool);
     this.integrations = new IntegrationStore(this.pool);
     this.integrationSecrets = new IntegrationSecretStore(this.pool);
     this.userMcp = new UserMcpStore(this.pool);

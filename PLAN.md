@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **One chat view: the agent's turn details fold into its work row (2026-10-25).**
+  The casual/technical switch is gone, with its `/api/v1/me/settings`
+  `chat_view` key. Every contiguous reasoning/tool run renders as one
+  collapsible row — "Agent is working 12s (4 steps)" live, "Agent worked for
+  7 seconds (4 steps)" settled — and the chevron opens the full technical
+  detail, indented under the label. A short or unstamped run reads "Agent
+  worked", so its details stay reachable. The running subagent block follows
+  the same shape: "Subagents working (N)" with a chevron that opens the tree.
+
 - **The decomposition review is applied (2026-10-25).** Six files that
   mixed layers are split, with no behaviour change:
   `platform/context.ts` / `contexts.ts` became `root-context.ts` /
