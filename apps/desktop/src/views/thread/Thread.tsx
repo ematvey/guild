@@ -54,18 +54,12 @@ import { WorkedForBlock, viewEntries } from "../worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../lib/sidebar-width";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../../lib/chat-width";
 import { readDraft, writeDraft } from "../../lib/drafts";
-import { IS_TAURI } from "../../transport";
-import {
-  apiUrl,
-  bindChatAgent,
-  chatAgentBinding,
-  fetchChatViewMode,
-  listModels,
-  machineId,
-  saveChatViewMode,
-  type ChatViewMode,
-  type ModelOption,
-} from "../../transport";
+import { IS_TAURI } from "../../lib/session";
+import { apiUrl } from "../../lib/session";
+import { bindChatAgent, chatAgentBinding } from "../../lib/api/chats";
+import { fetchChatViewMode, saveChatViewMode, type ChatViewMode } from "../../lib/api/workspaces";
+import { listModels, type ModelOption } from "../../lib/api/models";
+import { machineId } from "../../lib/machine-rpc";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { ContextRing } from "../../components/context-ring";
 import { SettingsSectionPane } from "../settings/settings-sections";

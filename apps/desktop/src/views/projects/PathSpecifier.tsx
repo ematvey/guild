@@ -8,7 +8,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { ChevronRight, CornerDownLeft, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import { listDir, wslHome } from "../../transport";
+import { listDir, wslHome } from "../../lib/api/folders";
 import {
   linuxBreadcrumbs,
   displayPath,

@@ -19,7 +19,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
-import { apiMe } from "../../transport";
+import { apiMe } from "../../lib/api/workspaces";
 import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import {

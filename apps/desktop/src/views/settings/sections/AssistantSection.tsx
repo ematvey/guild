@@ -15,12 +15,7 @@ import { SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
-import {
-  getApprovalPolicyPrompt,
-  getAssistantPrompt,
-  setApprovalPolicyPrompt,
-  setAssistantPrompt,
-} from "../../../transport";
+import { getApprovalPolicyPrompt, getAssistantPrompt, setApprovalPolicyPrompt, setAssistantPrompt } from "../../../lib/api/approvals";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 

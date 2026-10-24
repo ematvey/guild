@@ -2,7 +2,8 @@
 // writes through the transport and refreshes the affected lists.
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { updateChat, updateProject } from "../../../transport";
+import { updateChat } from "../../../lib/api/chats";
+import { updateProject } from "../../../lib/api/projects";
 
 export function useChatActions({
   refreshChats,

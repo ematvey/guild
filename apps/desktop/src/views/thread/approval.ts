@@ -2,7 +2,7 @@
 // mode sets the chat's tool-approval DEFAULT; per-tool exceptions from
 // Settings apply only while the chat is on the account default.
 import { Hand, ShieldCheck, TriangleAlert, type LucideIcon } from "lucide-react";
-import type { ApprovalPolicy, ChatApprovalMode } from "../../transport";
+import type { ApprovalPolicy, ChatApprovalMode } from "../../lib/api/approvals";
 
 export const APPROVAL_MODES: Record<
   ChatApprovalMode,

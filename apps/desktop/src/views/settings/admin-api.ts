@@ -2,7 +2,7 @@
 // Paths resolve through apiUrl: same-origin on the web, the paired server
 // URL inside the Tauri webview (whose origin is tauri://localhost).
 
-import { apiUrl } from "../../transport";
+import { apiUrl } from "../../lib/session";
 
 const TOKEN_KEY = "guild_token";
 

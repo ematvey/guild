@@ -2,7 +2,7 @@
 // session name and its agent. A plain chat renders none of this.
 
 import { ArrowLeft } from "lucide-react";
-import type { ChatTree } from "../../transport";
+import type { ChatTree } from "../../lib/api/chats";
 
 export function ChildThreadHeader({
   tree,

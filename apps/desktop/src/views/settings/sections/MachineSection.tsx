@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Cpu } from "lucide-react";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
-import { listMachines, type MachineInfo } from "../../../transport";
+import { listMachines, type MachineInfo } from "../../../lib/api/machines";
 import { relativeTime } from "../../../lib/relative-time";
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { PageHeader } from "../components/page-header";

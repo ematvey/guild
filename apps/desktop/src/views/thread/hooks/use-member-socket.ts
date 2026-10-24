@@ -3,15 +3,11 @@
 // process keeps the separate machine socket.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import {
-  machineId,
-  setMachineIdentity,
-  startSocket,
-  watchMachinePresence,
-  type ChatSummary,
-  type ChatSubagentNode,
-  type ThreadState,
-} from "../../../transport";
+import { machineId, watchMachinePresence } from "../../../lib/machine-rpc";
+import { setMachineIdentity } from "../../../lib/api/folders";
+import { startSocket } from "../../../lib/socket-client";
+import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
+import type { ThreadState } from "../../../lib/thread-events";
 import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { busyAfterThreadPush, statusFromThreads } from "../status";

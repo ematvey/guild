@@ -3,7 +3,7 @@
 // (install/uninstall/pin/gate/unpublish/fork). Actions never throw — they
 // return an ok/message result the panel surfaces as a toast.
 
-import { apiUrl, getToken } from "../../transport";
+import { apiUrl, getToken } from "../../lib/session";
 
 export interface SkillOwner {
   kind: "user" | "team";

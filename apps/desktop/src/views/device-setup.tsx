@@ -11,14 +11,9 @@ import {
 } from "@guild/ui/components/dialog";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { toast } from "sonner";
-import {
-  createPairingToken,
-  downloadRelease,
-  listReleases,
-  pairingCode,
-  serverUrl,
-  type Release,
-} from "../transport";
+import { createPairingToken, pairingCode } from "../lib/api/folders";
+import { downloadRelease, listReleases, type Release } from "../lib/api/releases";
+import { serverUrl } from "../lib/session";
 
 type DesktopOs = "mac" | "windows" | "linux";
 

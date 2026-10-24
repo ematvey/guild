@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchThreadContext, type ThreadContextUsage } from "../transport";
+import { fetchThreadContext, type ThreadContextUsage } from "../lib/thread-events";
 import { DesktopTooltip } from "./desktop-tooltip";
 
 const count = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });

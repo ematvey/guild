@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import type { ChatViewMode } from "../transport";
+import type { ChatViewMode } from "../lib/api/workspaces";
 import type { Block } from "../lib/thread-reducer";
 
 export type ViewEntry =

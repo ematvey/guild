@@ -5,7 +5,7 @@
 // member socket (the sync bracket plus the guild_subagent_tree push), so the
 // tree is always the current server state.
 
-import type { ChatSubagentNode } from "../../transport";
+import type { ChatSubagentNode } from "../../lib/api/chats";
 
 export interface RunningSubagentNode {
   node: ChatSubagentNode;

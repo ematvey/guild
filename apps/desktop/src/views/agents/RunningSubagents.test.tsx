@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ChatSubagentNode } from "../../transport";
+import type { ChatSubagentNode } from "../../lib/api/chats";
 import { isRunningStatus, RunningSubagents, runningSubagentTree } from "./RunningSubagents";
 
 function node(over: Partial<ChatSubagentNode> & { thread_id: string }): ChatSubagentNode {

@@ -13,7 +13,8 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import { Input } from "@guild/ui/components/input";
-import type { ChatSummary, Project } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
+import type { Project } from "../../lib/api/projects";
 import { filterProjects, recentProjects, type PickedProject } from "./projects";
 
 export function ProjectPickerDialog({

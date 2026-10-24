@@ -5,11 +5,13 @@ import { ApprovalsSection } from "./ApprovalsSection";
 import { AssistantSection } from "./AssistantSection";
 import { AboutSection } from "./AboutSection";
 
-vi.mock("../../../transport", () => ({
+vi.mock("../../../lib/session", () => ({
   IS_TAURI: false,
   apiUrl: (path: string) => path,
   serverUrl: () => "http://localhost:18080",
   serverBase: () => "",
+}));
+vi.mock("../../../lib/api/approvals", () => ({
   getApproval: vi.fn(),
   setApproval: vi.fn(),
   getAssistantPrompt: vi.fn(),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listModels, modelLabel, type ModelOption } from "../../transport";
+import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
 
 /** The org's enabled models, fetched once per session. Model ids are
  *  provider names; the app shows the admin's alias (e.g. "Auto") instead. */

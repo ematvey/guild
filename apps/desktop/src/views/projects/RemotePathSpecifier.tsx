@@ -7,7 +7,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { ChevronRight, CornerDownLeft, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import { listRemoteDir, remoteHome } from "../../transport";
+import { listRemoteDir, remoteHome } from "../../lib/api/folders";
 import {
   displayPath,
   expandError,

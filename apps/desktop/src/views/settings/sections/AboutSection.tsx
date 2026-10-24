@@ -9,7 +9,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
-import { IS_TAURI, serverBase } from "../../../transport";
+import { IS_TAURI, serverBase } from "../../../lib/session";
 import {
   setTelemetryEnabled,
   startTelemetry,

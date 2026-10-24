@@ -12,7 +12,7 @@ import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
-import { listModels, modelLabel, type ModelOption } from "../../transport";
+import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
 import {
   SAFE_BASELINE_NAMES,
   SAFE_BASELINE_TOOLS,

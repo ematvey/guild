@@ -14,7 +14,8 @@ describe("apiMe uses the adopted credential", () => {
     // Tauri mode: the base URL comes from localStorage (web mode is
     // same-origin and can't exercise the URL half).
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    const { apiMe, setToken } = await import("../transport");
+    const { apiMe } = await import("./api/workspaces");
+    const { setToken } = await import("./session");
 
     const store = new Map<string, string>();
     vi.stubGlobal("localStorage", {

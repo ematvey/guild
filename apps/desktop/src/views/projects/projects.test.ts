@@ -3,7 +3,8 @@
 // machine (sources → browse → confirm). No DOM, no I/O.
 
 import { describe, expect, it } from "vitest";
-import type { ChatSummary, Project } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
+import type { Project } from "../../lib/api/projects";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,

@@ -21,7 +21,7 @@ import {
   UsersRound,
   Waypoints,
 } from "lucide-react";
-import { apiMe } from "../../transport";
+import { apiMe } from "../../lib/api/workspaces";
 import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";

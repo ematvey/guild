@@ -4,7 +4,7 @@
 //! Settings → About. The SDK is dynamically imported so the chat bundle only
 //! pays for it when the user opted in.
 
-import { IS_TAURI, serverBase } from "../transport";
+import { IS_TAURI, serverBase } from "./session";
 
 const KEY = "guild.faro.enabled";
 const COLLECT_PATH = "/faro/collect";

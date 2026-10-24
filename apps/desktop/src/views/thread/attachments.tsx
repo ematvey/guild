@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { FileText, Film, Image as ImageIcon, Music, X as XIcon } from "lucide-react";
 import { openExternal } from "../../lib/open-external";
-import { attachmentBlobUrl, type MessageAttachmentMeta } from "../../transport";
+import { attachmentBlobUrl } from "../../lib/api/chats";
+import type { MessageAttachmentMeta } from "../../lib/thread-events";
 
 export function modalityOf(contentType: string): string {
   if (contentType.startsWith("image/")) return "image";

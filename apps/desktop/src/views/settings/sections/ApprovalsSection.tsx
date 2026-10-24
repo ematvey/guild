@@ -8,7 +8,7 @@ import { SkeletonRows, SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
-import { getApproval, setApproval, type ApprovalPolicy } from "../../../transport";
+import { getApproval, setApproval, type ApprovalPolicy } from "../../../lib/api/approvals";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 

@@ -6,7 +6,7 @@ import { statusFromThreads } from "./status";
 import { codemodeDuration, safeUrl, toolKind, toolPreview } from "./tool-text";
 import { prettyStamp } from "./blocks";
 import type { ToolBlock } from "../../lib/thread-reducer";
-import type { ChatSummary } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
 
 const route = () => parseChatRoute("/chats");
 

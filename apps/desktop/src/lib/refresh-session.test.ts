@@ -32,7 +32,7 @@ describe("refreshSession ignores stale responses", () => {
       await gate;
       return { status: 200, ok: true, json: async () => ({ token: "stale-A" }) };
     });
-    const { refreshSession, setToken, clearToken, getToken } = await import("../transport");
+    const { refreshSession, setToken, clearToken, getToken } = await import("./session");
 
     setToken("A");
     const pending = refreshSession();
@@ -52,7 +52,7 @@ describe("refreshSession ignores stale responses", () => {
       status: 200,
       ok: true, json: async () => ({ token: "rotated" }),
     }));
-    const { refreshSession, setToken, getToken } = await import("../transport");
+    const { refreshSession, setToken, getToken } = await import("./session");
 
     setToken("B");
     await refreshSession();
@@ -67,7 +67,7 @@ describe("refreshSession ignores stale responses", () => {
       await gate;
       return { status: 200, ok: true, json: async () => ({ token: "rotated" }) };
     });
-    const { refreshSession, setToken } = await import("../transport");
+    const { refreshSession, setToken } = await import("./session");
 
     setToken("A");
     const a = refreshSession();

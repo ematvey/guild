@@ -3,7 +3,8 @@
 // per-chat folder mechanism gone (projects design §5) this is the closest
 // "the folder the user works in" rule.
 
-import { listChats, listProjects } from "../../transport";
+import { listChats } from "../../lib/api/chats";
+import { listProjects } from "../../lib/api/projects";
 
 export async function resolveProjectDir(): Promise<string | null> {
   const projects = await listProjects();

@@ -41,7 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { listModels, modelLabel, type ModelOption } from "../../transport";
+import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
 import { relativeTime } from "../../lib/relative-time";
 import {
   archiveAgent,

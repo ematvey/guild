@@ -19,7 +19,7 @@ import { Frame } from "../frame";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { highlightJs } from "../js-highlight";
 import { openExternal } from "../../lib/open-external";
-import { toolArtifactBlobUrl } from "../../transport";
+import { toolArtifactBlobUrl } from "../../lib/api/chats";
 import {
   artifactCardOf,
   type ArtifactCard,

@@ -1,7 +1,7 @@
 // Pure derivations of the thread view's live status: what the sidebar shows,
 // whether the open thread is writable, and which state the send button has.
 import type { SidebarTab } from "../sidebar-rail";
-import type { ChatSummary } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
 
 export function statusFromThreads(chats: ChatSummary[]) {
   return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));

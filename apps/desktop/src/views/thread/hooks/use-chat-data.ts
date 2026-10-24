@@ -2,16 +2,9 @@
 // archived chats, projects and machines.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  listArchivedChats,
-  listArchivedProjects,
-  listChats,
-  listMachines,
-  listProjects,
-  type ChatSummary,
-  type MachineInfo,
-  type Project,
-} from "../../../transport";
+import { listArchivedChats, listChats, type ChatSummary } from "../../../lib/api/chats";
+import { listArchivedProjects, listProjects, type Project } from "../../../lib/api/projects";
+import { listMachines, type MachineInfo } from "../../../lib/api/machines";
 
 export type ChatStatus = Record<string, { generating: boolean; unread: boolean }>;
 

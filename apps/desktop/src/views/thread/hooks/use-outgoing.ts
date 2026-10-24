@@ -2,19 +2,10 @@
 // failed sends, and the queued-chip actions.
 import { useCallback, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { toast } from "sonner";
-import {
-  createChat,
-  machineId,
-  prepareTurn,
-  sendChatNoStream,
-  setChatApproval,
-  steerQueued,
-  stopChat,
-  uploadAttachment,
-  withdrawQueued,
-  compactChat,
-  type ChatApprovalMode,
-} from "../../../transport";
+import { createChat, sendChatNoStream, steerQueued, stopChat, uploadAttachment, withdrawQueued, compactChat } from "../../../lib/api/chats";
+import { machineId } from "../../../lib/machine-rpc";
+import { prepareTurn } from "../../../lib/api/skills";
+import { setChatApproval, type ChatApprovalMode } from "../../../lib/api/approvals";
 import { readDraft, writeDraft, type DraftStorage } from "../../../lib/drafts";
 import {
   captureCommand,
@@ -31,7 +22,7 @@ import {
 import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
 import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
-import type { Project } from "../../../transport";
+import type { Project } from "../../../lib/api/projects";
 import type { RoutePatch } from "../route";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

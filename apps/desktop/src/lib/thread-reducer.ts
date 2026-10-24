@@ -8,12 +8,7 @@
 //! Boundary: visible blocks only. Sockets, transport and composer state
 //! stay in the component; this is a plain module, not a store.
 
-import type {
-  MessageAttachmentMeta,
-  StreamFrame,
-  ThreadEventRow,
-  ThreadState,
-} from "../transport";
+import type { MessageAttachmentMeta, StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
 
 // ---------- block shapes ----------
 

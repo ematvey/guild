@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Frame } from "../frame";
-import { postApproval } from "../../transport";
+import { postApproval } from "../../lib/api/approvals";
 import type { ApprovalBlock } from "../../lib/thread-reducer";
 import { toolDisplayName } from "./tool-text";
 
