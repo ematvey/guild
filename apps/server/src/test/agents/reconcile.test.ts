@@ -20,6 +20,7 @@ dbDescribe("stale run reconciliation", () => {
   let orgId: string;
   let userId: string;
   const stopped: string[] = [];
+  const redelivered: string[] = [];
   const deps = () => ({
     pool: env!.db,
     threads,
@@ -28,6 +29,10 @@ dbDescribe("stale run reconciliation", () => {
         stopped.push(chatId);
       },
       canStopChat: () => true,
+      deliverPending: async (chatId: string) => {
+        redelivered.push(chatId);
+        return true;
+      },
     },
     log: pino({ level: "silent" }),
   });
@@ -153,8 +158,49 @@ dbDescribe("stale run reconciliation", () => {
     expect((await store.getRun(fx.runId)).status).toBe("failed");
   });
 
-  it("beginChatRun adopts the open run instead of opening a second", async () => {
-    const runtime = (env!.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
+  it("redelivers a child result that no turn ever took", async () => {
+    const fx = await fixture({ ageMs: null });
+    await threads.appendChildResult(fx.parentChatId, {
+      type: "child_result",
+      thread_id: fx.childThreadId,
+      run_id: fx.runId,
+      chat_id: fx.childChatId,
+      agent_name: "Clients",
+      title: "Child task",
+      status: "succeeded",
+      reason: null,
+      final_text: "the answer",
+      attachments: [],
+    });
+    await env!.db.query(
+      "UPDATE thread_events SET created_at = now() - interval '5 minutes' WHERE chat_id = $1",
+      [fx.parentChatId],
+    );
+    redelivered.length = 0;
+    await failStaleRuns(deps());
+    expect(redelivered).toContain(fx.parentChatId);
+  });
+
+  it("leaves a fresh unconsumed child result to its own delivery", async () => {
+    const fx = await fixture({ ageMs: null });
+    await threads.appendChildResult(fx.parentChatId, {
+      type: "child_result",
+      thread_id: fx.childThreadId,
+      run_id: fx.runId,
+      chat_id: fx.childChatId,
+      agent_name: "Clients",
+      title: "Child task",
+      status: "succeeded",
+      reason: null,
+      final_text: "the answer",
+      attachments: [],
+    });
+    redelivered.length = 0;
+    await failStaleRuns(deps());
+    expect(redelivered).not.toContain(fx.parentChatId);
+  });
+
+  it("beginChatRun adopts the open run instead of opening a second", async () => {    const runtime = (env!.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     const fx = await fixture({ ageMs: null });
     const child = await env!.db.query<{ agent_id: string }>(
       "SELECT agent_id FROM agent_threads WHERE id = $1",

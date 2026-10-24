@@ -11,11 +11,19 @@ import { pgTimestampToRfc3339 } from "../platform/time.js";
 export interface ReconcileDeps {
   pool: PlatformPool;
   threads: ThreadStore;
-  runtime: { stopChat(chatId: string): Promise<void>; canStopChat(chatId: string): boolean };
+  runtime: {
+    stopChat(chatId: string): Promise<void>;
+    canStopChat(chatId: string): boolean;
+    /** Places a parent chat's unconsumed child results as one steer turn. */
+    deliverPending(chatId: string): Promise<boolean>;
+  };
   log: Logger;
 }
 
 const DEFAULT_IDLE_MS = 10 * 60 * 1000;
+/** A result younger than this may still be in flight; the sweep leaves it
+ *  alone so a normal delivery is never raced. */
+const DEFAULT_UNDELIVERED_MS = 2 * 60 * 1000;
 
 interface StaleRunRow {
   id: string;
@@ -30,13 +38,15 @@ interface StaleRunRow {
   idle_seconds: string;
 }
 
-/** Fails runs whose chat has shown no event for `idleMs`, and settles the
- *  parent's strip for a delegated child. */
+/** Fails runs whose chat has shown no event for `idleMs`, settles the
+ *  parent's strip for a delegated child, and re-delivers a result whose
+ *  first delivery never reached a turn. */
 export async function failStaleRuns(
   deps: ReconcileDeps,
-  options?: { idleMs?: number },
+  options?: { idleMs?: number; undeliveredMs?: number },
 ): Promise<number> {
   const idleMs = options?.idleMs ?? DEFAULT_IDLE_MS;
+  const undeliveredMs = options?.undeliveredMs ?? DEFAULT_UNDELIVERED_MS;
   const res = await deps.pool.query<StaleRunRow>(
     `SELECT r.id, r.thread_id, t.chat_id, t.parent_thread_id, t.closed_at,
             pt.chat_id AS parent_chat_id,
@@ -102,5 +112,33 @@ export async function failStaleRuns(
       "stale run failed",
     );
   }
+
+  await deliverUndeliveredResults(deps, undeliveredMs);
   return failed;
+}
+
+/** A delivery that never reached a turn leaves its batch unconsumed: the
+ *  consume-then-steer path releases the batch when the steer fails, and the
+ *  parent chat has no run to take it. This pass gives such a batch the turn
+ *  it never got. */
+async function deliverUndeliveredResults(deps: ReconcileDeps, undeliveredMs: number): Promise<void> {
+  const res = await deps.pool.query<{ chat_id: string }>(
+    `SELECT DISTINCT e.chat_id
+     FROM thread_events e
+     WHERE e.type = 'child_result' AND e.consumed_by_run_id IS NULL
+       AND e.created_at < now() - ($1::bigint * interval '1 millisecond')
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
+         WHERE t.chat_id = e.chat_id AND r.status IN ('queued', 'running'))
+     ORDER BY e.chat_id`,
+    [undeliveredMs],
+  );
+  for (const row of res.rows) {
+    try {
+      const delivered = await deps.runtime.deliverPending(row.chat_id);
+      if (delivered) deps.log.info({ chatId: row.chat_id }, "undelivered child result redelivered");
+    } catch (error) {
+      deps.log.warn({ err: error, chatId: row.chat_id }, "undelivered child result redelivery failed");
+    }
+  }
 }

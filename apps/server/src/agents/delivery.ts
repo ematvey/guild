@@ -104,7 +104,7 @@ export class ChildResultDelivery {
   constructor(private readonly deps: ChildDeliveryDeps) {}
 
   async deliver(input: ChildRunFinished): Promise<void> {
-    const { pool, store, threads, runtime, log } = this.deps;
+    const { pool, threads } = this.deps;
     const child = await pool.query<{
       parent_thread_id: string | null;
       closed_at: Date | null;
@@ -163,6 +163,31 @@ export class ChildResultDelivery {
       attachments,
     });
 
+    await this.wake(parentRow);
+  }
+
+  /** Drains the unconsumed results of one parent chat into a turn. A sweep
+   *  calls this for a chat whose earlier delivery did not land. */
+  async deliverPending(chatId: string): Promise<boolean> {
+    const parent = await this.deps.pool.query<ParentThread>(
+      `SELECT t.id, t.chat_id, t.agent_id, t.user_id, t.depth,
+              t.closed_at AS parent_closed_at, c.org_id, a.model
+       FROM agent_threads t
+       JOIN chats c ON c.id = t.chat_id
+       JOIN agents a ON a.id = t.agent_id
+       WHERE t.chat_id = $1 AND t.parent_thread_id IS NULL`,
+      [chatId],
+    );
+    const parentRow = parent.rows[0];
+    if (parentRow === undefined || parentRow.parent_closed_at !== null) return false;
+    return this.wake(parentRow);
+  }
+
+  /** Places every unconsumed result of the parent chat as one steer input in
+   *  one run. A batch that cannot be placed goes back to the unconsumed pool
+   *  so a later attempt can still deliver it. */
+  private async wake(parentRow: ParentThread): Promise<boolean> {
+    const { store, threads, runtime, log } = this.deps;
     const running = await store.runningRunForChat(parentRow.chat_id);
     let runId = running?.id ?? null;
     let opened = false;
@@ -185,13 +210,28 @@ export class ChildResultDelivery {
           .updateRun(runId, { status: "skipped", finished_at: new Date().toISOString() })
           .catch(() => {});
       }
-      return;
+      return false;
     }
-    await runtime.deliverSteer(parentRow.chat_id, parentRow.org_id, formatChildResults(batch), parentRow.model);
-    log.info(
-      { parentThreadId: parentRow.id, childThreadId: input.child_thread_id, runId, count: batch.length },
-      "child result delivered",
-    );
+    try {
+      await runtime.deliverSteer(parentRow.chat_id, parentRow.org_id, formatChildResults(batch), parentRow.model);
+    } catch (error) {
+      await threads.releaseChildResults(batch.map((row) => row.id)).catch((releaseError: unknown) => {
+        log.warn({ err: releaseError, chatId: parentRow.chat_id }, "child result release failed");
+      });
+      if (opened) {
+        await store
+          .updateRun(runId, {
+            status: "failed",
+            error_code: "delivery_failed",
+            error_message: error instanceof Error ? error.message : String(error),
+            finished_at: new Date().toISOString(),
+          })
+          .catch(() => {});
+      }
+      throw error;
+    }
+    log.info({ parentThreadId: parentRow.id, runId, count: batch.length }, "child result delivered");
+    return true;
   }
 
   private async attachmentsOf(eventId: string | null): Promise<MessageAttachment[]> {

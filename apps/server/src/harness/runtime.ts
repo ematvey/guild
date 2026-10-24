@@ -806,6 +806,7 @@ export class GuildRuntime {
         runtime: {
           stopChat: (chatId) => this.stopChat(chatId),
           canStopChat: (chatId) => this.canStopChat(chatId),
+          deliverPending: (chatId) => this.childDelivery.deliverPending(chatId),
         },
       },
     ).catch((error: unknown) => {

@@ -221,6 +221,18 @@ export class ThreadStore {
     }
   }
 
+  /** Returns a batch to the unconsumed pool when its steer could not be
+   *  placed. The rows stay in the parent thread and the next drain takes
+   *  them. */
+  async releaseChildResults(ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.pool.query(
+      `UPDATE thread_events SET consumed_by_run_id = NULL
+       WHERE id = ANY($1::uuid[]) AND type = 'child_result'`,
+      [ids],
+    );
+  }
+
   appendProjectedEntry(input: {
     chatId: string;
     entryId: number;
