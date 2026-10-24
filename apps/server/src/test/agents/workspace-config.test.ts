@@ -1,5 +1,5 @@
-// The workspace config files: seeding from the templates, reading them
-// back, and parsing the one-line identity.
+// The workspace config files: seeding from the templates and reading them
+// back for the system prompt.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +7,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CONFIG_FILES,
-  parseIdentity,
   readAgentConfig,
   seedAgentWorkspace,
 } from "../../agents/workspace-config.js";
@@ -24,65 +23,44 @@ afterEach(() => {
 });
 
 describe("seedAgentWorkspace", () => {
-  it("writes the template files and an empty memories/ directory", async () => {
+  it("writes AGENTS.md and an empty memories/ directory", async () => {
     const dir = workspace();
-    const written = await seedAgentWorkspace(dir, { name: "Scout" });
-    expect(written.sort()).toEqual(["AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "SOUL.md", "USER.md"]);
+    const written = await seedAgentWorkspace(dir);
+    expect(written).toEqual(["AGENTS.md"]);
     expect(existsSync(path.join(dir, "memories"))).toBe(true);
-    expect(readFileSync(path.join(dir, "IDENTITY.md"), "utf8")).toBe("- Name: Scout | Vibe: | Emoji: | Avatar:\n");
-    expect(readFileSync(path.join(dir, "BOOTSTRAP.md"), "utf8")).toContain("Birth Sequence");
+    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toContain("# AGENTS.md");
   });
 
   it("never overwrites a file the agent already edited", async () => {
     const dir = workspace();
-    await seedAgentWorkspace(dir, { name: "Scout" });
-    writeFileSync(path.join(dir, "SOUL.md"), "# my own soul\n");
-    const written = await seedAgentWorkspace(dir, { name: "Scout" });
+    await seedAgentWorkspace(dir);
+    writeFileSync(path.join(dir, "AGENTS.md"), "# my own rules\n");
+    const written = await seedAgentWorkspace(dir);
     expect(written).toEqual([]);
-    expect(readFileSync(path.join(dir, "SOUL.md"), "utf8")).toBe("# my own soul\n");
+    expect(readFileSync(path.join(dir, "AGENTS.md"), "utf8")).toBe("# my own rules\n");
   });
-
 });
 
 describe("readAgentConfig", () => {
   it("reads the seeded files and reports nothing missing", async () => {
     const dir = workspace();
-    await seedAgentWorkspace(dir, { name: "Scout" });
+    await seedAgentWorkspace(dir);
     const config = await readAgentConfig(dir);
     expect(config.missing).toEqual([]);
-    expect([...config.files.keys()]).toEqual(CONFIG_FILES.filter((f) => f.name !== "MEMORY.md").map((f) => f.name));
-    expect(config.identity.name).toBe("Scout");
+    expect([...config.files.keys()]).toEqual(CONFIG_FILES.filter((f) => f.required).map((f) => f.name));
+  });
+
+  it("reads MEMORY.md when the agent created it", async () => {
+    const dir = workspace();
+    await seedAgentWorkspace(dir);
+    writeFileSync(path.join(dir, "MEMORY.md"), "# facts\n");
+    const config = await readAgentConfig(dir);
+    expect(config.files.get("MEMORY.md")).toBe("# facts\n");
   });
 
   it("treats a missing workspace as every required file missing", async () => {
     const config = await readAgentConfig(path.join(workspace(), "nope"));
-    expect(config.missing).toEqual(["IDENTITY.md", "SOUL.md", "AGENTS.md"]);
+    expect(config.missing).toEqual(["AGENTS.md"]);
     expect(config.files.size).toBe(0);
-    expect(config.identity.name).toBeNull();
-  });
-});
-
-describe("parseIdentity", () => {
-  it("parses the one-line form", () => {
-    expect(parseIdentity("- Name: Scout | Vibe: direct and calm | Emoji: 🧭 | Avatar: avatars/a.png")).toEqual({
-      name: "Scout",
-      vibe: "direct and calm",
-      emoji: "🧭",
-      avatar: "avatars/a.png",
-    });
-  });
-
-  it("ignores placeholders and blank values", () => {
-    expect(parseIdentity("- Name: Scout | Vibe: (pick something) | Emoji: ")).toEqual({
-      name: "Scout",
-      vibe: null,
-      emoji: null,
-      avatar: null,
-    });
-  });
-
-  it("accepts the multi-line label form", () => {
-    const text = "- **Name:** Echo\n- Vibe: warm\n- Emoji: 🌙\n";
-    expect(parseIdentity(text)).toMatchObject({ name: "Echo", vibe: "warm", emoji: "🌙" });
   });
 });

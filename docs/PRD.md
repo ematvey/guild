@@ -193,9 +193,9 @@ invoke a skill explicitly.
 An agent thread reads both its workspace and, on a desktop turn, the
 project it runs in.
 
-- Agent threads read `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`,
-  `MEMORY.md` and `BOOTSTRAP.md` from the agent workspace on every turn,
-  under a per-file and total byte budget.
+- Agent threads read `AGENTS.md` and `MEMORY.md` from the agent workspace
+  on every turn, under a per-file and total byte budget. The name and
+  description come from the agent record.
 - A desktop turn also supplies the project's AGENTS.md chain (global config
   file plus one file per directory from the repo root down).
 - The two sources stay distinguishable: workspace files render inside an

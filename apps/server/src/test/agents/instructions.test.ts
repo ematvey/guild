@@ -1,23 +1,16 @@
-// The agent's system instructions: identity, workspace, sharing, and the
-// workspace config files read at thread start.
+// The agent's system instructions: name, description, workspace, sharing,
+// and the workspace config files read at thread start.
 
 import { describe, expect, it } from "vitest";
 import { composeAgentInstructions, PROJECT_INSTRUCTIONS_MAX_CHARS } from "../../harness/runtime.js";
 import type { AgentConfigFiles } from "../../agents/workspace-config.js";
 
 function config(files: Record<string, string>, missing: string[] = []): AgentConfigFiles {
-  return {
-    files: new Map(Object.entries(files)),
-    missing,
-    identity: { name: null, vibe: null, emoji: null, avatar: null },
-  };
+  return { files: new Map(Object.entries(files)), missing };
 }
 
 const FULL = {
-  "IDENTITY.md": "- Name: Scout | Vibe: direct | Emoji: 🧭",
-  "SOUL.md": "# SOUL.md\n\nBe useful.",
   "AGENTS.md": "# AGENTS.md\n\nNever delete without asking.",
-  "USER.md": "# USER.md\n\n- Prefer short answers.",
   "MEMORY.md": "# MEMORY.md\n\n- The staging host is `dev-1`.",
 };
 
@@ -30,19 +23,24 @@ describe("composeAgentInstructions", () => {
     expect(text).toContain("Do not mention workspace paths");
   });
 
+  it("uses the description as the agent's purpose", () => {
+    const text = composeAgentInstructions(
+      { name: "Scout", description: "Finds sources and checks claims.", is_personal: false },
+      config(FULL),
+    );
+    expect(text).toContain("You are Scout, Finds sources and checks claims.");
+  });
+
   it("calls a personal agent's workspace private", () => {
     const text = composeAgentInstructions({ name: "Assistant", is_personal: true }, config(FULL));
     expect(text).toContain("the workspace is private");
     expect(text).not.toContain("shared with everyone");
   });
 
-  it("injects the config files in order, identity first", () => {
+  it("injects the config files in order", () => {
     const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
     const order = [
-      '<agent_workspace_file path="/workspace/IDENTITY.md">',
-      '<agent_workspace_file path="/workspace/SOUL.md">',
       '<agent_workspace_file path="/workspace/AGENTS.md">',
-      '<agent_workspace_file path="/workspace/USER.md">',
       '<agent_workspace_file path="/workspace/MEMORY.md">',
     ].map((marker) => text.indexOf(marker));
     expect(order.every((at) => at > 0)).toBe(true);
@@ -51,17 +49,17 @@ describe("composeAgentInstructions", () => {
     expect(text).toContain("The staging host is `dev-1`.");
     expect(text).toContain("Edit them with write/edit");
     expect(text).toContain('<agent_workspace path="/workspace">');
-    expect(text.indexOf("</agent_workspace>")).toBeGreaterThan(text.indexOf('<agent_workspace_file path="/workspace/MEMORY.md">'));
+    expect(text.indexOf("</agent_workspace>")).toBeGreaterThan(
+      text.indexOf('<agent_workspace_file path="/workspace/MEMORY.md">'),
+    );
   });
 
   it("marks a missing required file and skips a missing optional one", () => {
     const text = composeAgentInstructions(
       { name: "Scout", is_personal: false },
-      config({ "IDENTITY.md": "- Name: Scout" }, ["SOUL.md", "AGENTS.md"]),
+      config({}, ["AGENTS.md"]),
     );
-    expect(text).toContain('path="/workspace/SOUL.md">\n(missing: SOUL.md)');
     expect(text).toContain('path="/workspace/AGENTS.md">\n(missing: AGENTS.md)');
-    expect(text).not.toContain('path="/workspace/USER.md"');
     expect(text).not.toContain('path="/workspace/MEMORY.md"');
   });
 
@@ -72,7 +70,7 @@ describe("composeAgentInstructions", () => {
     );
     expect(text).toContain("(truncated at");
     expect(text).toContain("read the file for the rest");
-    expect(text.length).toBeLessThan(40 * 1024);
+    expect(text.length).toBeLessThan(30 * 1024);
   });
 
   it("appends the desktop project chain after the workspace files", () => {
@@ -111,17 +109,6 @@ describe("composeAgentInstructions", () => {
     const unbound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
     expect(unbound).not.toContain("agent_bash");
     expect(unbound).toContain("Edit them with write/edit");
-  });
-
-  it("stops adding files once the total budget is spent", () => {
-    const big = `# big\n\n${"y".repeat(8 * 1024)}`;
-    const text = composeAgentInstructions(
-      { name: "Scout", is_personal: false },
-      config({ "IDENTITY.md": big, "SOUL.md": big, "AGENTS.md": big, "USER.md": big, "MEMORY.md": big }),
-    );
-    // 24 KiB total: the last files cannot fit.
-    expect(text).not.toContain('path="/workspace/MEMORY.md"');
-    expect(text.length).toBeLessThan(30 * 1024);
   });
 
   it("gives a spawned child its tree context and the reply rule", () => {

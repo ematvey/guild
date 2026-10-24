@@ -4524,11 +4524,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                             }
                           }}
                         >
-                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                            <span className="truncate">{agent.name}</span>
-                            {agent.visibility !== "private" && (
-                              <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
-                            )}
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate">{agent.name}</span>
+                              {agent.visibility !== "private" && (
+                                <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                              )}
+                            </span>
+                            {agent.description ? (
+                              <span className="line-clamp-1 text-3xs text-muted-foreground">
+                                {agent.description}
+                              </span>
+                            ) : null}
                           </span>
                           {agent.id === pickedAgent?.id && <Check className="size-3.5" />}
                         </DropdownMenuItem>

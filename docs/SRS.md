@@ -481,19 +481,23 @@ A thread's instructions come from two sources, and each file is a tagged
 block carrying its full path, so the model can tell them apart.
 
 The agent workspace (`/workspace`, `AGENT_WORKSPACE_PATH`) holds
-`IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`, `MEMORY.md` and
-`BOOTSTRAP.md`. The server reads them on every turn, caps each at
+`AGENTS.md` (required) and `MEMORY.md` (optional), plus the `memories/`
+directory. The server reads them on every turn, caps each at
 `FILE_MAX_CHARS = 8 KiB` and the set at `TOTAL_MAX_CHARS = 24 KiB`
 (`apps/server/src/agents/workspace-config.ts`), and renders them inside
 one section:
 
 ```
 <agent_workspace path="/workspace">
-<agent_workspace_file path="/workspace/IDENTITY.md">
+<agent_workspace_file path="/workspace/AGENTS.md">
 ...file body...
 </agent_workspace_file>
 </agent_workspace>
 ```
+
+The agent's name and description come from the `agents` row, not from a
+workspace file. The description is the agent's purpose: the UI shows it to
+users, and the instructions and `list_agents` give it to callers.
 
 A desktop turn adds the user's project context: the global config-dir file
 (`AGENTS.override.md` beats `AGENTS.md`) plus one file per directory from

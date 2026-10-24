@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
 import { AgentStore } from "../../agents/store.js";
 import { SPECIALIST_PACK, installSpecialists } from "../../agents/specialists.js";
-import { AGENTS_TEMPLATE, SOUL_TEMPLATE } from "../../agents/templates.js";
+import { AGENTS_TEMPLATE } from "../../agents/templates.js";
 import { agentWorkspaceDir } from "../../agents/workspace-config.js";
 import type { UserRow } from "../../platform/store/identity.js";
 
@@ -95,7 +95,6 @@ describe("specialist pack", () => {
       expect(playbook.startsWith(spec.playbook)).toBe(true);
       expect(playbook).toContain("## Stop rule");
       expect(readFileSync(path.join(dir, "notes", "README.md"), "utf8")).toBe(spec.notesIndex);
-      expect(readFileSync(path.join(dir, "SOUL.md"), "utf8")).toBe(SOUL_TEMPLATE);
     }
   });
 

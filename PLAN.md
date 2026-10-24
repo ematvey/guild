@@ -12,6 +12,18 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Name and description are the agent; the workspace is only rules and
+  memory (2026-10-24).** The identity split failed: the `agents.name` row
+  said "Assistant" while `IDENTITY.md` said another name, and each UI
+  surface read a different one. The `agents` row is now the only source of
+  the name and the description. The UI shows both; the instructions and
+  `list_agents` give the description to callers. `IDENTITY.md`, `SOUL.md`,
+  `USER.md` and `BOOTSTRAP.md` are gone from the templates, the prompt and
+  the workspaces: `AGENTS.md` (required) and `MEMORY.md` (optional) plus
+  `memories/` are the whole workspace. Stable user preferences go in
+  `MEMORY.md`. Existing `IDENTITY.md` names were copied into the row before
+  the files were removed; Henry keeps his name.
+
 - **The running subagent tree is pushed, not polled (2026-10-24).** The
   member socket gains `subagent_tree`: the chat's whole thread subtree with
   each node's latest run status, sent inside the `sync` bracket and again on
