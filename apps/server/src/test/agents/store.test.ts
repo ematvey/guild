@@ -89,7 +89,7 @@ dbDescribe("AgentStore", () => {
       deriveTitleFromMessage(
         "Create memories/hello.md with a short note about yourself, then list the workspace and tell me what you wrote.",
       ),
-    ).toBe("Create memories/hello.md with a short note about yourself…");
+    ).toBe("Create memories/hello.md with a short note…");
     expect(deriveTitleFromMessage("oneverylongwordwithoutspaces".repeat(3))).toHaveLength(60);
   });
 
