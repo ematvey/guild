@@ -110,6 +110,7 @@ import {
   SubagentSpawnRecord,
 } from "./agents/subagent-blocks";
 import { Frame } from "./frame";
+import { PayloadPre } from "./payload-pre";
 import { ChildThreadHeader } from "./agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
@@ -872,9 +873,7 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
     >
       {/* Full height in the page flow: the conversation pane owns
           scrolling, the block itself never clips or inner-scrolls. */}
-      <div className={`whitespace-pre-wrap leading-relaxed text-muted-foreground ${WRAP_ANYWHERE}`}>
-        {text || "…"}
-      </div>
+      <PayloadPre text={text || "…"} />
     </Frame>
   );
 }
