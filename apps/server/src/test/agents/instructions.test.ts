@@ -134,4 +134,23 @@ describe("composeAgentInstructions", () => {
     const root = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
     expect(root).not.toContain("<spawned_by");
   });
+
+  it("tells a delegating agent not to wait for a child", () => {
+    const text = composeAgentInstructions(
+      { name: "Echo", is_personal: false },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      true,
+    );
+    expect(text).toContain("<delegation>");
+    expect(text).toContain("Do not wait for the child");
+    expect(text).toContain("the child's result arrives as a new message and wakes you");
+  });
+
+  it("omits the delegation block when the agent cannot spawn", () => {
+    const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
+    expect(text).not.toContain("<delegation>");
+  });
 });

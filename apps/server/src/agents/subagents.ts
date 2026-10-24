@@ -630,9 +630,10 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       description:
         "Spawn a child agent thread and post its first task. Give the session a short `name`: it labels the row the " +
         "user sees and the child thread itself, so several children stay distinguishable. Returns the child thread, " +
-        "run and chat ids at once; the child reports back by ending its turn. Depth and child count limits come from " +
-        "the deployment config. Call list_agents first when the target is uncertain; each entry's description says " +
-        "what that agent is for.",
+        "run and chat ids at once; the child reports back by ending its turn. Do not wait for the child: do not poll " +
+        "list or read_thread, and do not sleep. Continue your own work or end your turn; the result arrives as a new " +
+        "message. Depth and child count limits come from the deployment config. Call list_agents first when the " +
+        "target is uncertain; each entry's description says what that agent is for.",
       parameters: Type.Object({
         agent: Type.String({ description: "Target agent id or exact name within this organization" }),
         name: Type.Optional(

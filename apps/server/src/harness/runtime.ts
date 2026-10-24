@@ -153,6 +153,7 @@ export function composeAgentInstructions(
   projectInstructions?: string,
   machineBound = false,
   spawnedBy?: { parent_name: string; depth: number; can_spawn: boolean },
+  canDelegate = false,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -212,6 +213,17 @@ export function composeAgentInstructions(
       "This chat is bound to the user's project, so `read`, `write`, `edit` and `bash` act on their machine " +
         "in the project folder. `agent_read`, `agent_write`, `agent_edit` and `agent_bash` act in your own " +
         "workspace sandbox; that sandbox is a full Linux environment, so other paths there work too.",
+    );
+  }
+  if (canDelegate) {
+    parts.push(
+      [
+        "<delegation>",
+        "A spawn returns at once. Do not wait for the child, do not poll list or read_thread, and do not sleep.",
+        "If the spawned work is all that is left, end your turn; the child's result arrives as a new message and wakes you.",
+        "If you have other work, do it now.",
+        "</delegation>",
+      ].join("\n"),
     );
   }
   const project = projectBlock(projectInstructions);
@@ -1305,7 +1317,18 @@ export class GuildRuntime {
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name) };
     }
     const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
-    return composeAgentInstructions(agent, config, projectInstructions, machineBound, spawnedBy);
+    const canDelegate =
+      spawnedBy === undefined
+        ? agent.tools_mode === "all" || agent.tools.includes("subagents")
+        : spawnedBy.can_spawn;
+    return composeAgentInstructions(
+      agent,
+      config,
+      projectInstructions,
+      machineBound,
+      spawnedBy,
+      canDelegate,
+    );
   }
 
   /** The tree context of a spawned child thread, or undefined for a root. */
