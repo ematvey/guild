@@ -12,6 +12,26 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The decomposition review is applied (2026-10-25).** Six files that
+  mixed layers are split, with no behaviour change:
+  `platform/context.ts` / `contexts.ts` became `root-context.ts` /
+  `route-contexts.ts`; `views/sidebar-contents.tsx` became `views/sidebar/`
+  (one panel per file plus `rows.tsx` and `chrome.tsx`); `lib/context.ts`
+  became `lib/skills.ts`, `lib/turn-context.ts` and `lib/fs-bridge.ts`;
+  `harness/runtime.ts` gave up the importer's `SharedPoolDatabase` and chat
+  mapping (`importer/durable.ts`), the instruction composer
+  (`harness/instructions.ts`), the title cleanup (`harness/title.ts`) and
+  `directBaseTools` (`harness/agent-tools.ts`); `integrations/execute.ts`
+  became one module per vendor under `integrations/vendors/` with the
+  dispatcher left in `execute.ts`; `transport.ts` became `lib/session.ts`,
+  `lib/machine-rpc.ts`, `lib/socket-client.ts`, `lib/thread-events.ts` and
+  `lib/api/*`. `machine_link.rs` gave up the platform identity probes
+  (`machine_meta.rs`) and the frame classifier (`machine_frames.rs`). New
+  tests cover session addressing and tokens, the two thread reads, the chat
+  write wire contracts, and the sidebar rows and panels. Still open, in
+  `docs/reviews/2026-10-25-decomposition-review.md`: the Rust
+  `jsonrpc_loop.rs` and the Tauri shell.
+
 - **The chat view is the thread view (2026-10-25).** `views/WebChat.tsx`
   (4904 lines) is gone. The component is `views/thread/Thread.tsx` and the
   file name now matches the surface it renders and its `/thread/<id>`
