@@ -74,6 +74,7 @@ import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { ChildResultDelivery, assistantTextForRun, type ChildRunFinished } from "../agents/delivery.js";
 import { failStaleRuns } from "../agents/reconcile.js";
+import { notifySubagentTree } from "../agents/tree.js";
 import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { createTraceHook } from "../agents/trace-hook.js";
@@ -1573,6 +1574,7 @@ export class GuildRuntime {
                  'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at`,
       [row.id],
     );
+    if (runs.rowCount !== 0) await notifySubagentTree(this.pool, row.id);
     for (const run of runs.rows) {
       const finalText = await assistantTextForRun(this.pool, chatId, run.started_at).catch(() => "");
       await this.childDelivery

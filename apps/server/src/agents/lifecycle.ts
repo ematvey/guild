@@ -12,6 +12,7 @@ import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ChildResultDelivery, ChildRunFinished } from "./delivery.js";
+import { notifySubagentTree } from "./tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -168,6 +169,7 @@ export class AgentRunLifecycle {
         ],
       );
       if (updated.rowCount === 0) return;
+      await notifySubagentTree(this.deps.pool, run.thread_id);
       if (info.eventId !== undefined) {
         await this.deps.attachments?.publishAgentAttachments(run.chat_id, info.eventId).catch((error: unknown) => {
           this.deps.log.warn({ err: error, runId: run.id, chatId }, "attachment publish failed");
