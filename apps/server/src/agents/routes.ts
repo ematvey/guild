@@ -12,7 +12,6 @@ import type { ObjectStore } from "../platform/s3.js";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
-import { agentWorkspaceDir, readIdentity, type AgentIdentity } from "./workspace-config.js";
 import { runRoutineNow } from "./scheduler.js";
 import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
@@ -227,15 +226,6 @@ export function registerAgentRoutes(
   const store = new AgentStore(infra.pool, infra.trace, infra.config.agentWorkspaceWriteRoot);
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
 
-  /** The agent plus the identity line its IDENTITY.md carries — the UI's
-   *  display name, vibe and emoji. A missing file yields nulls. */
-  async function withIdentity<T extends { id: string; org_id: string }>(agent: T): Promise<T & { identity: AgentIdentity }> {
-    const identity = await readIdentity(
-      agentWorkspaceDir(infra.config.agentWorkspaceWriteRoot, agent.org_id, agent.id),
-    );
-    return { ...agent, identity };
-  }
-
   /** The built-in tool catalog the creation/settings forms offer. Integration
    *  and MCP tools are added by the runtime; this endpoint is the stable
    *  built-in surface. */
@@ -346,7 +336,7 @@ export function registerAgentRoutes(
       resources: resourcesField(body),
       team_ids: teamIdsField(body),
     });
-    return sendJson(reply, { agent: await withIdentity(agent), access: await store.access(user, agent) });
+    return sendJson(reply, { agent: agent, access: await store.access(user, agent) });
   });
 
   app.get("/api/v1/agents", async (req, reply) => {
@@ -361,14 +351,14 @@ export function registerAgentRoutes(
       includeArchived: queryParam(req, "include_archived") === "1",
       status: status === undefined || status === "" ? undefined : (status as AgentStatus),
     });
-    return sendJson(reply, { agents: await Promise.all(agents.map(withIdentity)) });
+    return sendJson(reply, { agents: await Promise.all(agents) });
   });
 
   app.get("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const agent = await store.get(user, agentId);
-    return sendJson(reply, { agent: await withIdentity(agent), access: await store.access(user, agent) });
+    return sendJson(reply, { agent: agent, access: await store.access(user, agent) });
   });
 
   app.patch("/api/v1/agents/:id", async (req, reply) => {
@@ -399,7 +389,7 @@ export function registerAgentRoutes(
     const teamIds = teamIdsField(body);
     if (teamIds !== undefined) patch.team_ids = teamIds;
     const agent = await store.update(user, agentId, patch);
-    return sendJson(reply, { agent: await withIdentity(agent) });
+    return sendJson(reply, { agent: agent });
   });
 
   app.post("/api/v1/agents/:id/archive", async (req, reply) => {

@@ -125,8 +125,8 @@ export class ThreadAgentLocked extends Error {
 
 /** The system instructions of an agent thread: who the agent is, where its
  *  files live, what its threads and workspace share, and the workspace
- *  config files themselves (OpenClaw-style: IDENTITY, SOUL, AGENTS, USER,
- *  MEMORY, BOOTSTRAP). The agent edits those files; the next turn reads
+ *  config files themselves (SOUL, AGENTS, USER, MEMORY). The agent edits
+ *  those files; the next turn reads
  *  them back. A desktop turn adds the user's project context after them.
  *  Each file is a tagged block carrying its full path, so the two sources
  *  stay distinguishable. Pure over the files it is given. */
@@ -140,7 +140,7 @@ export function composeAgentInstructions(
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
     : "Every thread is private to the user you are talking to. The workspace is shared with everyone who can use this agent.";
-  const description = agent.description?.trim() ?? "";
+  const description = (agent.description?.trim() ?? "").replace(/\.$/, "");
   const parts: string[] = [
     description === ""
       ? `You are ${agent.name}, a persistent agent in Guild.`
@@ -152,9 +152,8 @@ export function composeAgentInstructions(
   const workspace: string[] = [
     machineBound
       ? "Your own files. Read them with agent_read and edit them with agent_write/agent_edit; " +
-        "a change applies on your next turn. If BOOTSTRAP.md exists, follow it and then delete it."
-      : "Your own files. Edit them with write/edit; a change applies on your next turn. " +
-        "If BOOTSTRAP.md exists, follow it and then delete it.",
+        "a change applies on your next turn."
+      : "Your own files. Edit them with write/edit; a change applies on your next turn.",
   ];
   let budget = TOTAL_MAX_CHARS;
   for (const entry of CONFIG_FILES) {
@@ -1281,11 +1280,11 @@ export class GuildRuntime {
     const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
     try {
-      await seedAgentWorkspace(dir, agent);
+      await seedAgentWorkspace(dir);
       config = await readAgentConfig(dir);
     } catch (error) {
       this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
-      config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name), identity: { name: null, vibe: null, emoji: null, avatar: null } };
+      config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name) };
     }
     const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
     return composeAgentInstructions(agent, config, projectInstructions, machineBound, spawnedBy);

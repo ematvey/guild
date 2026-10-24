@@ -334,7 +334,7 @@ export class AgentStore {
   private async seedWorkspace(agent: { id: string; org_id: string; name: string }): Promise<void> {
     if (this.workspaceRoot === undefined) return;
     try {
-      await seedAgentWorkspace(agentWorkspaceDir(this.workspaceRoot, agent.org_id, agent.id), agent);
+      await seedAgentWorkspace(agentWorkspaceDir(this.workspaceRoot, agent.org_id, agent.id));
     } catch {
       // The next turn seeds it again through the runtime path.
     }

@@ -74,14 +74,6 @@ function listOf<T>(value: unknown, ...keys: string[]): T[] {
   return [];
 }
 
-/** The identity line from the agent's workspace IDENTITY.md. */
-export interface AgentIdentity {
-  name: string | null;
-  vibe: string | null;
-  emoji: string | null;
-  avatar: string | null;
-}
-
 export interface Agent {
   id: string;
   org_id: string;
@@ -110,8 +102,6 @@ export interface Agent {
   updated_at: string;
   last_activity_at?: string | null;
   unread?: boolean;
-  /** Parsed IDENTITY.md; null fields when the file is absent or blank. */
-  identity?: AgentIdentity | null;
 }
 
 export interface AgentThread {

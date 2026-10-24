@@ -1,6 +1,8 @@
 # Workspace agent config (OpenClaw-style)
 
-Status: implemented (2026-10-21).
+Status: superseded (2026-10-24). The file set is now `AGENTS.md` and
+`MEMORY.md`; the name and description live in the `agents` row. See the
+2026-10-24 entry in `PLAN.md`.
 
 ## Problem
 

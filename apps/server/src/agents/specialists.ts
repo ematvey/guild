@@ -401,7 +401,7 @@ export async function installSpecialists(
     }
 
     const dir = agentWorkspaceDir(deps.workspaceRoot, input.orgId, agent.id);
-    await seedAgentWorkspace(dir, agent);
+    await seedAgentWorkspace(dir);
     await writeFile(path.join(dir, "AGENTS.md"), `${specialist.playbook}${ECONOMY}`);
     await writeIfMissing(path.join(dir, "notes", "README.md"), specialist.notesIndex);
   }

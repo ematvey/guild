@@ -24,6 +24,7 @@ export function filterAgents(agents: Agent[], query: string): Agent[] {
   return agents.filter(
     (agent) =>
       agent.name.toLowerCase().includes(needle) ||
+      (agent.description ?? "").toLowerCase().includes(needle) ||
       (agent.owner_label ?? "").toLowerCase().includes(needle) ||
       agent.model.toLowerCase().includes(needle) ||
       agent.visibility.includes(needle),

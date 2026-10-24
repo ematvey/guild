@@ -230,14 +230,8 @@ export function AgentPage({
       <PageHeader
         title={
           <span className="flex min-w-0 items-center gap-2">
-            {agent.identity?.emoji ? (
-              <span className="text-lg leading-none" aria-hidden>
-                {agent.identity.emoji}
-              </span>
-            ) : (
-              <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
-            )}
-            <span className="truncate">{agent.identity?.name ?? agent.name}</span>
+            <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
+            <span className="truncate">{agent.name}</span>
             <AgentStatusBadge status={agent.status} />
           </span>
         }
@@ -250,12 +244,6 @@ export function AgentPage({
             <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
             <span>{agent.tools.length} tools</span>
-            {agent.identity?.vibe ? (
-              <>
-                <span>·</span>
-                <span className="italic">{agent.identity.vibe}</span>
-              </>
-            ) : null}
           </span>
         }
         actions={
@@ -494,9 +482,14 @@ function AgentOverview({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <div className="space-y-4">
+        {agent.description ? (
+          <Section title="About">
+            <p className="text-sm text-muted-foreground">{agent.description}</p>
+          </Section>
+        ) : null}
         <Section
           title="Configuration files"
-          description="IDENTITY.md, SOUL.md, AGENTS.md, USER.md and MEMORY.md live in the workspace and load into every thread."
+          description="AGENTS.md and MEMORY.md live in the workspace and load into every thread."
           action={
             <Button
               variant="ghost"
@@ -1070,12 +1063,12 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
       <dl className="space-y-2 text-sm">
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Name</dt>
-          <dd>{agent.identity?.name ?? agent.name}</dd>
+          <dd>{agent.name}</dd>
         </div>
-        {agent.identity?.vibe ? (
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Vibe</dt>
-            <dd className="text-right">{agent.identity.vibe}</dd>
+        {agent.description ? (
+          <div>
+            <dt className="text-muted-foreground">Description</dt>
+            <dd className="mt-0.5">{agent.description}</dd>
           </div>
         ) : null}
         <div className="flex justify-between gap-2">

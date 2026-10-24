@@ -31,7 +31,7 @@ const auth = (): Record<string, string> => ({
 });
 
 describe("agent workspace config over HTTP", () => {
-  it("seeds the templates on create and returns the identity line", async () => {
+  it("seeds the workspace on create", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/agents",
@@ -40,14 +40,11 @@ describe("agent workspace config over HTTP", () => {
     });
     expect(created.statusCode).toBe(200);
     const agent = (JSON.parse(created.body) as {
-      agent: { id: string; org_id: string; identity: { name: string | null } };
+      agent: { id: string; org_id: string };
     }).agent;
-    expect(agent.identity.name).toBe("Config agent");
 
     const dir = agentWorkspaceDir(root, agent.org_id, agent.id);
-    for (const file of ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "BOOTSTRAP.md"]) {
-      expect(existsSync(path.join(dir, file)), file).toBe(true);
-    }
+    expect(existsSync(path.join(dir, "AGENTS.md"))).toBe(true);
     expect(existsSync(path.join(dir, "memories"))).toBe(true);
     // MEMORY.md is optional and not seeded.
     expect(existsSync(path.join(dir, "MEMORY.md"))).toBe(false);
@@ -59,9 +56,7 @@ describe("agent workspace config over HTTP", () => {
       headers: auth(),
     });
     expect(detail.statusCode).toBe(200);
-    expect((JSON.parse(detail.body) as { agent: { identity: { name: string | null } } }).agent.identity.name).toBe(
-      "Config agent",
-    );
+    expect((JSON.parse(detail.body) as { agent: { name: string } }).agent.name).toBe("Config agent");
   });
 
   it("ignores an instructions field: the file is the only source", async () => {
@@ -140,21 +135,4 @@ describe("agent workspace config over HTTP", () => {
     expect((JSON.parse(cleared.body) as { agent: { description: string } }).agent.description).toBe("");
   });
 
-  it("reports null identity fields when IDENTITY.md is blank", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/agents",
-      headers: auth(),
-      payload: { name: "Blank agent", model: "GLM-Test-Model" },
-    });
-    const agent = (JSON.parse(created.body) as { agent: { id: string; org_id: string } }).agent;
-    const dir = agentWorkspaceDir(root, agent.org_id, agent.id);
-    rmSync(path.join(dir, "IDENTITY.md"));
-    const detail = await stack.env.app.inject({
-      method: "GET",
-      url: `/api/v1/agents/${agent.id}`,
-      headers: auth(),
-    });
-    expect((JSON.parse(detail.body) as { agent: { identity: { name: string | null } } }).agent.identity.name).toBeNull();
-  });
 });
