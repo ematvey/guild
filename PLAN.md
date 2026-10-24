@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The chat view is the thread view (2026-10-25).** `views/WebChat.tsx`
+  (4904 lines) is gone. The component is `views/thread/Thread.tsx` and the
+  file name now matches the surface it renders and its `/thread/<id>`
+  address. Pure derivations sit in `thread/route.ts` (`ChatRoute`,
+  `parseChatRoute`, `chatRoutePath`, and the pure `applyRoutePatch` that
+  `pushRoute` now calls), `thread/status.ts`, `thread/mentions.ts`,
+  `thread/tool-text.ts`, `thread/approval.ts` and `thread/blocks.tsx`.
+  Presentational widgets are `thread/tool-blocks.tsx`,
+  `thread/approval-card.tsx`, `thread/attachments.tsx`,
+  `thread/device-setup.tsx` and `thread/ThreadOverlays.tsx`. State lives in
+  `thread/hooks/`: route, chat lists, thread store, composer/drafts,
+  outgoing sends, member socket, approval mode and row actions. No behaviour
+  changed. The pure test file moved with the code, the widget modules gained
+  markup tests, and the route contract gained precedence tests.
+
 - **Name and description are the agent; the workspace is only rules and
   memory (2026-10-24).** The identity split failed: the `agents.name` row
   said "Assistant" while `IDENTITY.md` said another name, and each UI

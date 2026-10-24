@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import WebChat from "./views/WebChat";
+import Thread from "./views/thread/Thread";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
@@ -370,7 +370,7 @@ function DesktopApp() {
     // specific.
     return (
       <>
-        <WebChat
+        <Thread
           email={user}
           role={role}
           displayName={displayName}
@@ -543,7 +543,7 @@ function AppInner() {
       setOnboarded(profile.onboarded ?? true);
     };
     return email ? (
-      <WebChat
+      <Thread
         email={email}
         role={role}
         displayName={displayName}

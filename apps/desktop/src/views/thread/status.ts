@@ -1,0 +1,127 @@
+// Pure derivations of the thread view's live status: what the sidebar shows,
+// whether the open thread is writable, and which state the send button has.
+import type { SidebarTab } from "../sidebar-rail";
+import type { ChatSummary } from "../../transport";
+
+export function statusFromThreads(chats: ChatSummary[]) {
+  return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));
+}
+
+/** The open chat's remote bound machine when its socket is down — the
+ * offline warning banner's subject. Machine binding is project-derived, so
+ * only project-bound chats can have one. Null when unbound, bound to this
+ * machine (desktop executes its own tools), online, or presence unknown. */
+export function offlineMachine(
+  chats: ChatSummary[] | null,
+  chatId: string | null,
+  isTauri: boolean,
+  localMachineId: string | undefined,
+): { label: string } | null {
+  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+  if (!row?.machine_id || !row.project_id) return null;
+  if (isTauri && row.machine_id === localMachineId) return null;
+  if (row.machine_online !== false) return null;
+  return { label: row.machine_label ?? row.machine_id };
+}
+
+/** A thread is read-only when it is absent from both the active and the
+ * archived chat lists after those lists and the thread have loaded. Child
+ * chats are execution transcripts: the sidebar filters them out by design,
+ * so absence means "read-only child", never "new chat". The loading guards
+ * keep a freshly created chat writable while its row is still in flight. */
+export function isReadOnlyThread(input: {
+  chatId: string | null;
+  chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
+  archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
+  threadLoading: boolean;
+}): boolean {
+  const { chatId, chats, archivedChats, threadLoading } = input;
+  if (chatId === null || chats === null || archivedChats === null || threadLoading) {
+    return false;
+  }
+  if (chats.some((c) => c.id === chatId)) return false;
+  if (archivedChats.some((c) => c.id === chatId)) return false;
+  return true;
+}
+
+/** Whether the open chat shows busy after a thread-list push: while a
+ * send's HTTP round trip is in flight the pushed list predates the
+ * server's generating flag, so its false must not clear the optimistic
+ * busy (a second send could race the first). A first send is exempt: its
+ * pending state lives in the dedicated pending-submit spinner, and busy
+ * here feeds stopMode — a Stop button for a turn that does not exist is a
+ * lie. */
+export function busyAfterThreadPush(
+  chats: ChatSummary[],
+  openChatId: string | null,
+  sendInFlight: boolean,
+  current = false,
+): boolean {
+  if (sendInFlight && openChatId !== null) return true;
+  // A child thread is not a sidebar row. Its absence says nothing about the
+  // live turn, so keep the status the thread-state frames own.
+  const row = chats.find((c) => c.id === openChatId);
+  return row === undefined ? current : !!row.generating;
+}
+
+/** The composer's send button: the four states it can honestly show.
+ * Precedence: the stop click's own state, then a live turn (Stop), then a
+ * first-send submit in flight (spinner — the chat does not exist yet, so
+ * there is no turn to stop and nothing to send again), then the plain
+ * send/queue arrow. */
+export type SendButtonMode = "send" | "pending" | "stop" | "stopping";
+export function sendButtonState(input: {
+  hasContent: boolean;
+  hasModel: boolean;
+  generating: boolean;
+  stopping: boolean;
+  submitting: boolean;
+}): SendButtonMode {
+  if (input.generating && !input.hasContent) return input.stopping ? "stopping" : "stop";
+  if (input.submitting) return "pending";
+  return "send";
+}
+
+/** Drops a chat's cancellation-in-progress flag once that chat's own
+ * generating state settled to false in a server-truth source — the
+ * chat-status map (thread-state frames) or the pushed list. The stop
+ * click flags the chat optimistically; the server's stop is cooperative
+ * (journaled step checks), so the authoritative generating=false push
+ * trails the click by the epilogue's round trips. Undefined generating
+ * (chat unknown to both sources) keeps the flag: no evidence is no
+ * clearance. Returns null when nothing changed — the caller bails out
+ * of the state update instead of re-rendering on every push. */
+export function pruneStopping(
+  stopping: Record<string, true>,
+  chatStatus: Record<string, { generating: boolean; unread: boolean }>,
+  chats: ChatSummary[] | null,
+): Record<string, true> | null {
+  let changed = false;
+  const next: Record<string, true> = {};
+  for (const cid of Object.keys(stopping)) {
+    const generating =
+      chatStatus[cid]?.generating ?? chats?.find((c) => c.id === cid)?.generating;
+    if (generating === false) {
+      changed = true;
+      continue;
+    }
+    next[cid] = true;
+  }
+  return changed ? next : null;
+}
+
+/** Layout mode for one sidebar tab (desktop rail). The skills tab is a
+ *  full main-column page swap: NO sidebar aside at all — the skills page
+ *  replaces the chat thread — so picking it must not touch the persisted
+ *  sidebar collapsed state either (leaving the tab restores the sidebar
+ *  exactly as it was). Every other tab keeps the resizable panel next to
+ *  the chat, and a tab pick re-expands a collapsed panel. Mobile has no
+ *  rail aside at all (chats-only drawer) and always shows the chat. */
+export function tabPaneLayout(
+  tab: SidebarTab,
+  isMobile: boolean,
+): { aside: boolean; mainPane: "chat" | "skillsPage"; expandsPanel: boolean } {
+  if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
+  if (tab === "skills") return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  return { aside: true, mainPane: "chat", expandsPanel: true };
+}

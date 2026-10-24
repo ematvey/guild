@@ -1,38 +1,34 @@
-// Pure-logic tests for WebChat's highest-risk functions (no DOM, no server).
-// These run under `npm test` (vitest); see package.json.
+// Pure-logic tests for the thread view's highest-risk functions (no DOM, no
+// server). These run under `npm test` (vitest); see package.json.
 
 import { describe, expect, it } from "vitest";
 import {
-  artifactCardOf,
   busyAfterThreadPush,
   sendButtonState,
-  chatRoutePath,
-  compareVersions,
-  eventsToBlocks,
-  isImeEnter,
   isReadOnlyThread,
-  mentionCandidates,
-  composerSkills,
-  parseChatRoute,
-  parseSearchResults,
-  reconcilePendingSend,
   pruneStopping,
-  threadStateBlocks,
   statusFromThreads,
   offlineMachine,
+  tabPaneLayout,
+} from "./status";
+import { chatRoutePath, isImeEnter, parseChatRoute } from "./route";
+import { mentionCandidates, composerSkills } from "./mentions";
+import { accountDefaultLabel } from "./approval";
+import { parseSearchResults, toolLabel, toolDisplayName } from "./tool-text";
+import { compareVersions } from "./device-setup";
+import { viewEntries, workRunLabel } from "../worked-for-block";
+import {
+  artifactCardOf,
+  eventsToBlocks,
+  reconcilePendingSend,
   replayFrom,
   resolveApproval,
-  toolLabel,
-  toolDisplayName,
+  threadStateBlocks,
   upsertApproval,
-  accountDefaultLabel,
-  tabPaneLayout,
-  viewEntries,
-  workRunLabel,
   type Block,
-} from "./WebChat";
-import type { SidebarTab } from "./sidebar-rail";
-import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../transport";
+} from "../../lib/thread-reducer";
+import type { SidebarTab } from "../sidebar-rail";
+import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../../transport";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
   return { id: `e${seq}`, seq, event, created_at: "t" };
