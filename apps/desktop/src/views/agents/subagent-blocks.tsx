@@ -4,6 +4,7 @@
 
 import { Bot, CircleSlash, CornerUpRight, SquareArrowOutUpRight } from "lucide-react";
 import { Frame } from "../frame";
+import { PayloadPre } from "../payload-pre";
 import type {
   ChildClosedBlock,
   ChildResultBlock,
@@ -62,7 +63,7 @@ export function SubagentSpawnRecord({
         {task === "" ? (
           <p className="text-xs">No request recorded.</p>
         ) : (
-          <div className="whitespace-pre-wrap text-xs leading-relaxed">{task}</div>
+          <PayloadPre text={task} />
         )}
         <OpenThreadButton chatId={block.chatId} agentName={block.agentName} onOpen={onOpen} />
       </div>
@@ -98,7 +99,7 @@ export function SubagentResultRecord({
         {returned === "" ? (
           <p className="text-xs">No answer returned.</p>
         ) : (
-          <div className="whitespace-pre-wrap text-xs leading-relaxed">{returned}</div>
+          <PayloadPre text={returned} />
         )}
         <OpenThreadButton chatId={block.chatId} agentName={block.agentName} onOpen={onOpen} />
       </div>
