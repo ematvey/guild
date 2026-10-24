@@ -12,6 +12,16 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A child result is never lost (2026-10-24).** Delivery takes the batch
+  before the steer, so a steer that fails used to consume the result with
+  nothing to carry it: the opened run lingered and the reaper failed it as
+  `orphaned`. A failed steer now returns the batch to the unconsumed pool
+  and fails its own run as `delivery_failed`. The five-minute stale sweep
+  also re-delivers any `child_result` older than two minutes that no turn
+  ever took and whose chat has no open run, which covers a delivery that
+  died with its process. `failStaleRuns` writes an `orphaned` result for a
+  dead child; the sweep is what now hands that result to the parent.
+
 - **Projects archive like chats (2026-10-23).** The project row menu's
   Archive moves the project into a collapsed Archived section in the
   Projects panel; its row expands to its chats and its menu offers
