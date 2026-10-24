@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { PostgresDurableStorage } from "../storage/postgres/index.js";
 import { importThreads } from "../importer/importer.js";
-import { SharedPoolDatabase } from "../harness/runtime.js";
+import { SharedPoolDatabase } from "../importer/durable.js";
 import { applyPlatformMigrations } from "../platform/migrations.js";
 import { TEST_ADMIN_URL } from "./platform/harness.js";
 
