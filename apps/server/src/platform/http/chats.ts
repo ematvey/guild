@@ -742,6 +742,11 @@ export async function submitTurn(
       ...(agentsMd !== undefined ? { agentsMd } : {}),
     });
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+    // Name the thread from the first message while the turn runs; the run
+    // lifecycle retries once if this call fails.
+    if (adopted !== null && (chat.title ?? "").trim() === "") {
+      void chats.runtime.generateThreadTitle(chatId, adopted.thread_id).catch(() => {});
+    }
   } catch (error) {
     await chats.chats.setGenerating(user.org_id, chatId, priorGenerating);
     // The delivery failed after the accept committed: mark the command so
