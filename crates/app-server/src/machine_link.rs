@@ -13,9 +13,11 @@
 
 use crate::cloud::{CloudClient, CloudError};
 use crate::jsonrpc_loop::Shared;
+use crate::machine_frames::{ServerFrame, classify_server_frame};
+use crate::machine_meta::{MachineMeta, hostname_label, machine_meta};
 use crate::session_store;
 use futures::{SinkExt, StreamExt};
-use protocol::ws::{WsClientMsg, WsServerMsg};
+use protocol::ws::WsClientMsg;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,118 +57,6 @@ pub struct MachineLinkConfig {
     pub machine_id: String,
     pub client_id: String,
     pub machine_name: String,
-}
-
-/// Registry metadata reported on every machine connect: the durable
-/// hardware fingerprint (re-pair adoption hint) plus OS and app versions.
-/// Unavailable values are omitted — the server stores NULL.
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct MachineMeta {
-    pub fingerprint: Option<String>,
-    pub os: Option<String>,
-    pub os_version: Option<String>,
-    pub app_version: Option<String>,
-}
-
-fn non_empty(v: &str) -> Option<String> {
-    let t = v.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
-
-/// Stable per-install hardware identity, lowercase-trimmed: MachineGuid on
-/// Windows, /etc/machine-id on Linux, IOPlatformUUID on macOS.
-#[cfg(windows)]
-fn machine_fingerprint() -> Option<String> {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
-    use winreg::RegKey;
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey("SOFTWARE\\Microsoft\\Cryptography")
-        .ok()?;
-    let guid: String = key.get_value("MachineGuid").ok()?;
-    non_empty(&guid).map(|v| v.to_lowercase())
-}
-
-#[cfg(target_os = "linux")]
-fn machine_fingerprint() -> Option<String> {
-    let raw = std::fs::read_to_string("/etc/machine-id").ok()?;
-    non_empty(&raw).map(|v| v.to_lowercase())
-}
-
-#[cfg(target_os = "macos")]
-fn machine_fingerprint() -> Option<String> {
-    let output = std::process::Command::new("ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().find(|l| l.contains("IOPlatformUUID"))?;
-    let value = line.split('"').nth(3)?;
-    non_empty(value).map(|v| v.to_lowercase())
-}
-
-/// Human-facing OS version (e.g. "24H2", "15.5"), trimmed.
-#[cfg(windows)]
-fn machine_os_version() -> Option<String> {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
-    use winreg::RegKey;
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
-        .ok()?;
-    let version: String = key
-        .get_value("DisplayVersion")
-        .or_else(|_| key.get_value("CurrentVersion"))
-        .ok()?;
-    non_empty(&version)
-}
-
-#[cfg(target_os = "linux")]
-fn machine_os_version() -> Option<String> {
-    if let Ok(release) = std::fs::read_to_string("/etc/os-release") {
-        for line in release.lines() {
-            if let Some(value) = line.strip_prefix("VERSION_ID=") {
-                if let Some(v) = non_empty(value.trim().trim_matches('"')) {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    let kernel = std::process::Command::new("uname")
-        .arg("-r")
-        .output()
-        .ok()?;
-    non_empty(&String::from_utf8_lossy(&kernel.stdout))
-}
-
-#[cfg(target_os = "macos")]
-fn machine_os_version() -> Option<String> {
-    let output = std::process::Command::new("sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()?;
-    non_empty(&String::from_utf8_lossy(&output.stdout))
-}
-
-fn machine_meta() -> MachineMeta {
-    MachineMeta {
-        fingerprint: machine_fingerprint(),
-        os: Some(std::env::consts::OS.to_string()),
-        os_version: machine_os_version(),
-        app_version: non_empty(env!("CARGO_PKG_VERSION")),
-    }
-}
-
-/// Hostname label reported at connect (same sources as the machine.info
-/// RPC): COMPUTERNAME on Windows, /etc/hostname elsewhere.
-pub fn hostname_label() -> String {
-    std::env::var("COMPUTERNAME")
-        .ok()
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|s| s.trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "guild-machine".to_string())
 }
 
 /// Builds the upgrade URL: http(s) → ws(s), `/api/v1/ws`, all values
@@ -209,38 +99,6 @@ fn websocket_url(
     url
 }
 
-/// The executor-relevant subset of `WsServerMsg`, extracted by tag-peeking
-/// the raw JSON first: the link's liveness must not depend on the display
-/// event vocabulary (`StreamEvent` gains variants regularly, and machine
-/// sockets receive the same live feed as browser sockets). Only the frames
-/// this socket acts on are parsed strictly; everything else — display
-/// frames, unknown variants, unparseable text — is ignored.
-enum ServerFrame {
-    ToolDispatch {
-        chat_id: Uuid,
-        call_id: String,
-        name: String,
-        arguments: String,
-        workdir: Option<String>,
-    },
-    ToolCancel {
-        call_id: String,
-    },
-    MachineRequest {
-        request_id: String,
-        op: String,
-        payload: serde_json::Value,
-    },
-    Displaced,
-    AuthRequired,
-    Error {
-        message: String,
-    },
-    /// Anything the executor does not act on: display/state frames, frames
-    /// with an unknown `type` tag, non-JSON text. All ignored, never fatal.
-    Other,
-}
-
 /// Tool work is owned by one executor connection and addressed by call ID.
 #[derive(Default)]
 struct ToolExecutions(std::collections::HashMap<String, tokio::task::JoinHandle<()>>);
@@ -274,50 +132,6 @@ impl Drop for ToolExecutions {
         for task in self.0.values() {
             task.abort();
         }
-    }
-}
-
-fn classify_server_frame(text: &str) -> ServerFrame {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
-        return ServerFrame::Other;
-    };
-    let tag = value
-        .get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or_default();
-    match tag {
-        "tool_dispatch" | "tool_cancel" | "machine_request" | "error" => {
-            match serde_json::from_value::<WsServerMsg>(value) {
-                Ok(WsServerMsg::ToolDispatch {
-                    chat_id,
-                    call_id,
-                    name,
-                    arguments,
-                    workdir,
-                }) => ServerFrame::ToolDispatch {
-                    chat_id,
-                    call_id,
-                    name,
-                    arguments,
-                    workdir,
-                },
-                Ok(WsServerMsg::ToolCancel { call_id }) => ServerFrame::ToolCancel { call_id },
-                Ok(WsServerMsg::MachineRequest {
-                    request_id,
-                    op,
-                    payload,
-                }) => ServerFrame::MachineRequest {
-                    request_id,
-                    op,
-                    payload,
-                },
-                Ok(WsServerMsg::Error { message }) => ServerFrame::Error { message },
-                _ => ServerFrame::Other,
-            }
-        }
-        "displaced" => ServerFrame::Displaced,
-        "auth_required" => ServerFrame::AuthRequired,
-        _ => ServerFrame::Other,
     }
 }
 
