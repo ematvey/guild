@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import integrationSource from "./IntegrationsSection.tsx?raw";
 import gatewaySource from "./GatewaySection.tsx?raw";
-import webChatSource from "../../WebChat.tsx?raw";
+import deviceSetupSource from "../../thread/device-setup.tsx?raw";
 import { transpile } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
@@ -53,8 +53,8 @@ describe("round 3 API key cache", () => {
 
 describe("round 3 device installers", () => {
   it("keeps both Mac DMGs and excludes updater archives", () => {
-    const start = webChatSource.indexOf("  const installers =");
-    const code = webChatSource.slice(start, webChatSource.indexOf("  const generatePairing =", start));
+    const start = deviceSetupSource.indexOf("  const installers =");
+    const code = deviceSetupSource.slice(start, deviceSetupSource.indexOf("  const generatePairing =", start));
     const select = new Function("releases", "os", "OS_KEY", `${code}; return installers;`);
     const releases = ["darwin-aarch64", "darwin-x86_64"].flatMap((platform) =>
       ["Guild.dmg", "Guild.app.tar.gz"].map((filename) => ({ platform, filename })),
