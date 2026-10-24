@@ -6,10 +6,11 @@ export type ViewEntry =
   | { kind: "plain"; b: Block; i: number }
   | { kind: "work"; run: Block[]; turnStart?: string };
 
-/// Transcript entries. Each CONTIGUOUS thinking/tool run collapses into one
-/// work entry; every other block stays 1:1. The pending run is flushed when
-/// a non-run block arrives, so a work entry sits where its run was and never
-/// trails the text that followed it.
+/// Transcript entries. Each CONTIGUOUS agent-work run — thinking, tool
+/// calls and subagent lifecycle records — collapses into one work entry;
+/// every other block stays 1:1. The pending run is flushed when a non-run
+/// block arrives, so a work entry sits where its run was and never trails
+/// the text that followed it.
 ///
 /// The live "Agent is working Ns" clock anchors to the TURN's user message,
 /// not the run's own open-time: the turn is what the user is waiting on, so
@@ -28,7 +29,7 @@ export function viewEntries(blocks: Block[]): ViewEntry[] {
   };
   blocks.forEach((b, i) => {
     if (b.kind === "user") turnStart = b.ts;
-    if (b.kind === "reasoning" || b.kind === "tool") {
+    if (isWorkBlock(b)) {
       run.push(b);
       return;
     }
@@ -37,6 +38,18 @@ export function viewEntries(blocks: Block[]): ViewEntry[] {
   });
   flush();
   return entries;
+}
+
+/** The blocks that belong to the agent's work row: its thinking, tool calls,
+ *  and subagent lifecycle records. */
+function isWorkBlock(b: Block): boolean {
+  return (
+    b.kind === "reasoning" ||
+    b.kind === "tool" ||
+    b.kind === "child_spawn" ||
+    b.kind === "child_result" ||
+    b.kind === "child_closed"
+  );
 }
 
 export function workRunLabel(

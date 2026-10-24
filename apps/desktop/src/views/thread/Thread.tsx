@@ -723,6 +723,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   />
                 ) : b.kind === "tool" && b.tool ? (
                   <ToolFrame key={b.key} t={b.tool} />
+                ) : b.kind === "child_spawn" && b.childSpawn ? (
+                  <SubagentSpawnRecord key={b.key} block={b.childSpawn} onOpen={openChildChat} />
+                ) : b.kind === "child_result" && b.childResult ? (
+                  <SubagentResultRecord key={b.key} block={b.childResult} onOpen={openChildChat} />
+                ) : b.kind === "child_closed" && b.childClosed ? (
+                  <SubagentClosedRecord key={b.key} block={b.childClosed} onOpen={openChildChat} />
                 ) : null,
               )}
             </WorkedForBlock>
@@ -745,12 +751,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           ) : e.b.kind === "approval" && e.b.approval ? (
             <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
-          ) : e.b.kind === "child_spawn" && e.b.childSpawn ? (
-            <SubagentSpawnRecord key={e.b.key} block={e.b.childSpawn} onOpen={openChildChat} />
-          ) : e.b.kind === "child_result" && e.b.childResult ? (
-            <SubagentResultRecord key={e.b.key} block={e.b.childResult} onOpen={openChildChat} />
-          ) : e.b.kind === "child_closed" && e.b.childClosed ? (
-            <SubagentClosedRecord key={e.b.key} block={e.b.childClosed} onOpen={openChildChat} />
           ) : e.b.kind === "compaction" && e.b.compaction ? (
             <CompactionCard key={e.b.key} c={e.b.compaction} />
           ) : e.b.kind === "error" ? (
