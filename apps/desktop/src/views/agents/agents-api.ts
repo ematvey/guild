@@ -204,6 +204,13 @@ export interface AgentFileEntry {
   hidden?: boolean;
 }
 
+export interface AgentDirListing {
+  path: string;
+  entries: AgentFileEntry[];
+  /** Present when the requested path named a file; `path` is then its parent. */
+  file?: string;
+}
+
 export interface AgentToolInfo {
   name: string;
   label: string;
@@ -608,13 +615,25 @@ export async function listAgentFiles(
   path: string,
   hidden = false,
 ): Promise<AgentFileEntry[]> {
+  return (await listAgentDir(id, path, hidden)).entries;
+}
+
+/** One listing request for any path. A file path answers with its parent
+ *  folder's entries plus `file`, so a file deep link needs no second call. */
+export async function listAgentDir(
+  id: string,
+  path: string,
+  hidden = false,
+): Promise<AgentDirListing> {
   const query = new URLSearchParams({ path });
   if (hidden) query.set("hidden", "1");
-  return listOf<AgentFileEntry>(
-    await request<unknown>(`${agentBase(id)}/files?${query}`),
-    "entries",
-    "files",
-  );
+  const raw = await request<unknown>(`${agentBase(id)}/files?${query}`);
+  const record = (raw ?? {}) as Record<string, unknown>;
+  return {
+    path: typeof record.path === "string" ? record.path : path,
+    entries: listOf<AgentFileEntry>(raw, "entries", "files"),
+    ...(typeof record.file === "string" ? { file: record.file } : {}),
+  };
 }
 
 export async function getAgentFileContent(
