@@ -680,6 +680,11 @@ export interface ApplyResult {
 interface ChatView {
   blocks: Block[];
   watermark: number;
+  /// Whether an authoritative ThreadState has built this view. A live
+  /// thread_events delta can create a view before its first sync (a
+  /// background chat's fan-out reaches every socket of the owner); such a
+  /// view is not stale-eligible until the sync replaces or merges it.
+  synced: boolean;
   lastEventSeq: number;
   events: ThreadEventRow[];
   hasMore: boolean;
@@ -770,6 +775,7 @@ export function createThreadReducer(): ThreadReducer {
   const freshView = (): ChatView => ({
     blocks: [],
     watermark: -1,
+    synced: false,
     lastEventSeq: -1,
     events: [],
     hasMore: false,
@@ -1089,10 +1095,13 @@ export function createThreadReducer(): ThreadReducer {
     applyState(state) {
       const cid = state.chat_id;
       const v = viewOf(cid);
-      if (state.seq <= v.watermark) return result(v, true);
+      // Only a view already built by a sync can call a lower seq stale. A
+      // delta-created view has a watermark but no history; dropping the
+      // first sync would leave only the delta's few rows rendered.
+      if (v.synced && state.seq <= v.watermark) return result(v, true);
       const tailOldest = state.events[0]?.seq ?? Number.POSITIVE_INFINITY;
       const windowIsTail = v.events.length === 0 || (v.events[0]?.seq ?? 0) >= tailOldest;
-      if (v.watermark < 0) {
+      if (!v.synced && v.watermark < 0) {
         // A sync re-derives the view from its own window: pages loaded
         // before a reconnect are dropped, because the state's tail may no
         // longer be contiguous with them and a silent gap is worse than
@@ -1101,6 +1110,16 @@ export function createThreadReducer(): ThreadReducer {
         v.hasMore = state.has_more_events ?? false;
         rebuild(v);
         v.lastEventSeq = state.events.reduce((max, r) => Math.max(max, r.seq), -1);
+      } else if (!v.synced) {
+        // The live lane reached this chat before its first sync. Keep both
+        // the authoritative window and the newer delta rows, then rebuild.
+        const bySeq = new Map<number, ThreadEventRow>();
+        for (const r of state.events) bySeq.set(r.seq, r);
+        for (const r of v.events) if (!bySeq.has(r.seq)) bySeq.set(r.seq, r);
+        v.events = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+        v.hasMore = state.has_more_events ?? false;
+        rebuild(v);
+        v.lastEventSeq = v.events.reduce((max, r) => Math.max(max, r.seq), -1);
       } else {
         const fresh = state.events
           .filter((r) => r.seq > v.lastEventSeq)
@@ -1112,7 +1131,8 @@ export function createThreadReducer(): ThreadReducer {
         if (fresh.length > 0) v.events = [...v.events, ...fresh];
         if (windowIsTail) v.hasMore = state.has_more_events ?? false;
       }
-      v.watermark = state.seq;
+      v.watermark = Math.max(state.seq, v.watermark);
+      v.synced = true;
       // The model buffers are authoritative and server-side (commit clears
       // them and lands the assistant_message in one view change): strip the
       // previous buffer blocks, then re-stamp from this state. The strip is
@@ -1272,7 +1292,14 @@ export function createThreadReducer(): ThreadReducer {
     },
 
     invalidate() {
-      for (const v of views.values()) v.watermark = -1;
+      for (const v of views.values()) {
+        v.watermark = -1;
+        v.synced = false;
+        // The reconnect sync replaces the window wholesale; dropping it now
+        // keeps a delta that lands before that sync from merging old pages.
+        v.events = [];
+        v.lastEventSeq = -1;
+      }
     },
 
     optimisticSend(pending) {

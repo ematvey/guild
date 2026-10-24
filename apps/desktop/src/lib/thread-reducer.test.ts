@@ -280,6 +280,35 @@ describe("applyThreadEvents: live buffer supersession", () => {
     expect(fanned.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
     expect(fanned.blocks.every((b) => !b.key.startsWith("live-") && !b.key.startsWith("unpersisted-"))).toBe(true);
   });
+
+  it("a delta that reaches an unopened chat does not make its first sync stale", () => {
+    // The owner's socket receives the fan-out of every chat that generates,
+    // including a background child never opened. The delta creates a view;
+    // the sync that follows must still build the full history.
+    const r = createThreadReducer();
+    const events = [
+      row(1, { type: "user_message", content: "go" }),
+      row(2, assistantText("first")),
+      row(3, assistantText("second")),
+    ];
+    r.applyThreadEvents("child", 3, [events[2]!]);
+    const synced = r.applyState(state("child", 3, events, "", "", false));
+    expect(synced.stale).toBe(false);
+    expect(synced.blocks.map((b) => b.kind)).toEqual(["user", "text", "text"]);
+    expect(synced.blocks.map((b) => b.text)).toEqual(["go", "first", "second"]);
+  });
+
+  it("keeps delta rows newer than the sync window", () => {
+    const r = createThreadReducer();
+    const events = [
+      row(1, { type: "user_message", content: "go" }),
+      row(2, assistantText("first")),
+      row(3, assistantText("second")),
+    ];
+    r.applyThreadEvents("child", 3, [events[2]!]);
+    const synced = r.applyState(state("child", 2, events.slice(0, 2), "", "", false));
+    expect(synced.blocks.map((b) => b.text)).toEqual(["go", "first", "second"]);
+  });
 });
 
 describe("queued steering mode updates", () => {
