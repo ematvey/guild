@@ -22,7 +22,7 @@ import {
   type GatewayCredential,
   type GatewayTraceEmission,
 } from "./llm.js";
-import type { GatewayCtx } from "../contexts.js";
+import type { GatewayCtx } from "../route-contexts.js";
 import { rustJsonText, serializeRustJson } from "../provider/sse.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";

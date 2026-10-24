@@ -2,8 +2,8 @@
 // upload bytes into object storage and reference them from a chat.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { IdentityCtx } from "../contexts.js";
-import type { InfraContext } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
+import type { InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";

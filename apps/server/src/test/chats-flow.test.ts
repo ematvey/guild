@@ -18,7 +18,7 @@ const sseDone = (): string =>
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
   "data: [DONE]\n\n";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
-import type { PlatformContext } from "../platform/context.js";
+import type { PlatformContext } from "../platform/root-context.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { guildProviderId } from "../harness/models.js";
 import { UserEntry } from "@earendil-works/pi-durable";

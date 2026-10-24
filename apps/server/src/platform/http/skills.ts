@@ -5,7 +5,7 @@
 // bundles, content-addressed, auto-versioned; no review gate (§1.3).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import type { SkillStore } from "../store/skills.js";
 import type { UserRow } from "../store/identity.js";

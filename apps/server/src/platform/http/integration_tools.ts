@@ -8,7 +8,7 @@
 // acting-as, body shape) is identical to the Rust route.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
 import { callPlugin } from "../integrations/execute.js";

@@ -4,7 +4,7 @@
 // — duplicates are allowed.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";

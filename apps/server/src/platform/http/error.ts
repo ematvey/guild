@@ -15,7 +15,7 @@ import {
   uuidPathError,
 } from "../errors.js";
 import type { UserRow } from "../store/identity.js";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 
 export function parseUuidParam(req: FastifyRequest, param: string): string {
   const value = (req.params as Record<string, string>)[param] ?? "";

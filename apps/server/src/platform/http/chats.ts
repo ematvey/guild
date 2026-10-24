@@ -16,7 +16,7 @@
 // ThreadState frames from the pi-durable watch.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { parseUuidParam, queryParam, requireJsonBody, requireUser } from "./error.js";

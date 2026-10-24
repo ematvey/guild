@@ -9,8 +9,8 @@
 // generation identity the turn ack issues, and presence flips re-send the
 // thread list so the connection dot moves live.
 
-import type { PlatformContext } from "../platform/context.js";
-import type { ChatsCtx } from "../platform/contexts.js";
+import type { PlatformContext } from "../platform/root-context.js";
+import type { ChatsCtx } from "../platform/route-contexts.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";

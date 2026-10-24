@@ -10,7 +10,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
-import type { GatewayCtx } from "../contexts.js";
+import type { GatewayCtx } from "../route-contexts.js";
 import {
   accumulate,
   dispatch,

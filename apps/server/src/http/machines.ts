@@ -6,7 +6,7 @@
 // unpairing is registry adoption (re-pair) or manual row surgery.
 
 import type { FastifyInstance } from "fastify";
-import type { ChatsCtx, IdentityCtx } from "../platform/contexts.js";
+import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
 import { ApiError } from "../platform/errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
 import type { MachineRow } from "../platform/store/machines.js";
