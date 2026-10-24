@@ -285,7 +285,8 @@ function accessForRole(
 }
 
 /** Short, markdown-stripped thread title from the first non-empty line of a
- *  user message. Never the placeholder "New chat". */
+ *  user message. Never the placeholder "New chat". The desktop derives the
+ *  same label for a new chat, so the two paths must stay in step. */
 export function deriveTitleFromMessage(message: string): string {
   const first = message.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
   const text = first
@@ -298,14 +299,21 @@ export function deriveTitleFromMessage(message: string): string {
     .replace(/\s+/g, " ")
     .trim();
   if (text === "") return "";
+  const maxWords = 6;
   const max = 60;
-  if (text.length <= max) return text;
-  // Cut at a word boundary and mark the cut; a hard 60-character slice
-  // ended titles mid-word with no indication that text was dropped.
-  const cut = text.slice(0, max - 1);
-  const space = cut.lastIndexOf(" ");
-  const stem = (space >= max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/, "");
-  return `${stem}…`;
+  const words = text.split(" ");
+  let title = words.slice(0, maxWords).join(" ");
+  let cut = words.length > maxWords;
+  if (title.length > max) {
+    // Cut at a word boundary and mark the cut; a hard slice ended titles
+    // mid-word with no indication that text was dropped.
+    const stem = title.slice(0, max - 1);
+    const space = stem.lastIndexOf(" ");
+    title = (space >= max / 2 ? stem.slice(0, space) : stem).replace(/[\s,;:.\-–—]+$/, "");
+    cut = true;
+  }
+  if (cut) title = title.replace(/[\s,;:.\-–—]+$/, "") + "…";
+  return title.charAt(0).toUpperCase() + title.slice(1);
 }
 
 /** Default per-agent sandbox budget recorded with every new agent. */
