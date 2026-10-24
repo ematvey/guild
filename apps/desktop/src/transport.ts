@@ -847,6 +847,32 @@ export async function fetchChatTree(chatId: string, signal: AbortSignal): Promis
   return response.json();
 }
 
+/** One node of the chat's thread subtree, with its latest run status. */
+export interface ChatSubagentNode {
+  thread_id: string;
+  chat_id: string;
+  parent_thread_id: string | null;
+  agent_name: string;
+  title: string;
+  depth: number;
+  status: string | null;
+}
+
+/** The chat's thread subtree: the chat's own thread (parent null) and every
+ *  descendant thread. */
+export async function fetchChatSubagents(
+  chatId: string,
+  signal: AbortSignal,
+): Promise<ChatSubagentNode[]> {
+  const response = await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(chatId)}/subagents`), {
+    headers: { authorization: `Bearer ${getToken()}` },
+    signal,
+  });
+  if (!response.ok) return [];
+  const body = (await response.json()) as { nodes?: ChatSubagentNode[] };
+  return body.nodes ?? [];
+}
+
 export interface MachineInfo {
   machine_id: string;
   name: string;

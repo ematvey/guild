@@ -866,7 +866,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
   });
 });
 
-describe("subagent rows (child events)", () => {
+describe("subagent records (child events)", () => {
   const spawned = (over: Partial<Extract<ThreadEvent, { type: "child_spawned" }>> = {}): ThreadEvent => ({
     type: "child_spawned",
     thread_id: "child-thread",
@@ -897,246 +897,95 @@ describe("subagent rows (child events)", () => {
     event,
     created_at: at,
   });
-  const spawnTool = (name = "spawn"): ThreadEvent => ({
-    type: "assistant_message",
-    turn: 1,
-    step: 0,
-    model: "m",
-    usage,
-    blocks: [{ type: "tool_call", id: "call-spawn", name, arguments: '{"agent":"Researcher","task":"look"}' }],
-  });
 
-  it("inserts a row from child_spawned", () => {
-    const derived = deriveThread([row(1, spawned())]);
-    expect(derived.children).toHaveLength(1);
-    expect(derived.children[0]).toMatchObject({
-      threadId: "child-thread",
-      runId: "child-run",
-      chatId: "child-chat",
-      agentName: "Researcher",
-      title: "market scan",
-      status: "running",
-      startedAt: "t",
-    });
-  });
-
-  it("updates the same row from child_result", () => {
+  it("renders a spawn as its own record with the request", () => {
     const derived = deriveThread([
-      row(1, spawned()),
-      row(2, result({ status: "failed", reason: "boom", title: "renamed", agent_name: "Echo" })),
+      rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z"),
     ]);
-    expect(derived.children).toHaveLength(1);
-    expect(derived.children[0]).toMatchObject({
+    const records = derived.blocks.filter((b) => b.kind === "child_spawn");
+    expect(records).toHaveLength(1);
+    expect(records[0]!.key).toBe("1:0");
+    expect(records[0]!.childSpawn).toEqual({
       threadId: "child-thread",
       chatId: "child-chat",
-      agentName: "Echo",
-      title: "renamed",
-      status: "failed",
-      reason: "boom",
-      startedAt: "t",
-      finishedAt: "t",
-    });
-  });
-
-  it("creates a row from child_result when no spawn event is loaded", () => {
-    const derived = deriveThread([row(9, result({ status: "cancelled", chat_id: "child-chat" }))]);
-    expect(derived.children).toHaveLength(1);
-    expect(derived.children[0]).toMatchObject({
-      threadId: "child-thread",
-      chatId: "child-chat",
-      status: "cancelled",
-    });
-  });
-
-  it("marks a row closed from child_closed and keeps it after a reload", () => {
-    const events = [
-      rowAt(1, spawned(), "2026-10-22T10:00:00.000Z"),
-      rowAt(2, closed(), "2026-10-22T10:00:10.000Z"),
-    ];
-    const derived = deriveThread(events);
-    expect(derived.children[0]).toMatchObject({
-      threadId: "child-thread",
-      status: "closed",
-      finishedAt: "2026-10-22T10:00:10.000Z",
-    });
-
-    const r = createThreadReducer();
-    r.open("chat");
-    const applied = r.applyState(state("chat", 2, events));
-    expect(applied.children[0]).toMatchObject({
-      threadId: "child-thread",
-      status: "closed",
-      finishedAt: "2026-10-22T10:00:10.000Z",
-    });
-  });
-
-  it("applies child_closed through the incremental event lane", () => {
-    const r = createThreadReducer();
-    r.open("chat");
-    r.applyState(state("chat", 1, [rowAt(1, spawned(), "2026-10-22T10:00:00.000Z")]));
-    const applied = r.applyThreadEvents("chat", 2, [
-      rowAt(2, closed(), "2026-10-22T10:00:10.000Z"),
-    ]);
-    expect(applied.children[0]).toMatchObject({ status: "closed" });
-  });
-
-  it("creates nothing from child_closed without a matching row", () => {
-    const events = [row(1, closed({ thread_id: "never-spawned" }))];
-    expect(deriveThread(events).children).toEqual([]);
-
-    const r = createThreadReducer();
-    r.open("chat");
-    expect(r.applyState(state("chat", 1, events)).children).toEqual([]);
-  });
-
-  it("uses started_at from a child_result as the row start", () => {
-    const startedAt = "2026-10-22T09:59:00.000Z";
-    const derived = deriveThread([
-      rowAt(9, result({ chat_id: "child-chat", started_at: startedAt }), "2026-10-22T10:00:00.000Z"),
-    ]);
-    expect(derived.children[0]).toMatchObject({
-      threadId: "child-thread",
-      startedAt,
-      finishedAt: "2026-10-22T10:00:00.000Z",
-    });
-  });
-
-  it("prefers started_at from a result over the spawn event time", () => {
-    const startedAt = "2026-10-22T09:59:00.000Z";
-    const derived = deriveThread([
-      rowAt(1, spawned(), "2026-10-22T10:00:00.000Z"),
-      rowAt(2, result({ started_at: startedAt }), "2026-10-22T10:00:10.000Z"),
-    ]);
-    expect(derived.children[0]!.startedAt).toBe(startedAt);
-  });
-
-  it("never creates a row from a tool block without an event", () => {
-    const derived = deriveThread([
-      row(1, spawnTool()),
-      row(2, {
-        type: "tool_result",
-        turn: 1,
-        step: 0,
-        call_id: "call-spawn",
-        name: "spawn",
-        content: "",
-        is_error: false,
-        meta: { thread_id: "child-thread", chat_id: "child-chat", status: "running" },
-      }),
-    ]);
-    expect(derived.children).toEqual([]);
-  });
-
-  it("keeps two children of the same agent separate", () => {
-    const derived = deriveThread([
-      row(1, spawned({ thread_id: "child-1", chat_id: "chat-1", title: "first" })),
-      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
-    ]);
-    expect(derived.children).toHaveLength(2);
-    expect(derived.children.map((c) => c.chatId)).toEqual(["chat-1", "chat-2"]);
-  });
-
-  it("matches the incremental reducer's children to the full derivation", () => {
-    const events = [
-      row(1, spawned()),
-      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
-      row(3, result({ status: "failed" })),
-    ];
-    const r = createThreadReducer();
-    r.open("chat");
-    const applied = r.applyState(state("chat", 3, events));
-    expect(applied.children).toEqual(deriveThread(events).children);
-  });
-
-  it("opens one span block for a spawn with a task", () => {
-    const derived = deriveThread([rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z")]);
-    const spans = derived.blocks.filter((b) => b.kind === "child");
-    expect(spans).toHaveLength(1);
-    expect(spans[0]!.key).toBe("child:child-thread");
-    expect(spans[0]!.child).toMatchObject({
-      threadId: "child-thread",
       agentName: "Researcher",
       title: "market scan",
       task: "scan the market",
-      status: "running",
       startedAt: "2026-10-22T10:00:00.000Z",
     });
-    expect(derived.children[0]!.task).toBe("scan the market");
   });
 
-  it("merges a result into the spawn's span in place", () => {
+  it("renders a result as its own record, not merged into the spawn", () => {
     const derived = deriveThread([
       rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z"),
       rowAt(2, result({ final_text: "found three" }), "2026-10-22T10:00:10.000Z"),
     ]);
-    const spans = derived.blocks.filter((b) => b.kind === "child");
-    expect(spans).toHaveLength(1);
-    expect(spans[0]!.key).toBe("child:child-thread");
-    expect(spans[0]!.child).toMatchObject({
+    expect(derived.blocks.filter((b) => b.kind === "child_spawn")).toHaveLength(1);
+    const results = derived.blocks.filter((b) => b.kind === "child_result");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.key).toBe("2:0");
+    expect(results[0]!.childResult).toMatchObject({
       threadId: "child-thread",
+      chatId: "child-chat",
       agentName: "Researcher",
       title: "market scan",
-      task: "scan the market",
-      finalText: "found three",
       status: "succeeded",
-      startedAt: "2026-10-22T10:00:00.000Z",
+      finalText: "found three",
       finishedAt: "2026-10-22T10:00:10.000Z",
     });
   });
 
-  it("opens a span from a result with no loaded spawn", () => {
+  it("keeps a result that has no loaded spawn", () => {
     const derived = deriveThread([
-      rowAt(9, result({ final_text: "found three", started_at: "2026-10-22T09:59:00.000Z" }), "2026-10-22T10:00:00.000Z"),
+      rowAt(9, result({ status: "cancelled", chat_id: "child-chat", started_at: "2026-10-22T09:59:00.000Z" }), "2026-10-22T10:00:00.000Z"),
     ]);
-    const spans = derived.blocks.filter((b) => b.kind === "child");
-    expect(spans).toHaveLength(1);
-    expect(spans[0]!.key).toBe("child:child-thread");
-    expect(spans[0]!.child).toMatchObject({
+    const records = derived.blocks.filter((b) => b.kind === "child_result");
+    expect(records).toHaveLength(1);
+    expect(records[0]!.childResult).toMatchObject({
       threadId: "child-thread",
-      finalText: "found three",
-      status: "succeeded",
+      chatId: "child-chat",
+      status: "cancelled",
       startedAt: "2026-10-22T09:59:00.000Z",
       finishedAt: "2026-10-22T10:00:00.000Z",
     });
   });
 
-  it("keeps two children as two spans", () => {
-    const derived = deriveThread([
-      row(1, spawned({ thread_id: "child-1", chat_id: "chat-1", title: "first" })),
-      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
-    ]);
-    const spans = derived.blocks.filter((b) => b.kind === "child");
-    expect(spans.map((b) => b.key)).toEqual(["child:child-1", "child:child-2"]);
-  });
-
-  it("marks a span closed from child_closed", () => {
+  it("labels a close from the spawn already in the transcript", () => {
     const derived = deriveThread([
       rowAt(1, spawned(), "2026-10-22T10:00:00.000Z"),
       rowAt(2, closed(), "2026-10-22T10:00:10.000Z"),
     ]);
-    const spans = derived.blocks.filter((b) => b.kind === "child");
-    expect(spans).toHaveLength(1);
-    expect(spans[0]!.child).toMatchObject({
-      status: "closed",
-      finishedAt: "2026-10-22T10:00:10.000Z",
+    const records = derived.blocks.filter((b) => b.kind === "child_closed");
+    expect(records).toHaveLength(1);
+    expect(records[0]!.childClosed).toEqual({
+      threadId: "child-thread",
+      chatId: "child-chat",
+      agentName: "Researcher",
+      title: "market scan",
     });
   });
 
-  it("merges through the incremental event lane with a stable key", () => {
+  it("keeps two children as four separate records", () => {
+    const derived = deriveThread([
+      row(1, spawned({ thread_id: "child-1", chat_id: "chat-1", title: "first" })),
+      row(2, spawned({ thread_id: "child-2", chat_id: "chat-2", title: "second" })),
+      row(3, result({ thread_id: "child-1", chat_id: "chat-1", title: "first" })),
+    ]);
+    expect(derived.blocks.filter((b) => b.kind === "child_spawn").map((b) => b.key)).toEqual(["1:0", "2:0"]);
+    expect(derived.blocks.filter((b) => b.kind === "child_result").map((b) => b.key)).toEqual(["3:0"]);
+  });
+
+  it("keeps the spawn and result order through the incremental lane", () => {
     const r = createThreadReducer();
     r.open("chat");
-    const first = r.applyState(state("chat", 1, [rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z")]));
-    expect(first.blocks.filter((b) => b.kind === "child").map((b) => b.key)).toEqual(["child:child-thread"]);
+    r.applyState(state("chat", 1, [rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z")]));
     const applied = r.applyThreadEvents("chat", 2, [
       rowAt(2, result({ final_text: "found three" }), "2026-10-22T10:00:10.000Z"),
     ]);
-    const spans = applied.blocks.filter((b) => b.kind === "child");
-    expect(spans).toHaveLength(1);
-    expect(spans[0]!.key).toBe("child:child-thread");
-    expect(spans[0]!.child).toMatchObject({
-      status: "succeeded",
-      finalText: "found three",
-      finishedAt: "2026-10-22T10:00:10.000Z",
-    });
+    expect(applied.blocks.map((b) => b.kind).filter((k) => k.startsWith("child"))).toEqual([
+      "child_spawn",
+      "child_result",
+    ]);
+    expect(applied.blocks[1]!.childResult).toMatchObject({ finalText: "found three" });
   });
 });

@@ -11,81 +11,47 @@
 import type {
   MessageAttachmentMeta,
   StreamFrame,
-  ThreadEvent,
   ThreadEventRow,
   ThreadState,
 } from "../transport";
 
 // ---------- block shapes ----------
 
-export interface ChildRow {
-  /** The child agent thread id (the child_result event's thread_id). */
+/** A subagent spawn as its own transcript record: the request the parent
+ *  sent and the thread it created. */
+export interface ChildSpawnBlock {
   threadId: string;
-  runId?: string;
-  /** The durable chat id the child thread projects into; the row opens this
-   *  chat at its canonical /thread/<chatId> address. Null when no event
-   *  supplied one. */
+  /** The durable chat id the child thread projects into. Null when the event
+   *  carried none; the block then has no thread to open. */
   chatId?: string | null;
   agentName: string;
-  /** The session name its spawner chose; the row shows it after the agent
-   *  name. */
+  /** The session name its spawner chose. */
+  title?: string | null;
+  /** The request the parent sent (empty for events older than the field). */
+  task?: string;
+  startedAt: string;
+}
+
+/** A subagent's terminal record in the parent transcript. */
+export interface ChildResultBlock {
+  threadId: string;
+  chatId?: string | null;
+  agentName: string;
   title?: string | null;
   status: string;
   reason?: string;
-  /** The request the parent sent to this child (empty when the event is
-   *  older than the task field). */
-  task?: string;
-  /** The child's final answer, when it returned one. */
   finalText?: string;
-  startedAt: string;
-  finishedAt?: string;
+  startedAt?: string;
+  finishedAt: string;
 }
 
-/** One child span in the parent transcript: the whole child turn as a trace
- *  span. The spawn opens it, the result fills its answer and finish time. */
-export interface ChildSpan {
+/** A close of a subagent thread, kept in the parent transcript as the record
+ *  that the thread was closed. */
+export interface ChildClosedBlock {
   threadId: string;
   chatId?: string | null;
   agentName: string;
   title?: string | null;
-  /** The request the parent sent (empty for events older than the task field). */
-  task?: string;
-  /** The child's final answer, when it returned one. */
-  finalText?: string;
-  status: string;
-  startedAt: string;
-  finishedAt?: string;
-}
-
-/** Stable span block key: one block per child thread, however many events
- *  the child posts. */
-function childSpanKey(threadId: string): string {
-  return `child:${threadId}`;
-}
-
-/** The span view of a child row: same merge state, minus the pane-only
- *  fields (run id, reason). */
-function spanFromRow(row: ChildRow): ChildSpan {
-  return {
-    threadId: row.threadId,
-    chatId: row.chatId ?? null,
-    agentName: row.agentName,
-    title: row.title ?? null,
-    task: row.task,
-    finalText: row.finalText,
-    status: row.status,
-    startedAt: row.startedAt,
-    finishedAt: row.finishedAt,
-  };
-}
-
-/** Merges a span into its block in place. A child without a block yet (the
- *  spawn fell outside the loaded window) opens one at the current position. */
-function upsertChildSpanBlock(blocks: Block[], span: ChildSpan, ts: string): Block[] {
-  const key = childSpanKey(span.threadId);
-  const index = blocks.findIndex((b) => b.kind === "child" && b.key === key);
-  if (index < 0) return [...blocks, { kind: "child", text: "", child: span, ts, key }];
-  return blocks.map((b, i) => (i === index ? { ...b, child: span } : b));
 }
 
 export interface ToolBlock {
@@ -105,106 +71,6 @@ export interface ToolBlock {
   /// never finished.
   ts?: string;
   endTs?: string;
-}
-
-/** Child metadata from a child_spawned event: the row exists as soon as the
- *  spawn posts the child turn, before the child finishes. */
-function childRowFromSpawned(
-  ev: {
-    thread_id: string;
-    run_id: string;
-    chat_id?: string | null;
-    agent_name?: string | null;
-    title?: string | null;
-    task?: string | null;
-    status: string;
-  },
-  createdAt: string,
-): ChildRow {
-  return {
-    threadId: ev.thread_id,
-    runId: ev.run_id,
-    chatId: ev.chat_id ?? null,
-    agentName: ev.agent_name || "Subagent",
-    title: ev.title || null,
-    task: ev.task || undefined,
-    status: ev.status,
-    startedAt: createdAt,
-  };
-}
-
-/** The fallback row for a child_result with no child_spawned row in the
- *  loaded window. Only the event's chat_id can open a chat; a thread id is
- *  never a chat id. */
-function childRowFromResult(
-  ev: {
-    thread_id: string;
-    chat_id?: string | null;
-    agent_name?: string | null;
-    title?: string | null;
-    run_id: string;
-    status: string;
-    reason?: string | null;
-    started_at?: string | null;
-    final_text?: string | null;
-  },
-  createdAt: string,
-): ChildRow {
-  return {
-    threadId: ev.thread_id,
-    runId: ev.run_id,
-    chatId: ev.chat_id ?? null,
-    agentName: ev.agent_name || "Subagent",
-    title: ev.title || null,
-    status: ev.status,
-    reason: ev.reason ?? undefined,
-    finalText: ev.final_text || undefined,
-    startedAt: ev.started_at || createdAt,
-    finishedAt: createdAt,
-  };
-}
-
-function upsertChild(children: ChildRow[], row: ChildRow): ChildRow[] {
-  const index = children.findIndex((child) => child.threadId === row.threadId);
-  if (index < 0) return [...children, row];
-  const current = children[index]!;
-  return children.map((child, i) => (i === index ? { ...current, ...row } : child));
-}
-
-function applyChildSpawned(children: ChildRow[], ev: Extract<ThreadEvent, { type: "child_spawned" }>, createdAt: string): ChildRow[] {
-  return upsertChild(children, childRowFromSpawned(ev, createdAt));
-}
-
-function applyChildResult(children: ChildRow[], ev: Extract<ThreadEvent, { type: "child_result" }>, createdAt: string): ChildRow[] {
-  const index = children.findIndex((child) => child.threadId === ev.thread_id);
-  if (index < 0) return [...children, childRowFromResult(ev, createdAt)];
-  const current = children[index]!;
-  return children.map((child, i) =>
-    i === index
-      ? {
-          ...current,
-          chatId: current.chatId ?? ev.chat_id ?? null,
-          runId: ev.run_id,
-          agentName: ev.agent_name || current.agentName,
-          title: ev.title || current.title,
-          status: ev.status,
-          reason: ev.reason ?? undefined,
-          finalText: ev.final_text || undefined,
-          startedAt: ev.started_at || current.startedAt,
-          finishedAt: createdAt,
-        }
-      : child,
-  );
-}
-
-/// A close of a row the window never spawned is ignored: it must not
-/// invent a row.
-function applyChildClosed(children: ChildRow[], ev: Extract<ThreadEvent, { type: "child_closed" }>, createdAt: string): ChildRow[] {
-  const index = children.findIndex((child) => child.threadId === ev.thread_id);
-  if (index < 0) return children;
-  return children.map((child, i) =>
-    i === index ? { ...child, status: "closed", finishedAt: createdAt } : child,
-  );
 }
 
 /// One durable approval gate (design spec section F): a client tool waiting
@@ -302,7 +168,17 @@ export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | nul
 }
 
 export interface Block {
-  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction" | "child";
+  kind:
+    | "user"
+    | "text"
+    | "error"
+    | "reasoning"
+    | "tool"
+    | "approval"
+    | "compaction"
+    | "child_spawn"
+    | "child_result"
+    | "child_closed";
   text: string;
   /// Stable React key. Derived blocks use the source event's seq (plus an
   /// in-event index); streaming-built blocks use a live counter.
@@ -334,8 +210,12 @@ export interface Block {
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
-  /// kind === "child": one child span in the transcript (technical view).
-  child?: ChildSpan;
+  /// kind === "child_spawn": the request and the thread it created.
+  childSpawn?: ChildSpawnBlock;
+  /// kind === "child_result": the child's terminal record.
+  childResult?: ChildResultBlock;
+  /// kind === "child_closed": the close record.
+  childClosed?: ChildClosedBlock;
 }
 
 export interface PendingSend {
@@ -416,9 +296,23 @@ const CLIENT_TOOL_NAMES = [
   "write_file",
 ];
 
+/** A result or close event may carry no label of its own; the spawn record
+ *  already in the transcript names the thread and holds its chat id. */
+function spawnLabel(
+  blocks: readonly Block[],
+  threadId: string,
+): { chatId: string | null; agentName: string; title: string | null } {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const spawn = blocks[i]?.childSpawn;
+    if (spawn !== undefined && spawn.threadId === threadId) {
+      return { chatId: spawn.chatId ?? null, agentName: spawn.agentName, title: spawn.title ?? null };
+    }
+  }
+  return { chatId: null, agentName: "Subagent", title: null };
+}
+
 interface DerivedThread {
   blocks: Block[];
-  children: ChildRow[];
   toolsByCall: Map<string, ToolBlock>;
   approvalsByCall: Map<string, ApprovalBlock>;
 }
@@ -431,7 +325,6 @@ interface DerivedThread {
 export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
   let blocks: Block[] = [];
-  let children: ChildRow[] = [];
   const toolsByCall = new Map<string, ToolBlock>();
   const approvalsByCall = new Map<string, ApprovalBlock>();
   for (const row of sorted) {
@@ -562,27 +455,53 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
       case "turn_error":
         blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(inEvent++) });
         break;
-      case "child_spawned": {
-        children = applyChildSpawned(children, ev, row.created_at);
-        const child = children.find((c) => c.threadId === ev.thread_id);
-        if (child) blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
+      case "child_spawned":
+        blocks.push({
+          kind: "child_spawn",
+          text: "",
+          key: seqKey(inEvent++),
+          ts: row.created_at,
+          childSpawn: {
+            threadId: ev.thread_id,
+            chatId: ev.chat_id ?? null,
+            agentName: ev.agent_name || "Subagent",
+            title: ev.title || null,
+            task: ev.task || undefined,
+            startedAt: row.created_at,
+          },
+        });
         break;
-      }
-      case "child_result": {
-        children = applyChildResult(children, ev, row.created_at);
-        const child = children.find((c) => c.threadId === ev.thread_id);
-        if (child) blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
+      case "child_result":
+        blocks.push({
+          kind: "child_result",
+          text: "",
+          key: seqKey(inEvent++),
+          ts: row.created_at,
+          childResult: {
+            threadId: ev.thread_id,
+            chatId: ev.chat_id ?? spawnLabel(blocks, ev.thread_id).chatId,
+            agentName: ev.agent_name || spawnLabel(blocks, ev.thread_id).agentName,
+            title: ev.title || spawnLabel(blocks, ev.thread_id).title,
+            status: ev.status,
+            reason: ev.reason ?? undefined,
+            finalText: ev.final_text || undefined,
+            startedAt: ev.started_at || undefined,
+            finishedAt: row.created_at,
+          },
+        });
         break;
-      }
-      case "child_closed": {
-        children = applyChildClosed(children, ev, row.created_at);
-        const child = children.find((c) => c.threadId === ev.thread_id);
-        const key = child ? childSpanKey(child.threadId) : null;
-        if (child && key && blocks.some((b) => b.kind === "child" && b.key === key)) {
-          blocks = upsertChildSpanBlock(blocks, spanFromRow(child), row.created_at);
-        }
+      case "child_closed":
+        blocks.push({
+          kind: "child_closed",
+          text: "",
+          key: seqKey(inEvent++),
+          ts: row.created_at,
+          childClosed: {
+            threadId: ev.thread_id,
+            ...spawnLabel(blocks, ev.thread_id),
+          },
+        });
         break;
-      }
     }
   }
   // Resolved approvals are decisions, not conversation content: a card whose
@@ -600,7 +519,6 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           ),
       ),
     ),
-    children,
     toolsByCall,
     approvalsByCall,
   };
@@ -732,7 +650,6 @@ export function reconcilePendingSend(
 
 export interface ApplyResult {
   blocks: Block[];
-  children: ChildRow[];
   /// False when the state's seq was not newer than the view's watermark —
   /// nothing was applied and the caller must not render from it.
   stale: boolean;
@@ -762,7 +679,6 @@ export interface ApplyResult {
 /// tail plus any older pages the reader scrolled up to load.
 interface ChatView {
   blocks: Block[];
-  children: ChildRow[];
   watermark: number;
   lastEventSeq: number;
   events: ThreadEventRow[];
@@ -853,7 +769,6 @@ export function createThreadReducer(): ThreadReducer {
 
   const freshView = (): ChatView => ({
     blocks: [],
-    children: [],
     watermark: -1,
     lastEventSeq: -1,
     events: [],
@@ -874,7 +789,6 @@ export function createThreadReducer(): ThreadReducer {
 
   const result = (v: ChatView, stale = false, restored = true): ApplyResult => ({
     blocks: v.blocks,
-    children: v.children,
     stale,
     compacting: compactingChat !== null && current !== LOOSE && compactingChat === current,
     restored,
@@ -901,7 +815,6 @@ export function createThreadReducer(): ThreadReducer {
       (b) => b.kind === "user" && b.pending && !d.blocks.some((x) => x.key === b.key),
     );
     v.blocks = [...d.blocks, ...live, ...pending];
-    v.children = d.children;
     v.toolsByCall = d.toolsByCall;
     v.approvalsByCall = d.approvalsByCall;
   }
@@ -1094,27 +1007,53 @@ export function createThreadReducer(): ThreadReducer {
       case "turn_error":
         v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
         break;
-      case "child_spawned": {
-        v.children = applyChildSpawned(v.children, ev, row.created_at);
-        const child = v.children.find((c) => c.threadId === ev.thread_id);
-        if (child) v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
+      case "child_spawned":
+        v.blocks.push({
+          kind: "child_spawn",
+          text: "",
+          key: seqKey(0),
+          ts: row.created_at,
+          childSpawn: {
+            threadId: ev.thread_id,
+            chatId: ev.chat_id ?? null,
+            agentName: ev.agent_name || "Subagent",
+            title: ev.title || null,
+            task: ev.task || undefined,
+            startedAt: row.created_at,
+          },
+        });
         break;
-      }
-      case "child_result": {
-        v.children = applyChildResult(v.children, ev, row.created_at);
-        const child = v.children.find((c) => c.threadId === ev.thread_id);
-        if (child) v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
+      case "child_result":
+        v.blocks.push({
+          kind: "child_result",
+          text: "",
+          key: seqKey(0),
+          ts: row.created_at,
+          childResult: {
+            threadId: ev.thread_id,
+            chatId: ev.chat_id ?? spawnLabel(v.blocks, ev.thread_id).chatId,
+            agentName: ev.agent_name || spawnLabel(v.blocks, ev.thread_id).agentName,
+            title: ev.title || spawnLabel(v.blocks, ev.thread_id).title,
+            status: ev.status,
+            reason: ev.reason ?? undefined,
+            finalText: ev.final_text || undefined,
+            startedAt: ev.started_at || undefined,
+            finishedAt: row.created_at,
+          },
+        });
         break;
-      }
-      case "child_closed": {
-        v.children = applyChildClosed(v.children, ev, row.created_at);
-        const child = v.children.find((c) => c.threadId === ev.thread_id);
-        const key = child ? childSpanKey(child.threadId) : null;
-        if (child && key && v.blocks.some((b) => b.kind === "child" && b.key === key)) {
-          v.blocks = upsertChildSpanBlock(v.blocks, spanFromRow(child), row.created_at);
-        }
+      case "child_closed":
+        v.blocks.push({
+          kind: "child_closed",
+          text: "",
+          key: seqKey(0),
+          ts: row.created_at,
+          childClosed: {
+            threadId: ev.thread_id,
+            ...spawnLabel(v.blocks, ev.thread_id),
+          },
+        });
         break;
-      }
     }
     // A new event supersedes a shown error: prune keeps the error visible
     // only while it stays the thread's latest block.

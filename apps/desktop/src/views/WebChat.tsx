@@ -15,7 +15,6 @@ import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { highlightJs } from "./js-highlight";
 import { WorkedForBlock, viewEntries } from "./worked-for-block";
-import { childElapsedLabel, childStatusLabel, childStatusTone } from "./agents/child-row";
 export { workRunLabel, viewEntries } from "./worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../lib/chat-width";
@@ -28,7 +27,6 @@ import {
   ShieldCheck,
   Brain,
   ChevronDown,
-  ChevronUp,
   Check,
   Copy,
   EllipsisVertical,
@@ -105,7 +103,13 @@ import {
   type AgentsRoute,
 } from "./agents/agents-route";
 import { listAgents, listInbox, type Agent } from "./agents/agents-api";
-import { ChildList, childRowsOf, readSubagentsActiveOnly, readSubagentsAlwaysShow, subagentRowsForMode, writeSubagentsAlwaysShow } from "./agents/ChildList";
+import { RunningSubagents } from "./agents/RunningSubagents";
+import {
+  SubagentClosedRecord,
+  SubagentResultRecord,
+  SubagentSpawnRecord,
+} from "./agents/subagent-blocks";
+import { Frame } from "./frame";
 import { ChildThreadHeader } from "./agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import { OnboardingGuide, type OnboardingExit } from "./onboarding";
@@ -131,6 +135,8 @@ import {
   apiOnboarded,
   createChat,
   fetchChatTree,
+  fetchChatSubagents,
+  type ChatSubagentNode,
   fetchChatViewMode,
   fetchThreadEventsPage,
   getChatApproval,
@@ -182,8 +188,6 @@ import {
   type ApprovalBlock,
   type ArtifactCard,
   type Block,
-  type ChildRow,
-  type ChildSpan,
   type CodemodeCallRow,
   type CompactionBlock,
   type ThreadReducer,
@@ -844,53 +848,6 @@ function StatusPill({ status }: { status: "running" | "done" | "error" }) {
   );
 }
 
-/// Generic collapsible frame behind the reasoning and tool renders.
-function Frame({
-  icon,
-  title,
-  badge,
-  defaultOpen = false,
-  children,
-}: {
-  icon?: React.ReactNode;
-  /** A node, or a render function receiving `open` (to e.g. hide the
-   * collapsed-row preview once the full content is shown below). */
-  title: React.ReactNode | ((open: boolean) => React.ReactNode);
-  badge?: React.ReactNode;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const titleNode = typeof title === "function" ? title(open) : title;
-  return (
-    // A clickable text row on the page — no chip background, full width, the
-    // The row blends into the conversation; the panel only exists below
-    // the row once it is opened.
-    <div className="flex w-full flex-col text-sm">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"
-      >
-        {icon}
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">{titleNode}</span>
-        {badge}
-        {open ? (
-          <ChevronUp className="size-3 shrink-0 text-muted-foreground/60" />
-        ) : (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground/60" />
-        )}
-      </button>
-      {open && (
-        // No card boundary: the content just continues below the row as
-        // smaller, grayer text, indented under the label.
-        <div className="mb-2 pl-[22px] text-sm text-muted-foreground">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /// Collapsible "Thinking" frame for a reasoning block; default collapsed,
 /// body is the accumulated thinking text.
 function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
@@ -1128,64 +1085,6 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
     </Frame>
-  );
-}
-
-/// One child span in the parent transcript, rendered like a trace span: a
-/// left rail nests it under the tool call that spawned it, a one-line
-/// header carries identity and status, and the request/answer read as
-/// labelled span attributes. The subagent pane carries the controls.
-const childSpanDotClass: Record<ReturnType<typeof childStatusTone>, string> = {
-  running: "animate-pulse bg-sky-500",
-  success: "bg-emerald-500",
-  danger: "bg-destructive",
-  muted: "bg-muted-foreground/50",
-};
-
-function ChildSpanBlock({ span }: { span: ChildSpan }) {
-  const tone = childStatusTone(span.status);
-  const label = childStatusLabel(span.status);
-  const elapsed = childElapsedLabel(span);
-  const task = (span.task ?? "").trim();
-  const returned = (span.finalText ?? "").trim();
-  return (
-    <div className="border-l border-border/60 pl-3">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs">
-        <span
-          className={`size-2 shrink-0 rounded-full ${childSpanDotClass[tone]}`}
-          title={label}
-          aria-label={label}
-        />
-        <span className="truncate font-medium">{span.agentName}</span>
-        {span.title && (
-          <>
-            <span className="shrink-0 text-muted-foreground">·</span>
-            <span className="truncate text-muted-foreground">{span.title}</span>
-          </>
-        )}
-        <span className="shrink-0 rounded border border-border/60 px-1 text-3xs uppercase tracking-wider text-muted-foreground">
-          AGENT
-        </span>
-        {elapsed && <span className="shrink-0 tabular-nums text-muted-foreground">{elapsed}</span>}
-        <span className="shrink-0 text-muted-foreground">{label}</span>
-      </div>
-      {task && (
-        <div className="mt-1 flex gap-2">
-          <span className="w-14 shrink-0 text-3xs uppercase tracking-wider text-muted-foreground">TASK</span>
-          <div className="max-h-40 min-w-0 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed">
-            {task}
-          </div>
-        </div>
-      )}
-      {returned && (
-        <div className="mt-1 flex gap-2">
-          <span className="w-14 shrink-0 text-3xs uppercase tracking-wider text-muted-foreground">RETURN</span>
-          <div className="max-h-40 min-w-0 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 px-2 py-1.5 text-xs leading-relaxed">
-            {returned}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -2152,8 +2051,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ]);
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
-  // Child rows come from the reducer's child events, not from tool blocks.
-  const [children, setChildren] = useState<ChildRow[]>([]);
   // The open chat's thread-tree node: a child header renders from its parent.
   // The node keeps the chat it describes, so a switch never applies the
   // previous chat's parent and a sync refresh never blanks the header.
@@ -2559,7 +2456,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       oldestSeqRef.current = applied.oldestSeq;
       setHasMore(applied.hasMore);
       setBlocks(applied.blocks);
-      setChildren(applied.children);
     } catch {
       if (!controller.signal.aborted) toast.error("Could not load earlier messages");
     } finally {
@@ -2796,7 +2692,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     updateContextRevision(cid, state.events);
     setBusy(state.generating);
     setBlocks(applied.blocks);
-    setChildren(applied.children);
     hasMoreRef.current = applied.hasMore;
     oldestSeqRef.current = applied.oldestSeq;
     setHasMore(applied.hasMore);
@@ -2844,7 +2739,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
-      setChildren(opened.children);
       hasMoreRef.current = false;
       oldestSeqRef.current = -1;
       setHasMore(false);
@@ -2858,7 +2752,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
-      setChildren(opened.children);
       hasMoreRef.current = opened.hasMore;
       oldestSeqRef.current = opened.oldestSeq;
       setHasMore(opened.hasMore);
@@ -3016,7 +2909,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         if (cid === openChatIdRef.current) {
           updateContextRevision(cid, events);
           setBlocks(applied.blocks);
-          setChildren(applied.children);
           hasMoreRef.current = applied.hasMore;
           oldestSeqRef.current = applied.oldestSeq;
           setHasMore(applied.hasMore);
@@ -3045,7 +2937,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           const applied = reducerRef.current.applyFrame(frame.event);
           if (!applied.stale) {
             setBlocks(applied.blocks);
-            setChildren(applied.children);
           }
           if (frame.event.type === "error") {
             toast.error(frame.event.message ?? "Model error");
@@ -3435,10 +3326,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setChatView(m);
     void saveChatViewMode(m);
   }, []);
-  // Subagent pane preferences: the mode decides which rows are visible, and
-  // "always show" keeps the pane reachable with no rows.
-  const [subagentsAlwaysShow, setSubagentsAlwaysShow] = useState(readSubagentsAlwaysShow);
-  const [subagentsActiveOnly, setSubagentsActiveOnly] = useState(readSubagentsActiveOnly);
   // View entries: the two views differ ONLY in thinking/tool runs —
   // technical renders each block 1:1, casual replaces each contiguous run
   // with one WorkedForBlock. Everything else (user, text, errors,
@@ -3513,8 +3400,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             <ToolFrame key={e.b.key} t={e.b.tool} />
           ) : e.b.kind === "approval" && e.b.approval ? (
             <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
-          ) : e.b.kind === "child" && e.b.child ? (
-            <ChildSpanBlock key={e.b.key} span={e.b.child} />
+          ) : e.b.kind === "child_spawn" && e.b.childSpawn ? (
+            <SubagentSpawnRecord key={e.b.key} block={e.b.childSpawn} onOpen={openChildChat} />
+          ) : e.b.kind === "child_result" && e.b.childResult ? (
+            <SubagentResultRecord key={e.b.key} block={e.b.childResult} onOpen={openChildChat} />
+          ) : e.b.kind === "child_closed" && e.b.childClosed ? (
+            <SubagentClosedRecord key={e.b.key} block={e.b.childClosed} onOpen={openChildChat} />
           ) : e.b.kind === "compaction" && e.b.compaction ? (
             <CompactionCard key={e.b.key} c={e.b.compaction} />
           ) : e.b.kind === "error" ? (
@@ -3541,15 +3432,40 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           )
         );
       }),
-    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex],
+    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
   );
-  // Child rows live in a pinned strip above the composer and come from the
-  // reducer's live child list, independent of the transcript view.
-  const childRows = useMemo(() => childRowsOf(children), [children]);
-  const visibleChildRows = useMemo(
-    () => subagentRowsForMode(childRows, subagentsActiveOnly),
-    [childRows, subagentsActiveOnly],
+  // The running part of the chat's thread subtree, rendered at the end of
+  // the transcript. A grandchild's events never reach this chat, so the tree
+  // is fetched rather than derived from the block log.
+  const [subagentNodes, setSubagentNodes] = useState<ChatSubagentNode[]>([]);
+  const anySubagentRunning = subagentNodes.some(
+    (node) => node.status === "running" || node.status === "queued",
   );
+  useEffect(() => {
+    if (!chatId) {
+      setSubagentNodes([]);
+      return;
+    }
+    let live = true;
+    const controller = new AbortController();
+    const load = () =>
+      void fetchChatSubagents(chatId, controller.signal)
+        .then((nodes) => {
+          if (live) setSubagentNodes(nodes);
+        })
+        .catch(() => {
+          // A failed refresh keeps the previous tree; the next event retries.
+        });
+    load();
+    // A grandchild's completion writes no event into this chat, so a running
+    // tree polls until it is empty.
+    const timer = anySubagentRunning ? window.setInterval(load, 5000) : undefined;
+    return () => {
+      live = false;
+      controller.abort();
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [chatId, threadEventSeq, anySubagentRunning]);
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -4047,17 +3963,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   {chatArchived ? "Unarchive" : "Archive"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => {
-                    const next = !subagentsAlwaysShow;
-                    setSubagentsAlwaysShow(next);
-                    writeSubagentsAlwaysShow(next);
-                  }}
-                >
-                  <Check className={`size-4 ${subagentsAlwaysShow ? "" : "opacity-0"}`} />
-                  Always show subagents
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
                   <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
                   Casual view
@@ -4162,6 +4067,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 </div>
               )}
               {transcriptEntries}
+              <RunningSubagents nodes={subagentNodes} onOpen={openChildChat} />
               {/* in-progress /compact line: replaced by the durable
                   "Context compacted" card when the event lands. The reducer
                   computes the guard (its armed target vs the open chat) —
@@ -4255,20 +4161,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
-          {(visibleChildRows.length > 0 || subagentsAlwaysShow) && (
-            <div
-              className="pointer-events-auto mx-auto w-full pb-1.5"
-              style={{ maxWidth: chatWidth }}
-            >
-              <ChildList
-                rows={childRows}
-                onOpen={openChildChat}
-                activeOnly={subagentsActiveOnly}
-                onActiveOnlyChange={setSubagentsActiveOnly}
-                alwaysShow={subagentsAlwaysShow}
-              />
-            </div>
-          )}
           {readOnlyThread ? (
             <div
               className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"

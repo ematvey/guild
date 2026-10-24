@@ -560,6 +560,51 @@ export function registerAgentRoutes(
   app.get("/api/v1/chats/:id/tree", chatTree);
   app.get("/api/v1/threads/:id/tree", chatTree);
 
+  /** The chat's thread subtree with each node's latest run status. The chat
+   *  view renders the running part below its transcript. */
+  const chatSubagents = async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const res = await infra.pool.query<{
+      thread_id: string;
+      chat_id: string;
+      parent_thread_id: string | null;
+      agent_name: string;
+      title: string;
+      depth: number;
+      status: string | null;
+    }>(
+      `WITH RECURSIVE subtree AS (
+         SELECT t.id, t.chat_id, t.parent_thread_id, t.agent_id, t.title, t.depth
+         FROM agent_threads t WHERE t.chat_id = $1
+         UNION ALL
+         SELECT c.id, c.chat_id, c.parent_thread_id, c.agent_id, c.title, c.depth
+         FROM agent_threads c JOIN subtree p ON c.parent_thread_id = p.id
+       )
+       SELECT s.id AS thread_id, s.chat_id, s.parent_thread_id, a.name AS agent_name,
+              s.title, s.depth,
+              (SELECT r.status FROM agent_runs r WHERE r.thread_id = s.id
+               ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS status
+       FROM subtree s JOIN agents a ON a.id = s.agent_id
+       ORDER BY s.depth, s.id`,
+      [chatId],
+    );
+    return sendJson(reply, {
+      chat_id: chatId,
+      nodes: res.rows.map((row) => ({
+        thread_id: row.thread_id,
+        chat_id: row.chat_id,
+        parent_thread_id: row.parent_thread_id,
+        agent_name: row.agent_name,
+        title: row.title,
+        depth: Number(row.depth),
+        status: row.status,
+      })),
+    });
+  };
+  app.get("/api/v1/chats/:id/subagents", chatSubagents);
+
   /** Stop or close the thread behind a chat, from the chat's own UI. The
    *  chat is authorized first; a chat with no thread row has nothing to act
    *  on. `close` marks the subtree closed, which also drops late results. */

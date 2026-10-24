@@ -5,7 +5,7 @@
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@guild/ui/lib/utils";
 import type { ChatTree } from "../../transport";
-import { childStatusLabel, childStatusTone } from "./child-row";
+import { childStatusLabel, childStatusTone } from "./child-status";
 
 const dotClass: Record<ReturnType<typeof childStatusTone>, string> = {
   running: "animate-pulse bg-sky-500",
