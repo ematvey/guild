@@ -113,7 +113,7 @@ export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stoppi
         </>
       }
     >
-      <div className="space-y-1">{children}</div>
+      <div className="flex flex-col">{children}</div>
     </Frame>
   );
 });

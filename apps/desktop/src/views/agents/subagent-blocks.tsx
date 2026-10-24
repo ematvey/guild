@@ -3,7 +3,7 @@
 // collapsible Frame — and each one opens the child thread it names.
 
 import { Bot, CircleSlash, CornerUpRight, SquareArrowOutUpRight } from "lucide-react";
-import { Frame } from "../frame";
+import { Frame, FRAME_ROW_CLASS } from "../frame";
 import { PayloadPre } from "../payload-pre";
 import type {
   ChildClosedBlock,
@@ -117,7 +117,7 @@ export function SubagentClosedRecord({
   onOpen: (chatId: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+    <div className={`${FRAME_ROW_CLASS} text-sm text-muted-foreground`}>
       <CircleSlash className="size-3 shrink-0" />
       <span className="min-w-0 flex-1 truncate">
         Closed subagent {block.agentName}

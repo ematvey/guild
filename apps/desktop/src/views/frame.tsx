@@ -6,6 +6,15 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
+/// The row that every transcript detail shares: tools, reasoning, subagent
+/// records and the agent-work group itself. One class keeps their vertical
+/// rhythm identical wherever they nest.
+export const FRAME_ROW_CLASS =
+  "flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground";
+
+/// The body below an opened row: smaller, grayer, indented under the label.
+export const FRAME_BODY_CLASS = "mb-2 pl-[22px] text-sm text-muted-foreground";
+
 export function Frame({
   icon,
   title,
@@ -29,7 +38,7 @@ export function Frame({
     <div className={`flex w-full flex-col text-sm ${className ?? ""}`}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"
+        className={FRAME_ROW_CLASS}
       >
         {icon}
         <span className="min-w-0 flex-1 truncate text-muted-foreground">{titleNode}</span>
@@ -43,7 +52,7 @@ export function Frame({
       {open && (
         // No card boundary: the content just continues below the row as
         // smaller, grayer text, indented under the label.
-        <div className="mb-2 pl-[22px] text-sm text-muted-foreground">
+        <div className={FRAME_BODY_CLASS}>
           {children}
         </div>
       )}
