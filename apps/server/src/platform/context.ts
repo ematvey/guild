@@ -131,12 +131,15 @@ export class PlatformContext {
    *  unset):
    *  - wsSync: the chats lane's state-sync capture, called inside the socket
    *    reader's sync bracket (SyncBegin … SyncDone).
+   *  - wsSubagentTree: the chat's thread subtree, sent inside the same
+   *    bracket.
    *  - wsToolResult: the dispatch lane's tool-result completion (owns_pending_tool
    *    + turn completion).
    *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
    *    machine connect (Rust reconcile_machine_tools).
    *  - wsLog: trace sink for the socket supervisor (server log in Rust). */
   wsSync?: ChatsCtx["wsSync"];
+  wsSubagentTree?: ChatsCtx["wsSubagentTree"];
   wsToolResult?: ChatsCtx["wsToolResult"];
   wsMachineReconcile?: ChatsCtx["wsMachineReconcile"];
   wsLog?: ChatsCtx["wsLog"];

@@ -1,7 +1,9 @@
 // The chat's running subagents, rendered at the end of the transcript. It is
 // part of the chat body: scrolling up takes it out of view, nothing pins it
 // and nothing draws a border. Only running threads appear — the spawn and
-// result records in the transcript are the history.
+// result records in the transcript are the history. The nodes arrive on the
+// member socket (the sync bracket plus the guild_subagent_tree push), so the
+// tree is always the current server state.
 
 import type { ChatSubagentNode } from "../../transport";
 
@@ -49,44 +51,67 @@ function label(node: ChatSubagentNode): string {
   return node.title.trim() === "" ? node.agent_name : `${node.agent_name} · ${node.title}`;
 }
 
-function Row({
-  entry,
-  depth,
-  onOpen,
-}: {
-  entry: RunningSubagentNode;
-  depth: number;
-  onOpen: (chatId: string) => void;
-}) {
-  const { node } = entry;
-  const root = depth === 0;
-  const text = root ? (node.title.trim() === "" ? "This chat" : node.title) : label(node);
+/** One vertical guide column: a full line for an ancestor with following
+ *  siblings, nothing otherwise. */
+function Guide({ draw }: { draw: boolean }) {
   return (
-    <div>
-      <button
-        type="button"
-        disabled={root}
-        onClick={() => {
-          if (!root) onOpen(node.chat_id);
-        }}
-        className={
-          root
-            ? "block max-w-full truncate text-left text-xs text-muted-foreground"
-            : "block max-w-full truncate rounded text-left text-xs text-foreground/80 hover:text-foreground"
-        }
-        style={{ paddingLeft: depth * 14 }}
-        title={root ? text : `Open ${label(node)}`}
-      >
-        {text}
-      </button>
-      {entry.children.map((child) => (
-        <Row key={child.node.thread_id} entry={child} depth={depth + 1} onOpen={onOpen} />
-      ))}
-    </div>
+    <span className="relative w-4 shrink-0 self-stretch">
+      {draw && <span className="absolute inset-y-0 left-1/2 border-l border-border/60" />}
+    </span>
   );
 }
 
-/** Renders nothing when no descendant of this chat is running. */
+function Row({
+  entry,
+  guides,
+  isLast,
+  onOpen,
+}: {
+  entry: RunningSubagentNode;
+  guides: readonly boolean[];
+  isLast: boolean;
+  onOpen: (chatId: string) => void;
+}) {
+  const { node } = entry;
+  const text = label(node);
+  return (
+    <>
+      <div className="flex items-stretch text-xs">
+        {guides.map((draw, i) => (
+          <Guide key={i} draw={draw} />
+        ))}
+        <span className="relative w-4 shrink-0 self-stretch">
+          <span
+            className={`absolute left-1/2 top-0 border-l border-border/60 ${
+              isLast ? "h-1/2" : "inset-y-0"
+            }`}
+          />
+          <span className="absolute left-1/2 top-1/2 w-1/2 border-t border-border/60" />
+        </span>
+        <button
+          type="button"
+          onClick={() => onOpen(node.chat_id)}
+          className="min-w-0 flex-1 truncate rounded py-0.5 text-left text-xs text-foreground/80 hover:text-foreground"
+          title={`Open ${text}`}
+        >
+          {text}
+        </button>
+      </div>
+      {entry.children.map((child, i) => (
+        <Row
+          key={child.node.thread_id}
+          entry={child}
+          guides={[...guides, !isLast]}
+          isLast={i === entry.children.length - 1}
+          onOpen={onOpen}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Renders nothing when no descendant of this chat is running. The chat's
+ *  own title never appears: the tree starts at the running children. */
 export function RunningSubagents({
   nodes,
   onOpen,
@@ -97,11 +122,21 @@ export function RunningSubagents({
   const tree = runningSubagentTree(nodes);
   if (tree === null) return null;
   return (
-    <div className="space-y-0.5">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="mt-8">
+      <div className="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Subagents
       </div>
-      <Row entry={tree} depth={0} onOpen={onOpen} />
+      <div>
+        {tree.children.map((child, i) => (
+          <Row
+            key={child.node.thread_id}
+            entry={child}
+            guides={[]}
+            isLast={i === tree.children.length - 1}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { M5TestEnv } from "../platform/m5-harness.js";
+import type { ChildRunFinished } from "../../agents/delivery.js";
 
 const env: M5TestEnv | null = await createAgentsTestEnv();
 const dbDescribe = env === null ? describe.skip : describe;
@@ -99,6 +100,53 @@ dbDescribe("agent run lifecycle", () => {
     expect((await store.getRun(run.id)).tokens).toBe(12);
     const again = await env!.db.query("SELECT id FROM agent_thread_chunks WHERE thread_id = $1", [threadId]);
     expect(again.rows).toHaveLength(1);
+  });
+
+  it("delivers only the terminal assistant text, never tool narration", async () => {
+    const delivered: ChildRunFinished[] = [];
+    const withDelivery = new AgentRunLifecycle({
+      pool: env!.db,
+      log: pino({ level: "silent" }),
+      delivery: { deliver: async (input) => { delivered.push(input); } },
+    });
+    const run = await store.createRun({
+      agent_id: agentId,
+      thread_id: threadId,
+      trigger: "message",
+      status: "running",
+      started_at: new Date().toISOString(),
+    });
+    await threads.appendEvent(chatId, { type: "user_message", content: "Find the answer.", attachments: [] });
+    const narrated = await threads.appendEvent(
+      chatId,
+      assistantMessageEvent(
+        1,
+        1,
+        [
+          { type: "text", text: "I will check the files first." },
+          { type: "tool_call", id: "call-1", name: "bash", arguments: "{}" },
+        ],
+        { tokens_in: 1, tokens_out: 1, cost_usd: 0 },
+        "GLM-Test",
+      ),
+    );
+    await withDelivery.assistantEvent(chatId, narrated);
+    expect(delivered).toHaveLength(0);
+
+    const terminal = await threads.appendEvent(
+      chatId,
+      assistantMessageEvent(
+        1,
+        2,
+        [{ type: "text", text: "The answer is 42." }],
+        { tokens_in: 1, tokens_out: 1, cost_usd: 0 },
+        "GLM-Test",
+      ),
+    );
+    await withDelivery.assistantEvent(chatId, terminal);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.final_text).toBe("The answer is 42.");
+    expect((await store.getRun(run.id)).status).toBe("succeeded");
   });
 
   it("marks a run with no text and no send_message silent", async () => {

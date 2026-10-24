@@ -12,6 +12,27 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The running subagent tree is pushed, not polled (2026-10-24).** The
+  member socket gains `subagent_tree`: the chat's whole thread subtree with
+  each node's latest run status, sent inside the `sync` bracket and again on
+  a `guild_subagent_tree` NOTIFY. The NOTIFY fires on run create, run-status
+  change and subtree cancel/close, and it fans out to every ancestor chat of
+  the changed thread, because each ancestor may be open somewhere. The
+  desktop drops its 5 s poll and the REST fetch; it replaces the node list
+  from the frame. The tree renders the running part only, starts at the
+  running children (the chat's own title is gone), and draws branch lines
+  instead of bare indentation. Spacing from the transcript's last stamp
+  grows to `mt-8`. Protocol: `WsServerMsg::SubagentTree`; SRS-56 and PRD-2
+  record the rule that every live chat/thread UI update rides the socket.
+
+- **A child result carries only its terminal text (2026-10-24).** The run
+  lifecycle used to join the text of every assistant message in the turn,
+  so a parent saw the child's tool narration ("I will check the files
+  first") before the answer. `final_text` now comes from the terminal
+  assistant event, the one with no tool call; earlier rows are narration.
+  A stopped run with no terminal event delivers no partial text. Staged
+  files still ride the terminal event's attachment rows.
+
 - **A child result is never lost (2026-10-24).** Delivery takes the batch
   before the steer, so a steer that fails used to consume the result with
   nothing to carry it: the opened run lingered and the reaper failed it as

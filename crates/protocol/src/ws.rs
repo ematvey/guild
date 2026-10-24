@@ -170,6 +170,13 @@ pub enum WsServerMsg {
     OrgEvent {
         event: serde_json::Value,
     },
+    /// The chat's thread subtree with each node's latest run status. Sent on
+    /// the sync bracket and whenever a node is created, starts, finishes or
+    /// closes. Daemons tag-peek frames and ignore unknown types.
+    SubagentTree {
+        chat_id: Uuid,
+        nodes: Vec<serde_json::Value>,
+    },
 }
 
 #[cfg(test)]

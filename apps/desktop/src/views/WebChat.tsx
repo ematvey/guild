@@ -135,7 +135,6 @@ import {
   apiOnboarded,
   createChat,
   fetchChatTree,
-  fetchChatSubagents,
   type ChatSubagentNode,
   fetchChatViewMode,
   fetchThreadEventsPage,
@@ -1896,6 +1895,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [route.agents, route.chatId, inboxRevision]);
   const chatId = route.chatId;
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
+  // The open chat's thread subtree, pushed whole on every change (sync
+  // bracket and the guild_subagent_tree NOTIFY). No poll: the tree is live
+  // display state.
+  const [subagentNodes, setSubagentNodes] = useState<ChatSubagentNode[]>([]);
   const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
     const seq = events[events.length - 1]?.seq ?? 0;
     setContextRevision(prev => prev?.chatId === cid && prev.seq >= seq ? prev : { chatId: cid, seq });
@@ -2732,6 +2735,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
+    setSubagentNodes([]);
     if (chatId !== null && justCreatedBusyRef.current === chatId) justCreatedBusyRef.current = null;
     else setBusy(false);
     stick.current = true;
@@ -2882,6 +2886,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
       onThreadState: (state) => applyHistory(state),
+      onSubagentTree: (cid, nodes) => {
+        if (cid === openChatIdRef.current) setSubagentNodes(nodes);
+      },
       onThreadEvents: (cid, _seq, events) => {
         // Incremental durable-log fan-out: the same rows a refresh replays,
         // applied live. Settles optimistic sends exactly like applyHistory.
@@ -3435,37 +3442,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
   );
   // The running part of the chat's thread subtree, rendered at the end of
-  // the transcript. A grandchild's events never reach this chat, so the tree
-  // is fetched rather than derived from the block log.
-  const [subagentNodes, setSubagentNodes] = useState<ChatSubagentNode[]>([]);
-  const anySubagentRunning = subagentNodes.some(
-    (node) => node.status === "running" || node.status === "queued",
-  );
-  useEffect(() => {
-    if (!chatId) {
-      setSubagentNodes([]);
-      return;
-    }
-    let live = true;
-    const controller = new AbortController();
-    const load = () =>
-      void fetchChatSubagents(chatId, controller.signal)
-        .then((nodes) => {
-          if (live) setSubagentNodes(nodes);
-        })
-        .catch(() => {
-          // A failed refresh keeps the previous tree; the next event retries.
-        });
-    load();
-    // A grandchild's completion writes no event into this chat, so a running
-    // tree polls until it is empty.
-    const timer = anySubagentRunning ? window.setInterval(load, 5000) : undefined;
-    return () => {
-      live = false;
-      controller.abort();
-      if (timer !== undefined) window.clearInterval(timer);
-    };
-  }, [chatId, threadEventSeq, anySubagentRunning]);
+  // the transcript. The nodes arrive on the member socket, never by polling.
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {

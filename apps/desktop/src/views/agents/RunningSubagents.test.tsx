@@ -2,8 +2,9 @@
 // kept, so a finished branch never shows below the transcript.
 
 import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { ChatSubagentNode } from "../../transport";
-import { isRunningStatus, runningSubagentTree } from "./RunningSubagents";
+import { isRunningStatus, RunningSubagents, runningSubagentTree } from "./RunningSubagents";
 
 function node(over: Partial<ChatSubagentNode> & { thread_id: string }): ChatSubagentNode {
   return {
@@ -58,5 +59,26 @@ describe("runningSubagentTree", () => {
     expect(isRunningStatus("queued")).toBe(true);
     expect(isRunningStatus("succeeded")).toBe(false);
     expect(isRunningStatus(null)).toBe(false);
+  });
+});
+
+describe("RunningSubagents", () => {
+  const nodes: ChatSubagentNode[] = [
+    node({ thread_id: "root", title: "im testing a subagent tree. spawn subagents inst" }),
+    node({ thread_id: "child", parent_thread_id: "root", status: "running", depth: 1, title: "T1-A" }),
+    node({ thread_id: "grand", parent_thread_id: "child", status: "running", depth: 2, title: "T1-A-1" }),
+  ];
+
+  it("never renders the chat's own title", () => {
+    const html = renderToStaticMarkup(<RunningSubagents nodes={nodes} onOpen={() => {}} />);
+    expect(html).toContain("Subagents");
+    expect(html).toContain("Researcher · T1-A");
+    expect(html).toContain("Researcher · T1-A-1");
+    expect(html).not.toContain("im testing a subagent tree");
+  });
+
+  it("renders nothing when no descendant runs", () => {
+    const done = nodes.map((n) => ({ ...n, status: "succeeded" }));
+    expect(renderToStaticMarkup(<RunningSubagents nodes={done} onOpen={() => {}} />)).toBe("");
   });
 });

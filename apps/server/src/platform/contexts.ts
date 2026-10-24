@@ -104,6 +104,9 @@ export interface ChatsCtx {
   /** The chats lane's state-sync capture, called inside the socket reader's
    *  sync bracket (SyncBegin … SyncDone). */
   wsSync?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg | null>;
+  /** The chat's thread subtree, sent inside the same sync bracket so a
+   *  (re)connect never waits for a poll to show the running tree. */
+  wsSubagentTree?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg | null>;
   /** The dispatch lane's tool-result completion (owns_pending_tool + turn
    *  completion). */
   wsToolResult?: (args: { member: LiveMember; user: UserRow; frame: { type: "tool_result"; chat_id: string; call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] } }) => Promise<void>;

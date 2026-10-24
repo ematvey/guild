@@ -42,6 +42,7 @@ import {
   type UpdateRoutineInput,
 } from "./routines.js";
 import { insertChunks, search, type AgentChunkInput, type AgentSearchHit } from "./search.js";
+import { notifySubagentTree } from "./tree.js";
 import { agentWorkspaceDir, seedAgentWorkspace } from "./workspace-config.js";
 import type { TraceStore } from "../platform/trace.js";
 
@@ -1284,6 +1285,7 @@ export class AgentStore {
     );
     const run = toRun(res.rows[0]!);
     this.mirrorRun(run);
+    if (run.thread_id !== null) await notifySubagentTree(this.pool, run.thread_id);
     return run;
   }
 
@@ -1317,6 +1319,10 @@ export class AgentStore {
     if (row === undefined) throw ApiError.notFound("no such run");
     const run = toRun(row);
     this.mirrorRun(run);
+    // A status change moves the running tree of every ancestor chat.
+    if (patch.status !== undefined && run.thread_id !== null) {
+      await notifySubagentTree(this.pool, run.thread_id);
+    }
     return run;
   }
 

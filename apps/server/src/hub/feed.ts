@@ -17,6 +17,7 @@ import { pgTimestampToRfc3339 } from "../platform/time.js";
 import { NOT_EXECUTION_TRANSCRIPT } from "../platform/store/chats.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
+import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
 
@@ -54,6 +55,9 @@ export class FeedForwarder implements GenerationStreamSink {
   private readonly dirtyChats = new Set<string>();
   /** Open generation identities (live_frame generation_id). */
   private readonly generations = new Map<string, string>();
+  /** Last pushed subtree per chat, as JSON: a run-status write that leaves
+   *  the rendered tree unchanged sends nothing. */
+  private readonly subagentTrees = new Map<string, string>();
   /** Per-chat fan-out baseline: rows at/below this seq already reached the
    *  client (full-view publishes re-baseline to the capture's max row).
    *  Undefined = the open() baseline hasn't run yet — committed() falls
@@ -142,8 +146,33 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       if (typeof parsed.org_id !== "string" || typeof parsed.event_id !== "string") return;
       void this.orgEvent(parsed.org_id, parsed.event_id).catch(() => {});
+      return;
+    }
+    if (channel === "guild_subagent_tree") {
+      if (payload === "") return;
+      void this.subagentTree(payload).catch(() => {});
     }
   };
+
+  /** One chat's thread subtree, pushed to its owner's sockets when it moves.
+   *  The tree is display state, not log state, so the frame carries the whole
+   *  node list and the client replaces its view. Frames ride the chat's send
+   *  chain so an older snapshot never lands after a newer one. */
+  private async subagentTree(chatId: string): Promise<void> {
+    this.enqueue(chatId, async () => {
+      const chat = await this.ensureChat(chatId, false);
+      if (chat === null) return;
+      if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
+        this.subagentTrees.delete(chatId);
+        return;
+      }
+      const nodes = await chatSubagentNodes(this.ctx.pool, chatId);
+      const wire = JSON.stringify(nodes);
+      if (this.subagentTrees.get(chatId) === wire) return;
+      this.subagentTrees.set(chatId, wire);
+      this.sendToUser(chat.userId, subagentTreeMsg(chatId, nodes));
+    });
+  }
 
   private async committed(chatId: string): Promise<void> {
     const chat = await this.ensureChat(chatId, true);

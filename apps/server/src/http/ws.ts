@@ -680,6 +680,8 @@ async function runSyncStarted(
     else if (chats.wsSync === undefined) {
       sink.send({ type: "error", message: "sync unavailable" });
     }
+    const tree = await chats.wsSubagentTree?.({ chatId, user, sink });
+    if (tree !== undefined && tree !== null) sink.send(tree);
   } catch (error) {
     sink.send({
       type: "error",

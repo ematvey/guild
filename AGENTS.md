@@ -22,6 +22,16 @@ you.
 
 ## Conventions
 
+- **Every chat/thread UI update arrives over the member WebSocket.** Any
+  state the user sees change live — messages, run status, the subagent
+  tree, the chat list, presence — is pushed as a `WsServerMsg` frame on the
+  member socket: inside the `sync` bracket for the first view, then on the
+  store NOTIFY. Clients do not poll HTTP for state the socket carries, and
+  a grandchild's event is pushed to every ancestor chat that displays it.
+  New display state gets a frame variant in `crates/protocol/src/ws.rs`
+  (regenerate the bindings), a serializer arm in
+  `apps/server/src/hub/protocol.ts`, a NOTIFY channel, and a feed handler.
+  The client applies the frame; it never re-fetches.
 - **All navigation state is URL state.** Every page, tab, panel and
   sub-page the user can reach has its own fixed URL (rail tabs, threads,
   projects, new chats per surface, skills pages, settings sections and
