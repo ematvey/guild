@@ -1,11 +1,16 @@
 // Built-in connector tool catalogs: tool declarations with their manifest
-// classes, config
-// validation, and connection tests. The runtime (execute) is not ported —
-// spec decision 8 defers the integrations runtime, so a validated execute
-// call fails the way the Rust connector fails with its backend unreachable
-// (see src/platform/http/integration_tools.ts).
+// classes, config validation, and connection tests. The execute side lives
+// in vendors/ (one module per vendor); this file declares what each
+// connector offers and proves a saved row can reach it.
 
 import { createSign } from "node:crypto";
+import {
+  configString,
+  secret,
+  secretOrNull,
+  trimTrailingSlash,
+  type Json,
+} from "./vendors/shared.js";
 
 export interface ConnectorToolSpec {
   name: string;
@@ -26,8 +31,6 @@ export interface BuiltinConnector {
   testConnection(config: Record<string, unknown>, secrets: [string, string][]): Promise<void>;
 }
 
-type Json = Record<string, unknown>;
-
 const PROBE_TIMEOUT_MS = 15_000;
 
 /** The probe contract: any 2xx passes; a transport
@@ -47,26 +50,6 @@ async function probe(req: Promise<Response>, what: string): Promise<void> {
 
 function fetchTimeout(init?: RequestInit): RequestInit {
   return { ...init, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) };
-}
-
-function secret(secrets: [string, string][], name: string): string {
-  const found = secrets.find(([n]) => n === name);
-  if (found === undefined) throw new Error(`secret ${name} is not stored`);
-  return found[1];
-}
-
-function secretOrNull(secrets: [string, string][], name: string): string | null {
-  const found = secrets.find(([n]) => n === name);
-  return found === undefined ? null : found[1];
-}
-
-function configString(config: Json, name: string): string | undefined {
-  const v = config[name];
-  return typeof v === "string" ? v : undefined;
-}
-
-function trimTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, "");
 }
 
 /** The generic `api` tool every REST-connector exposes (api_tool_spec). */
