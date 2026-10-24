@@ -58,4 +58,19 @@ describe("session", () => {
     expect(getToken()).toBeNull();
     expect(() => setToken("tok")).not.toThrow();
   });
+
+  it("names the HTTP status when a proxy answers without a message", async () => {
+    vi.stubGlobal("window", { location: { origin: "http://localhost:18080" } });
+    vi.stubGlobal("localStorage", fakeStore({ guild_token: "tok" }));
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 502,
+      statusText: "",
+      json: async () => {
+        throw new SyntaxError("Unexpected token '<'");
+      },
+    })));
+    const { mintTicket } = await import("./session");
+    await expect(mintTicket()).rejects.toThrow("The server answered HTTP 502");
+  });
 });

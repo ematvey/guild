@@ -98,10 +98,20 @@ export async function mintTicket(refreshed = false): Promise<string> {
   }
   if (res.status === 401) throw new SessionExpiredError("Sign in again to reconnect");
   const value = await res.json().catch(() => ({}));
-  if (!res.ok || typeof value.ticket !== "string") {
-    throw new Error(value?.error?.message ?? res.statusText);
+  if (!res.ok) throw new Error(ticketFailure(res, value));
+  if (typeof value.ticket !== "string") {
+    throw new Error("The server sent no socket ticket");
   }
   return value.ticket;
+}
+
+/** An error the user can read: the API's own message, else the HTTP status.
+ *  A proxy answers with a non-JSON body and an empty statusText, so the
+ *  status code is the only fact left. */
+function ticketFailure(res: Response, value: { error?: { message?: unknown } }): string {
+  const detail = value.error?.message;
+  if (typeof detail === "string" && detail.trim() !== "") return detail;
+  return `The server answered HTTP ${res.status}`;
 }
 
 /** Opens a WebSocket through the injectable browser socket factory. */

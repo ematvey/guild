@@ -44,6 +44,12 @@ export function openSocket(url: string, factory: SocketFactory = (u) => new WebS
   return factory(url);
 }
 
+/** Never hand an empty message to the UI: a blank toast tells the user nothing. */
+function reportError(error: unknown, handlers: SocketHandlers): void {
+  const message = error instanceof Error ? error.message : String(error);
+  handlers.onError?.(message.trim() === "" ? "Could not reach the server" : message);
+}
+
 /** Pure protocol router. It has no browser or socket dependencies. */
 
 export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): void {
@@ -192,7 +198,7 @@ export function startSocket(
                 stopped = true;
                 opts.onAuthRequired?.();
               } else {
-                opts.onError?.(error instanceof Error ? error.message : String(error));
+                reportError(error, opts);
                 scheduleReconnect();
               }
             });
@@ -218,7 +224,7 @@ export function startSocket(
     } catch (error) {
       connecting = false;
       if (error instanceof SessionExpiredError) { stopped = true; opts.onAuthRequired?.(); return; }
-      opts.onError?.(error instanceof Error ? error.message : String(error));
+      reportError(error, opts);
       scheduleReconnect();
     } finally {
       connecting = false;

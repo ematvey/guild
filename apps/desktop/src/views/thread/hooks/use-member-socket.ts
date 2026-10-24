@@ -213,7 +213,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
             setBlocks(applied.blocks);
           }
           if (frame.event.type === "error") {
-            toast.error(frame.event.message ?? "Model error");
+            toast.error(frame.event.message?.trim() || "Model error", { id: "model-error" });
           }
         }
       },
@@ -227,7 +227,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           recoverMissingChatRef.current();
         } else {
           setThreadLoading(false);
-          toast.error(message);
+          // One toast per connection problem: the socket retries every few
+          // seconds, and identical stacked toasts read as spam.
+          toast.error(message, { id: "member-socket" });
         }
       },
       onDisplaced: () => toast.error("This chat connection was replaced"),
