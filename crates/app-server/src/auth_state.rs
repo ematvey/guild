@@ -7,7 +7,8 @@
 //! method, so the steps cannot drift apart.
 
 use crate::cloud::{CloudClient, CloudError};
-use crate::machine_link::{hostname_label, LinkRegistry, MachineLinkConfig};
+use crate::machine_link::{LinkRegistry, MachineLinkConfig};
+use crate::machine_meta::hostname_label;
 use crate::session_store::{self, StoredSession, WorkspaceStore};
 use anyhow::Context as _;
 use std::collections::BTreeMap;
