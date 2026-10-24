@@ -112,6 +112,16 @@ dbDescribe("routine store", () => {
     expect(enabled.next_run_at).not.toBeNull();
 
     expect((await store.listRoutines(agentId)).map((item) => item.id)).toContain(routine.id);
+    const run = await store.createRun({
+      agent_id: agentId,
+      user_id: owner.id,
+      routine_id: routine.id,
+      trigger: "routine",
+      status: "succeeded",
+      summary: "Ran the check",
+    });
+    const listed = (await store.listRoutines(agentId)).find((item) => item.id === routine.id);
+    expect(listed?.last_run?.id).toBe(run.id);
     expect((await store.getRoutine(agentId, routine.id)).id).toBe(routine.id);
     await store.deleteRoutine(agentId, routine.id);
     await expect(store.getRoutine(agentId, routine.id)).rejects.toMatchObject({ status: 404 });

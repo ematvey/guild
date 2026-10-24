@@ -165,6 +165,8 @@ export interface AgentRoutine {
   next_run_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Newest run for this routine, when the list is read through the store. */
+  last_run?: AgentRun | null;
 }
 
 export interface AgentRoutineOccurrence {

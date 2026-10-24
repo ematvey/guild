@@ -1468,7 +1468,22 @@ export class AgentStore {
   }
 
   async listRoutines(agentId: string): Promise<AgentRoutine[]> {
-    return listRoutines(this.pool, agentId);
+    const routines = await listRoutines(this.pool, agentId);
+    if (routines.length === 0) return routines;
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT DISTINCT ON (r.routine_id) ${RUN_COLUMNS}
+       FROM agent_runs r
+       WHERE r.routine_id = ANY($1::uuid[])
+       ORDER BY r.routine_id, r.created_at DESC, r.id DESC`,
+      [routines.map((routine) => routine.id)],
+    );
+    const lastByRoutine = new Map(
+      res.rows.map((row) => [row.routine_id as string, toRun(row)]),
+    );
+    return routines.map((routine) => ({
+      ...routine,
+      last_run: lastByRoutine.get(routine.id) ?? null,
+    }));
   }
 
   async getRoutine(agentId: string, routineId: string): Promise<AgentRoutine> {
