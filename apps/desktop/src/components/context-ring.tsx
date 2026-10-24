@@ -41,8 +41,7 @@ export function ContextRing({ chatId, model, revision }: {
       <span role="img" aria-label={label} tabIndex={0} data-context-ring
         className={`flex size-7 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring ${color}`}>
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="2" opacity="0.25"
-            strokeDasharray={percent === null ? "2 3" : undefined} />
+          <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="2" opacity="0.25" />
           {percent !== null && <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="2"
             pathLength="100" strokeDasharray={`${fill} 100`} strokeLinecap={fill > 0 ? "round" : "butt"}
             transform="rotate(-90 10 10)" />}
