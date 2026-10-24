@@ -17,10 +17,13 @@ first. Code comments describe only the present.
   `chat_view` key. Every contiguous agent-work run — thinking, tool calls
   and subagent spawn/result/close records — renders as one collapsible row —
   "Agent is working 12s (4 steps)" live, "Agent worked for 7 seconds
-  (4 steps)" settled — and the chevron opens the full technical detail,
-  indented under the label. A short or unstamped run reads "Agent
-  worked", so its details stay reachable. The running subagent block follows
-  the same shape: "Subagents working (N)" with a chevron that opens the tree.
+  (4 steps)" settled — and the chevron opens the full technical detail in
+  one container, indented under the label. A short or unstamped run reads
+  "Agent worked", so its details stay reachable. Every detail row shares
+  `FRAME_ROW_CLASS` / `FRAME_BODY_CLASS`, so subagent records and
+  tool/reasoning rows keep the same padding and margins. The running
+  subagent block follows the same shape: "Subagents working (N)" with a
+  chevron that opens the tree.
 
 - **The decomposition review is applied (2026-10-25).** Six files that
   mixed layers are split, with no behaviour change:
