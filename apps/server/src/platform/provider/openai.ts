@@ -147,7 +147,9 @@ export function parseOpenAiFrame(data: string): OpenAiFrame {
     | undefined;
   const delta = (choice?.["delta"] as Record<string, unknown> | undefined) ?? {};
   const chunks: ProviderChunk[] = [];
-  const reasoning = delta["reasoning_content"];
+  // vLLM emits `reasoning`; most OpenAI-compatible backends emit
+  // `reasoning_content`. Both carry the same thinking delta.
+  const reasoning = delta["reasoning_content"] ?? delta["reasoning"];
   if (typeof reasoning === "string" && reasoning !== "") {
     chunks.push({ kind: "thinking", textDelta: reasoning, tokensIn, tokensOut, reasoningTokens });
   }
