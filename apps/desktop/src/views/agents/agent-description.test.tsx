@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createAgentPayload, validateAgentStep } from "./AgentCreate";
-import { AgentCard } from "./AgentsDirectory";
+import { AgentRow } from "./AgentsDirectory";
 import type { Agent } from "./agents-api";
 
 const draft = {
@@ -47,14 +47,14 @@ describe("agent description", () => {
     );
   });
 
-  it("renders the description on the directory card", () => {
-    const html = renderToStaticMarkup(<AgentCard agent={agent} onNavigate={() => {}} />);
+  it("renders the description on the directory row", () => {
+    const html = renderToStaticMarkup(<AgentRow agent={agent} onNavigate={() => {}} />);
     expect(html).toContain("Finds primary sources and summarizes them.");
   });
 
   it("renders no description element when the description is empty", () => {
     const html = renderToStaticMarkup(
-      <AgentCard agent={{ ...agent, description: "" }} onNavigate={() => {}} />,
+      <AgentRow agent={{ ...agent, description: "" }} onNavigate={() => {}} />,
     );
     expect(html).not.toContain("line-clamp-2");
   });
