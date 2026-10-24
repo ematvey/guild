@@ -136,15 +136,25 @@ done
 # Docker resolves a bind volume's source under <volume>/_data. The remount
 # above replaces the FUSE session, so those binds now point at the dead one:
 # sandbox containers fail with "transport endpoint is not connected" and
-# commands on the workspace hang. Stack a fresh bind over each stale one, for
-# every volume whose device is this mountpoint. The volumes live in the host
-# namespace, so the whole loop runs there.
+# commands on the workspace hang. Point every such volume at the live mount,
+# for every volume whose device is this mountpoint. The volumes live in the
+# host namespace, so the whole loop runs there.
+#
+# The docker volume and the host directory are peers under shared mount
+# propagation: a fresh mount at the host directory already appears at the
+# volume's _data, and unmounting _data propagates back and tears the new
+# FUSE mount down. So the loop only acts when _data does not resolve to a
+# live FUSE mount, and only then replaces what is there.
 nsenter -t 1 -m -- sh -c '
   mountpoint=$1
   for opts in /var/lib/docker/volumes/*/opts.json; do
     [ -f "$opts" ] || continue
     grep -q "\"MountDevice\":\"$mountpoint\"" "$opts" || continue
     volume_dir=${opts%/opts.json}
+    if stat -f -c %T "$volume_dir/_data" 2>/dev/null | grep -q "^fuse"; then
+      printf "juicefs: %s/_data already on the live mount\n" "$volume_dir"
+      continue
+    fi
     umount "$volume_dir/_data" >/dev/null 2>&1 || umount -l "$volume_dir/_data" >/dev/null 2>&1 || true
     mount --bind "$mountpoint" "$volume_dir/_data" || exit 1
     printf "juicefs: rebound %s/_data to %s\n" "$volume_dir" "$mountpoint"
