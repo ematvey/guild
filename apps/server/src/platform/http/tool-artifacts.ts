@@ -4,7 +4,7 @@
 // through GET /api/v1/tool_artifacts/{id}.
 
 import type { FastifyInstance } from "fastify";
-import type { ChatsCtx, IdentityCtx, InfraContext } from "../contexts.js";
+import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 

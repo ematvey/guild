@@ -4,7 +4,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import { decryptSecret, maskSecretLen } from "../crypto.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";

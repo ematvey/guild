@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import { rustJsonText } from "../provider/sse.js";
 
 /** The authenticated user from the session table, requiring the admin role. */

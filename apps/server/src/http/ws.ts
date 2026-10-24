@@ -16,7 +16,7 @@ import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { ChatsCtx, IdentityCtx } from "../platform/contexts.js";
+import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
 import type { PlatformPool } from "../platform/db.js";
 import { ApiError } from "../platform/errors.js";
 import { requireUser } from "../platform/http/error.js";

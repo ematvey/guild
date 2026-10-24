@@ -4,7 +4,7 @@
 // touches a store.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../platform/contexts.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../platform/route-contexts.js";
 import { ApiError, sortedJson } from "../platform/errors.js";
 import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.js";
 import { submitTurn } from "../platform/http/chats.js";

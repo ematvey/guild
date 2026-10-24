@@ -6,7 +6,7 @@
 // fields skipped, `has_more_events` always present.
 
 import { threadEventRowWire, type ThreadEventRow } from "../platform/domain/thread-events.js";
-import type { ChatsCtx } from "../platform/contexts.js";
+import type { ChatsCtx } from "../platform/route-contexts.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { WsServerMsg } from "../hub/protocol.js";
 import { ApiError } from "../platform/errors.js";

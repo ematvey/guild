@@ -3,7 +3,7 @@
 // tags cannot send bearer tokens, and a logo is not sensitive.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";

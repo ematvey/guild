@@ -15,7 +15,7 @@
 
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { lookup } from "node:dns/promises";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
 import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";

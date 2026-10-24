@@ -9,7 +9,7 @@ import { queryParam, requireUser } from "./error.js";
 import { rustFloat, rustJsonText } from "../provider/sse.js";
 import { errorText } from "../usage.js";
 import { isUuid } from "../time.js";
-import type { IdentityCtx, InfraContext } from "../contexts.js";
+import type { IdentityCtx, InfraContext } from "../route-contexts.js";
 
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 100;

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { createM1TestEnv, type M1TestEnv } from "./harness.js";
-import { PlatformContext } from "../../platform/context.js";
+import { PlatformContext } from "../../platform/root-context.js";
 import { hashPassword, verifyPassword } from "../../platform/crypto.js";
 import { pgTimestampToRfc3339, uuidv7, isUuid } from "../../platform/time.js";
 import { safeFilename } from "../../platform/store/attachments.js";

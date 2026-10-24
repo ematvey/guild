@@ -5,8 +5,8 @@
 // route here.
 
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../context.js";
-import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../contexts.js";
+import type { PlatformContext } from "../root-context.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { RAW_BODY, JSON_REJECTION_PREFIX, TextError } from "../errors.js";
 import { installErrorHandling } from "./error.js";
 import { registerAuthRoutes } from "./auth.js";

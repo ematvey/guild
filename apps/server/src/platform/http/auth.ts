@@ -4,7 +4,7 @@
 // credential that minted them.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import type { PlatformPool } from "../db.js";
 import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";

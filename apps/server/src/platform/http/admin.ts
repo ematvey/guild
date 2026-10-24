@@ -5,7 +5,7 @@
 // (M7 wiring; connector catalogs live in src/platform/integrations/).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";

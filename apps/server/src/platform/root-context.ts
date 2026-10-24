@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { pendingWorkQuery } from "./store/work.js";
-// Platform context: the per-process Postgres pool, object store, ClickHouse
-// usage sink, and typed store facades shared by the native route handlers.
+// Platform root context: the composition root. It builds the per-process
+// Postgres pool, object store, ClickHouse usage sink and typed store facades
+// once, then hands each route group a narrow slice from route-contexts.ts.
 
 import type { Config } from "../config.js";
 import { createPlatformPool, type PlatformPool } from "./db.js";
@@ -43,7 +44,7 @@ import { UsageSink } from "./usage.js";
 import { TraceStore } from "./trace.js";
 import { ApiError } from "./errors.js";
 import type { GatewayCredential } from "./http/llm.js";
-import type { ChatsCtx } from "./contexts.js";
+import type { ChatsCtx } from "./route-contexts.js";
 import type { Logger } from "pino";
 
 // Fixed identities for the config-minted internal gateway key (spec

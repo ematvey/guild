@@ -13,7 +13,7 @@ import { setupM2Stack, startMockUpstream, type M2Stack } from "./platform/m2-har
 import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
 import { notifySubagentTree } from "../agents/tree.js";
-import type { PlatformContext } from "../platform/context.js";
+import type { PlatformContext } from "../platform/root-context.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;

@@ -10,7 +10,7 @@
 // same events the Rust feed's listener consumes.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ChatsCtx, IdentityCtx } from "../contexts.js";
+import type { ChatsCtx, IdentityCtx } from "../route-contexts.js";
 import type { PlatformPool } from "../db.js";
 import { requireUser } from "./error.js";
 import { sseReply } from "./sse-writer.js";

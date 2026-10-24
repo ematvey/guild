@@ -6,7 +6,7 @@
 // Wired onto PlatformContext.wsSync / wsSubagentTree inside the socket's sync
 // bracket.
 
-import type { PlatformContext } from "../platform/context.js";
+import type { PlatformContext } from "../platform/root-context.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type { WsServerMsg } from "../hub/protocol.js";
 import { captureThreadState, threadStateMsg } from "./thread-state.js";

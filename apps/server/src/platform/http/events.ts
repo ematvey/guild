@@ -2,7 +2,7 @@
 // listed here; live delivery uses the authenticated WebSocket feed (hub).
 
 import type { FastifyInstance } from "fastify";
-import type { IdentityCtx } from "../contexts.js";
+import type { IdentityCtx } from "../route-contexts.js";
 import { sortedJson } from "../errors.js";
 import { requireUser } from "./error.js";
 
