@@ -1044,11 +1044,12 @@ describe("viewEntries (collapsed work runs)", () => {
     ]);
   });
 
-  it("keeps a subagent record outside the work run", () => {
+  it("puts a subagent record inside the work run", () => {
     const child: Block = {
       kind: "child_spawn",
       text: "",
       key: "c1",
+      ts: "2026-10-15T12:00:04.000Z",
       childSpawn: {
         threadId: "child-thread",
         agentName: "Researcher",
@@ -1056,7 +1057,7 @@ describe("viewEntries (collapsed work runs)", () => {
       },
     };
     const blocks = [user, tool(1), child, text(2)];
-    expect(shape(blocks)).toEqual(["u", "work(t1)", "c1", "x2"]);
+    expect(shape(blocks)).toEqual(["u", "work(t1,c1)", "x2"]);
   });
 });
 

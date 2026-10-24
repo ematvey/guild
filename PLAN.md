@@ -14,10 +14,11 @@ first. Code comments describe only the present.
 
 - **One chat view: the agent's turn details fold into its work row (2026-10-25).**
   The casual/technical switch is gone, with its `/api/v1/me/settings`
-  `chat_view` key. Every contiguous reasoning/tool run renders as one
-  collapsible row — "Agent is working 12s (4 steps)" live, "Agent worked for
-  7 seconds (4 steps)" settled — and the chevron opens the full technical
-  detail, indented under the label. A short or unstamped run reads "Agent
+  `chat_view` key. Every contiguous agent-work run — thinking, tool calls
+  and subagent spawn/result/close records — renders as one collapsible row —
+  "Agent is working 12s (4 steps)" live, "Agent worked for 7 seconds
+  (4 steps)" settled — and the chevron opens the full technical detail,
+  indented under the label. A short or unstamped run reads "Agent
   worked", so its details stay reachable. The running subagent block follows
   the same shape: "Subagents working (N)" with a chevron that opens the tree.
 
