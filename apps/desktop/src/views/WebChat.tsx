@@ -267,9 +267,13 @@ export function busyAfterThreadPush(
   chats: ChatSummary[],
   openChatId: string | null,
   sendInFlight: boolean,
+  current = false,
 ): boolean {
   if (sendInFlight && openChatId !== null) return true;
-  return !!chats.find((c) => c.id === openChatId)?.generating;
+  // A child thread is not a sidebar row. Its absence says nothing about the
+  // live turn, so keep the status the thread-state frames own.
+  const row = chats.find((c) => c.id === openChatId);
+  return row === undefined ? current : !!row.generating;
 }
 
 /** The composer's send button: the four states it can honestly show.
@@ -2129,6 +2133,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     });
   };
   const [busy, setBusy] = useState(false);
+  // Synchronous mirror of `busy`: frame handlers read it before React
+  // re-renders, and a list push must not clear a child thread's live turn.
+  const busyRef = useRef(false);
+  const markBusy = (value: boolean): void => {
+    busyRef.current = value;
+    setBusy(value);
+  };
   // A "normal" send's HTTP round trip is in flight: onThreadList consults
   // this and keeps the optimistic busy instead of lowering it from a list
   // push that predates the server's generating flag.
@@ -2256,9 +2267,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     };
   }, [chatId]);
 
-  // The tree node rides with the thread load: one request per chat id, then
-  // a refresh whenever the thread's event log moves so the status stays live.
-  const threadEventSeq = contextRevision?.chatId === chatId ? contextRevision.seq : -1;
+  // The tree node rides with the thread load: one request per chat id. The
+  // parent title and depth do not change, and refetching on every event let
+  // a busy child abort each request before it settled, so the header stayed
+  // on the generic "Subagent thread" label for the whole run.
   useEffect(() => {
     if (!chatId) return;
     let live = true;
@@ -2274,7 +2286,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       live = false;
       controller.abort();
     };
-  }, [chatId, threadEventSeq]);
+  }, [chatId]);
 
   useEffect(() => {
     listModels().then((m) => {
@@ -2692,7 +2704,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
     updateContextRevision(cid, state.events);
-    setBusy(state.generating);
+    markBusy(state.generating);
     setBlocks(applied.blocks);
     hasMoreRef.current = applied.hasMore;
     oldestSeqRef.current = applied.oldestSeq;
@@ -2736,7 +2748,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     loadSeq.current++;
     setSubagentNodes([]);
     if (chatId !== null && justCreatedBusyRef.current === chatId) justCreatedBusyRef.current = null;
-    else setBusy(false);
+    else markBusy(false);
     stick.current = true;
     setAtBottom(true);
     if (!chatId) {
@@ -2871,16 +2883,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         syncingChatsRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
-        setBusy(false);
+        markBusy(false);
       },
       onThreadList: (nextChats) => {
         setChats(nextChats);
-        setChatStatus(statusFromThreads(nextChats));
+        // Merge, not replace: a child thread is never in the list, so its
+        // live status must survive every sidebar push.
+        setChatStatus((prev) => ({ ...prev, ...statusFromThreads(nextChats) }));
         // busyAfterThreadPush keeps the optimistic busy while a send's
         // HTTP round trip is in flight (the push predates the server's
         // generating flag — clearing busy here would let a second send
         // race the first).
-        setBusy(busyAfterThreadPush(nextChats, openChatIdRef.current, sendingRef.current));
+        markBusy(busyAfterThreadPush(nextChats, openChatIdRef.current, sendingRef.current, busyRef.current));
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
@@ -3027,7 +3041,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       setPendingSubmitId(command.id);
       sendingRef.current = false;
     } else if (openChatIdRef.current === target) {
-      setBusy(true);
+      markBusy(true);
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
@@ -3077,7 +3091,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               key: command.id, sentAt: command.sentAt,
               attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
             justCreatedBusyRef.current = cid;
-            setBusy(true);
+            markBusy(true);
             pushRoute({ chatId: cid, overlay: null });
             void refreshChats();
           }
@@ -3116,14 +3130,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       if (!mountedRef.current) return;
       const cid = command.chatId ?? command.originChatId;
       const failed = reducerRef.current.failSend(cid, command.id, e instanceof Error ? e.message : String(e));
-      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); setBusy(false); }
+      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); markBusy(false); }
       recoverOutgoing(command);
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
       setPendingSubmitId(cur => cur === command.id ? null : cur);
       sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
-      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setBusy(false);
+      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) markBusy(false);
       refreshOutgoing(n => n + 1);
     }
   };

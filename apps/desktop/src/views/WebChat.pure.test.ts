@@ -734,6 +734,15 @@ describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", (
     expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
   });
 
+  it("keeps a child thread's live status when the list has no row", () => {
+    // Regression: child threads never appear in thread_list. Treating the
+    // absent row as generating=false cleared the Working indicator on every
+    // sidebar push while the child's run was still live.
+    expect(busyAfterThreadPush([], "child-1", false, true)).toBe(true);
+    expect(busyAfterThreadPush([row(false)], "child-1", false, true)).toBe(true);
+    expect(busyAfterThreadPush([], "child-1", false, false)).toBe(false);
+  });
+
   it("never busies the new-chat composer off an in-flight first send", () => {
     // The first send's pending state is the dedicated pending-submit
     // spinner; busy here feeds stopMode, and a Stop button for a turn that
