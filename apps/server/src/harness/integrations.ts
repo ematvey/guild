@@ -30,7 +30,8 @@ import type { EventStore } from "../platform/store/events.js";
 import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
-import { callPlugin, type ToolOutcome } from "../platform/integrations/execute.js";
+import { callPlugin } from "../platform/integrations/execute.js";
+import type { ToolOutcome } from "../platform/integrations/vendors/shared.js";
 import type { PluginGateway } from "../platform/integrations/plugins.js";
 import {
   namespacedTool,
