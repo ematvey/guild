@@ -102,7 +102,7 @@ Precedence order:
 2. **`VITE_DEFAULT_SERVER_URL`** — baked into the frontend bundle at build
    time:
    ```bash
-   VITE_DEFAULT_SERVER_URL=https://guild.example.org npm run build
+   VITE_DEFAULT_SERVER_URL=https://guild.example.com npm run build
    ```
    (then run the packaging script — the value is inside the shipped binary).
 3. Fallback: `http://localhost:18080`.
@@ -135,7 +135,7 @@ artifacts of the same version/platform). When running it detached
 
 ```bash
 BASE=http://localhost:18080 TOKEN=<admin-session-token> VERSION=0.1.0 \
-  VITE_DEFAULT_SERVER_URL=https://guild.example.org \
+  VITE_DEFAULT_SERVER_URL=https://guild.example.com \
   scripts/release-clients.sh
 ```
 

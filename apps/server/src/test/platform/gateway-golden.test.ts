@@ -80,7 +80,7 @@ describe("M2 golden replay (live-capture fixtures)", () => {
     });
     expect(provRes.statusCode).toBe(200);
     const renameRes = await inject("PUT", "/api/v1/admin/gateway/providers/openai", stack.adminToken, {
-      name: "Acme LLMs",
+      name: "Local LLMs",
       protocol: "openai",
       base_url: upstream.url,
       key: "sk-live-capture",

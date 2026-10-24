@@ -571,7 +571,7 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   agent needs a fixed skill set for everyone.
 
 - **Schema-first protocol types (protobuf or similar), dropping the
-  Rust-side ts-rs generation** (maintainer, 2026-10-14): define the wire types
+  Rust-side ts-rs generation** (2026-10-14): define the wire types
   once in a language-neutral IDL and generate both the Rust and TS types
   from it, instead of Rust being the source of truth with ts-rs emitting
   `crates/protocol/bindings/*.ts`. Removes the npm-workspace-inside-crates

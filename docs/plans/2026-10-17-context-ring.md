@@ -42,6 +42,6 @@ Verification:
   and passes Ed25519 verification. Builds/publication ran successfully as
   `bigjob-20261016-235713-context-clients`.
 
-Implementation was created in `/home/user/guild-wt/composer-context-ring`
+Implementation was created in `guild-wt/composer-context-ring`
 on `feat/composer-context-ring`, then fast-forwarded into `develop` for dev
 deployment and client publication. Production was untouched.

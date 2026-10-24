@@ -345,7 +345,7 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
     // every cycle) turned a persistently failing bind into a link kill per
     // cycle: with the Windows pipe bind broken (os error 87, 2026-09-23 →
     // 09-29) every Windows machine's link died within a second of
-    // connecting, forever — WORKSTATION/DEVBOX-2 permanently offline.
+    // connecting, forever — Windows machines permanently offline.
     let mut link_cycle: Option<(
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
@@ -632,7 +632,7 @@ fn create_pipe_server_instance(
     // is unassigned and CreateNamedPipeW rejects the whole call with
     // ERROR_INVALID_PARAMETER (87) — every Windows pipe host failed to bind
     // until this moved (2026-09-29), and the host cycle churned the machine
-    // link every second (WORKSTATION/DEVBOX-2 permanently offline).
+    // link every second (Windows machines permanently offline).
     let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
     if first {
         open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
@@ -716,9 +716,9 @@ mod tests {
 
     #[test]
     fn pipe_suffix_is_stable_hex() {
-        let s = user_pipe_suffix("maintainer");
+        let s = user_pipe_suffix("alice");
         assert_eq!(s.len(), 16);
-        assert_eq!(s, user_pipe_suffix("maintainer"));
+        assert_eq!(s, user_pipe_suffix("alice"));
     }
 }
 

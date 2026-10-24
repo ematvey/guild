@@ -182,8 +182,8 @@ connection after 5 minutes unused, so the runner can count it idle.
 3. Smoke: `docker run --rm --runtime=runsc node:22-slim uname -r` →
    `4.19.0-gvisor`.
 
-Done on `devbox` 2026-10-14 (release 20261005.0; daemon.json backup
-`/etc/docker/daemon.json.bak-20261014-pre-gvisor`).
+Done 2026-10-14 (release 20261005.0; back up
+`/etc/docker/daemon.json` first).
 
 ## Phases
 

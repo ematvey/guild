@@ -23,7 +23,7 @@
 #
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
-#     VITE_DEFAULT_SERVER_URL=https://guild.example.org \
+#     VITE_DEFAULT_SERVER_URL=https://guild.example.com \
 #     scripts/release-clients.sh
 set -euo pipefail
 

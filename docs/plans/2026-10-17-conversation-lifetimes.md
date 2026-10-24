@@ -3,7 +3,7 @@
 This implements the follow-up review of `a4527a8`. Pi Durable and its related
 packages remain pinned to 1.3.0. The change addresses the six reproduced
 findings, the inspected lifecycle issues, and the architecture/style work
-in `/home/user/guild-audits/pi-durable-2026-10-17/FOLLOWUP.md`.
+in `guild-audits/pi-durable-2026-10-17/FOLLOWUP.md` (outside the repo).
 
 ## Ownership and admission
 
@@ -225,7 +225,7 @@ model replied exactly `QUEUE_STEERING_0572_OK`. Submissions 16315 and 16325
 both completed with answer 16329; both commands completed, and the promoted
 message kept its original ID. Reload preserved the delivered transcript and
 idle composer. Screenshots and JSON evidence live under
-`/home/user/guild-audits/pi-durable-2026-10-17/`.
+`guild-audits/pi-durable-2026-10-17/` (outside the repo).
 
 All deployment, database, and release operations used dev. Production was
 untouched.

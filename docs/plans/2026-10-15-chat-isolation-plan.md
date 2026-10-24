@@ -1,10 +1,10 @@
 # Chat isolation — worker-per-chat: decided and building
 
-maintainer, 2026-10-15. Outcome of the durability incidents (the poisoned
+2026-10-15. Outcome of the durability incidents (the poisoned
 `pi.live` document that SessionFailed every chat, the sealed session after a
 transient Postgres failure, the SIGTERM drain). Requirement: **every chat is
 fully isolated** — one chat's failure may never take down another chat, and
-recovery must be automatic. DECISION 2026-10-15 (maintainer): build the
+recovery must be automatic. DECISION 2026-10-15: build the
 worker-per-chat model with IPC — “should be more scalable” — not gated on
 upstream. M0 (the in-process supervisor) shipped first (`fe67fd8`) and stays:
 it is the recovery primitive workers reuse.

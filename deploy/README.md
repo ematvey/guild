@@ -28,7 +28,7 @@ cd ../..
 BASE=http://localhost:8080 \
 TOKEN=<admin-session-token> \
 VERSION=<desktop-version> \
-VITE_DEFAULT_SERVER_URL=https://guild.example.org \
+VITE_DEFAULT_SERVER_URL=https://guild.example.com \
   scripts/release-clients.sh
 ```
 
