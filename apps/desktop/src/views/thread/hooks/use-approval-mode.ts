@@ -1,7 +1,7 @@
 // The composer's per-chat approval mode and the account default label.
 import { useEffect, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { getApproval, getChatApproval, setChatApproval, type ChatApprovalMode } from "../../../transport";
+import { getApproval, getChatApproval, setChatApproval, type ChatApprovalMode } from "../../../lib/api/approvals";
 import { accountDefaultLabel } from "../approval";
 
 export function useApprovalMode({

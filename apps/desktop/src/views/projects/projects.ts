@@ -3,7 +3,9 @@
 // the WSL path specifier's state machine. No DOM, no I/O — the components
 // drive the effects and feed events into pickerReducer.
 
-import type { ChatSummary, DirEntry, Project } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
+import type { DirEntry } from "../../lib/api/folders";
+import type { Project } from "../../lib/api/projects";
 
 // ---- sidebar grouping ----
 

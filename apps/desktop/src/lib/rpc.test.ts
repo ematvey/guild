@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: any[]) => invokeMock(...args),
 }));
 
-import { rpcCall, rpcWaitersOutstanding } from "../transport";
+import { rpcCall, rpcWaitersOutstanding } from "./machine-rpc";
 
 describe("rpcCall poll routing", () => {
   beforeEach(() => {

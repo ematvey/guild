@@ -2,7 +2,8 @@
 // live turn flags, scroll geometry and the thread-tree node.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { fetchChatTree, fetchThreadEventsPage, type ChatSubagentNode, type ChatTree, type ThreadState } from "../../../transport";
+import { fetchChatTree, type ChatSubagentNode, type ChatTree } from "../../../lib/api/chats";
+import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
 import { createThreadReducer, type Block, type ThreadReducer } from "../../../lib/thread-reducer";
 import { EARLIER_PAGE_SIZE } from "../mentions";
 

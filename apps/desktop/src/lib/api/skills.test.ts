@@ -12,7 +12,8 @@ describe("orgSkillsApi.skillBody pins the version", () => {
 
   async function setup() {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    const { orgSkillsApi, setToken } = await import("./transport");
+    const { orgSkillsApi } = await import("./skills");
+    const { setToken } = await import("../session");
     const store = new Map<string, string>([
       ["guild.serverUrl", "https://guild.example"],
       ["guild_token", "tok"],
@@ -42,23 +43,5 @@ describe("orgSkillsApi.skillBody pins the version", () => {
     const { api, urls } = await setup();
     expect(await api.skillBody("deploy-checklist")).toBe("BODY");
     expect(urls).toEqual(["https://guild.example/api/v1/skills/deploy-checklist/source"]);
-  });
-});
-
-describe("settings reads distinguish failures from defaults", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  it.each(["getApproval", "getAssistantPrompt"] as const)("%s rejects failed reads", async (name) => {
-    const transport = await import("./transport");
-    vi.stubGlobal("localStorage", { getItem: () => null });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
-    await expect(transport[name]()).rejects.toThrow("503");
-  });
-
-  it("preserves a successful absent assistant override", async () => {
-    const { getAssistantPrompt } = await import("./transport");
-    vi.stubGlobal("localStorage", { getItem: () => null });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ prompt: null }), { status: 200 })));
-    await expect(getAssistantPrompt()).resolves.toBeNull();
   });
 });

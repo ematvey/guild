@@ -1,0 +1,268 @@
+// The member socket client: connect with a one-use ticket, route server
+// frames to handlers, and resync the open thread on every reconnect.
+
+import type { WsServerMsg } from "../../../../crates/protocol/bindings/Ws";
+
+import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
+import { clientId } from "./machine-rpc";
+import { StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
+import { ChatSubagentNode, ChatSummary } from "./api/chats";
+
+export interface SocketLike {
+  readonly readyState: number;
+  onopen: ((event?: any) => void) | null;
+  onmessage: ((event: any) => void) | null;
+  onerror: ((event?: any) => void) | null;
+  onclose: ((event?: any) => void) | null;
+  send(data: string): void;
+  close(): void;
+}
+
+export type SocketFactory = (url: string) => SocketLike;
+
+export interface SocketHandlers {
+  onConnect?: () => void;
+  onThreadState?: (state: ThreadState) => void;
+  /** Incremental durable-log fan-out: rows appended since the client's
+   *  last view, rendered through the same replay rules a sync uses. */
+  onThreadEvents?: (chat_id: string, seq: number, events: ThreadEventRow[]) => void;
+  /** The open chat's thread subtree with each node's latest run status. */
+  onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
+  onThreadList: (chats: ChatSummary[]) => void;
+  onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
+  onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
+  onSync: (chat_id: string, phase: "begin" | "done") => void;
+  onDisplaced?: () => void;
+  onAuthRequired?: () => void;
+  onError?: (message: string) => void;
+  onOrgEvent?: (event: unknown) => void;
+}
+
+/** Converts the current HTTP origin into the WebSocket origin. */
+
+export function openSocket(url: string, factory: SocketFactory = (u) => new WebSocket(u)): SocketLike {
+  return factory(url);
+}
+
+/** Pure protocol router. It has no browser or socket dependencies. */
+
+export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): void {
+  switch (message.type) {
+    case "hello":
+    case "tool_dispatch":
+    case "tool_cancel":
+      return;
+    case "thread_state":
+      handlers.onThreadState?.(message as unknown as ThreadState);
+      return;
+    case "thread_events":
+      handlers.onThreadEvents?.(
+        message.chat_id,
+        message.seq,
+        message.events as unknown as ThreadEventRow[],
+      );
+      return;
+    case "thread_list":
+      handlers.onThreadList(message.chats as unknown as ChatSummary[]);
+      return;
+    case "subagent_tree":
+      handlers.onSubagentTree?.(message.chat_id, message.nodes as unknown as ChatSubagentNode[]);
+      return;
+    case "chat_status":
+      handlers.onChatStatus({ chat_id: message.chat_id, generating: message.generating });
+      return;
+    case "sync_begin":
+      handlers.onSync(message.chat_id, "begin");
+      return;
+    case "live_frame":
+      handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id ?? null, event: message.event as StreamFrame });
+      return;
+    case "sync_done":
+      handlers.onSync(message.chat_id, "done");
+      return;
+    case "displaced":
+      handlers.onDisplaced?.();
+      return;
+    case "auth_required":
+      handlers.onAuthRequired?.();
+      return;
+    case "error":
+      handlers.onError?.(message.message);
+      return;
+    case "org_event":
+      handlers.onOrgEvent?.(message.event);
+      return;
+  }
+}
+
+/** One member socket per tab or desktop webview. Reconnects always resync. */
+
+export function startSocket(
+  opts: SocketHandlers & {
+    getOpenChatId: () => string | null;
+    socketFactory?: SocketFactory;
+  },
+): { stop: () => void; resync: () => void; markRead: (chatId: string) => void } {
+  const factory = opts.socketFactory ?? ((url: string) => openSocket(url));
+  let socket: SocketLike | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let connecting = false;
+  let needsRefresh = false;
+  const viewWatermarks = new Map<string, number>();
+  // Liveness: browsers auto-pong protocol-level pings below JS, so the tab
+  // cannot hear the server's heartbeat. This side sends app-level pings and
+  // watches for ANY server frame back — a stalled tunnel (half-open socket)
+  // looks "open" but delivers nothing; without this watchdog the tab stays
+  // deaf until an external event kills the connection.
+  const PING_INTERVAL_MS = 5_000;
+  const DEAD_AFTER_MS = 15_000;
+  let lastFrameAt = 0;
+  let pingsTimer: ReturnType<typeof setInterval> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  const noteFrame = (): void => {
+    lastFrameAt = Date.now();
+  };
+  const livenessLoop = (): void => {
+    if (pingsTimer !== null) return;
+    pingsTimer = setInterval(() => {
+      if (stopped) return;
+      if (socket?.readyState === 1) {
+        try { socket.send(JSON.stringify({ type: "ping" })); } catch { /* closing */ }
+      }
+    }, PING_INTERVAL_MS);
+    watchdogTimer = setInterval(() => {
+      if (stopped || socket === null || socket.readyState !== 1) return;
+      if (lastFrameAt !== 0 && Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+        // Half-open black hole: force the reconnect path (onclose fires).
+        try { socket.close(); } catch { /* already closing */ }
+      }
+    }, 2_000);
+  };
+  const livenessStop = (): void => {
+    if (pingsTimer !== null) { clearInterval(pingsTimer); pingsTimer = null; }
+    if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null; }
+  };
+
+  const sendSync = () => {
+    if (socket?.readyState !== 1) return;
+    socket.send(JSON.stringify({ type: "sync", chat_id: opts.getOpenChatId() }));
+  };
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer !== null || connecting) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, 3000);
+  };
+  const connect = async (): Promise<void> => {
+    if (stopped || connecting) return;
+    connecting = true;
+    try {
+      if (needsRefresh) { await refreshSession(); needsRefresh = false; }
+      const ticket = await mintTicket();
+      if (stopped) return;
+      const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}`;
+      const current = openSocket(url, factory);
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current || stopped) return;
+        viewWatermarks.clear();
+        noteFrame();
+        opts.onConnect?.();
+        sendSync();
+      };
+      current.onmessage = (event) => {
+        if (socket !== current || stopped || typeof event.data !== "string") return;
+        noteFrame();
+        try {
+          const message = JSON.parse(event.data) as WsServerMsg;
+          if (message.type === "auth_required") {
+            connecting = true;
+            needsRefresh = true;
+            current.close();
+            void refreshSession().then(() => {
+              needsRefresh = false;
+              connecting = false;
+              scheduleReconnect();
+            }).catch((error) => {
+              connecting = false;
+              if (error instanceof SessionExpiredError) {
+                stopped = true;
+                opts.onAuthRequired?.();
+              } else {
+                opts.onError?.(error instanceof Error ? error.message : String(error));
+                scheduleReconnect();
+              }
+            });
+            return;
+          }
+          if (message.type === "thread_state") {
+            if (message.seq <= (viewWatermarks.get(message.chat_id) ?? -1)) return;
+            viewWatermarks.set(message.chat_id, message.seq);
+          }
+          routeMessage(message, opts);
+        } catch {
+          /* malformed server message — ignore */
+        }
+      };
+      current.onerror = () => {
+        current.close();
+      };
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null;
+        scheduleReconnect();
+      };
+    } catch (error) {
+      connecting = false;
+      if (error instanceof SessionExpiredError) { stopped = true; opts.onAuthRequired?.(); return; }
+      opts.onError?.(error instanceof Error ? error.message : String(error));
+      scheduleReconnect();
+    } finally {
+      connecting = false;
+    }
+  };
+
+  livenessLoop();
+  // Wake-ups and network flips leave half-open sockets behind: re-check
+  // liveness (and resync when healthy) the moment the tab is live again.
+  const wakeCheck = (): void => {
+    if (stopped) return;
+    if (socket === null || socket.readyState !== 1) {
+      if (lastFrameAt === 0 || Date.now() - lastFrameAt > DEAD_AFTER_MS) void connect();
+    } else if (Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+      try { socket.close(); } catch { /* already closing */ }
+    } else {
+      sendSync();
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", wakeCheck);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") wakeCheck();
+    });
+  }
+
+  void connect();
+  return {
+    stop: () => {
+      stopped = true;
+      livenessStop();
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      const current = socket;
+      socket = null;
+      current?.close();
+    },
+    resync: () => sendSync(),
+    // The duplex read-mark: rides the member socket the turn's frames
+    // already arrive on — no separate HTTP request per new content.
+    markRead: (chatId: string) => {
+      if (socket?.readyState !== 1) return;
+      socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+    },
+  };
+} // shared with the settings window client code
+

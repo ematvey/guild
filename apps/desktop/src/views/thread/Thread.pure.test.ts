@@ -28,7 +28,8 @@ import {
   type Block,
 } from "../../lib/thread-reducer";
 import type { SidebarTab } from "../sidebar-rail";
-import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../../transport";
+import type { ApprovalPolicy } from "../../lib/api/approvals";
+import type { ThreadEvent, ThreadEventRow } from "../../lib/thread-events";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
   return { id: `e${seq}`, seq, event, created_at: "t" };

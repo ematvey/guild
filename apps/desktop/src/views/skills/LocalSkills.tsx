@@ -15,7 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
-import { rpcCall } from "../../transport";
+import { rpcCall } from "../../lib/machine-rpc";
 import { resolveProjectDir } from "../settings/resolve-project-dir";
 import { daemonFs } from "../../lib/fs-bridge";
 import { listSkills, setSkillDisabled } from "../../lib/skills";

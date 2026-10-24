@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Lock, Plus, Search } from "lucide-react";
-import { IS_TAURI } from "../../transport";
+import { IS_TAURI } from "../../lib/session";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Avatar } from "@guild/ui/components/avatar";

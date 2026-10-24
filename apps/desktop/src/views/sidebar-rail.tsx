@@ -19,7 +19,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
 import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
-import { IS_TAURI } from "../transport";
+import { IS_TAURI } from "../lib/session";
 
 export type SidebarTab =
   | "inbox"

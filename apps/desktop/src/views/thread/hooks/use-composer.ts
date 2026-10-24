@@ -28,8 +28,8 @@ import {
   type OutgoingCommand,
 } from "../../../lib/outgoing-command";
 import { fetchInstalls } from "../../skills/skills-api";
-import { rpcCall } from "../../../transport";
-import { apiUrl } from "../../../transport";
+import { rpcCall } from "../../../lib/machine-rpc";
+import { apiUrl } from "../../../lib/session";
 import { BUILTIN_COMMANDS, composerSkills, mentionCandidates, type ComposerSkill } from "../mentions";
 import { modalityOf } from "../attachments";
 

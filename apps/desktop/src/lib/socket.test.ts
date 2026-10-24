@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { routeMessage, startSocket, type SocketHandlers, type SocketLike } from "../transport";
-import type { ThreadEventRow } from "../transport";
-import type { ThreadEvent } from "../transport";
+import { routeMessage, startSocket, type SocketHandlers, type SocketLike } from "./socket-client";
+import type { ThreadEventRow } from "./thread-events";
+import type { ThreadEvent } from "./thread-events";
 
 const chat = { id: "chat-1", title: "Chat", created_at: "now" };
 const delta = { type: "delta" as const, content: "hello" };

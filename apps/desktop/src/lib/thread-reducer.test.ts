@@ -12,7 +12,7 @@ import {
   reconcilePendingSend,
   threadStateBlocks,
 } from "./thread-reducer";
-import type { ThreadEvent, ThreadEventRow, ThreadState } from "../transport";
+import type { ThreadEvent, ThreadEventRow, ThreadState } from "./thread-events";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
   return { id: `e${seq}`, seq, event, created_at: "t" };

@@ -12,13 +12,14 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { ChevronDown, Plus, X } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";import {
-  IS_TAURI,
+import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { IS_TAURI } from "../lib/session";
+import {
   workspaceList,
   workspaceSignOut,
   workspaceSwitch,
   type WorkspaceList,
-} from "../transport";
+} from "../lib/api/workspaces";
 
 /** The origin's display label: scheme stripped, so two servers of one org
  * stay distinguishable without a wall of protocol. */

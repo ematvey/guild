@@ -10,7 +10,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { api, ApiError, getToken } from "../admin-api";
-import { apiUrl, serverUrl } from "../../../transport";
+import { apiUrl, serverUrl } from "../../../lib/session";
 
 interface OrgSettings {
   name: string;

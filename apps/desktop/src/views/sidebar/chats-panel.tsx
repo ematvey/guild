@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import type { ChatSummary } from "../../transport";
+import type { ChatSummary } from "../../lib/api/chats";
 import { sidebarGrouping } from "../projects/projects";
 import { ChatListItem } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";

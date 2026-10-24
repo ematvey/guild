@@ -5,7 +5,7 @@
 // is set it replaces `combo` outside the desktop client (browsers reserve
 // some plain-modifier shortcuts, e.g. Ctrl+N).
 
-import { IS_TAURI } from "../transport";
+import { IS_TAURI } from "../lib/session";
 
 const isApple =
   typeof navigator !== "undefined" &&

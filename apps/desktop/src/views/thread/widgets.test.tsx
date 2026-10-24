@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApprovalCard } from "./approval-card";
 import { AttachmentFileChip, AttachmentImageThumb } from "./attachments";
 import type { ApprovalBlock } from "../../lib/thread-reducer";
-import type { MessageAttachmentMeta } from "../../transport";
+import type { MessageAttachmentMeta } from "../../lib/thread-events";
 
 const approval = (over: Partial<ApprovalBlock>): ApprovalBlock => ({
   callId: "call-1",

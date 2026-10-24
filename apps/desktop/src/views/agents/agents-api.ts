@@ -3,7 +3,7 @@
 // server owns the wire truth, so list responses accept both a bare array
 // and a keyed envelope.
 
-import { apiUrl, getToken } from "../../transport";
+import { apiUrl, getToken } from "../../lib/session";
 import type {
   AgentStatus,
   AgentVisibility,

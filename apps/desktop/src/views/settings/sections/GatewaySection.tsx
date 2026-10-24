@@ -28,13 +28,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import { serverUrl } from "../../../transport";
-import {
-  createMyApiKey,
-  listMyApiKeys,
-  revokeMyApiKey,
-  type ApiKeyInfo,
-} from "../../../transport";
+import { serverUrl } from "../../../lib/session";
+import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../lib/api/models";
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../components/page-header";

@@ -17,14 +17,9 @@ import { Button } from "@guild/ui/components/button";
 import { Spinner } from "@guild/ui/components/spinner";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import {
-  createProject,
-  listWslDistros,
-  wslPrettyName,
-  type Distro,
-  type MachineInfo,
-  type Project,
-} from "../../transport";
+import { createProject, type Project } from "../../lib/api/projects";
+import { listWslDistros, wslPrettyName, type Distro } from "../../lib/api/folders";
+import type { MachineInfo } from "../../lib/api/machines";
 import { PathSpecifier } from "./PathSpecifier";
 import { RemotePathSpecifier } from "./RemotePathSpecifier";
 

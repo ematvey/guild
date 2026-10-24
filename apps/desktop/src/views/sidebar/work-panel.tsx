@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import type { MachineInfo, Project } from "../../transport";
+import type { MachineInfo } from "../../lib/api/machines";
+import type { Project } from "../../lib/api/projects";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,

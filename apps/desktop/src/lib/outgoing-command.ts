@@ -1,4 +1,4 @@
-import type { MessageAttachmentMeta } from "../transport";
+import type { MessageAttachmentMeta } from "./thread-events";
 
 export type DraftAttachment = MessageAttachmentMeta & {
   file?: File;
