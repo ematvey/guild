@@ -57,7 +57,6 @@ import { readDraft, writeDraft } from "../../lib/drafts";
 import { IS_TAURI } from "../../lib/session";
 import { apiUrl } from "../../lib/session";
 import { bindChatAgent, chatAgentBinding } from "../../lib/api/chats";
-import { fetchChatViewMode, saveChatViewMode, type ChatViewMode } from "../../lib/api/workspaces";
 import { listModels, type ModelOption } from "../../lib/api/models";
 import { machineId } from "../../lib/machine-rpc";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
@@ -669,22 +668,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     await archiveChat(chatId);
     pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
   }, [chatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
-  // The chat view mode (casual/technical): per-user server-side (user_kv);
-  // the toggle applies locally and PUTs best-effort.
-  const [chatView, setChatView] = useState<ChatViewMode>("casual");
-  useEffect(() => {
-    void fetchChatViewMode().then(setChatView);
-  }, []);
-  const setChatViewPersist = useCallback((m: ChatViewMode) => {
-    setChatView(m);
-    void saveChatViewMode(m);
-  }, []);
-  // View entries: the two views differ ONLY in thinking/tool runs —
-  // technical renders each block 1:1, casual replaces each contiguous run
-  // with one WorkedForBlock. Everything else (user, text, errors,
-  // compaction cards, queued-send chips, approvals) is identical.
+  // View entries: each contiguous thinking/tool run becomes one
+  // WorkedForBlock; everything else (user, text, errors, compaction cards,
+  // queued-send chips, approvals) stays 1:1.
   const { entries: displayEntries, finalAgent, lastAgent } = useMemo(() => {
-    const entries = viewEntries(blocks, chatView);
+    const entries = viewEntries(blocks);
     // Hover stamps under agent text mark only the turn's final message: an
     // intermediate text block between tool runs is context, not the answer,
     // and stamping each one costs hover space under the whole transcript.
@@ -704,7 +692,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       }
     }
     return { entries, finalAgent, lastAgent };
-  }, [blocks, chatView]);
+  }, [blocks]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
   // The transcript is the expensive subtree: every keystroke in the
@@ -725,7 +713,19 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               active={streaming && i === displayEntries.length - 1}
               stopping={!!(chatId && stopping[chatId])}
               turnStart={e.turnStart}
-            />
+            >
+              {e.run.map((b) =>
+                b.kind === "reasoning" ? (
+                  <ReasoningFrame
+                    key={b.key}
+                    text={b.reasoningText ?? ""}
+                    live={streaming && b.key === blocks[lastBlockIndex]?.key}
+                  />
+                ) : b.kind === "tool" && b.tool ? (
+                  <ToolFrame key={b.key} t={b.tool} />
+                ) : null,
+              )}
+            </WorkedForBlock>
           ) : e.b.kind === "user" ? (
             <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
               <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
@@ -743,14 +743,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               </div>
               <HoverStamp ts={e.b.ts} side="right" />
             </div>
-          ) : e.b.kind === "reasoning" ? (
-            <ReasoningFrame
-              key={e.b.key}
-              text={e.b.reasoningText ?? ""}
-              live={streaming && e.i === lastBlockIndex}
-            />
-          ) : e.b.kind === "tool" && e.b.tool ? (
-            <ToolFrame key={e.b.key} t={e.b.tool} />
           ) : e.b.kind === "approval" && e.b.approval ? (
             <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
           ) : e.b.kind === "child_spawn" && e.b.childSpawn ? (
@@ -785,7 +777,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           )
         );
       }),
-    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, openChildChat],
+    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, blocks, openChildChat],
   );
   // The running part of the chat's thread subtree, rendered at the end of
   // the transcript. The nodes arrive on the member socket, never by polling.
@@ -1286,15 +1278,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   {chatArchived ? "Unarchive" : "Archive"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
-                  <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
-                  Casual view
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setChatViewPersist("technical")}>
-                  <Check className={`size-4 ${chatView === "technical" ? "" : "opacity-0"}`} />
-                  Technical view
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))}>
                   <Link2 className="size-4" />
                   Copy thread URL
@@ -1402,18 +1385,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 </div>
               )}
               {/* Working shimmer: the turn is generating but the displayed
-                  tail is not already animating — a live reasoning frame
-                  (technical) or an active work run (casual). */}
+                  tail is not already animating — the last text block streams,
+                  an active work run pulses its label, a live reasoning frame
+                  sits inside that run. */}
               {streaming &&
                 !(
                   blocks.length > 0 &&
                   (blocks[blocks.length - 1].kind === "text" ||
                     blocks[blocks.length - 1].kind === "reasoning")
                 ) &&
-                !(
-                  chatView === "casual" &&
-                  displayEntries[displayEntries.length - 1]?.kind === "work"
-                ) && (
+                displayEntries[displayEntries.length - 1]?.kind !== "work" && (
                   <div className="max-w-none py-1">
                     <WorkingIndicator
                       label={chatId && stopping[chatId] ? "Stopping" : "Working"}

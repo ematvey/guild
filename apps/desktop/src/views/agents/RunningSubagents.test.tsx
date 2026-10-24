@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChatSubagentNode } from "../../lib/api/chats";
-import { isRunningStatus, RunningSubagents, runningSubagentTree } from "./RunningSubagents";
+import { countRunning, isRunningStatus, RunningSubagents, runningSubagentTree, SubagentTree } from "./RunningSubagents";
 
 function node(over: Partial<ChatSubagentNode> & { thread_id: string }): ChatSubagentNode {
   return {
@@ -80,9 +80,23 @@ describe("RunningSubagents", () => {
     node({ thread_id: "grand", parent_thread_id: "child", status: "running", depth: 2, title: "T1-A-1" }),
   ];
 
-  it("never renders the chat's own title", () => {
+  it("counts only the live nodes in the kept tree", () => {
+    const tree = runningSubagentTree(nodes)!;
+    expect(countRunning(tree)).toBe(2);
+  });
+
+  it("collapses to a counted header and never renders the chat's own title", () => {
     const html = renderToStaticMarkup(<RunningSubagents nodes={nodes} onOpen={() => {}} />);
-    expect(html).toContain("Subagents");
+    expect(html).toContain("Subagents working");
+    expect(html).toContain("(2)");
+    expect(html).not.toContain("Researcher · T1-A");
+    expect(html).not.toContain("im testing a subagent tree");
+  });
+
+  it("the expanded tree names every kept node", () => {
+    const html = renderToStaticMarkup(
+      <SubagentTree tree={runningSubagentTree(nodes)!} onOpen={() => {}} />,
+    );
     expect(html).toContain("Researcher · T1-A");
     expect(html).toContain("Researcher · T1-A-1");
     expect(html).not.toContain("im testing a subagent tree");

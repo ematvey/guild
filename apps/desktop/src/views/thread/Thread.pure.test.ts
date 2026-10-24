@@ -1010,7 +1010,7 @@ describe("tabPaneLayout (rail tab → sidebar/pane layout)", () => {
   });
 });
 
-describe("viewEntries (casual work runs)", () => {
+describe("viewEntries (collapsed work runs)", () => {
   const tool = (n: number): Block => ({
     kind: "tool",
     text: "",
@@ -1019,37 +1019,32 @@ describe("viewEntries (casual work runs)", () => {
   });
   const text = (n: number): Block => ({ kind: "text", text: `text${n}`, key: `x${n}` });
   const user: Block = { kind: "user", text: "go", key: "u", ts: "2026-10-15T12:00:00.000Z" };
-  const shape = (blocks: Block[], view: "casual" | "technical") =>
-    viewEntries(blocks, view).map((e) =>
+  const shape = (blocks: Block[]) =>
+    viewEntries(blocks).map((e) =>
       e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key,
     );
 
   it("collapses a contiguous run into one entry sitting where the run was", () => {
     const blocks = [user, tool(1), tool(2), text(3), tool(4), tool(5), text(6)];
-    expect(shape(blocks, "casual")).toEqual(["u", "work(t1,t2)", "x3", "work(t4,t5)", "x6"]);
+    expect(shape(blocks)).toEqual(["u", "work(t1,t2)", "x3", "work(t4,t5)", "x6"]);
   });
 
   it("never leaves a work entry trailing the text that followed its run", () => {
     const blocks = [user, tool(1), text(2), tool(3), text(4)];
-    const entries = viewEntries(blocks, "casual");
+    const entries = viewEntries(blocks);
     expect(entries[entries.length - 1]).toMatchObject({ kind: "plain", b: { key: "x4" } });
   });
 
   it("anchors every run to the turn's user message", () => {
     const blocks = [user, tool(1), text(2), tool(3)];
-    const runs = viewEntries(blocks, "casual").filter((e) => e.kind === "work");
+    const runs = viewEntries(blocks).filter((e) => e.kind === "work");
     expect(runs.map((r) => r.kind === "work" && r.turnStart)).toEqual([
       "2026-10-15T12:00:00.000Z",
       "2026-10-15T12:00:00.000Z",
     ]);
   });
 
-  it("technical renders every block 1:1", () => {
-    const blocks = [user, tool(1), tool(2), text(3)];
-    expect(shape(blocks, "technical")).toEqual(["u", "t1", "t2", "x3"]);
-  });
-
-  it("keeps a subagent record in both views", () => {
+  it("keeps a subagent record outside the work run", () => {
     const child: Block = {
       kind: "child_spawn",
       text: "",
@@ -1061,12 +1056,11 @@ describe("viewEntries (casual work runs)", () => {
       },
     };
     const blocks = [user, tool(1), child, text(2)];
-    expect(shape(blocks, "casual")).toEqual(["u", "work(t1)", "c1", "x2"]);
-    expect(shape(blocks, "technical")).toEqual(["u", "t1", "c1", "x2"]);
+    expect(shape(blocks)).toEqual(["u", "work(t1)", "c1", "x2"]);
   });
 });
 
-describe("workRunLabel (casual worked-for entry)", () => {
+describe("workRunLabel (worked-for entry)", () => {
   const run = (start?: string, end?: string): Block[] => [
     {
       kind: "tool",
@@ -1076,13 +1070,13 @@ describe("workRunLabel (casual worked-for entry)", () => {
     },
   ];
 
-  it("a completed run under one second renders nothing", () => {
-    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.500Z"), false, false, 0)).toBeNull();
-    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.000Z"), false, false, 0)).toBeNull();
+  it("a completed run under one second still gets a label for its details", () => {
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.500Z"), false, false, 0)).toBe("Agent worked");
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.000Z"), false, false, 0)).toBe("Agent worked");
   });
 
-  it("a completed run without stamps renders nothing; longer runs spell the duration", () => {
-    expect(workRunLabel(run(undefined, undefined), false, false, 0)).toBeNull();
+  it("a completed run without stamps still gets a label; longer runs spell the duration", () => {
+    expect(workRunLabel(run(undefined, undefined), false, false, 0)).toBe("Agent worked");
     expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:07.000Z"), false, false, 0)).toBe(
       "Agent worked for 7 seconds",
     );

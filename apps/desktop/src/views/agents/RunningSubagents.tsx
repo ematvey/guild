@@ -6,6 +6,7 @@
 // tree is always the current server state.
 
 import type { ChatSubagentNode } from "../../lib/api/chats";
+import { Frame } from "../frame";
 
 export interface RunningSubagentNode {
   node: ChatSubagentNode;
@@ -55,6 +56,15 @@ export function runningSubagentTree(nodes: readonly ChatSubagentNode[]): Running
 
 function label(node: ChatSubagentNode): string {
   return node.title.trim() === "" ? node.agent_name : `${node.agent_name} · ${node.title}`;
+}
+
+/** How many nodes in the kept tree are still live. A finished parent kept for
+ *  a running grandchild does not count itself. */
+export function countRunning(node: RunningSubagentNode): number {
+  return node.children.reduce(
+    (n, child) => n + (isRunningStatus(child.node.status) ? 1 : 0) + countRunning(child),
+    0,
+  );
 }
 
 /** One vertical guide column: a full line for an ancestor with following
@@ -116,8 +126,32 @@ function Row({
   );
 }
 
+/** The kept tree rows, starting at the running children. */
+export function SubagentTree({
+  tree,
+  onOpen,
+}: {
+  tree: RunningSubagentNode;
+  onOpen: (chatId: string) => void;
+}) {
+  return (
+    <div>
+      {tree.children.map((child, i) => (
+        <Row
+          key={child.node.thread_id}
+          entry={child}
+          guides={[]}
+          isLast={i === tree.children.length - 1}
+          onOpen={onOpen}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** Renders nothing when no descendant of this chat is running. The chat's
- *  own title never appears: the tree starts at the running children. */
+ *  own title never appears: the tree starts at the running children. The
+ *  header carries the live count and opens the full tree below. */
 export function RunningSubagents({
   nodes,
   onOpen,
@@ -128,21 +162,16 @@ export function RunningSubagents({
   const tree = runningSubagentTree(nodes);
   if (tree === null) return null;
   return (
-    <div className="mt-8">
-      <div className="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Subagents
-      </div>
-      <div>
-        {tree.children.map((child, i) => (
-          <Row
-            key={child.node.thread_id}
-            entry={child}
-            guides={[]}
-            isLast={i === tree.children.length - 1}
-            onOpen={onOpen}
-          />
-        ))}
-      </div>
-    </div>
+    <Frame
+      className="mt-8"
+      title={
+        <>
+          <span className="font-medium text-foreground/80">Subagents working</span>
+          <span className="ml-2 text-muted-foreground/70">({countRunning(tree)})</span>
+        </>
+      }
+    >
+      <SubagentTree tree={tree} onOpen={onOpen} />
+    </Frame>
   );
 }

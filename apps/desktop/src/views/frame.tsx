@@ -11,6 +11,7 @@ export function Frame({
   title,
   badge,
   defaultOpen = false,
+  className,
   children,
 }: {
   icon?: React.ReactNode;
@@ -19,12 +20,13 @@ export function Frame({
   title: React.ReactNode | ((open: boolean) => React.ReactNode);
   badge?: React.ReactNode;
   defaultOpen?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const titleNode = typeof title === "function" ? title(open) : title;
   return (
-    <div className="flex w-full flex-col text-sm">
+    <div className={`flex w-full flex-col text-sm ${className ?? ""}`}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"

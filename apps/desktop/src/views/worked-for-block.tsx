@@ -1,15 +1,15 @@
 import { memo, useEffect, useState } from "react";
-import type { ChatViewMode } from "../lib/api/workspaces";
+import { Frame } from "./frame";
 import type { Block } from "../lib/thread-reducer";
 
 export type ViewEntry =
   | { kind: "plain"; b: Block; i: number }
   | { kind: "work"; run: Block[]; turnStart?: string };
 
-/// Transcript entries for one view. Technical renders every block 1:1;
-/// casual replaces each CONTIGUOUS thinking/tool run with one work entry.
-/// The pending run is flushed when a non-run block arrives, so a work entry
-/// sits where its run was and never trails the text that followed it.
+/// Transcript entries. Each CONTIGUOUS thinking/tool run collapses into one
+/// work entry; every other block stays 1:1. The pending run is flushed when
+/// a non-run block arrives, so a work entry sits where its run was and never
+/// trails the text that followed it.
 ///
 /// The live "Agent is working Ns" clock anchors to the TURN's user message,
 /// not the run's own open-time: the turn is what the user is waiting on, so
@@ -18,7 +18,7 @@ export type ViewEntry =
 /// the next step's buffer can arrive before the previous step's commit,
 /// making the new live block inherit the old open-time). Settled runs keep
 /// their own per-run duration.
-export function viewEntries(blocks: Block[], view: ChatViewMode): ViewEntry[] {
+export function viewEntries(blocks: Block[]): ViewEntry[] {
   const entries: ViewEntry[] = [];
   let run: Block[] = [];
   let turnStart: string | undefined;
@@ -28,7 +28,7 @@ export function viewEntries(blocks: Block[], view: ChatViewMode): ViewEntry[] {
   };
   blocks.forEach((b, i) => {
     if (b.kind === "user") turnStart = b.ts;
-    if (view === "casual" && (b.kind === "reasoning" || b.kind === "tool")) {
+    if (b.kind === "reasoning" || b.kind === "tool") {
       run.push(b);
       return;
     }
@@ -45,7 +45,7 @@ export function workRunLabel(
   stopping: boolean,
   nowMs: number,
   turnStart?: string,
-): string | null {
+): string {
   const ownStart = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
   // Live counting anchors to the turn start (starts at 0, no per-step
   // resets); a settled run keeps its own open-to-end duration.
@@ -62,16 +62,19 @@ export function workRunLabel(
   })();
   if (stopping) return "Agent is stopping";
   if (active) return secs !== null ? `Agent is working ${secs}s` : "Agent is working";
-  if (secs === null || secs < 1) return null;
+  // A settled run always gets a label: its details stay reachable behind the
+  // same row even when the duration is unknown or under a second.
+  if (secs === null || secs < 1) return "Agent worked";
   if (secs < 60) return `Agent worked for ${secs} ${secs === 1 ? "second" : "seconds"}`;
   return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stopping, turnStart }: {
+export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stopping, turnStart, children }: {
   run: Block[];
   active: boolean;
   stopping: boolean;
   turnStart?: string;
+  children: React.ReactNode;
 }) {
   const [nowMs, setNowMs] = useState(Date.now);
   useEffect(() => {
@@ -81,14 +84,23 @@ export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stoppi
     return () => window.clearInterval(timer);
   }, [active, stopping]);
   const label = workRunLabel(run, active, stopping, nowMs, turnStart);
-  if (label === null) return null;
+  const steps = run.length;
+  const stepText = `${steps} ${steps === 1 ? "step" : "steps"}`;
   // The top padding — not a margin — clears the hover-stamp band under the
   // preceding message: the band hangs 4..16px below it, and sibling margins
   // collapse into the list's own 20px rhythm, so only padding moves the
   // label. It keeps the timestamp's gaps equal above and below.
   return (
-    <div className="mt-0! mb-2.5! pt-2! pb-0 text-sm text-muted-foreground">
-      {active ? <span className="animate-pulse">{label}</span> : label}
-    </div>
+    <Frame
+      className="mt-0! mb-2.5! pt-2! pb-0"
+      title={
+        <>
+          <span className={active ? "animate-pulse" : ""}>{label}</span>
+          <span className="ml-2 text-muted-foreground/70">({stepText})</span>
+        </>
+      }
+    >
+      <div className="space-y-1">{children}</div>
+    </Frame>
   );
 });
