@@ -145,7 +145,8 @@ describe("composeAgentInstructions", () => {
       true,
     );
     expect(text).toContain("<delegation>");
-    expect(text).toContain("Do not wait for the child");
+    expect(text).toContain("Do not wait or poll for the child");
+    expect(text).toContain("Read a child with read_thread only when you need its progress");
     expect(text).toContain("the child's result arrives as a new message and wakes you");
   });
 

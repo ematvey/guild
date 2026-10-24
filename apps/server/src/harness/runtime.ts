@@ -219,7 +219,8 @@ export function composeAgentInstructions(
     parts.push(
       [
         "<delegation>",
-        "A spawn returns at once. Do not wait for the child, do not poll list or read_thread, and do not sleep.",
+        "A spawn returns at once. Do not wait or poll for the child, and do not sleep.",
+        "Read a child with read_thread only when you need its progress for a decision; it is not a way to wait.",
         "If the spawned work is all that is left, end your turn; the child's result arrives as a new message and wakes you.",
         "If you have other work, do it now.",
         "</delegation>",
