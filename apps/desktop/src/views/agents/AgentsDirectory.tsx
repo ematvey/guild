@@ -5,6 +5,7 @@ import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
+import { VISIBILITY_LABEL } from "./agents-route";
 import { listAgents, type Agent } from "./agents-api";
 import { ModelName } from "./agent-model";
 import {
@@ -15,7 +16,6 @@ import {
   LoadingRows,
   PageBody,
   PageHeader,
-  VisibilityBadge,
 } from "./agent-ui";
 
 export function filterAgents(agents: Agent[], query: string): Agent[] {
@@ -166,19 +166,26 @@ function AgentGroup({
   if (agents.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-2 px-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 className="mb-1.5 px-3 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </h2>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60 bg-card/40">
         {agents.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} onNavigate={onNavigate} />
+          <li key={agent.id}>
+            <AgentRow agent={agent} onNavigate={onNavigate} />
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
   );
 }
 
-export function AgentCard({
+/**
+ * One agent as a full-width record. The row carries the name, owner,
+ * description and its facts on a single line of meta text; only the
+ * exceptional state (not active) gets a badge.
+ */
+export function AgentRow({
   agent,
   onNavigate,
 }: {
@@ -186,44 +193,63 @@ export function AgentCard({
   onNavigate: (route: AgentsRoute) => void;
 }) {
   const last = agent.last_activity_at ?? agent.updated_at ?? agent.created_at;
+  const owner = agent.owner_label ?? "Unknown owner";
+  const ownerEmail =
+    agent.owner_email && agent.owner_email !== agent.owner_label ? agent.owner_email : null;
+  const tools =
+    agent.tools_mode === "all"
+      ? "All tools"
+      : `${agent.tools.length} tool${agent.tools.length === 1 ? "" : "s"}`;
   return (
     <button
       type="button"
       onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "overview" })}
       aria-label={`Open agent ${agent.name}`}
-      className="group flex min-h-32 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left outline-none transition-colors hover:border-ring/60 hover:bg-accent/40 focus-visible:border-ring"
+      className="flex w-full items-start gap-3 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/60"
     >
-      <div className="flex items-start gap-3">
-        <AgentGlyph name={agent.name} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{agent.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {agent.owner_label ?? "Unknown owner"}
-            {agent.owner_email && agent.owner_email !== agent.owner_label
-              ? ` · ${agent.owner_email}`
-              : ""}
-          </p>
+      <AgentGlyph name={agent.name} className="mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold">{agent.name}</span>
+          {agent.unread === true && (
+            <span
+              aria-label="Unread activity"
+              className="size-1.5 shrink-0 rounded-full bg-sky-500"
+            />
+          )}
+          {agent.status !== "active" && <AgentStatusBadge status={agent.status} />}
         </div>
-        <AgentStatusBadge status={agent.status} />
+        <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+          {owner}
+          {ownerEmail !== null ? ` · ${ownerEmail}` : ""}
+        </p>
+        {agent.description && (
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            {agent.description}
+          </p>
+        )}
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-2xs text-muted-foreground">
+          <span>{VISIBILITY_LABEL[agent.visibility]}</span>
+          <Separator />
+          <span className="min-w-0 truncate">
+            <ModelName id={agent.model} alias={agent.model_alias} />
+          </span>
+          <Separator />
+          <span>{tools}</span>
+        </p>
       </div>
-      {agent.description && (
-        <p className="line-clamp-2 text-xs text-muted-foreground">{agent.description}</p>
-      )}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <VisibilityBadge visibility={agent.visibility} />
-        <span className="max-w-full truncate rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">
-          <ModelName id={agent.model} alias={agent.model_alias} />
-        </span>
-      </div>
-      <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>
-          {agent.tools_mode === "all"
-            ? "All tools"
-            : `${agent.tools.length} tool${agent.tools.length === 1 ? "" : "s"}`}
-        </span>
-        <span title={last}>{relativeTime(last)}</span>
-      </div>
+      <span className="shrink-0 pt-0.5 text-2xs text-muted-foreground" title={last}>
+        {relativeTime(last)}
+      </span>
     </button>
+  );
+}
+
+function Separator() {
+  return (
+    <span aria-hidden="true" className="text-border">
+      ·
+    </span>
   );
 }
 
