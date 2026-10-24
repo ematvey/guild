@@ -9,7 +9,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
-import { browserFs, daemonFs, prepareTurn as assembleTurn, type OrgSkillsApi } from "./lib/context";
+import { browserFs, daemonFs } from "./lib/fs-bridge";
+import type { OrgSkillsApi } from "./lib/skills";
+import { prepareTurn as assembleTurn } from "./lib/turn-context";
 import { openExternal } from "./lib/open-external";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

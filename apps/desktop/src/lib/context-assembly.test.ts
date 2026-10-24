@@ -1,24 +1,25 @@
-//! Context-assembly logic (context.ts): the port of the daemon's Rust
-//! skills.rs + agents_md.rs. The fake fs mirrors the bridge contract;
-//! expectations come from the Rust implementations' own tests.
+//! Context assembly (skills.ts + turn-context.ts): the port of the
+//! daemon's Rust skills.rs + agents_md.rs. The fake fs mirrors the bridge
+//! contract; expectations come from the Rust implementations' own tests.
 
 import { describe, expect, it } from "vitest";
+import type { BridgeFs, DirEntry } from "./fs-bridge";
 import {
+  discoverSkills,
+  installedOrgSkills,
+  listSkills,
+  mentionBlock,
+  mentionExpansions,
   parseFrontmatter,
   promptIndex,
-  mentionExpansions,
-  mentionBlock,
+  setSkillDisabled,
+  type OrgSkillsApi,
+} from "./skills";
+import {
+  loadGlobalAgentsMd,
   prepareTurn,
   projectAgentDocs,
-  loadGlobalAgentsMd,
-  discoverSkills,
-  listSkills,
-  setSkillDisabled,
-  installedOrgSkills,
-  type BridgeFs,
-  type DirEntry,
-  type OrgSkillsApi,
-} from "./context";
+} from "./turn-context";
 
 /** In-memory fs with the bridge's shapes. */
 function fakeFs(files: Record<string, string>, dirs: string[] = []): BridgeFs & { written: Record<string, string> } {
