@@ -18,7 +18,7 @@ import {
   pairingCode,
   serverUrl,
   type Release,
-} from "../../transport";
+} from "../transport";
 
 type DesktopOs = "mac" | "windows" | "linux";
 

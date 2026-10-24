@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import integrationSource from "./IntegrationsSection.tsx?raw";
 import gatewaySource from "./GatewaySection.tsx?raw";
-import deviceSetupSource from "../../thread/device-setup.tsx?raw";
+import deviceSetupSource from "../../device-setup.tsx?raw";
 import { transpile } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 

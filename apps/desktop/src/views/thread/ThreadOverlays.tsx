@@ -1,7 +1,7 @@
 // The thread view's floating surfaces: the device-setup dialog, the
 // onboarding guide and the create-project dialog.
 import { apiOnboarded, machineId, type MachineInfo, type Project } from "../../transport";
-import { DeviceSetupDialog } from "./device-setup";
+import { DeviceSetupDialog } from "../device-setup";
 import { OnboardingGuide, type OnboardingExit } from "../onboarding";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import type { RoutePatch } from "./route";
