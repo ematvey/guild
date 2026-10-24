@@ -68,7 +68,7 @@ import { assertPlatformSchema } from "../platform/migrations.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
-import { AgentStore } from "../agents/store.js";
+import { AgentStore, deriveTitleFromMessage } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
@@ -102,6 +102,23 @@ import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import { createAgentWorkspaceTools, createMachineTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
+
+/** One short model call names a fresh thread. The reply is not trusted as
+ *  prose: it is cleaned and bounded by `deriveTitleFromMessage`. */
+const TITLE_SYSTEM =
+  "You name conversations. Reply with a title of 3 to 6 words in the language of the user's message. " +
+  "Return only the title: no quotes, no trailing punctuation, no explanation.";
+
+/** The model's title line, stripped of wrappers a chat model may add. */
+export function cleanGeneratedTitle(raw: string): string {
+  const line = raw.split(/\r?\n/).map((part) => part.trim()).find((part) => part !== "") ?? "";
+  const stripped = line
+    .replace(/^title\s*:\s*/i, "")
+    .replace(/^["'`“”]+|["'`“”]+$/g, "")
+    .replace(/[.;:,]+$/, "")
+    .trim();
+  return deriveTitleFromMessage(stripped);
+}
 
 /** The direct tool surface for an agent: its allowlist narrows the coding
  *  and skill tools, and codemode is always present (the only path to the
@@ -427,6 +444,7 @@ export class GuildRuntime {
       trace: this.trace,
       attachments: this.attachments,
       delivery: this.childDelivery,
+      title: (chatId, threadId) => this.generateThreadTitle(chatId, threadId),
     });
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
@@ -1866,6 +1884,56 @@ export class GuildRuntime {
       orgId,
       infos,
     );
+  }
+
+  /** Names a fresh thread from its first user message with one short model
+   *  call. Explicitly named threads (title_locked), non-chat threads, and
+   *  threads that already carry a title are left alone. */
+  async generateThreadTitle(chatId: string, threadId: string): Promise<void> {
+    const res = await this.pool.query<{
+      org_id: string;
+      title: string | null;
+      title_locked: boolean;
+      kind: string;
+      model: string | null;
+    }>(
+      `SELECT c.org_id, t.title, t.title_locked, t.kind, a.model
+       FROM agent_threads t
+       JOIN chats c ON c.id = t.chat_id
+       JOIN agents a ON a.id = t.agent_id
+       WHERE t.id = $1 AND t.chat_id = $2`,
+      [threadId, chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return;
+    if (row.kind !== "thread" || row.title_locked) return;
+    if ((row.title ?? "").trim() !== "") return;
+    const first = await this.pool.query<{ content: string | null }>(
+      `SELECT payload->>'content' AS content FROM thread_events
+       WHERE chat_id = $1 AND type = 'user_message' ORDER BY seq ASC LIMIT 1`,
+      [chatId],
+    );
+    const text = (first.rows[0]?.content ?? "").trim();
+    if (text === "" || row.model === null) return;
+    const model = this.models.getModel(guildProviderId(row.org_id), row.model);
+    if (model === undefined) return;
+    const result = await this.models.completeSimple(
+      model,
+      {
+        systemPrompt: TITLE_SYSTEM,
+        messages: [
+          { role: "user", content: `Name this conversation:\n\n${text.slice(0, 2_000)}`, timestamp: Date.now() },
+        ],
+      },
+      { maxTokens: 256, temperature: 0.3, reasoning: "minimal" },
+    );
+    const raw = result.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    const title = cleanGeneratedTitle(raw);
+    if (title === "") return;
+    await this.chats.setGeneratedTitle(row.org_id, chatId, threadId, title);
   }
 
   /** Whether this process can stop the chat's in-flight turn. A worker

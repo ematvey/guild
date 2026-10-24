@@ -422,7 +422,7 @@ export function ChatsPanel({
             grouping.visible.map((c) => (
               <ChatListItem
                 key={c.id}
-                title={c.title || "Untitled"}
+                title={c.title}
                 active={c.id === chatId}
                 status={{ generating: !!c.generating, unread: !!c.unread }}
                 onClick={() => onOpenChat(c.id)}
@@ -455,7 +455,7 @@ export function ChatsPanel({
                 {archivedChats.map((c) => (
                   <ChatListItem
                     key={c.id}
-                    title={c.title || "Untitled"}
+                    title={c.title}
                     active={c.id === chatId}
                     status={{ generating: !!c.generating, unread: false }}
                     onClick={() => onOpenChat(c.id)}
@@ -562,7 +562,7 @@ export function WorkPanel({
             {!loadingChats && chats.slice(0, limit).map((c) => (
               <ChatListItem
                 key={c.id}
-                title={c.title || "Untitled"}
+                title={c.title}
                 active={c.id === chatId}
                 status={{ generating: !!c.generating, unread: !!c.unread }}
                 onClick={() => onOpenChat(c.id)}

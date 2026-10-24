@@ -43,6 +43,9 @@ export interface AgentRunLifecycleDeps {
   attachments?: Pick<AttachmentStore, "publishAgentAttachments">;
   /** Delivers a finished child run to its parent thread. */
   delivery?: Pick<ChildResultDelivery, "deliver">;
+  /** Names a fresh thread from its first turn. Runs after the run settles;
+   *  a locked or already-named thread is left alone. */
+  title?: (chatId: string, threadId: string) => Promise<void>;
 }
 
 function blocksOf(payload: Record<string, unknown>): { type?: string; text?: string }[] {
@@ -170,6 +173,11 @@ export class AgentRunLifecycle {
       );
       if (updated.rowCount === 0) return;
       await notifySubagentTree(this.deps.pool, run.thread_id);
+      if (status === "succeeded" && this.deps.title !== undefined) {
+        void this.deps.title(run.chat_id, run.thread_id).catch((error: unknown) => {
+          this.deps.log.warn({ err: error, chatId: run.chat_id }, "thread title generation failed");
+        });
+      }
       if (info.eventId !== undefined) {
         await this.deps.attachments?.publishAgentAttachments(run.chat_id, info.eventId).catch((error: unknown) => {
           this.deps.log.warn({ err: error, runId: run.id, chatId }, "attachment publish failed");

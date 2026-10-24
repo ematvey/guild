@@ -14,6 +14,7 @@ export const NOTIFY_CHANNELS = [
   "guild_chat_status",
   "guild_events",
   "guild_subagent_tree",
+  "guild_thread_title",
 ] as const;
 
 export class NotifyHub {

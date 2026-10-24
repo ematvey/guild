@@ -137,6 +137,19 @@ export class FeedForwarder implements GenerationStreamSink {
       this.dirtyChats.add(parsed.chat_id);
       return;
     }
+    if (channel === "guild_thread_title") {
+      let parsed: { org_id?: string; user_id?: string };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      if (typeof parsed.org_id !== "string" || typeof parsed.user_id !== "string") return;
+      // The sidebar and the open header both read the title from this list;
+      // a generated name lands there without a refetch.
+      void this.pushThreadList(parsed.org_id, parsed.user_id).catch(() => {});
+      return;
+    }
     if (channel === "guild_events") {
       let parsed: { org_id?: string; event_id?: string };
       try {
@@ -400,6 +413,14 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       this.sendToUser(userId, { type: "thread_list", chats: list });
     }
+  }
+
+  private async pushThreadList(orgId: string, userId: string): Promise<void> {
+    const list = await threadListSnapshot(this.ctx, this.ctx.pool, {
+      org_id: orgId,
+      id: userId,
+    } as UserRow);
+    this.sendToUser(userId, { type: "thread_list", chats: list });
   }
 
   private async bindingsOf(userId: string): Promise<UserBindings> {

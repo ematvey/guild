@@ -193,7 +193,6 @@ import {
   type ThreadReducer,
   type ToolBlock,
 } from "../lib/thread-reducer";
-import { threadTitleFromMessage } from "../lib/thread-title";
 // The block layer (types + derivation + merge rules) lives in
 // lib/thread-reducer; these names stay importable from the view.
 export {
@@ -3054,9 +3053,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     try {
       await submitCommand(command, {
         checkpoint: persistCommand,
-        create: async (text, project) => {
+        create: async (_text, project) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
-          const cid = await createChat(threadTitleFromMessage(text), project);
+          const cid = await createChat("", project);
           if (!cid) throw new Error("Chat create failed");
           return cid;
         },
@@ -3310,7 +3309,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     childThreadNode || isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
   const activeTitle = readOnlyThread
     ? childTree?.title ?? "Subagent thread"
-    : activeChat?.title ?? "New chat";
+    : activeChat?.title ?? (chatId === null ? "New chat" : "");
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
   const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
