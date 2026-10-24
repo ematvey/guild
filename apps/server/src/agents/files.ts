@@ -23,8 +23,12 @@ export interface AgentFileEntry {
 }
 
 export interface AgentDirListing {
+  /** Directory that the entries belong to. */
   path: string;
   entries: AgentFileEntry[];
+  /** Set when the requested path named a file: the entries are its parent
+   *  folder, and this is the file's own path. */
+  file?: string;
 }
 
 export interface AgentTextFile {
@@ -146,13 +150,25 @@ export class AgentFiles {
     const target = await lstat(abs).catch(() => {
       throw ApiError.notFound("no such path");
     });
-    if (!target.isDirectory()) throw badPath("not a directory");
-    const names = await readdir(abs);
+    // A file path lists the folder that holds it, so one request answers both
+    // "which folder am I in" and "what sits next to this file".
+    if (!target.isDirectory()) {
+      const parentRel = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+      const parentAbs = path.dirname(abs);
+      await this.assertNoSymlink(root, parentRel);
+      await this.assertContained(realRoot, parentAbs);
+      return { path: parentRel, entries: await this.entriesOf(parentAbs, parentRel, showHidden), file: rel };
+    }
+    return { path: rel, entries: await this.entriesOf(abs, rel, showHidden) };
+  }
+
+  private async entriesOf(dir: string, rel: string, showHidden: boolean): Promise<AgentFileEntry[]> {
+    const names = await readdir(dir);
     const entries: AgentFileEntry[] = [];
     for (const name of names) {
       if (!showHidden && (name.startsWith(".") || HIDDEN_NAMES.has(name))) continue;
       const childRel = rel === "" ? name : `${rel}/${name}`;
-      const childAbs = path.join(abs, name);
+      const childAbs = path.join(dir, name);
       const stats = await lstat(childAbs);
       entries.push(entryFor(childRel, stats, stats.isSymbolicLink()));
     }
@@ -161,7 +177,7 @@ export class AgentFiles {
       if (a.kind !== "dir" && b.kind === "dir") return 1;
       return a.name.localeCompare(b.name);
     });
-    return { path: rel, entries };
+    return entries;
   }
 
   async statPath(orgId: string, agentId: string, relPath?: string): Promise<AgentFileEntry> {

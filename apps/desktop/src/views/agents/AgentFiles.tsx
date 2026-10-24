@@ -21,6 +21,7 @@ import {
   agentFileResponse,
   createAgentThread,
   getAgentFileContent,
+  listAgentDir,
   listAgentFiles,
   listAgentThreads,
   sendAgentTurn,
@@ -201,15 +202,15 @@ export function AgentFiles({
     }
     setError(null);
     setEntries(null);
-    void listAgentFiles(agentId, path, hidden)
-      .then((rows) => {
+    void listAgentDir(agentId, path, hidden)
+      .then((listing) => {
         if (!live) return;
-        setEntries(normalize(rows, path));
-        setListingDir(path);
-        setIsDirectory(true);
+        setEntries(normalize(listing.entries, listing.path));
+        setListingDir(listing.path);
+        setIsDirectory(listing.file === undefined);
       })
       .catch(async (err: unknown) => {
-        // A file deep link lists its parent; the file itself is the preview.
+        // Older servers reject a file path; list its parent instead.
         if (path !== "") {
           try {
             const parent = parentPath(path);

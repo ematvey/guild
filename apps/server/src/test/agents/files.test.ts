@@ -69,6 +69,18 @@ describe("AgentFiles", () => {
     expect(shown.entries.map((entry) => entry.name)).toContain(".guild");
   });
 
+  it("lists the parent folder when the path names a file", async () => {
+    const listing = await files.listDir(orgId, agentId, "docs/note.md");
+    expect(listing.path).toBe("docs");
+    expect(listing.file).toBe("docs/note.md");
+    expect(listing.entries.map((entry) => entry.name)).toEqual(["note.md"]);
+
+    const rootListing = await files.listDir(orgId, agentId, "hello.txt");
+    expect(rootListing.path).toBe("");
+    expect(rootListing.file).toBe("hello.txt");
+    expect(rootListing.entries.map((entry) => entry.name)).toContain("hello.txt");
+  });
+
   it("stats files and symlinks without following the link", async () => {
     const file = await files.statPath(orgId, agentId, "hello.txt");
     expect(file).toMatchObject({ kind: "file", size: 12, symlink: false });
