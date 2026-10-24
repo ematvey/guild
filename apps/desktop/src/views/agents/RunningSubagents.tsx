@@ -22,7 +22,13 @@ export function isRunningStatus(status: string | null | undefined): boolean {
 export function runningSubagentTree(nodes: readonly ChatSubagentNode[]): RunningSubagentNode | null {
   const byThread = new Map<string, ChatSubagentNode>();
   for (const node of nodes) byThread.set(node.thread_id, node);
-  const root = nodes.find((node) => node.parent_thread_id === null);
+  // A chat's subtree starts at its own thread. That thread has no parent
+  // for a top-level chat, but a child chat's own thread names the parent
+  // chat's thread — which is not in this list. The root is the node whose
+  // parent is absent from the subtree, not the one with a null parent.
+  const root = nodes.find(
+    (node) => node.parent_thread_id === null || !byThread.has(node.parent_thread_id),
+  );
   if (root === undefined) return null;
 
   const childrenOf = new Map<string, ChatSubagentNode[]>();
