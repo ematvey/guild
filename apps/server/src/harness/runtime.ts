@@ -1915,7 +1915,13 @@ export class GuildRuntime {
     );
     const text = (first.rows[0]?.content ?? "").trim();
     if (text === "" || row.model === null) return;
-    const model = this.models.getModel(guildProviderId(row.org_id), row.model);
+    let model = this.models.getModel(guildProviderId(row.org_id), row.model);
+    if (model === undefined) {
+      // The server process in worker mode has not registered this org's
+      // routes yet; the title call is the first model use there.
+      await this.refreshOrgModels(row.org_id);
+      model = this.models.getModel(guildProviderId(row.org_id), row.model);
+    }
     if (model === undefined) return;
     const result = await this.models.completeSimple(
       model,
