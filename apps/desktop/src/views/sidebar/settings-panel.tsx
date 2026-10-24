@@ -1,0 +1,71 @@
+import { SETTINGS_SECTIONS } from "../settings/settings-sections";
+import { CloseSidebarButton, CollapseButton } from "./chrome";
+
+export function SettingsPanel({
+  role,
+  activeSection,
+  onSelectSection,
+  onCollapse,
+  onClose,
+}: {
+  /** "admin" turns on the workspace sections, same as the rail menu. */
+  role: string;
+  /** The section rendered in the main pane (inline settings); null = none
+   * picked yet. */
+  activeSection: string | null;
+  /** A section pick renders that section inline in the main pane. */
+  onSelectSection: (id: string) => void;
+  onCollapse?: () => void;
+  /** Mobile drawer only: close the sheet from the panel header. */
+  onClose?: () => void;
+}) {
+  const isAdmin = role === "admin";
+  const visible = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
+  const groups: { key: "user" | "workspace"; label: string }[] = [
+    { key: "user", label: "User" },
+    ...(isAdmin ? [{ key: "workspace" as const, label: "Workspace" }] : []),
+  ];
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="flex items-center justify-between px-3 py-3">
+        <span className="font-semibold">Settings</span>
+        <span className="flex items-center gap-1">
+          <CollapseButton onCollapse={onCollapse} />
+          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {groups.map((g) => {
+          const items = visible.filter((s) => s.group === g.key);
+          if (items.length === 0) return null;
+          return (
+            <div key={g.key}>
+              <p className="px-1 pb-1 pt-4 text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
+                {g.label}
+              </p>
+              <div className="space-y-0.5">
+                {items.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => onSelectSection(s.id)}
+                    className={`relative flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+                      activeSection === s.id
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    {activeSection === s.id && (
+                      <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
+                    )}
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
