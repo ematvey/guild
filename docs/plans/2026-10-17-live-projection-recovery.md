@@ -99,11 +99,11 @@ immutable validation. The latest focused rerun after that correction passed
 
 The client publisher completed successfully with six artifacts, verifying
 every upload's local/server SHA-256. The localhost and public dev updater
-(`guild.example.com`) serve version 0.5.69 with four signed platform entries.
+serve version 0.5.69 with four signed platform entries.
 A real Windows installer download through the public updater URL also matched
 the release registry's SHA-256.
 
-The devbox daemon was idle before restart. Its old PID 475727 exited, the
+The dev daemon was idle before restart. Its old PID 475727 exited, the
 replacement process became PID 3290542, and the dev machine registry reports
 0.5.69. A live verification conversation completed an ordinary model turn,
 then dispatched `sleep 30; : guild_cancel_verify_20261017_0015` to that machine.

@@ -148,7 +148,7 @@ current cycle; this file keeps the rest. Same entry format.
   `docs/plans/2026-10-17-live-projection-recovery.md`. The reported browser freeze
   remains unproven; these changes address reproduced recovery/lifetime defects.
   Dev verified: health 0.5.69, live bundle `index-CRKD5YRJ.js`, six signed
-  desktop artifacts and four public updater platforms. The running devbox
+  desktop artifacts and four public updater platforms. The running dev
   daemon was upgraded from 0.5.40 to 0.5.69 after its tools were idle. A real
   machine shell plus sleep child exited on Stop, then the same conversation
   completed `CANCEL_OK`. The affected thread is idle, its history remains
@@ -621,8 +621,8 @@ current cycle; this file keeps the rest. Same entry format.
   first-send/coalescing/turn_error fixes, JetBrains Mono, and the skills
   markdown viewer; version bumped everywhere to 0.5.44
   (`scripts/bump-version.sh`), client artifacts published to both
-  deployments with their URLs baked (dev → guild.example.com :18080, prod →
-  guild.example.org :18081), servers rebuilt on both stacks.
+  deployments with their URLs baked (dev → :18080, prod → :18081), servers
+  rebuilt on both stacks.
 
 - **Branch reconciliation: master merged into develop, develop merged back (2026-10-14).**
   The 0.5.43 hotfixes went master → cherry-pick → develop, leaving the branches
@@ -750,7 +750,7 @@ current cycle; this file keeps the rest. Same entry format.
   Server runs as uid 1000; `GUILD_SANDBOX` fails closed in production;
   shell tools default on with a runner. Also fixed on the way: skill slug
   traversal, and NUL bytes in tool output breaking thread journaling.
-  Host: gVisor 20261005.0 on devbox. Single-host compose only; Kubernetes
+  Host: gVisor 20261005.0. Single-host compose only; Kubernetes
   deferred. Plan + decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`;
   deploy notes: `docs/deploy-nuances.md` §4a.
 
@@ -790,7 +790,7 @@ current cycle; this file keeps the rest. Same entry format.
   without it default fresh installs to localhost:18080), the prod-deploy
   README, and the per-deployment release checklist in deploy-nuances.md.
   0.5.42 artifacts were re-published to both deployments with the URL baked
-  (dev → guild.example.com, prod → guild.example.org); sessions used for
+  (dev and prod); sessions used for
   the publish API were throwaway Postgres rows, deleted after.
 
 - **The member socket goes quiet mid-turn; the read-mark rides the duplex (2026-10-14).**
@@ -826,7 +826,7 @@ current cycle; this file keeps the rest. Same entry format.
   host-run importer needs `host.docker.internal` rewritten to `localhost`, the
   runbook's literal command fails with ENOTFOUND); `schema_history` was already
   current (0068), so startup migrations were no-ops. Both machines reconnected
-  (WORKSTATION @ 0.5.42, guild-machine @ 0.5.34 — the latter is due a client update),
+  (the Windows client @ 0.5.42, the Linux client @ 0.5.34 — the latter is due a client update),
   zero error-level log lines at startup.
 
 - **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42, 2026-10-14).**
@@ -901,8 +901,8 @@ current cycle; this file keeps the rest. Same entry format.
   `hubspot-investigate` row's description and manifest were corrected in
   place, and the pusher got their retroactive install record.
 
-- **Prod is a separate checkout (2026-10-14).** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by a
+- **Prod is a separate checkout (2026-10-14).** (a separate checkout, branch master, compose
+  stack on :18081). Deploy to prod by a
   deliberate merge of develop into its master (a release merge, e.g.
   "release 0.5.42 — merge develop into prod") — never a blind
   fast-forward: develop → master crossings are meant to be deliberate,
@@ -948,7 +948,7 @@ current cycle; this file keeps the rest. Same entry format.
   install-on-use pin -> panel counts -> activity feed).
 
 - **Rust server deleted (2026-10-13).** `crates/server` git-rm'd — the R9
-  gate (prod cutover + soak) superseded by maintainer's explicit order after
+  gate (prod cutover + soak) superseded by an explicit decision after
   the live E2E on the TS stack (real model turn with tool calls through the
   server-side sandbox, usage sink verified, wire parity diffed against the
   retired Rust image on a loopback port: all GET surfaces identical except
@@ -1093,7 +1093,7 @@ current cycle; this file keeps the rest. Same entry format.
   clean 404 envelope — deferred per decision 8). Final verification:
   227 tests green (22 suites), headless client login + a real
   GLM-5.3-Flash turn through the all-TS stack (M7-SMOKE-OK), and the real
-  shipped desktop daemon (WORKSTATION 0.5.33) linked through the TS hub with
+  shipped desktop daemon (Windows client 0.5.33) linked through the TS hub with
   zero errors. Post-retirement trap fixed the same day: the Rust CORS
   layer (tauri-webview origin allow-list) had been riding the proxy —
   browser preflights (`/api/v1/ws/ticket`, `/faro/collect`) 404'd once it
@@ -1104,8 +1104,8 @@ current cycle; this file keeps the rest. Same entry format.
   against the dev DB rebuilt 90 chats → 90 conversations, 3446 events →
   3446 entries exactly, documents preserved, turns healthy after
   (RERUN-SMOKE-OK); pre-rerun backup:
-  `/tmp/guild-backup/guild-pre-rerun-0552.sql`. Prod ladder (`~/guild-prod`, :18081)
-  is the remaining step — held until maintainer validates dev (the plan
+  `/tmp/guild-backup/guild-pre-rerun-0552.sql`. Prod ladder (the prod stack, :18081)
+  is the remaining step — held until the dev stack is validated (the plan
   gates prod on "after dev stabilizes"). Backup of the dev DB taken
   before the importer's final run:
   `/tmp/guild-backup/guild-2026-10-04-0332.sql`.
@@ -1234,7 +1234,7 @@ current cycle; this file keeps the rest. Same entry format.
   (`guild-server-ts`, tsc at build time) owns the public port :18080, Rust
   service renamed `server-rust` (internal only). Verified on the dev stack:
   login + a real GLM-5.3-Flash turn end-to-end through the proxy via the
-  headless client, and real desktop daemons (WORKSTATION 0.5.33, devbox 0.5.25)
+  headless client, and real desktop daemons (Windows 0.5.33, Linux 0.5.25)
   reconnected and working through it. Trap found: renaming the Rust service
   must move `GUILD_WORKER_ADVERTISED_URL` to `http://server-rust:9080` or
   restate's deployment discovery 500-loops and every ChatRunner turn hangs;
@@ -1279,8 +1279,8 @@ current cycle; this file keeps the rest. Same entry format.
   in again" instead of vanishing.
 
 - **0.5.25 — a live machine slot is held, not displaced (2026-09-30).** Root cause of the
-  recurring devbox outages: any locally-run guild binary (dev sessions on
-  this box — which IS devbox) loads the real token.json and connects a
+  recurring dev-host outages: any locally-run guild binary (dev sessions on
+  the same host) loads the real token.json and connects a
   machine link as the same row; the hub's newest-wins displacement handed
   the slot to the thief, and the displaced link never learns it lost the
   slot — its leftover server conn keeps heartbeating, so the daemon sits
@@ -1294,12 +1294,12 @@ current cycle; this file keeps the rest. Same entry format.
   per-instance credentials. Server-only change; no client release needed.
 
 - **0.5.24 — the Windows machines were offline because of one misplaced
-  flag (2026-09-29).** WORKSTATION's daemon trace (the 0.5.23 toggle earning its keep) showed
+  flag (2026-09-29).** The Windows client's daemon trace (the 0.5.23 toggle earning its keep) showed
   `daemon host cycle failed: os error 87` once per second: the Sep 23 pipe
   rewrite passed `PIPE_REJECT_REMOTE_CLIENTS` in `dwOpenMode` where the bit
   is unassigned, so `CreateNamedPipeW` failed on every call and the host
   cycle aborted + respawned the machine link once a second — no Windows
-  client could hold a link past ~1s (WORKSTATION, DEVBOX-2), while the
+  client could hold a link past ~1s (both Windows clients), while the
   Linux daemon path never runs this code. Flag moved to `dwPipeMode`; the
   reclaiming host also no longer tears the link down on a failed bind (the
   link is independent of the CLI socket — the Sep 23 abort+respawn shape
@@ -1307,11 +1307,11 @@ current cycle; this file keeps the rest. Same entry format.
   instrumentation + the 0.5.23 trace toggle turned "why is it offline"
   into a one-line answer without touching the user's machine.
 
-- **0.5.23 — daemon trace behind a settings toggle (WORKSTATION offline hunt) (2026-09-29).**
-  WORKSTATION's machine link connects and the client closes it ~3 ms later
+- **0.5.23 — daemon trace behind a settings toggle (Windows offline hunt) (2026-09-29).**
+  The Windows machine link connects and the client closes it ~3 ms later
   (server telemetry: `reader_closed`, zero frames), then no retry for
   minutes — the retired-socket-host path, not the 1 s backoff. Same
-  signature as DEVBOX-2's flap; Linux daemon links live. The client
+  signature as the other Windows client's flap; Linux daemon links live. The client
   trace that names the end reason was env-gated only, which is useless on
   a user machine. dtrace now has a runtime gate (`dtrace::set_enabled`),
   the desktop app persists the choice (`daemon-trace.enabled` marker in the

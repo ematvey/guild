@@ -164,7 +164,7 @@ export default function GeneralSection() {
             autoComplete="off"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && name.trim() !== org?.name && void saveName()}
-            placeholder="e.g. Acme"
+            placeholder="e.g. your-org"
           />}
           <Button disabled={busy || !org || !name.trim() || name.trim() === org?.name} onClick={() => void saveName()}>
             Save

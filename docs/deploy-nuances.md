@@ -1,28 +1,31 @@
 # Guild — deploy nuances
 
-Everything non-obvious about building, serving, and shipping Guild on this
-host (`devbox`). Facts verified 2026-09-12 (host-services cutover). Companion
-to `docs/clients.md` (client distribution details).
+Everything non-obvious about building, serving, and shipping Guild on a
+single Docker host. Companion to `docs/clients.md` (client distribution
+details).
 
 ---
 
-## 0. Host services (default operating mode, since 2026-09-12)
+## 0. Host services (default operating mode)
 
-Guild prod AND tests use the shared **host-level** services — nobody runs
-private copies by default. The neutral services live in `/data` and are owned
-by no single project:
+Guild prod AND tests use shared **host-level** services — nobody runs
+private copies by default. Each service belongs to the host, not to this
+project:
 
-| Service | Compose dir | Endpoint | Creds |
-|---|---|---|---|
-| Postgres 17 | `/srv/postgres` | `127.0.0.1:5432` (published `0.0.0.0`) | admin `postgres` / `REDACTED_HOST_POSTGRES_PASSWORD`; Guild db/role: `guild`/`guild` |
-| ClickHouse 26.5 | `/srv/clickhouse` | `0.0.0.0:8123` (HTTP) | `ch_user` / `ch_passwd` |
-| RustFS (S3) | systemd `rustfs.service`, data `/srv/rustfs` | `0.0.0.0:9950` S3 API, `:9951` console | dedicated IAM users (guild, posthog, other); root pair rotated 2026-10-15, lives only in `/etc/default/rustfs` |
-| Faro collector (Alloy+Loki) | `/srv/faro` | `0.0.0.0:12347` Faro receiver (`/collect`), Loki loopback `127.0.0.1:3100` | none (per-app rate limiting) |
+| Service | Endpoint | Notes |
+|---|---|---|
+| Postgres 17 | `127.0.0.1:5432` | Guild database and role: `guild` |
+| ClickHouse | `0.0.0.0:8123` (HTTP) | Guild database: `guild` |
+| S3-compatible storage | `0.0.0.0:9950` (S3 API), `:9951` (console) | Guild bucket: `guild` |
+| Faro collector (Alloy + Loki) | `0.0.0.0:12347` (`/collect`) | No auth; per-app rate limiting |
+
+Service data directories, admin credentials, and the S3 root pair live
+outside this repo, in the host's service configuration.
 
 Guild proxies browser telemetry through the server: `POST /faro/collect`
 forwards to `GUILD_FARO_URL` (default the collector above; empty disables).
 The client's Settings → About toggle (off by default) sends app diagnostics
-to it. See `/srv/faro/README.md`.
+to it.
 
 - Each project gets its own **database/bucket** on the shared servers
   (Guild: db `guild`, bucket `guild`).
@@ -33,22 +36,19 @@ to it. See `/srv/faro/README.md`.
   /`_SECRET_ACCESS_KEY`). There are **no testcontainers anymore**.
 - `host.docker.internal` (compose `extra_hosts: host-gateway`) is how the
   Guild server container reaches these ports.
-- History: `/srv/postgres.old-20260912` is a stale 15 GB orphan cluster
-  (one 15 GB database, last served June 2026) — parked untouched, safe to
-  delete after review. Guild's prod data was migrated into the new host
-  postgres via pg_dump (2026-09-12); usage_events (71 rows) copied to host
-  ClickHouse; MinIO objects (505 MB, 22 files) copied to rustfs.
+- An older Postgres cluster may still exist on the host after a migration.
+  It is not used by Guild; remove it only after a manual review.
 
 ---
 
 ## 1. What runs where
 
-Guild runs on two stacks on this host: dev here, prod in `~/guild-prod`.
+Guild can run on two stacks on one host: a dev stack and a prod stack.
 **Don't confuse them.**
 
 ### Dev: compose stack on :18080
 
-- Compose project: `~/guild/deploy/compose` (`docker-compose.yml` there).
+- Compose project: `deploy/compose` (`docker-compose.yml` there).
 - Running container: `compose-server-1` (the TS server). The infra services
   (postgres/clickhouse/minio) exist in the compose file behind the
   `fullstack` profile as a self-contained fallback and are **stopped**
@@ -58,7 +58,7 @@ Guild runs on two stacks on this host: dev here, prod in `~/guild-prod`.
   + API everything points at).
 - Config: `deploy/compose/config.env` (gitignored — holds real secrets:
   `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`). `GUILD_HTTP_PORT=18080`
-  because 8080 is already taken on this host. DB/CH/S3 URLs use
+  because another service already uses 8080. DB/CH/S3 URLs use
   `host.docker.internal:5432/8123/9950`.
 - Server state lives in the named volume `guild_data` (`/data` inside the
   container — `GUILD_DATA_DIR`, the server-side workspace sessions root).
@@ -68,13 +68,13 @@ Guild runs on two stacks on this host: dev here, prod in `~/guild-prod`.
 
 ### The legacy Node stack on :9330 — removed
 
-The Cloudflare tunnel ingress for `guild.example.com` targets `localhost:18080`
-(`/etc/cloudflared/config.yml`). It previously targeted :9330.
+If a reverse proxy or tunnel fronts the deployment, point it at
+`localhost:18080`. It previously targeted :9330.
 
 - The old `guild-web-1`, `guild-api-1`, `guild-nginx-1`, `guild-db-1` and
   `guild-cli-releases-1` containers are gone, and the compose file that
-  defined them (`~/guild/docker-compose.yml`) is not in the repo. They were
-  a leftover of the earlier architecture.
+  defined them is not in the repo. They were a leftover of the earlier
+  architecture.
 - Nothing points at :9330 now. If `guild-*-1` names ever reappear, they are
   legacy; `compose-*-1` names are the current stack.
 
@@ -97,7 +97,7 @@ the image (`GUILD_WEB_DIST` default; `apps/server/src/http/web.ts`):
 ### Shipping a frontend change (the canonical recipe)
 
 ```bash
-cd ~/guild/deploy/compose
+cd deploy/compose
 docker compose build server && docker compose up -d server
 ```
 
@@ -151,8 +151,7 @@ Notes:
   build-only `sandbox-image` (exits at once); postgres/clickhouse/minio are behind
   the `fullstack` profile (`--profile fullstack` to use them). The server
   has no compose-service deps — the host services must already be up. If
-  the server crash-loops on boot, check the host services first
-  (`/srv/postgres`, `/srv/clickhouse`, `rustfs.service`).
+  the server crash-loops on boot, check the host services first.
 - The fullstack fallback ClickHouse stays pinned to
   `clickhouse-server:24`; the host ClickHouse floats 26.5
   (`pull_policy: always`) — a host CH upgrade can change behavior.
@@ -180,7 +179,7 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
   ["--overlay2=root:self"]}` under `runtimes` in `/etc/docker/daemon.json`,
   `sudo systemctl reload docker` (a reload, not a restart: running
   containers are untouched). Check: `docker info | grep -i runsc`.
-  devbox: release 20261005.0, installed 2026-10-14.
+  Verified with gVisor release 20261005.0.
 - **config.env** needs `GUILD_SANDBOX_RUNNER_TOKEN` (shared by server and
   runner; `openssl rand -hex 32`). The server gets
   `GUILD_SANDBOX_RUNNER_URL` from compose.
@@ -189,9 +188,8 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
   `GUILD_SANDBOX_SUBNET` (default `10.213.0.0/24`) and
   `GUILD_SANDBOX_EGRESS_IP` (default `10.213.0.2`), plus
   `GUILD_SANDBOX_IMAGE` / `GUILD_SANDBOX_EGRESS_IMAGE` tags (`:prod`) so
-  one stack's build can't swap the other's images. Docker's default
-  address pools are exhausted on devbox — every new network needs an
-  explicit subnet.
+  one stack's build can't swap the other's images. When Docker's default
+  address pools are exhausted, every new network needs an explicit subnet.
 - **The egress proxy is addressed by IP**, never by name: Docker's embedded
   DNS does not work inside gVisor sandboxes. The allowlist is
   `deploy/sandbox/egress/allowed-domains.txt` (mounted; `docker compose
@@ -353,11 +351,11 @@ isolated config file (`GUILD_CONFIG_ENV`).
     Windows NSIS installer (cargo-xwin cross-build), Linux AppImage
     (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
     deps: zig + cargo-zigbuild, macOS SDK at `$SDKROOT`, mingw-w64, makensis,
-    llvm, `~/opt/linuxdeploy`, `~/opt/libdmg-hfsplus`, hfsprogs, 7z.
+    llvm, linuxdeploy, libdmg-hfsplus, hfsprogs, 7z.
   - `scripts/release-desktop.sh` — portable tar.gz/zip builds for
     linux/mac/windows (zigbuild), not installer-format.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
-    VITE_DEFAULT_SERVER_URL=https://guild.example.org scripts/release-clients.sh`.
+    VITE_DEFAULT_SERVER_URL=https://guild.example.com scripts/release-clients.sh`.
   - Running the release script from a systemd transient unit needs an explicit
     `-E PATH=...` including `~/.cargo/bin` (cargo-xwin/zigbuild) — the unit's
     default PATH lacks it and the build fails with "cargo-xwin command not
@@ -387,7 +385,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
 
 ```bash
 # ship a frontend or backend change to :18080
-cd ~/guild/deploy/compose && docker compose build server && docker compose up -d server
+cd deploy/compose && docker compose build server && docker compose up -d server
 
 # just restart (e.g. after config.env change)
 docker compose up -d server   # recreate if env changed: --force-recreate

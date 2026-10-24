@@ -1,7 +1,7 @@
 # TS server rebuild on pi-durable — design
 
 Date: 2026-10-04
-Status: approved (grilled with maintainer)
+Status: approved after design review
 
 ## Purpose
 

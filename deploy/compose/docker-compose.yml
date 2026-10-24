@@ -1,7 +1,7 @@
 services:
   # Default operating mode: the server uses the shared HOST services
-  # (postgres on :5432 at /srv/postgres, ClickHouse on :8123 at
-  # /srv/clickhouse, rustfs on :9950) via host.docker.internal — see
+  # (postgres on :5432, ClickHouse on :8123, S3 on :9950) via
+  # host.docker.internal — see
   # config.env. The full in-compose infra below (postgres/clickhouse/minio)
   # is the self-contained fallback: run with `--profile fullstack` and point
   # config.env back at the service names. Kept maintained, not used by

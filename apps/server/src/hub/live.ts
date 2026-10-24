@@ -98,7 +98,7 @@ export class LiveHub {
    *  identity thief — rejected instead of displacing a healthy link (the
    *  displaced link never learns it lost the slot: its leftover server conn
    *  keeps exchanging heartbeats, so the daemon sits "connected" while the
-   *  machine shows offline until restart — devbox, 2026-09-28/29). A
+   *  machine shows offline until restart, 2026-09-28/29). A
    *  reconnect of the SAME instance replaces its own zombie slot — this
    *  heals honest blips and the observed thief pattern (fresh instance).
    *  `resume=true` from a stale (non-current) instance is likewise rejected.

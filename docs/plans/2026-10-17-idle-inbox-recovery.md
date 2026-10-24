@@ -58,7 +58,7 @@ entries. From zero through five seconds, parent renders=1 and history renders=1.
 Settling caused one expected parent/history render and no further timer updates.
 The temporary fixture was removed after verification. This demonstrates removal
 of the identified periodic transcript work; it does not measure every possible
-cause of workstation lag.
+cause of desktop lag.
 
 ## Deployment and final validation
 

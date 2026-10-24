@@ -5,7 +5,7 @@ changes in 0.5.71–0.5.72. It uses isolated managed dev members and local MCP
 and provider fixtures against the compose stack at localhost:18080. Real
 GLM calls verify guide execution and sandbox file operations. Production
 is excluded. Detailed screenshots, recordings, and state evidence are in
-`/home/user/guild-audits/pi-durable-2026-10-17/browser/`.
+`guild-audits/pi-durable-2026-10-17/browser/` (outside the repo).
 
 ## Browser findings and resulting behavior
 
@@ -52,7 +52,7 @@ one. MCP probe and list responses must agree on canonical call names.
 All **19 affected-feature groups pass** in three isolated Chrome sessions
 using two dedicated dev members. The detailed report, screenshots,
 recordings, and JSON proofs are in the
-[full browser report](/home/user/guild-audits/pi-durable-2026-10-17/browser/report.md).
+[full browser report](guild-audits/pi-durable-2026-10-17/browser/report.md) (outside the repo).
 
 | Group | Terminal evidence |
 | --- | --- |
