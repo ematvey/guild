@@ -1,0 +1,62 @@
+// The running subagent tree: only the running part of the chat's subtree is
+// kept, so a finished branch never shows below the transcript.
+
+import { describe, expect, it } from "vitest";
+import type { ChatSubagentNode } from "../../transport";
+import { isRunningStatus, runningSubagentTree } from "./RunningSubagents";
+
+function node(over: Partial<ChatSubagentNode> & { thread_id: string }): ChatSubagentNode {
+  return {
+    chat_id: `chat-${over.thread_id}`,
+    parent_thread_id: null,
+    agent_name: "Researcher",
+    title: over.thread_id,
+    depth: 0,
+    status: null,
+    ...over,
+  };
+}
+
+describe("runningSubagentTree", () => {
+  it("keeps a running child and its running grandchild", () => {
+    const tree = runningSubagentTree([
+      node({ thread_id: "root" }),
+      node({ thread_id: "child", parent_thread_id: "root", status: "running", depth: 1 }),
+      node({ thread_id: "grand", parent_thread_id: "child", status: "queued", depth: 2 }),
+    ]);
+    expect(tree?.node.thread_id).toBe("root");
+    expect(tree?.children.map((c) => c.node.thread_id)).toEqual(["child"]);
+    expect(tree?.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
+  });
+
+  it("drops a finished branch but keeps a finished parent with a running grandchild", () => {
+    const tree = runningSubagentTree([
+      node({ thread_id: "root" }),
+      node({ thread_id: "done", parent_thread_id: "root", status: "succeeded", depth: 1 }),
+      node({ thread_id: "live", parent_thread_id: "root", status: "running", depth: 1 }),
+      node({ thread_id: "grand", parent_thread_id: "done", status: "running", depth: 2 }),
+    ]);
+    expect(tree?.children.map((c) => c.node.thread_id)).toEqual(["done", "live"]);
+    expect(tree?.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
+  });
+
+  it("is null when nothing runs", () => {
+    expect(
+      runningSubagentTree([
+        node({ thread_id: "root" }),
+        node({ thread_id: "child", parent_thread_id: "root", status: "succeeded", depth: 1 }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("is null for a chat with no thread row", () => {
+    expect(runningSubagentTree([])).toBeNull();
+  });
+
+  it("treats queued and running as live", () => {
+    expect(isRunningStatus("running")).toBe(true);
+    expect(isRunningStatus("queued")).toBe(true);
+    expect(isRunningStatus("succeeded")).toBe(false);
+    expect(isRunningStatus(null)).toBe(false);
+  });
+});

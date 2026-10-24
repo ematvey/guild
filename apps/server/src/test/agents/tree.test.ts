@@ -85,6 +85,70 @@ describe("chat tree", () => {
     expect(JSON.parse(alias.body)).toEqual(JSON.parse(res.body));
   });
 
+  it("lists the whole subtree with each node's latest run status", async () => {
+    const agentId = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model)
+       VALUES ($1, $2, $3, 'Tree agent', 'GLM-Test-Model')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const rootChat = await insertChat("Root chat");
+    const rootThread = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
+       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      [rootThread, agentId, stack.memberId, rootChat],
+    );
+    const childChat = await insertChat("Child chat");
+    const childThread = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat, rootThread],
+    );
+    const grandchildChat = await insertChat("Grandchild chat");
+    const grandchildThread = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Grandchild session', 'delegated', $5, 2)`,
+      [grandchildThread, agentId, stack.memberId, grandchildChat, childThread],
+    );
+    await stack.env.db.query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, thread_id, trigger, status, started_at)
+       VALUES ($1, $2, $3, $4, 'delegation', 'running', now())`,
+      [randomUUID(), agentId, stack.memberId, childThread],
+    );
+
+    const res = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${rootChat}/subagents`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      chat_id: string;
+      nodes: { thread_id: string; parent_thread_id: string | null; status: string | null; title: string; depth: number }[];
+    };
+    expect(body.chat_id).toBe(rootChat);
+    expect(body.nodes.map((n) => [n.thread_id, n.parent_thread_id, n.status])).toEqual([
+      [rootThread, null, null],
+      [childThread, rootThread, "running"],
+      [grandchildThread, childThread, null],
+    ]);
+    expect(body.nodes.map((n) => n.depth)).toEqual([0, 1, 2]);
+    expect(body.nodes.map((n) => n.title)).toEqual(["Root session", "Child session", "Grandchild session"]);
+
+    // A plain chat has no thread row: an empty subtree, not an error.
+    const plainChat = await insertChat("Plain chat");
+    const plain = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${plainChat}/subagents`,
+      headers: auth(),
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(JSON.parse(plain.body).nodes).toEqual([]);
+  });
+
   it("returns a plain chat with parent null and its thread kind", async () => {
     const plainChat = await insertChat("Plain chat");
     const plain = await stack.env.app.inject({
