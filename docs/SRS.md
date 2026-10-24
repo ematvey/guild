@@ -447,7 +447,7 @@ ordinary tools reach it with no special policy.
 
 ## 11. Skills / context assembly
 
-Per `apps/desktop/src/lib/context.ts` + `skill-mention.ts` (TS owns the
+Per `apps/desktop/src/lib/skills.ts` + `skill-mention.ts` (TS owns the
 logic; Rust only touches bytes through `fs.*`), with the server as the
 enforcement cap (`apps/server/src/harness/runtime.ts`).
 
