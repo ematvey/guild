@@ -742,7 +742,7 @@ describe("gateway/chat turn flow", () => {
     const id = JSON.parse(created.body).id as string;
     const runtime = stack.env.app.platform.runtime;
     await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    const conversation = await runtime.conversationForChat(id);
     await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
     await conversation.commit(async tx => {
       for (let i = 0; i < 3; i++) await tx.appendEntry(UserEntry, conversation.id, { model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }] });
@@ -774,7 +774,7 @@ describe("gateway/chat turn flow", () => {
     const id = JSON.parse(created.body).id as string;
     const runtime = stack.env.app.platform.runtime;
     await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    const conversation = await runtime.conversationForChat(id);
     await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
     const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
     expect(started.statusCode).toBe(200);

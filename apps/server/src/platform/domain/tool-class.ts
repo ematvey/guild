@@ -1,0 +1,61 @@
+// The tool risk class vocabulary: read, write, admin. One home for the
+// class rank, the compiled-in and manifest class rules, and the client
+// tool names that map into the policy vocabulary.
+
+export type ToolClass = "read" | "write" | "admin";
+
+export const TOOL_CLASSES: readonly ToolClass[] = ["read", "write", "admin"];
+
+export function isToolClass(value: unknown): value is ToolClass {
+  return value === "read" || value === "write" || value === "admin";
+}
+
+/** Class rank for the policy rule: read < write < admin. */
+export function classRank(cls: string): number {
+  return cls === "write" ? 1 : cls === "admin" ? 2 : 0;
+}
+
+/** Effective manifest class for one compiled-in tool: the declared class or
+ *  read. */
+export function toolClassOf(connector: { classes: Record<string, string> }, tool: string): string {
+  const declared = connector.classes[tool];
+  if (declared === "write" || declared === "admin") return declared;
+  return "read";
+}
+
+/** Effective manifest class for one registry v2 integration tool: the
+ *  declared class or read. */
+export function manifestToolClass(manifest: Record<string, unknown> | null, tool: string): string {
+  const tools = manifest?.["tools"];
+  if (tools !== null && typeof tools === "object" && !Array.isArray(tools)) {
+    const classes = (tools as Record<string, unknown>)["classes"];
+    if (classes !== null && typeof classes === "object" && !Array.isArray(classes)) {
+      const c = (classes as Record<string, unknown>)[tool];
+      if (c === "write" || c === "admin") return c;
+      if (typeof c === "string") return "read";
+    }
+  }
+  return "read";
+}
+
+/** The pi-durable tool names → the guild-core tool classes the client
+ *  policy vocabulary is keyed by. */
+export function clientToolClass(name: string): string {
+  switch (name) {
+    case "read":
+      return "read_file";
+    case "bash":
+    case "agent_bash":
+      return "execute";
+    case "write":
+    case "agent_write":
+      return "write_file";
+    case "edit":
+    case "agent_edit":
+      return "edit_file";
+    case "agent_read":
+      return "read_file";
+    default:
+      return name;
+  }
+}

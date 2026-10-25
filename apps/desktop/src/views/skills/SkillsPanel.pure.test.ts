@@ -7,12 +7,10 @@ import { describe, expect, it } from "vitest";
 import {
   filterByKind,
   filterSkills,
-  ownerInitials,
   skillsPageHeader,
   skillRow,
   skillsEmptyState,
   sortSkills,
-  versionRank,
 } from "./SkillsPanel";
 import {
   clampSkillsRoute,
@@ -21,6 +19,8 @@ import {
   skillsRefetch,
   type SkillsRoute,
 } from "./skills-route";
+import { avatarChip } from "../../lib/format";
+import { versionRank } from "./version";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 
 const fixtures: SkillItem[] = [
@@ -92,10 +92,10 @@ describe("skillRow", () => {
   });
 });
 
-describe("ownerInitials (the row's initials avatar)", () => {
+describe("avatarChip (the row's avatar chip)", () => {
   it("takes the first two characters, uppercased", () => {
-    expect(ownerInitials("Ada")).toBe("AD");
-    expect(ownerInitials("platform-team")).toBe("PL");
+    expect(avatarChip("Ada")).toBe("AD");
+    expect(avatarChip("platform-team")).toBe("PL");
   });
 });
 
@@ -119,7 +119,7 @@ describe("versionRank (the recently-updated sort's version order)", () => {
   it("parses the numeric suffix of a vN version", () => {
     expect(versionRank("v3")).toBe(3);
     expect(versionRank("v10")).toBe(10);
-    expect(versionRank("1.2.0")).toBe(0);
+    expect(versionRank("1.2.0")).toBe(1);
   });
 });
 

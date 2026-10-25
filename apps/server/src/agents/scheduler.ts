@@ -5,13 +5,13 @@
 // tests start it explicitly.
 
 import { rm } from "node:fs/promises";
-import path from "node:path";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import { uuidv7 } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
 import { AgentStore } from "./store.js";
+import { agentWorkspaceDir } from "./workspace-config.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
 
 export const SCHEDULER_TICK_MS = 15_000;
@@ -124,7 +124,7 @@ export class AgentScheduler {
       try {
         await this.deps.store.purgeById(row.org_id, row.id);
         if (this.deps.workspaceRoot !== undefined) {
-          await rm(path.join(this.deps.workspaceRoot, "agents", row.org_id, row.id), {
+          await rm(agentWorkspaceDir(this.deps.workspaceRoot, row.org_id, row.id), {
             recursive: true,
             force: true,
           });

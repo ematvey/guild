@@ -671,16 +671,20 @@ describe("M6 admin users + prompts", () => {
   it("stores the assistant and approval-policy prompts in org_kv", async () => {
     const before = await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken);
     expect(before.statusCode).toBe(200);
-    expect(json(before)).toEqual({ prompt: null });
+    expect(json(before)).toEqual({
+      prompt: null,
+      default:
+        "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.",
+    });
 
     const set = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "You are terse." });
     expect(set.statusCode).toBe(200);
     expect(json(set)).toEqual({ ok: true });
-    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toEqual({ prompt: "You are terse." });
+    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toMatchObject({ prompt: "You are terse." });
 
     const reset = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "" });
     expect(reset.statusCode).toBe(200);
-    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toEqual({ prompt: null });
+    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toMatchObject({ prompt: null });
 
     const policy = json(await inject("GET", "/api/v1/admin/approval-policy-prompt", e.adminToken)) as unknown as {
       prompt: string | null;

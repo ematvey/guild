@@ -4,7 +4,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";
-import { rustFloat, rustJsonText } from "../provider/sse.js";
+import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { PROTOCOLS, providerSlug } from "../store/gateway.js";
 

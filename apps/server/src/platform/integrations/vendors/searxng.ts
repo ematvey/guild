@@ -1,4 +1,4 @@
-import { configString, trimTrailingSlash, fetchJson, clampNumber } from "./shared.js";
+import { fetchJson, clampNumber, searxngBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- searxng ----------
@@ -8,9 +8,8 @@ export async function searxngExecute(config: Json, tool: string, args: Json, _se
   const query = args["query"];
   if (typeof query !== "string") throw new Error("web_search requires query");
   const count = clampNumber(args, "count", 5, 10);
-  const base = configString(config, "base_url");
-  if (base === undefined) throw new Error("searxng config requires base_url");
-  const url = new URL(`${trimTrailingSlash(base)}/search`);
+  const base = searxngBaseUrl(config);
+  const url = new URL(`${base}/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("format", "json");
   const body = await fetchJson(url.toString(), {}, "searxng");

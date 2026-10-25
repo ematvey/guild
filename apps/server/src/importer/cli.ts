@@ -23,18 +23,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
   process.exit(1);
 }
 
-const pool = new pg.Pool({
-  connectionString: databaseUrl,
-  max: 4,
-  types: {
-    // BIGINT seq counters parse as numbers (ids/sequences are far below
-    // 2^53).
-    getTypeParser: (oid, format) =>
-      oid === 20 && format === "text"
-        ? (value: string) => Number(value)
-        : pg.types.getTypeParser(oid, format),
-  },
-} as pg.PoolConfig);
+const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
 
 const objects =
   config.s3Url !== "" && config.s3AccessKeyId !== "" && config.s3SecretAccessKey !== ""

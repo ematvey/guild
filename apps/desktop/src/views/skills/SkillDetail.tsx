@@ -33,6 +33,7 @@ import {
   type SkillSourceFile,
 } from "./skills-api";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { avatarChip } from "../../lib/format";
 
 /** SKILL.md body without the leading YAML frontmatter block: the detail
  * page header already shows name/description, so the preview starts at
@@ -227,12 +228,6 @@ export function sparkRects(
  *  series' peak, bottoming out at the 2px minimum. */
 export function readBars(series: Array<{ day: string; reads: number }>): number[] {
   return sparkRects(series).map((r) => r.h);
-}
-
-/** First two characters of a label, uppercased — the initials avatar chip
- *  (the detail page's owner line and versions table). */
-export function avatarChip(label: string): string {
-  return label.slice(0, 2).toUpperCase();
 }
 
 /** The POST /api/v1/skills body that forks this skill: from the viewer's

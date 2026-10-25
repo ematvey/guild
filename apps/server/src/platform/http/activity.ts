@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { queryParam, requireUser } from "./error.js";
-import { rustFloat, rustJsonText } from "../provider/sse.js";
+import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 import { errorText } from "../usage.js";
 import { isUuid } from "../time.js";
 import type { IdentityCtx, InfraContext } from "../route-contexts.js";

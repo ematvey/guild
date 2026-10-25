@@ -6,6 +6,10 @@ import type { PlatformPool } from "../db.js";
 
 /** Server-wide KV key holding the auto-generated release signing seed. */
 export const SIGNING_SEED_KV = "release_signing_seed";
+/** Org KV key holding the admin-configured assistant persona prompt. */
+export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
+/** Org KV key holding the admin-configured "Approve for me" policy prompt. */
+export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 
 export class OrgKvStore {
   constructor(readonly pool: PlatformPool) {}

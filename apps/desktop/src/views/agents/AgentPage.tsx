@@ -43,6 +43,7 @@ import {
 } from "@guild/ui/components/select";
 import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
 import { relativeTime } from "../../lib/relative-time";
+import { count } from "../../lib/format";
 import {
   archiveAgent,
   createAgentThread,
@@ -67,7 +68,9 @@ import {
 } from "./agents-api";
 import {
   AGENT_TABS,
+  DEFAULT_ACTIVITY_FILTERS,
   VISIBILITY_LABEL,
+  type ActivityFilters,
   type AgentTab,
   type AgentVisibility,
   type AgentsRoute,
@@ -116,6 +119,7 @@ export function AgentPage({
   threadId,
   routineId,
   filePath,
+  filters,
   viewer,
   onNavigate,
   onOpenChat,
@@ -125,6 +129,7 @@ export function AgentPage({
   threadId?: string;
   routineId?: string;
   filePath?: string;
+  filters?: ActivityFilters;
   viewer: Viewer;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
@@ -153,7 +158,11 @@ export function AgentPage({
   const manage = agent !== null && canManageAgent(agent, viewer);
 
   const setTab = (next: AgentTab) => {
-    onNavigate({ view: "agent", agentId, tab: next });
+    onNavigate(
+      next === "activity"
+        ? { view: "agent", agentId, tab: next, filters: DEFAULT_ACTIVITY_FILTERS }
+        : { view: "agent", agentId, tab: next },
+    );
   };
 
   /** A thread has one canonical address: its chat. */
@@ -243,7 +252,7 @@ export function AgentPage({
             <span>·</span>
             <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
-            <span>{agent.tools.length} tools</span>
+            <span>{count(agent.tools.length, "tool")}</span>
           </span>
         }
         actions={
@@ -320,6 +329,10 @@ export function AgentPage({
             <ActivityPage
               embedded
               agentId={agent.id}
+              filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
+              onFiltersChange={(next) =>
+                onNavigate({ view: "agent", agentId, tab: "activity", filters: next })
+              }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
             />
@@ -337,6 +350,17 @@ export function AgentPage({
       )}
     </div>
   );
+}
+
+async function downloadAgentExport(agent: Agent): Promise<void> {
+  const bundle = await exportAgent(agent.id);
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function AgentActions({
@@ -375,14 +399,7 @@ function AgentActions({
   const download = async () => {
     setExporting(true);
     try {
-      const bundle = await exportAgent(agent.id);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      await downloadAgentExport(agent);
     } finally {
       setExporting(false);
     }
@@ -697,24 +714,6 @@ function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const download = async () => {
-    setExporting(true);
-    try {
-      const bundle = await exportAgent(agent.id);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } finally {
-      setExporting(false);
-    }
-  };
 
   useEffect(() => {
     void listModels().then((rows) => setModels(rows ?? []));
@@ -998,57 +997,22 @@ function AgentSettings({
         title="Danger zone"
         description={`Deleting starts a grace period. The default is 30 days; the org can change it.`}
       >
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              if (agent.status === "active") await archiveAgent(agent.id);
-              else await restoreAgent(agent.id);
-              onChanged();
-            }}
-          >
-            {agent.status === "active" ? <Archive /> : <ArchiveRestore />}
-            {agent.status === "active" ? "Archive agent" : "Restore agent"}
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
-            <Trash2 />
-            Delete agent
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <AgentActions
+            agent={agent}
+            manage={manage}
+            onChanged={onChanged}
+            onDeleted={onDeleted}
+          />
+          <span className="text-xs text-muted-foreground">
+            Archive, restore, export or delete this agent.
+          </span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
             Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
-        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The agent stops now and disappears from the directory. Its workspace, threads and
-                runs stay recoverable during the organization&apos;s grace period (30 days by
-                default); after that they are purged. Download an export first if you need the
-                definitions and run history.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button variant="outline" onClick={() => void download()} disabled={exporting}>
-                <Download />
-                {exporting ? "Preparing…" : "Download export"}
-              </Button>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => {
-                  void deleteAgent(agent.id).then(onDeleted);
-                }}
-              >
-                Delete agent
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
         <p className="mt-2 text-xs text-muted-foreground">
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>

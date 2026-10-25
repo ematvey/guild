@@ -50,6 +50,16 @@ describe("readAgentConfig", () => {
     expect([...config.files.keys()]).toEqual(CONFIG_FILES.filter((f) => f.required).map((f) => f.name));
   });
 
+  it("lets AGENTS.override.md shadow AGENTS.md", async () => {
+    const dir = workspace();
+    await seedAgentWorkspace(dir);
+    writeFileSync(path.join(dir, "AGENTS.override.md"), "# override\n");
+    const config = await readAgentConfig(dir);
+    expect(config.files.get("AGENTS.override.md")).toBe("# override\n");
+    expect(config.files.has("AGENTS.md")).toBe(false);
+    expect(config.missing).toEqual([]);
+  });
+
   it("reads MEMORY.md when the agent created it", async () => {
     const dir = workspace();
     await seedAgentWorkspace(dir);

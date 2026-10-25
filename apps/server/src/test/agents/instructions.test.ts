@@ -66,11 +66,11 @@ describe("composeAgentInstructions", () => {
   it("truncates a long file with a marker that points at the file", () => {
     const text = composeAgentInstructions(
       { name: "Scout", is_personal: false },
-      config({ ...FULL, "AGENTS.md": `# AGENTS.md\n\n${"x".repeat(9 * 1024)}` }),
+      config({ ...FULL, "AGENTS.md": `# AGENTS.md\n\n${"x".repeat(40 * 1024)}` }),
     );
     expect(text).toContain("(truncated at");
     expect(text).toContain("read the file for the rest");
-    expect(text.length).toBeLessThan(30 * 1024);
+    expect(text.length).toBeLessThan(36 * 1024);
   });
 
   it("appends the desktop project chain after the workspace files", () => {

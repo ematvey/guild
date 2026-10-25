@@ -34,6 +34,7 @@ use uuid::Uuid;
 /// session sat "connected" forever while the server had long freed the
 /// slot (machine offline until the daemon restarted). Env-overridable for
 /// tests.
+// coherence:seam owner=@maintainer until=2027-01-31 reason="test hook shortens the heartbeat"
 fn heartbeat_secs() -> u64 {
     std::env::var("GUILD_LINK_HEARTBEAT_SECS")
         .ok()
@@ -41,6 +42,7 @@ fn heartbeat_secs() -> u64 {
         .unwrap_or(15)
 }
 
+// coherence:seam owner=@maintainer until=2027-01-31 reason="test hook shortens the idle verdict"
 fn idle_secs() -> u64 {
     std::env::var("GUILD_LINK_IDLE_SECS")
         .ok()
@@ -966,7 +968,7 @@ fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 /// shutdown.
 pub async fn watch_token_store(
     path: PathBuf,
-    session: Arc<std::sync::Mutex<crate::jsonrpc_loop::Session>>,
+    session: Arc<std::sync::Mutex<crate::jsonrpc_loop::EngineState>>,
     links: LinkRegistry,
     mut shutdown_rx: watch::Receiver<bool>,
     poll: Duration,
@@ -988,7 +990,7 @@ pub async fn watch_token_store(
         let cfg = config_from_store(&path);
         {
             // The in-memory session follows the store too: the daemon built
-            // Session.auth at boot, and the unit's CLI / agent.start /
+            // its engine state's auth at boot, and the unit's CLI / agent.start /
             // registry.* read it — a re-pair must not leave stale auth.
             // Memory-only: no persist, and the link send below keeps its
             // dedup.
@@ -1243,7 +1245,7 @@ mod tests {
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),
@@ -1633,7 +1635,7 @@ mod tests {
         let (_shutdown, mut stop) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),
@@ -2012,7 +2014,7 @@ mod tests {
         let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let session = Arc::new(std::sync::Mutex::new(
-            crate::jsonrpc_loop::Session::default(),
+            crate::jsonrpc_loop::EngineState::default(),
         ));
         let watched = session.clone();
         tokio::spawn(watch_token_store(
@@ -2050,7 +2052,7 @@ mod tests {
         assert_eq!(
             session.lock().unwrap().auth.cloud().unwrap().token,
             "t2",
-            "Session.auth follows the reloaded store"
+            "EngineState.auth follows the reloaded store"
         );
         // A store change that resolves to the config already held dedups:
         // no publish, the channel stays quiet (mtime re-save of the same
@@ -2087,7 +2089,7 @@ mod tests {
             org_logo_url: None,
         };
         session_store::save(&path, &store("ta", "a@b")).unwrap();
-        let mut initial = crate::jsonrpc_loop::Session::default();
+        let mut initial = crate::jsonrpc_loop::EngineState::default();
         initial.auth.adopt_stored(&store("ta", "a@b"));
         initial.chat_id = Some(uuid::Uuid::now_v7());
         initial.model = "m".into();
@@ -2216,7 +2218,7 @@ mod error_frame_tests {
         let (_shutdown, mut stop) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),

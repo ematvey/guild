@@ -25,8 +25,6 @@ export interface ChatSummary {
   project_id?: string;
   project_name?: string;
   project_machine_label?: string;
-  /** Whether the bound machine's socket is live right now. */
-  machine_online?: boolean;
   /** The chat's latest thread event (RFC3339), falling back to created_at —
    *  the sidebar's recent-activity sort key. List rows carry it; the live
    *  thread-event fan-out moves it forward as turns land. */
@@ -64,15 +62,6 @@ export interface ChatSubagentNode {
   title: string;
   depth: number;
   status: string | null;
-}
-
-export interface ChatMessage {
-  role: string;
-  content: string;
-  /// Present on assistant rows that requested tool calls.
-  tool_calls?: { id: string; name: string; arguments: unknown }[];
-  /// Present on tool rows: the call this result answers.
-  tool_call_id?: string;
 }
 
 export async function listChats(): Promise<ChatSummary[] | null> {

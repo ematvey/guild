@@ -8,12 +8,11 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { IS_TAURI, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
-import { apiLogin, apiLogout, apiMe } from "./lib/api/workspaces";
+import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
-import { clearApiCache } from "./views/settings/use-cached-api";
+import { clearSettingsCaches } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./lib/machines-store";
-import { clearGatewayCache } from "./views/settings/sections/GatewaySection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 import { startTelemetry } from "./lib/telemetry";
@@ -386,9 +385,8 @@ function DesktopApp() {
       /* engine unreachable — local sign-out only */
     }
     clearToken();
-    clearApiCache();
+    clearSettingsCaches();
     clearMachinesCache();
-    clearGatewayCache();
     setUser(null);
     window.location.reload();
   };
@@ -552,9 +550,8 @@ function AppInner() {
     const signOut = async () => {
       await apiLogout();
       clearToken();
-      clearApiCache();
+      clearSettingsCaches();
       clearMachinesCache();
-      clearGatewayCache();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

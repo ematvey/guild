@@ -6,6 +6,8 @@
 // timeoutMs bounds the wait, with a grace window so the server's
 // authoritative outcome (offline / settled / timed-out) wins when it is
 // merely slow; past that the proxy answers with the offline shape.
+//
+// coherence:seam owner=@maintainer until=2027-01-31 reason="IPC dispatch until workers hold a hub connection"
 
 import type { MachineToolOutcome } from "../machines/dispatch.js";
 import type { MachineDispatchCall, WorkerResponse } from "./protocol.js";

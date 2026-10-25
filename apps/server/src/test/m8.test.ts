@@ -426,10 +426,10 @@ describe("connector execute spot checks (mock backend)", () => {
 
 // ---------- MCP tool call (stub peer) ----------
 
-import type { PluginCallIdentity } from "../platform/integrations/execute.js";
-import type { PluginSecretSource, PluginTurn } from "../platform/integrations/plugins.js";
+import type { IntegrationCallIdentity } from "../platform/integrations/execute.js";
+import type { PluginSecretSource, IntegrationTurn } from "../platform/integrations/plugins.js";
 import type { Json } from "../platform/integrations/plugins.js";
-import type { ConnectorToolSpec } from "../platform/integrations/connectors.js";
+import type { IntegrationToolSpec } from "../platform/integration-catalog.js";
 
 describe("MCP tools/call (stub peer)", () => {
   let mcp: Server;
@@ -521,8 +521,8 @@ describe("MCP tools/call (stub peer)", () => {
       },
       masterKey: () => Buffer.alloc(32, 7),
     };
-    const spec = { name: "echo", description: "Echo", input_schema: { type: "object" } } as unknown as ConnectorToolSpec;
-    const turn: PluginTurn = {
+    const spec = { name: "echo", description: "Echo", input_schema: { type: "object" } } as unknown as IntegrationToolSpec;
+    const turn: IntegrationTurn = {
       executor: "mcp",
       slug: "test-mcp",
       description: "test",
@@ -531,7 +531,7 @@ describe("MCP tools/call (stub peer)", () => {
       secretNames: ["api_key"],
       identityKey: "test-mcp",
     };
-    const identity: PluginCallIdentity = {
+    const identity: IntegrationCallIdentity = {
       orgId: "org-1",
       callerId: "caller-1",
       callId: "call-1",

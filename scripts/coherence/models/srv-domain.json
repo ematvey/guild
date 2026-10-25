@@ -1,31 +1,67 @@
 {
-  "shared_canonical": ["apps/server/src/agents/types.ts"],
+  "shared_canonical": [
+    "apps/server/src/agents/types.ts"
+  ],
   "concepts": [
     {
       "id": "agent-thread",
       "definition": "One node of an agent's conversation tree; it holds the transcript in its own chat journal row and names its parent node.",
       "canonical": "apps/server/src/agents/types.ts",
-      "types": ["AgentThread", "AgentThreadKind", "AgentThreadRef", "SubagentNode"],
-      "aliases": ["agent_thread"],
+      "types": [
+        "AgentThread",
+        "AgentThreadKind",
+        "AgentThreadRef",
+        "SubagentNode"
+      ],
+      "aliases": [
+        "agent_thread"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/types.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/subagents.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/workspace.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/delivery.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/tree.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/agents/types.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/subagents.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/workspace.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/delivery.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/tree.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/agents/tree.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/agents/tree.ts"
+        }
       ]
     },
     {
       "id": "agent-notice",
       "definition": "One row of an agent's per-user inbox: a message, a routine failure or a routine disable notice, with a read marker.",
       "canonical": "apps/server/src/agents/types.ts",
-      "types": ["AgentNotice"],
-      "aliases": ["agent_notice", "inbox-notice"],
+      "types": [
+        "AgentNotice"
+      ],
+      "aliases": [
+        "agent_notice",
+        "inbox-notice"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/types.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/agents/types.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -33,10 +69,20 @@
       "id": "agent-workspace-file",
       "definition": "One file or folder inside an agent's workspace, as the read-only browser reports it: relative path, kind, size, mtime and a symlink flag.",
       "canonical": "apps/server/src/agents/files.ts",
-      "types": ["AgentFileEntry", "AgentDirListing", "AgentTextFile", "AgentDownload"],
-      "aliases": ["agent-file"],
+      "types": [
+        "AgentFileEntry",
+        "AgentDirListing",
+        "AgentTextFile",
+        "AgentDownload"
+      ],
+      "aliases": [
+        "agent-file"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/files.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/agents/files.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -44,10 +90,18 @@
       "id": "workspace-turn",
       "definition": "One running turn's journal row of the workspace paths it wrote, used to warn two live turns that touched the same file.",
       "canonical": "apps/server/src/agents/conflict.ts",
-      "types": ["WorkspaceTurnRef"],
-      "aliases": ["agent_workspace_turns", "workspace-conflict"],
+      "types": [
+        "WorkspaceTurnRef"
+      ],
+      "aliases": [
+        "agent_workspace_turns",
+        "workspace-conflict"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/conflict.ts", "role": "db" }
+        {
+          "where": "apps/server/src/agents/conflict.ts",
+          "role": "db"
+        }
       ],
       "translations": []
     },
@@ -55,12 +109,26 @@
       "id": "agent-workspace-config",
       "definition": "The small set of files at an agent workspace root (AGENTS.md, MEMORY.md) that seed the workspace and ride the system prompt.",
       "canonical": "apps/server/src/agents/workspace-config.ts",
-      "types": ["AgentConfigFiles"],
-      "aliases": ["workspace-config", "workspace-prompt-files"],
+      "types": [
+        "AgentConfigFiles"
+      ],
+      "aliases": [
+        "workspace-config",
+        "workspace-prompt-files"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/workspace-config.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/templates.ts", "role": "domain" },
-        { "where": "apps/server/src/agents/specialists.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/agents/workspace-config.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/templates.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/specialists.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -68,10 +136,17 @@
       "id": "specialist",
       "definition": "One member of the installable specialist pack: a named org agent with a fixed tool list, a playbook and a notes index.",
       "canonical": "apps/server/src/agents/specialists.ts",
-      "types": ["SpecialistDefinition"],
-      "aliases": ["specialist-pack"],
+      "types": [
+        "SpecialistDefinition"
+      ],
+      "aliases": [
+        "specialist-pack"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/specialists.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/agents/specialists.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -79,10 +154,18 @@
       "id": "connect-ticket",
       "definition": "A single-use, short-lived string that a client mints before a socket connect and spends on that connect.",
       "canonical": "apps/server/src/hub/tickets.ts",
-      "types": ["TicketStore", "TicketIdentity"],
-      "aliases": ["ticket"],
+      "types": [
+        "TicketStore",
+        "TicketIdentity"
+      ],
+      "aliases": [
+        "ticket"
+      ],
       "representations": [
-        { "where": "apps/server/src/hub/tickets.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/hub/tickets.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -90,12 +173,30 @@
       "id": "hub",
       "definition": "The in-process registry of live member sockets and machine slots, plus the per-socket outbound queue and the pending machine requests.",
       "canonical": "apps/server/src/hub/index.ts",
-      "types": ["Hub", "Member", "MachineRequestFn", "MachineRequestError", "LiveMember", "MachineRegistration"],
-      "aliases": ["socket-registry"],
+      "types": [
+        "Hub",
+        "Member",
+        "MachineRequestFn",
+        "MachineRequestError",
+        "LiveMember",
+        "MachineRegistration"
+      ],
+      "aliases": [
+        "socket-registry"
+      ],
       "representations": [
-        { "where": "apps/server/src/hub/index.ts", "role": "domain" },
-        { "where": "apps/server/src/hub/live.ts", "role": "domain" },
-        { "where": "apps/server/src/hub/sink.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/hub/index.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/hub/live.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/hub/sink.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -103,20 +204,35 @@
       "id": "member-feed",
       "definition": "The server-side forwarder that turns one shared Postgres NOTIFY stream into frames on the member sockets of a chat's owner.",
       "canonical": "apps/server/src/hub/feed.ts",
-      "types": ["FeedForwarder", "ChatIdentity", "UserBindings"],
-      "aliases": ["feed-forwarder"],
+      "types": [
+        "FeedForwarder",
+        "ChatIdentity",
+        "UserBindings"
+      ],
+      "aliases": [
+        "feed-forwarder"
+      ],
       "representations": [
-        { "where": "apps/server/src/hub/feed.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/hub/feed.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
     {
       "id": "workspace-snapshot",
-      "definition": "One user's sidebar state — active chats, archived chats, projects, and the machine registry — built as wire rows for the workspace push on the member socket.",
+      "definition": "One user's sidebar state \u2014 active chats, archived chats, projects, and the machine registry \u2014 built as wire rows for the workspace push on the member socket.",
       "canonical": "apps/server/src/hub/workspace.ts",
-      "aliases": ["sidebar-snapshot", "workspace-push"],
+      "aliases": [
+        "sidebar-snapshot",
+        "workspace-push"
+      ],
       "representations": [
-        { "where": "apps/server/src/hub/workspace.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/hub/workspace.ts",
+          "role": "wire"
+        }
       ],
       "translations": []
     },
@@ -124,10 +240,17 @@
       "id": "projection-cursor",
       "definition": "The stored position in a chat's durable entry log that the transcript projection has already copied into thread_events, with its turn and step.",
       "canonical": "apps/server/src/chats/projection.ts",
-      "types": ["ProjectionState"],
-      "aliases": ["chat-projection-cursor"],
+      "types": [
+        "ProjectionState"
+      ],
+      "aliases": [
+        "chat-projection-cursor"
+      ],
       "representations": [
-        { "where": "apps/server/src/chats/projection.ts", "role": "db" }
+        {
+          "where": "apps/server/src/chats/projection.ts",
+          "role": "db"
+        }
       ],
       "translations": []
     },
@@ -135,10 +258,17 @@
       "id": "submission-reconciliation",
       "definition": "The stored position in a chat's durable submission and task logs that the platform tables have already mirrored.",
       "canonical": "apps/server/src/chats/recovery.ts",
-      "types": ["ConversationRecovery"],
-      "aliases": ["reconciliation-cursor"],
+      "types": [
+        "ConversationRecovery"
+      ],
+      "aliases": [
+        "reconciliation-cursor"
+      ],
       "representations": [
-        { "where": "apps/server/src/chats/recovery.ts", "role": "db" }
+        {
+          "where": "apps/server/src/chats/recovery.ts",
+          "role": "db"
+        }
       ],
       "translations": []
     },
@@ -146,10 +276,18 @@
       "id": "turn-text",
       "definition": "The user message text a turn derives from its attachments: chip metadata plus the inlined document text or a media note.",
       "canonical": "apps/server/src/chats/turn-text.ts",
-      "types": ["MediaRef", "MediaMap"],
-      "aliases": ["arrival-turn-text"],
+      "types": [
+        "MediaRef",
+        "MediaMap"
+      ],
+      "aliases": [
+        "arrival-turn-text"
+      ],
       "representations": [
-        { "where": "apps/server/src/chats/turn-text.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/chats/turn-text.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -157,51 +295,252 @@
       "id": "thread-chunk",
       "definition": "One searchable slice of a finished turn: a seq range of a thread plus its text and full-text index row.",
       "canonical": "apps/server/src/agents/search.ts",
-      "types": ["AgentChunkInput", "AgentChunkMessage", "AgentSearchHit"],
-      "aliases": ["search-chunk"],
+      "types": [
+        "AgentChunkInput",
+        "AgentChunkMessage",
+        "AgentSearchHit"
+      ],
+      "aliases": [
+        "search-chunk"
+      ],
       "representations": [
-        { "where": "apps/server/src/agents/search.ts", "role": "db" }
+        {
+          "where": "apps/server/src/agents/search.ts",
+          "role": "db"
+        }
       ],
       "translations": []
+    },
+    {
+      "id": "mime",
+      "definition": "The content type and modality of a file or tool result, decided once from its extension or declared type.",
+      "canonical": "apps/server/src/platform/domain/mime.ts",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/domain/mime.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/send-file.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/chats/turn-text.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/platform/domain/mime.ts"
+        },
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/server/src/chats/turn-text.ts"
+        }
+      ]
     }
   ],
   "attaches": [
-    { "where": "apps/server/src/agents/types.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/types.ts", "concept": "agent-run", "role": "domain" },
-    { "where": "apps/server/src/agents/types.ts", "concept": "routine", "role": "domain" },
-    { "where": "apps/server/src/agents/lifecycle.ts", "concept": "agent-run", "role": "domain" },
-    { "where": "apps/server/src/agents/delivery.ts", "concept": "agent-run", "role": "domain" },
-    { "where": "apps/server/src/agents/reconcile.ts", "concept": "agent-run", "role": "domain" },
-    { "where": "apps/server/src/agents/scheduler.ts", "concept": "agent-run", "role": "domain" },
-    { "where": "apps/server/src/agents/scheduler.ts", "concept": "routine", "role": "domain" },
-    { "where": "apps/server/src/agents/scheduler.ts", "concept": "agent-notice", "role": "domain" },
-    { "where": "apps/server/src/agents/tools.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/tools.ts", "concept": "routine", "role": "domain" },
-    { "where": "apps/server/src/agents/tools.ts", "concept": "agent-notice", "role": "domain" },
-    { "where": "apps/server/src/agents/subagents.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/specialists.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/workspace.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/workspace-config.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/agents/conflict.ts", "concept": "thread-event", "role": "event" },
-    { "where": "apps/server/src/agents/delivery.ts", "concept": "thread-event", "role": "event" },
-    { "where": "apps/server/src/agents/lifecycle.ts", "concept": "thread-event", "role": "event" },
-    { "where": "apps/server/src/agents/thread-read.ts", "concept": "thread-event", "role": "report" },
-    { "where": "apps/server/src/chats/projection.ts", "concept": "thread-event", "role": "db" },
-    { "where": "apps/server/src/chats/turn-text.ts", "concept": "attachment", "role": "domain" },
-    { "where": "apps/server/src/chats/attachment-materialize.ts", "concept": "attachment", "role": "domain" },
-    { "where": "apps/server/src/agents/send-file.ts", "concept": "attachment", "role": "domain" },
-    { "where": "apps/server/src/agents/delivery.ts", "concept": "attachment", "role": "domain" },
-    { "where": "apps/server/src/chats/spill.ts", "concept": "tool-artifact", "role": "db" },
-    { "where": "apps/server/src/agents/tree.ts", "concept": "ws-frame", "role": "wire" },
-    { "where": "apps/server/src/chats/thread-state.ts", "concept": "ws-frame", "role": "wire" },
-    { "where": "apps/server/src/chats/thread-state.ts", "concept": "thread-state", "role": "wire" },
-    { "where": "apps/server/src/chats/ws-sync.ts", "concept": "thread-state", "role": "wire" },
-    { "where": "apps/server/src/chats/ws-sync.ts", "concept": "member-socket", "role": "event" },
-    { "where": "apps/server/src/hub/index.ts", "concept": "member-socket", "role": "wire" },
-    { "where": "apps/server/src/hub/live.ts", "concept": "machine", "role": "domain" },
-    { "where": "apps/server/src/hub/index.ts", "concept": "machine", "role": "domain" },
-    { "where": "apps/server/src/hub/feed.ts", "concept": "machine", "role": "event" },
-    { "where": "apps/server/src/hub/feed.ts", "concept": "chat", "role": "event" }
+    {
+      "where": "apps/server/src/agents/types.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/types.ts",
+      "concept": "agent-run",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/types.ts",
+      "concept": "routine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/lifecycle.ts",
+      "concept": "agent-run",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/delivery.ts",
+      "concept": "agent-run",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/reconcile.ts",
+      "concept": "agent-run",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/scheduler.ts",
+      "concept": "agent-run",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/scheduler.ts",
+      "concept": "routine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/scheduler.ts",
+      "concept": "agent-notice",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/tools.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/tools.ts",
+      "concept": "routine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/tools.ts",
+      "concept": "agent-notice",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/subagents.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/specialists.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/workspace.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/workspace-config.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/conflict.ts",
+      "concept": "thread-event",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/agents/delivery.ts",
+      "concept": "thread-event",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/agents/lifecycle.ts",
+      "concept": "thread-event",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/agents/thread-read.ts",
+      "concept": "thread-event",
+      "role": "report"
+    },
+    {
+      "where": "apps/server/src/chats/projection.ts",
+      "concept": "thread-event",
+      "role": "db"
+    },
+    {
+      "where": "apps/server/src/chats/turn-text.ts",
+      "concept": "attachment",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/chats/attachment-materialize.ts",
+      "concept": "attachment",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/send-file.ts",
+      "concept": "attachment",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/delivery.ts",
+      "concept": "attachment",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/chats/spill.ts",
+      "concept": "tool-artifact",
+      "role": "db"
+    },
+    {
+      "where": "apps/server/src/agents/tree.ts",
+      "concept": "ws-frame",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/chats/thread-state.ts",
+      "concept": "ws-frame",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/chats/thread-state.ts",
+      "concept": "thread-state",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/chats/ws-sync.ts",
+      "concept": "thread-state",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/chats/ws-sync.ts",
+      "concept": "member-socket",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/hub/index.ts",
+      "concept": "member-socket",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/hub/live.ts",
+      "concept": "machine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/hub/index.ts",
+      "concept": "machine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/hub/feed.ts",
+      "concept": "machine",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/hub/feed.ts",
+      "concept": "chat",
+      "role": "event"
+    },
+    {
+      "where": "apps/server/src/hub/workspace.ts",
+      "concept": "chat",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/hub/workspace.ts",
+      "concept": "project",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/hub/workspace.ts",
+      "concept": "machine",
+      "role": "wire"
+    }
   ],
   "no_concept": [],
   "types_no_concept": []

@@ -10,10 +10,11 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
-import type { IntegrationGate } from "./integrations.js";
+import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
+import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
 
-export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
+export { ASSISTANT_PROMPT_KEY };
 
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
@@ -22,7 +23,8 @@ export const DEFAULT_PERSONA =
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
   const persona = orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
-  return `${persona} Coding tools — \`read\`, \`write\`, \`edit\`, \`list\`, \`bash\` and \`web_search\` — are called directly. Integration and MCP tools run on the Guild server through the codemode tool: write JavaScript that calls \`tools.<name>\`, and \`tools.thread_history\`/\`tools.thread_search\` as nested calls. Inspect and change files with the coding tools before answering anything that could be about files.`;
+  const codingTools = CODING_TOOL_NAMES.map((name) => `\`${name}\``).join(", ");
+  return `${persona} Coding tools — ${codingTools} — are called directly. Integration and MCP tools run on the Guild server through the codemode tool: write JavaScript that calls \`tools.<name>\`, and \`tools.thread_history\`/\`tools.thread_search\` as nested calls. Inspect and change files with the coding tools before answering anything that could be about files.`;
 }
 
 /** The codemode usage notes: what the shipped tool description leaves easy

@@ -1,21 +1,7 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, gitlabBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- gitlab ----------
-
-const GITLAB_DEFAULT_API = "https://gitlab.com/api/v4";
-
-function gitlabBaseUrl(config: Json): string {
-  const raw = configString(config, "base_url");
-  const trimmed = raw !== undefined ? raw.trim().replace(/\/+$/, "") : null;
-  if (trimmed === null || trimmed === "") return GITLAB_DEFAULT_API;
-  // has_url_path: a string without `://` always counts as carrying a path;
-  // a URL whose authority is followed by `/…` keeps its path as-is, a bare
-  // host gains the /api/v4 prefix.
-  const schemeSplit = trimmed.split("://");
-  const hasUrlPath = schemeSplit.length === 1 ? true : schemeSplit[1]!.includes("/");
-  return hasUrlPath ? trimmed : `${trimmed}/api/v4`;
-}
 
 /** Maps an HTTP failure to the tool-error contract: auth errors, missing
  *  resources, and validation rejections get specific wording; anything

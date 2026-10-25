@@ -268,28 +268,9 @@
     },
     {
       "id": "exec-policy",
-      "definition": "The static rule set that decides whether a command may run, ask, or be blocked, with no runtime state.",
-      "canonical": "crates/codex-execpolicy/src/policy.rs",
-      "types": [
-        "Policy",
-        "Evaluation",
-        "Decision",
-        "RuleMatch",
-        "PrefixRule",
-        "PrefixPattern",
-        "PatternToken",
-        "NetworkRule",
-        "NetworkRuleProtocol",
-        "MatchOptions",
-        "RequirementsExecPolicy",
-        "PolicyParser",
-        "Error",
-        "ErrorLocation",
-        "TextPosition",
-        "TextRange",
-        "AmendError",
-        "ExecPolicyCheckCommand"
-      ],
+      "definition": "The static rule set that decides whether a shell command may run, matched before any approval gate.",
+      "canonical": "apps/server/src/execpolicy/matcher.ts",
+      "types": [],
       "aliases": [
         "execpolicy",
         "prefix-rule",
@@ -297,47 +278,15 @@
       ],
       "representations": [
         {
-          "where": "crates/codex-execpolicy/src/policy.rs",
+          "where": "apps/server/src/execpolicy/matcher.ts",
           "role": "domain"
         },
         {
-          "where": "crates/codex-execpolicy/src/rule.rs",
-          "role": "domain"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/decision.rs",
-          "role": "domain"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/error.rs",
-          "role": "domain"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/executable_name.rs",
-          "role": "domain"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/parser.rs",
+          "where": "apps/server/src/execpolicy/rule-parser.ts",
           "role": "db"
         },
         {
-          "where": "crates/codex-execpolicy/src/amend.rs",
-          "role": "db"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/sandbox_migration.rs",
-          "role": "db"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/sandbox_migration_tests.rs",
-          "role": "db"
-        },
-        {
-          "where": "crates/codex-execpolicy/src/execpolicycheck.rs",
-          "role": "report"
-        },
-        {
-          "where": "crates/codex-execpolicy/tests/basic.rs",
+          "where": "apps/server/assets/exec_policy_base.rules",
           "role": "report"
         }
       ],
@@ -345,12 +294,12 @@
         {
           "from": "db",
           "to": "domain",
-          "at": "crates/codex-execpolicy/src/parser.rs"
+          "at": "apps/server/src/execpolicy/rule-parser.ts"
         },
         {
           "from": "domain",
           "to": "report",
-          "at": "crates/codex-execpolicy/src/execpolicycheck.rs"
+          "at": "apps/server/assets/exec_policy_base.rules"
         }
       ]
     }
@@ -410,6 +359,10 @@
     },
     {
       "where": "crates/protocol/build.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/tests/common/mod.rs",
       "reason": "infrastructure"
     }
   ],

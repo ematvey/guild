@@ -487,9 +487,7 @@ Cargo lockfiles (`cargo update -w` touches only workspace members):
 scripts/bump-version.sh 0.5.38
 ```
 
-Deliberately NOT synced: `crates/codex-utils-absolute-path` and
-`crates/codex-execpolicy` (0.2.1) — vendored Codex upstream crates that
-keep their own version line; and every external dependency in the
+Deliberately NOT synced: every external dependency in the
 `[workspace.dependencies]` table.
 
 When a release bumps the version, run the script first, commit, then

@@ -1,5 +1,5 @@
-// Per-turn workspace conflict journal. Tool calls that write files append
-// their paths to agent_workspace_turns; overlapping paths between running
+// writeJournal: the per-turn workspace conflict journal. Tool calls that
+// write files append their paths to agent_workspace_turns; overlapping paths between running
 // turns produce a notice in the other turn's transcript (a system_message)
 // and, for the writer, a warning diagnostic on the tool result. The user is
 // never notified.

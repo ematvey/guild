@@ -1,11 +1,7 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, configString, trimTrailingSlash, fetchTimeout, transportCause, clampNumber, callVendorApi } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, fetchTimeout, transportCause, clampNumber, callVendorApi, slackBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- slack ----------
-
-function slackBaseUrl(config: Json): string {
-  return trimTrailingSlash(configString(config, "base_url") ?? "https://slack.com/api");
-}
 
 async function slackApi(url: string, init: RequestInit): Promise<Json> {
   let res: Response;

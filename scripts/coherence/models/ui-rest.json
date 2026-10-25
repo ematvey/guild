@@ -4,21 +4,21 @@
     {
       "id": "workspace-session",
       "definition": "One signed-in server the desktop workspace switcher can point at.",
-      "canonical": "apps/desktop/src/lib/api/workspaces.ts",
+      "canonical": "apps/desktop/src/lib/api/servers.ts",
       "types": [
-        "WorkspaceRow",
-        "WorkspaceList"
+        "ServerRow",
+        "ServerList"
       ],
       "aliases": [
         "server-session"
       ],
       "representations": [
         {
-          "where": "apps/desktop/src/lib/api/workspaces.ts",
+          "where": "apps/desktop/src/lib/api/servers.ts",
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/workspace-menu.tsx",
+          "where": "apps/desktop/src/views/server-menu.tsx",
           "role": "ui"
         }
       ],
@@ -26,13 +26,13 @@
         {
           "from": "wire",
           "to": "ui",
-          "at": "apps/desktop/src/views/workspace-menu.tsx"
+          "at": "apps/desktop/src/views/server-menu.tsx"
         }
       ]
     },
     {
       "id": "project-instructions",
-      "definition": "The AGENTS.md instruction chain and the skills index assembled into one turn's prompt.",
+      "definition": "The files a chat carries into its turn: AGENTS.override.md over AGENTS.md, plus MEMORY.md, 32 KiB total. The desktop and the server both read it; each can see a folder the other cannot.",
       "canonical": "apps/desktop/src/lib/turn-context.ts",
       "types": [
         "PreparedTurn",
@@ -48,6 +48,108 @@
         }
       ],
       "translations": []
+    },
+    {
+      "id": "skill-version",
+      "definition": "A skill version string, parsed once and rendered the same way wherever a skill appears.",
+      "canonical": "apps/desktop/src/views/skills/version.ts",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/skills/version.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/skills/SkillsPanel.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/skills/SkillsPanel.tsx"
+        }
+      ]
+    },
+    {
+      "id": "settings-wire",
+      "definition": "The settings endpoints and their mutations, named in one module so no view holds a path.",
+      "canonical": "apps/desktop/src/lib/api/settings.ts",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/settings.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/RegistrySection.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/views/settings/sections/RegistrySection.tsx"
+        }
+      ]
+    },
+    {
+      "id": "folder-browser",
+      "definition": "The folder picker: one interaction body, one transport and one path rule per host kind.",
+      "canonical": "apps/desktop/src/views/projects/FolderBrowser.tsx",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/projects/FolderBrowser.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/projects/PathSpecifier.tsx",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/projects/RemotePathSpecifier.tsx",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/projects/PathSpecifier.tsx"
+        }
+      ]
+    },
+    {
+      "id": "usage-query",
+      "definition": "The usage panel's filter, carried in the chat route so a reload and the back button restore it.",
+      "canonical": "apps/desktop/src/views/settings/usage-route.ts",
+      "types": [
+        "UsageQuery"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/settings/usage-route.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/route.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/desktop/src/views/thread/route.ts"
+        }
+      ]
     }
   ],
   "shared_canonical": [],
@@ -71,11 +173,6 @@
       "where": "apps/desktop/src/components/user-badge.tsx",
       "concept": "user",
       "role": "ui"
-    },
-    {
-      "where": "apps/desktop/src/lib/api/workspaces.ts",
-      "concept": "user",
-      "role": "wire"
     },
     {
       "where": "apps/desktop/src/lib/oidc-login.ts",

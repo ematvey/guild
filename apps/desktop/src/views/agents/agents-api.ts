@@ -461,23 +461,6 @@ export async function listRunChildren(runId: string): Promise<AgentRun[]> {
   return body.children;
 }
 
-export interface AgentArtifact {
-  id: string;
-  path: string;
-  size: number;
-  status: "inbox" | "staged" | "released";
-  inbox_path?: string | null;
-  staging_path?: string | null;
-  created_at: string;
-}
-
-export async function listRunArtifacts(runId: string): Promise<AgentArtifact[]> {
-  const body = await request<{ artifacts: AgentArtifact[] }>(
-    `/api/v1/runs/${encodeURIComponent(runId)}/artifacts`,
-  );
-  return body.artifacts;
-}
-
 export interface ActivityFilters {
   agent?: string;
   status?: RunStatus | "all";
@@ -728,9 +711,6 @@ export function groupTools(
 // calls), sessions (chats) and the summary. One shape for the whole
 // observability surface; the server owns the wire truth.
 
-export type ActivityTab = "traces" | "calls" | "sessions";
-export type ActivityPeriod = "24h" | "7d" | "30d";
-
 export interface TraceRow {
   trace_id: string;
   org_id: string;
@@ -787,7 +767,7 @@ export interface SpanRow {
   attributes: Record<string, unknown>;
 }
 
-export interface SessionRow {
+export interface ChatActivityRow {
   session_id: string;
   traces: number;
   calls: number;
@@ -878,12 +858,13 @@ export async function listSpans(
   );
 }
 
-export async function listSessions(
+export async function listChatActivity(
   filters: ActivityQuery = {},
-): Promise<{ sessions: SessionRow[]; total: number }> {
-  return request<{ sessions: SessionRow[]; total: number }>(
+): Promise<{ chats: ChatActivityRow[]; total: number }> {
+  const body = await request<{ sessions: ChatActivityRow[]; total: number }>(
     `/api/v1/activity/sessions${activityQuery(filters)}`,
   );
+  return { chats: body.sessions, total: body.total };
 }
 
 export async function getActivitySummary(

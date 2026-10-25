@@ -10,7 +10,7 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
