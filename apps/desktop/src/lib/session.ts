@@ -5,6 +5,10 @@
 
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/** localStorage keys owned by this module. */
+export const SERVER_URL_KEY = "guild.serverUrl";
+export const TOKEN_KEY = "guild_token";
+
 /// Base URL for server HTTP calls. Web: same-origin (guild-server serves the
 /// app). Tauri: the webview origin is tauri://localhost, which the server
 /// knows nothing about — same-origin fetches would die there — so they go to
@@ -13,7 +17,7 @@ export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" i
 export function serverBase(): string {
   if (IS_TAURI) {
     try {
-      return (localStorage.getItem("guild.serverUrl") ?? "").replace(/\/$/, "");
+      return (localStorage.getItem(SERVER_URL_KEY) ?? "").replace(/\/$/, "");
     } catch {
       return "";
     }
@@ -32,8 +36,6 @@ export function apiUrl(path: string): string {
 export function serverUrl(): string {
   return serverBase() || window.location.origin;
 }
-
-export const TOKEN_KEY = "guild_token";
 
 export function wsUrl(): string {
   const base = serverBase();

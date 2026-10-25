@@ -30,12 +30,12 @@ import {
 } from "./agents-api";
 import {
   fileBreadcrumbs,
-  formatFileSize,
   joinPath,
   parentPath,
   previewKindOf,
   type AgentsRoute,
 } from "./agents-route";
+import { formatBytes } from "../../lib/format";
 import {
   EmptyState,
   ErrorState,
@@ -447,7 +447,7 @@ export function AgentFiles({
                         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                       ) : (
                         <span className="hidden shrink-0 text-2xs text-muted-foreground sm:block">
-                          {entry.kind === "dir" ? "—" : formatFileSize(entry.size)}
+                          {entry.kind === "dir" ? "—" : formatBytes(entry.size)}
                         </span>
                       )}
                       <span className="hidden w-20 shrink-0 text-right text-2xs text-muted-foreground md:block">
@@ -596,7 +596,7 @@ function FilePreview({ content, path }: { content: AgentFileContent; path: strin
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <File className="size-4" />
         <Mono>{path}</Mono>
-        <span>· {formatFileSize(content.size)}</span>
+        <span>· {formatBytes(content.size)}</span>
       </div>
     </Section>
   );

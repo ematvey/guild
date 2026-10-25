@@ -6,7 +6,6 @@ import {
   agentsRouteTab,
   fileBreadcrumbs,
   fileExtension,
-  formatFileSize,
   joinPath,
   parentPath,
   parseAgentsRoute,
@@ -110,14 +109,6 @@ describe("file path helpers", () => {
     expect(previewKindOf("table.csv")).toBe("csv");
     expect(previewKindOf("archive.zip")).toBe("binary");
     expect(fileExtension("Makefile")).toBe("");
-  });
-
-  it("formats sizes for file rows", () => {
-    expect(formatFileSize(0)).toBe("0 B");
-    expect(formatFileSize(900)).toBe("900 B");
-    expect(formatFileSize(1536)).toBe("1.5 KB");
-    expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0 MB");
-    expect(formatFileSize(null)).toBe("—");
   });
 });
 

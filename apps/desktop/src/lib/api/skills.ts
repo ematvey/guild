@@ -52,7 +52,7 @@ export async function prepareTurn(
   prompt: string,
   projectDir?: string,
 ): Promise<{ prompt: string; index: string; instructions?: string }> {
-  // Context assembly moved to the client (lib/context.ts) over the fs
+  // Context assembly lives in the client (lib/turn-context.ts) over the fs
   // bridge; browser mode has no local files and passes through untouched.
   const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;
   const scopes = await fs.scopes();

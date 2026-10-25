@@ -231,7 +231,7 @@ export function readBars(series: Array<{ day: string; reads: number }>): number[
 
 /** First two characters of a label, uppercased — the initials avatar chip
  *  (the detail page's owner line and versions table). */
-export function initialsOf(label: string): string {
+export function avatarChip(label: string): string {
   return label.slice(0, 2).toUpperCase();
 }
 
@@ -640,7 +640,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
               <Avatar
                 src={detail.owner.avatar_url}
                 alt={detail.owner.label}
-                fallback={initialsOf(detail.owner.label)}
+                fallback={avatarChip(detail.owner.label)}
                 className="size-5 border border-border"
                 fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
               />
@@ -706,7 +706,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                         {v.publisher !== null && v.publisher !== "" ? (
                           <span className="flex items-center gap-1.5">
                             <Avatar
-                              fallback={initialsOf(v.publisher)}
+                              fallback={avatarChip(v.publisher)}
                               className="size-5 border border-border"
                               fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
                             />

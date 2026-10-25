@@ -19,7 +19,7 @@ import {
   readBars,
   readSummary,
   shaPrefix,
-  initialsOf,
+  avatarChip,
   isMarkdownPath,
   skillMdPreviewBody,
   sparkRects,
@@ -312,9 +312,9 @@ describe("publishedLabel (the versions table's Published cell)", () => {
   });
 });
 
-describe("initialsOf (the avatar chips)", () => {
+describe("avatarChip (the avatar chips)", () => {
   it("takes the first two characters, uppercased", () => {
-    expect(initialsOf("Ada")).toBe("AD");
+    expect(avatarChip("Ada")).toBe("AD");
   });
 });
 
