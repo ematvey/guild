@@ -41,6 +41,13 @@ export function applySubagentTree(
   return { ...trees, [chatId]: nodes };
 }
 
+/** A reconnect invalidates every cached tree: a run can finish while the
+ *  socket is down. The bracket and NOTIFY re-push live trees; until then the
+ *  list row's working flag is the fallback. */
+export function clearSubagentTrees(): Record<string, ChatSubagentNode[]> {
+  return {};
+}
+
 /** The open chat's remote bound machine when its socket is down — the
  * offline warning banner's subject. Machine binding is project-derived, so
  * only project-bound chats can have one. Null when unbound, bound to this

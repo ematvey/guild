@@ -347,6 +347,101 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("sends ThreadState even when the child-tree read rejects", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("sync tree failure");
+    const ws = await memberSocket();
+    const originalTree = platform.wsSubagentTree!;
+    platform.wsSubagentTree = async () => {
+      throw new Error("tree read failed");
+    };
+    try {
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      const state = await waitFrame(ws, (f) => f.type === "thread_state" && f.chat_id === chat.id);
+      expect(state.chat_id).toBe(chat.id);
+      const done = await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chat.id);
+      expect(done.chat_id).toBe(chat.id);
+      const trees = textFrames(ws).filter((f) => f.type === "subagent_tree" && f.chat_id === chat.id);
+      expect(trees).toHaveLength(0);
+    } finally {
+      platform.wsSubagentTree = originalTree;
+      ws.end();
+    }
+  });
+
+  it("defers a live tree that arrives inside a sync bracket until after SyncDone", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("sync gate");
+    const agentId = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model)
+       VALUES ($1, $2, $3, 'Sync gate agent', 'GLM-Test-Model')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const rootThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
+       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      [rootThread, agentId, stack.memberId, chat.id],
+    );
+    const childChat = await createChat("sync gate child");
+    const childThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat.id, rootThread],
+    );
+    const runId = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, thread_id, trigger, status, started_at)
+       VALUES ($1, $2, $3, $4, 'delegation', 'running', now())`,
+      [runId, agentId, stack.memberId, childThread],
+    );
+
+    const ws = await memberSocket();
+    const originalTree = platform.wsSubagentTree!;
+    let releaseTree: () => void = () => {};
+    const treeGate = new Promise<void>((resolve) => { releaseTree = resolve; });
+    platform.wsSubagentTree = async (args) => {
+      await treeGate;
+      return originalTree(args);
+    };
+    try {
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      await ws.until((f) => f.kind === "text" && f.data.includes("sync_begin"));
+      // The bracket is open. A live tree push for the same chat arrives now.
+      await notifySubagentTree(platform.pool, childThread);
+      releaseTree();
+
+      // The bracket's own tree and state arrive first; the deferred live tree
+      // follows SyncDone.
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chat.id);
+      await ws.until(
+        (f) =>
+          f.kind === "text" &&
+          (JSON.parse(f.data) as Record<string, unknown>).type === "subagent_tree" &&
+          textFrames(ws).filter((frame) => frame.type === "subagent_tree").length >= 2,
+        5_000,
+      );
+
+      const frames = textFrames(ws);
+      const beginIndex = frames.findIndex((f) => f.type === "sync_begin" && f.chat_id === chat.id);
+      const stateIndex = frames.findIndex((f) => f.type === "thread_state" && f.chat_id === chat.id);
+      const doneIndex = frames.findIndex((f) => f.type === "sync_done" && f.chat_id === chat.id);
+      const treeFrames = frames
+        .map((frame, index) => ({ frame, index }))
+        .filter(({ frame, index }) => index > beginIndex && frame.type === "subagent_tree" && frame.chat_id === chat.id);
+      expect(treeFrames.length).toBeGreaterThanOrEqual(2);
+      const bracketTree = treeFrames[0]!;
+      const liveTree = treeFrames[treeFrames.length - 1]!;
+      expect(bracketTree.index).toBeLessThan(stateIndex);
+      expect(stateIndex).toBeLessThan(doneIndex);
+      expect(doneIndex).toBeLessThan(liveTree.index);
+      expect((bracketTree.frame.nodes as { status: string | null }[]).some((n) => n.status === "running")).toBe(true);
+    } finally {
+      platform.wsSubagentTree = originalTree;
+      ws.end();
+    }
+  });
+
   it("fans a committed event out to every socket of the owner, and to no stranger", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("fanout chat");
     const first = await memberSocket();

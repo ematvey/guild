@@ -188,7 +188,7 @@ export default function Thread(props: ThreadProps) {
 }
 
 function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: ThreadProps) {
-  const { chats, setChats, chatsRef, chatStatus, setChatStatus, subagentTrees, setSubagentTree, refreshChats, archivedChats, refreshArchivedChats, projects, machines, refreshProjects, archivedProjects, refreshArchivedProjects } = useChatData();
+  const { chats, setChats, chatsRef, chatStatus, setChatStatus, subagentTrees, setSubagentTree, resetSubagentTrees, refreshChats, archivedChats, refreshArchivedChats, projects, machines, refreshProjects, archivedProjects, refreshArchivedProjects } = useChatData();
   const { route, setRoute, pushRoute } = useThreadRoute();
   const chatId = route.chatId;
   const overlay = route.overlay;
@@ -200,7 +200,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     childTree, stopping, setStopping, busy, busyRef, markBusy, sendingRef,
     loadStateRef, pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
     scrollRestoreRef, displayedChatId, displayedSynced, displayedSyncedRef,
-    childTreeFailed, navigating, loadEarlier, openForChat,
+    childTreeFailed, navigating, loadEarlier, openForChat, cancelPending,
   } = thread;
   // What the screen shows: the old thread while a swap is pending, the cold
   // deep-link target while its skeleton is up, and the route chat otherwise.
@@ -239,7 +239,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // failure takes over.
   const justCreatedBusyRef = useRef<string | null>(null);
   const { approvalMode, accountDefault, pickApprovalMode } =
-    useApprovalMode({ chatId, justCreatedApprovalRef });
+    useApprovalMode({ chatId: viewChatId, justCreatedApprovalRef });
   // The composer's project binding. The chip renders only when a project
   // is actually bound or pre-picked (project context) — a plain chat-mode
   // chat shows no project affordance at all. On a new (unsent) chat the
@@ -284,6 +284,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef,
     oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
+    resetSubagentTrees, cancelPending,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
   // The composer floats over the chat content; the scroll pane needs its
@@ -434,12 +435,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // A bound chat shows its own agent; a new chat keeps the pick. A thread
   // that belongs to its agent is not switchable.
   useEffect(() => {
-    if (chatId === null) {
+    if (viewChatId === null) {
       setAgentLocked(false);
       return;
     }
     let live = true;
-    void chatAgentBinding(chatId)
+    void chatAgentBinding(viewChatId)
       .then(({ agent, switcheable }) => {
         if (!live) return;
         setAgentLocked(!switcheable);
@@ -451,7 +452,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     return () => {
       live = false;
     };
-  }, [chatId]);
+  }, [viewChatId]);
 
 
   useEffect(() => {
@@ -573,13 +574,24 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // composer's project pick is not touched here — it is route state, owned
   // by the pick effect below (an open thread is never pre-picked).
   useEffect(() => {
-    restoreForChat(chatId);
     const skipBusyReset = chatId !== null && justCreatedBusyRef.current === chatId;
     openForChat(chatId, skipBusyReset);
     socketRef.current?.resync();
     // One load per chat id; the helpers are recreated per render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
+
+  // The composer belongs to the displayed chat, not the route target: a
+  // pending swap keeps the old transcript and its draft until the one
+  // committed swap. On first mount a non-null route with no display yet is
+  // still pending, so its draft waits for the swap.
+  const restoredDraftChatRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (restoredDraftChatRef.current === displayedChatId) return;
+    if (restoredDraftChatRef.current === undefined && chatId !== null && displayedChatId === null) return;
+    restoredDraftChatRef.current = displayedChatId;
+    restoreForChat(displayedChatId);
+  }, [displayedChatId, chatId]);
 
   // A just-created chat keeps its editable composer until its sidebar row
   // lands; the marker then clears so a later visit is not treated as new.
@@ -835,7 +847,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               key={`work-${e.run[0]!.key}`}
               run={e.run}
               active={streaming && i === displayEntries.length - 1}
-              stopping={!!(chatId && stopping[chatId])}
+              stopping={!!(viewChatId && stopping[viewChatId])}
               turnStart={e.turnStart}
             >
               {e.run.map((b) =>
@@ -874,7 +886,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               <HoverStamp ts={e.b.ts} side="right" />
             </div>
           ) : e.b.kind === "approval" && e.b.approval ? (
-            <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
+            <ApprovalCard key={e.b.key} a={e.b.approval} chatId={viewChatId} />
           ) : e.b.kind === "compaction" && e.b.compaction ? (
             <CompactionCard key={e.b.key} c={e.b.compaction} />
           ) : e.b.kind === "error" ? (
@@ -894,7 +906,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           )
         );
       }),
-    [displayEntries, finalAgent, lastAgent, streaming, chatId, stopping, lastBlockIndex, blocks, openChildChat],
+    [displayEntries, finalAgent, lastAgent, streaming, viewChatId, stopping, lastBlockIndex, blocks, openChildChat],
   );
   // The running part of the chat's thread subtree, rendered at the end of
   // the transcript. The nodes arrive on the member socket, never by polling.
@@ -906,19 +918,24 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     return !!c && c.chatId === null && c.originChatId === null;
   })();
 
+  const enrichChat = useCallback((c: NonNullable<typeof chats>[number]) => {
+    const status = chatStatus[c.id];
+    return {
+      ...c,
+      ...(status ?? {}),
+      working: workingForChat(
+        { generating: status?.generating ?? c.generating, working: !!(status?.working || c.working) },
+        subagentTrees[c.id],
+      ),
+    };
+  }, [chatStatus, subagentTrees]);
   const grouping = useMemo(
-    () => sidebarGrouping(chats === null ? null : chats.map((c) => {
-      const status = chatStatus[c.id];
-      return {
-        ...c,
-        ...(status ?? {}),
-        working: workingForChat(
-          { generating: status?.generating ?? c.generating, working: !!(status?.working || c.working) },
-          subagentTrees[c.id],
-        ),
-      };
-    })),
-    [chats, chatStatus, subagentTrees],
+    () => sidebarGrouping(chats === null ? null : chats.map(enrichChat)),
+    [chats, enrichChat],
+  );
+  const archivedRows = useMemo(
+    () => archivedChats?.map(enrichChat) ?? null,
+    [archivedChats, enrichChat],
   );
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
@@ -1018,8 +1035,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     <ChatsPanel
       grouping={grouping}
       loadingChats={chats === null}
-      chatId={chatId}
-      archivedChats={archivedChats}
+      chatId={viewChatId}
+      archivedChats={archivedRows}
       onNewChat={newChat}
       onOpenChat={openChat}
       onCollapse={sidebarCollapse}
@@ -1037,7 +1054,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         projects={projects}
         archivedProjects={archivedProjects}
         machines={machines}
-        chatId={chatId}
+        chatId={viewChatId}
         onOpenChat={openChat}
         onCollapse={sidebarCollapse}
         onClose={sidebarClose}
@@ -1376,7 +1393,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               loading={threadLoading && blocks.length === 0}
             />
           )}
-          {chatId && openWorking && !openGenerating && (
+          {viewChatId && openWorking && !openGenerating && (
             <span
               className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
               title="Working"
@@ -1387,7 +1404,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               <span>Working</span>
             </span>
           )}
-          {chatId && !readOnlyThread && (
+          {viewChatId && !readOnlyThread && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -1457,7 +1474,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         {blocks.length === 0 ? (
           threadLoading ? (
             <ThreadSkeleton width={chatWidth} />
-          ) : !chatId ? (
+          ) : !viewChatId ? (
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
             {models !== null && models.length === 0 && (
               <p className="rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-amber-300">
@@ -1543,7 +1560,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 displayEntries[displayEntries.length - 1]?.kind !== "work" && (
                   <div className="max-w-none py-1">
                     <WorkingIndicator
-                      label={chatId && stopping[chatId] ? "Stopping" : "Working"}
+                      label={viewChatId && stopping[viewChatId] ? "Stopping" : "Working"}
                     />
                   </div>
                 )}
@@ -1695,7 +1712,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 </div>
               );
             })()}
-            {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === chatId).map(command => (
+            {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === viewChatId).map(command => (
               <div key={command.id} className="px-2 pb-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate" title={command.text}>Send needs retry: {command.text || "attachments"}</span>
@@ -1770,7 +1787,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               ref={ta}
               value={prompt}
               onChange={(e) => {
-                fileStore.touchDraft(chatId);
+                fileStore.touchDraft(viewChatId);
                 promptRef.current = e.target.value;
                 setPrompt(e.target.value);
                 setCaret(e.target.selectionStart ?? e.target.value.length);
@@ -1857,7 +1874,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   <Plus className="size-4" />
                 </Button>
                 {(() => {
-                  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+                  const row = viewChatId ? chats?.find((c) => c.id === viewChatId) : undefined;
                   // One read-only chip for project + machine. The composer
                   // never binds projects: a chat is projectless unless it was
                   // started from a project (the sidebar project row's "+",
@@ -1878,7 +1895,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   // pushed before the refetched list lands) — the chip then
                   // renders without a live socket state instead of crashing.
                   const machineOnline: boolean | undefined = remoteMachine
-                    ? chatId
+                    ? viewChatId
                       ? row?.machine_online
                       : machines?.find((m) => m.machine_id === chipMachineId)?.connected
                     : undefined;
@@ -2005,8 +2022,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                           onSelect={() => {
                             setPickedAgent(agent);
                             pickedAgentRef.current = agent;
-                            if (chatId !== null) {
-                              void bindChatAgent(chatId, agent.id).then((ok) => {
+                            if (viewChatId !== null) {
+                              void bindChatAgent(viewChatId, agent.id).then((ok) => {
                                 if (!ok) toast.error("Could not switch the agent for this chat");
                               });
                             }
@@ -2068,7 +2085,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                     hasContent,
                     hasModel: !!model,
                     generating,
-                    stopping: !!chatId && !!stopping[chatId],
+                    stopping: !!viewChatId && !!stopping[viewChatId],
                     submitting,
                   });
                   return (
