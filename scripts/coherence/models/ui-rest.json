@@ -1,0 +1,277 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "workspace-session",
+      "definition": "One signed-in server the desktop workspace switcher can point at.",
+      "canonical": "apps/desktop/src/lib/api/workspaces.ts",
+      "types": [
+        "WorkspaceRow",
+        "WorkspaceList"
+      ],
+      "aliases": [
+        "server-session"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/workspaces.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/workspace-menu.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/views/workspace-menu.tsx"
+        }
+      ]
+    },
+    {
+      "id": "project-instructions",
+      "definition": "The AGENTS.md instruction chain and the skills index assembled into one turn's prompt.",
+      "canonical": "apps/desktop/src/lib/turn-context.ts",
+      "types": [
+        "PreparedTurn",
+        "DocEntry"
+      ],
+      "aliases": [
+        "instruction-chain"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/turn-context.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": []
+    }
+  ],
+  "shared_canonical": [],
+  "attaches": [
+    {
+      "where": "apps/desktop/src-tauri/src/lib.rs",
+      "concept": "member-socket",
+      "role": "domain"
+    },
+    {
+      "where": "apps/desktop/src-tauri/src/lib.rs",
+      "concept": "machine",
+      "role": "domain"
+    },
+    {
+      "where": "apps/desktop/src/components/context-ring.tsx",
+      "concept": "usage",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/components/user-badge.tsx",
+      "concept": "user",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/lib/api/workspaces.ts",
+      "concept": "user",
+      "role": "wire"
+    },
+    {
+      "where": "apps/desktop/src/lib/oidc-login.ts",
+      "concept": "oidc-config",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/lib/skills.ts",
+      "concept": "skill",
+      "role": "domain"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/ActivityPage.tsx",
+      "concept": "agent-run",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentCreate.tsx",
+      "concept": "agent",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentRoutines.tsx",
+      "concept": "routine",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentsDirectory.tsx",
+      "concept": "agent",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/ChildThreadHeader.tsx",
+      "concept": "chat",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/MessagesView.tsx",
+      "concept": "message",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/agent-model.tsx",
+      "concept": "agent",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/device-setup.tsx",
+      "concept": "release",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/device-setup.tsx",
+      "concept": "pairing-token",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/ActivityFeed.tsx",
+      "concept": "org-event",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/LocalSkills.tsx",
+      "concept": "skill",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/SkillEditor.tsx",
+      "concept": "skill",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/SkillsPanel.tsx",
+      "concept": "skill",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/skills-api.ts",
+      "concept": "skill",
+      "role": "wire"
+    },
+    {
+      "where": "apps/desktop/src/views/worked-for-block.tsx",
+      "concept": "agent-run",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/lib/browser-send-store.ts",
+      "concept": "outgoing-command",
+      "role": "db"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/agents-api.ts",
+      "concept": "trace",
+      "role": "wire"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/ActivityPage.tsx",
+      "concept": "trace",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/activity-format.ts",
+      "concept": "trace",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentFiles.tsx",
+      "concept": "agent-workspace-file",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentThreadList.tsx",
+      "concept": "agent-thread",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/RunningSubagents.tsx",
+      "concept": "agent-thread",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/subagent-blocks.tsx",
+      "concept": "agent-thread",
+      "role": "ui"
+    }
+  ],
+  "types_no_concept": [],
+  "no_concept": [
+    {
+      "where": "apps/desktop/src-tauri/build.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src-tauri/src/main.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/vite.config.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/components/desktop-tooltip.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/components/hotkey-hint.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/lib/format.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/relative-time.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/scroll-activity.ts",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/AgentsPanel.tsx",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/JsonView.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/agent-ui.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/frame.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/js-highlight.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/markdown.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/onboarding.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/payload-pre.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/skills/skill-diff.ts",
+      "reason": "infrastructure"
+    }
+  ]
+}
