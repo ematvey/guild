@@ -9,25 +9,7 @@ import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
 import { ApiError } from "../platform/errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
-import type { MachineRow } from "../platform/store/machines.js";
-
-/** MachineInfo wire shape. The Rust handler serializes each row through
- *  json! (serde_json Value → BTreeMap), so key order is ALPHABETICAL —
- *  verified against the captured Rust frames (ws-golden.json). */
-function machineInfo(row: MachineRow, connected: boolean): Record<string, unknown> {
-  return {
-    ...(row.app_version !== null ? { app_version: row.app_version } : {}),
-    connected,
-    first_connected_at: row.first_connected_at,
-    last_connected_at: row.last_connected_at,
-    ...(row.last_ip !== null ? { last_ip: row.last_ip } : {}),
-    last_seen_at: row.last_seen_at,
-    machine_id: row.machine_id,
-    name: row.label !== null && row.label !== "" ? row.label : row.machine_id,
-    ...(row.os !== null ? { os: row.os } : {}),
-    ...(row.os_version !== null ? { os_version: row.os_version } : {}),
-  };
-}
+import { machineInfo } from "../hub/workspace.js";
 
 export function registerMachineRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: IdentityCtx): void {
   /** Lists the calling user's machines: every durable registry row plus the

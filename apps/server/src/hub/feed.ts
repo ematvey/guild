@@ -10,11 +10,15 @@
 // thread list so the connection dot moves live.
 
 import type { PlatformContext } from "../platform/root-context.js";
-import type { ChatsCtx } from "../platform/route-contexts.js";
-import type { UserRow } from "../platform/store/identity.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
 import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
+import {
+  archivedThreadListSnapshot,
+  machineListSnapshot,
+  projectListSnapshot,
+  threadListSnapshot,
+} from "./workspace.js";
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
 
@@ -63,6 +67,10 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Per-chat send chains: the async watermark + fan-out of one frame
    *  serializes before the next, so frame order matches emission order. */
   private readonly chains = new Map<string, Promise<void>>();
+  /** Per-user workspace push chains: one snapshot in flight per user, so a
+   *  query started before a write can never land after the one that
+   *  carries it. */
+  private readonly workspaceChains = new Map<string, Promise<void>>();
   /** Last known machine-online state per (user, chat) binding. */
   private readonly presence = new Map<string, boolean>();
   private readonly bindings = new Map<string, UserBindings>();
@@ -134,7 +142,7 @@ export class FeedForwarder implements GenerationStreamSink {
       this.dirtyChats.add(parsed.chat_id);
       return;
     }
-    if (channel === "guild_thread_title") {
+    if (channel === "guild_workspace") {
       let parsed: { org_id?: string; user_id?: string };
       try {
         parsed = JSON.parse(payload);
@@ -142,9 +150,10 @@ export class FeedForwarder implements GenerationStreamSink {
         return;
       }
       if (typeof parsed.org_id !== "string" || typeof parsed.user_id !== "string") return;
-      // The sidebar and the open header both read the title from this list;
-      // a generated name lands there without a refetch.
-      void this.pushThreadList(parsed.org_id, parsed.user_id).catch(() => {});
+      // Every sidebar list (chats, archived, projects, machines) rides one
+      // serialized push, so a snapshot taken before a write can never land
+      // after the one that carries it.
+      void this.pushWorkspace(parsed.org_id, parsed.user_id).catch(() => {});
       return;
     }
     if (channel === "guild_events") {
@@ -196,17 +205,22 @@ export class FeedForwarder implements GenerationStreamSink {
       return;
     }
     this.dirtyChats.delete(chatId);
-    // A pending approval is a list-level state (the red row indicator):
-    // an approval request or decision that just committed re-pushes the
-    // sidebar list, which carries the chat's blocked flag. A new assistant
-    // turn likewise moves the chat's unread count.
+    // List-level state: a new user turn creates the row (and moves its
+    // activity stamp), an assistant turn moves the unread count, and an
+    // approval request or decision flips the blocked flag. Each one
+    // re-pushes the workspace, not a bare chat list.
     const last = await this.ctx.pool.query<{ type: string }>(
       "SELECT type FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
       [chatId],
     );
     const lastType = last.rows[0]?.type;
-    if (lastType === "approval_request" || lastType === "approval_decision" || lastType === "assistant_message") {
-      void this.pushThreadList(chat.orgId, chat.userId).catch(() => {});
+    if (
+      lastType === "user_message" ||
+      lastType === "approval_request" ||
+      lastType === "approval_decision" ||
+      lastType === "assistant_message"
+    ) {
+      void this.pushWorkspace(chat.orgId, chat.userId).catch(() => {});
     }
     // An open turn owns the view: instead of re-broadcasting the whole
     // thread per append, fan out only the rows committed since the last
@@ -414,22 +428,45 @@ export class FeedForwarder implements GenerationStreamSink {
         }
       }
       if (!changed) continue;
-      let list;
-      try {
-        list = await threadListSnapshot(this.ctx, { org_id: bindings.orgId, id: userId } as UserRow);
-      } catch {
-        continue;
-      }
-      this.sendToUser(userId, { type: "thread_list", chats: list });
+      void this.pushWorkspace(bindings.orgId, userId).catch(() => {});
     }
   }
 
-  private async pushThreadList(orgId: string, userId: string): Promise<void> {
-    const list = await threadListSnapshot(this.ctx, {
-      org_id: orgId,
-      id: userId,
-    } as UserRow);
-    this.sendToUser(userId, { type: "thread_list", chats: list });
+  /** One serialized workspace push per user. Every list-changing write and
+   *  presence flip calls this; the chain keeps the wire order equal to the
+   *  commit order, so an older snapshot can never overtake a newer one. */
+  pushWorkspace(orgId: string, userId: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    const key = `${orgId}:${userId}`;
+    const previous = this.workspaceChains.get(key) ?? Promise.resolve();
+    const next = previous.then(() => this.sendWorkspace(orgId, userId)).catch(() => {});
+    this.workspaceChains.set(key, next);
+    void next.finally(() => {
+      if (this.workspaceChains.get(key) === next) this.workspaceChains.delete(key);
+    });
+    return next;
+  }
+
+  private async sendWorkspace(orgId: string, userId: string): Promise<void> {
+    if (this.stopped) return;
+    if (this.ctx.hub.sinksOfUser(userId).length === 0) return;
+    const user = { org_id: orgId, id: userId };
+    const [chats, archived, projects, machines] = await Promise.all([
+      threadListSnapshot(this.ctx, user),
+      archivedThreadListSnapshot(this.ctx, user),
+      projectListSnapshot(this.ctx, user),
+      machineListSnapshot(this.ctx, user),
+    ]);
+    // The legacy chat list stays first for old clients (and the Rust
+    // daemon's bootstrap wait); the rest are additive frames.
+    this.sendToUser(userId, { type: "thread_list", chats });
+    this.sendToUser(userId, { type: "archived_thread_list", chats: archived });
+    this.sendToUser(userId, {
+      type: "project_list",
+      projects: projects.projects,
+      archived_projects: projects.archived_projects,
+    });
+    this.sendToUser(userId, { type: "machine_list", machines });
   }
 
   private async bindingsOf(userId: string): Promise<UserBindings> {
@@ -452,10 +489,13 @@ export class FeedForwarder implements GenerationStreamSink {
 
   /** Machine presence flip: the owner's member sockets repaint the online
    *  dot without polling the registry. */
-  machineStatus(machineId: string, userId: string, online: boolean): void {
+  machineStatus(machineId: string, userId: string, orgId: string, online: boolean): void {
     if (this.stopped) return;
     const frame: WsServerMsg = { type: "machine_status", machine_id: machineId, online };
     for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sink.send(frame);
+    // A claim can be a new registration or a re-pair (the rows and the
+    // chats' machine labels move), so the registry list repaints too.
+    void this.pushWorkspace(orgId, userId).catch(() => {});
   }
 
   private sendToUser(userId: string, frame: WsServerMsg): void {
@@ -465,47 +505,4 @@ export class FeedForwarder implements GenerationStreamSink {
   private sendToOrg(orgId: string, frame: WsServerMsg): void {
     for (const sink of this.ctx.hub.sinksOfOrg(orgId)) sink.send(frame);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Shared thread-list snapshot (moved verbatim from http/ws.ts — the connect
-// bootstrap and the presence poll render the same payload).
-
-/** The same thread-list payload as GET /api/v1/chats (Rust
- *  feed::thread_list_filtered), computed for a push: every active
- *  (non-archived) chat of the caller with the hub's live machine state. */
-export async function threadListSnapshot(chats: ChatsCtx, user: Pick<UserRow, "org_id" | "id">): Promise<unknown[]> {
-  const rows = await chats.chats.listChats(user.org_id, user.id);
-  return rows.map((chat) => {
-    const online = chat.machine_id !== null && chats.hub.machineOnline(chat.machine_id);
-    // Old chats stored the raw machine id as their label; the live hub label
-    // (the machine's hostname) is the truth when the slot is up.
-    const label =
-      online && chat.machine_id !== null
-        ? (chats.hub.machineLabel(chat.machine_id) ?? chat.machine_id)
-        : chat.machine_label;
-    // Key order: the Rust handler serializes each chat through
-    // serde_json::Value (json! BTreeMap), so the wire order is ALPHABETICAL —
-    // verified against the Rust server's captured frames (ws-golden.json).
-    return {
-      created_at: chat.created_at,
-      generating: chat.generating,
-      id: chat.id,
-      last_activity_at: chat.last_activity_at,
-      ...(chat.machine_id !== null ? { machine_id: chat.machine_id } : {}),
-      ...(label !== null ? { machine_label: label } : {}),
-      machine_online: online,
-      org_id: chat.org_id,
-      ...(chat.project_id !== null ? { project_id: chat.project_id } : {}),
-      ...(chat.project_name !== null ? { project_name: chat.project_name } : {}),
-      ...(chat.project_machine_label !== null
-        ? { project_machine_label: chat.project_machine_label }
-        : {}),
-      ...(chat.title !== null ? { title: chat.title } : {}),
-      unread: chat.unread,
-      blocked: chat.blocked,
-      user_id: chat.user_id,
-      working: chat.working,
-    };
-  });
 }

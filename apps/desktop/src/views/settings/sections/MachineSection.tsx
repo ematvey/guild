@@ -6,32 +6,23 @@
 //! list holds every registered machine, connected or not; only the dot and
 //! the last-seen stamp track live socket state.
 
-import { useEffect, useState } from "react";
+
 import { Cpu } from "lucide-react";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
-import { refreshMachines, useMachines } from "../../../lib/machines-store";
+import { useMachines } from "../../../lib/machines-store";
 import { relativeTime } from "../../../lib/relative-time";
-import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { PageHeader } from "../components/page-header";
 
 export function MachineSection() {
-  const [loadError, setLoadError] = useState(false);
-  // The registry is shared app state: the member socket patches the
-  // connected flag live, so an open page follows a machine coming up or
-  // going down without a refetch.
+  // The registry is shared app state: the member socket sends the rows and
+  // patches the connected flag live, so an open page follows a machine
+  // coming up or going down without a refetch.
   const machines = useMachines();
-  useEffect(() => {
-    const epoch = currentCacheEpoch();
-    void refreshMachines().then((ok) => {
-      if (cacheEpochChanged(epoch)) return;
-      if (!ok) setLoadError(true);
-    });
-  }, []);
 
   return (
     <div className="space-y-4">
       <PageHeader title="Machine" />
-      {machines === null && loadError ? <p role="alert" className="text-sm text-destructive">Could not load machines.</p> : machines === null ? (
+      {machines === null ? (
         <SkeletonForm />
       ) : machines.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">

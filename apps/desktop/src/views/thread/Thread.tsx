@@ -189,7 +189,11 @@ export default function Thread(props: ThreadProps) {
 }
 
 function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: ThreadProps) {
-  const { chats, setChats, chatsRef, chatStatus, setChatStatus, subagentTrees, setSubagentTree, resetSubagentTrees, refreshChats, archivedChats, refreshArchivedChats, projects, machines, refreshProjects, archivedProjects, refreshArchivedProjects } = useChatData();
+  const {
+    chats, setChats, chatsRef, chatStatus, setChatStatus, subagentTrees, setSubagentTree,
+    resetSubagentTrees, archivedChats, setArchivedChats, projects, setProjects, machines,
+    archivedProjects, setArchivedProjects,
+  } = useChatData();
   const { route, setRoute, pushRoute } = useThreadRoute();
   const chatId = route.chatId;
   const overlay = route.overlay;
@@ -275,13 +279,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
     deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef,
-    setBlocks, markBusy, openChatIdRef, loadSeq, sendingRef, refreshChats, projects,
+    setBlocks, markBusy, openChatIdRef, loadSeq, sendingRef, projects,
     openRow, currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping,
     setStopping, justCreatedApprovalRef, justCreatedBusyRef, pushRoute,
   });
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef, machineTakenOver } = useMemberSocket({
-    signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks,
+    signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
+    setArchivedProjects, reducerRef, setBlocks,
     markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef,
     oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
@@ -512,9 +517,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         : { id: route.projectId, name: "", machine_label: undefined },
     );
   }, [route.chatId, route.newChat, route.projectId, projects]);
-  const projectCreated = () => {
-    void refreshProjects();
-  };
 
   // Draft GC: per-chat draft keys would otherwise accumulate forever and
   // outlive their chats. Drop the keys whose chat left the sidebar lists
@@ -538,7 +540,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
 
   const {
     renameChat, archiveChat, unarchiveChat, renameProject, archiveProject, unarchiveProject,
-  } = useChatActions({ refreshChats, refreshArchivedChats, refreshProjects, refreshArchivedProjects });
+  } = useChatActions();
   const renameChatRow = useCallback((id: string, title: string) => { void renameChat(id, title); }, [renameChat]);
   const archiveChatRow = useCallback((id: string) => { void archiveChat(id); }, [archiveChat]);
   const unarchiveChatRow = useCallback((id: string) => { void unarchiveChat(id); }, [unarchiveChat]);
@@ -2127,7 +2129,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         onboardOpen={route.overlay?.kind === "onboard"}
         createProjectOpen={createProjectOpen}
         onCloseCreateProject={setCreateProjectOpen}
-        onProjectCreated={projectCreated}
         onboarded={onboarded}
         onOnboarded={onOnboarded}
         machines={machines}
