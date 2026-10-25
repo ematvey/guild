@@ -7,7 +7,7 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
-import { modalityOf } from "../chats/turn-text.js";
+import { modalityOf } from "../platform/domain/mime.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
 import { terminalAssistantText } from "./lifecycle.js";
