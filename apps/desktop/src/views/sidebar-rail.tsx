@@ -17,7 +17,7 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
-import { WorkspaceRailButton } from "./workspace-menu";
+import { ServerRailButton } from "./server-menu";
 import { IS_TAURI } from "../lib/session";
 
 export type SidebarTab =
@@ -124,7 +124,7 @@ export function SidebarRail({
       <div className="flex flex-col items-center gap-1">
         {/* First button: the active workspace (logo/initial); its dropdown
             carries the switcher rows. Renders nothing on the web. */}
-        <WorkspaceRailButton
+        <ServerRailButton
           onAddWorkspace={onAddWorkspace}
           onReload={() => window.location.reload()}
         />

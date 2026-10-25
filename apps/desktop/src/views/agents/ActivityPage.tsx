@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { apiMe } from "../../lib/api/workspaces";
+import { apiMe } from "../../lib/api/servers";
 import {
   RUN_STATUS_LABEL,
   RUN_TRIGGER_LABEL,
