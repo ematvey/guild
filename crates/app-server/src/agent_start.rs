@@ -437,7 +437,7 @@ mod tests {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .respond_with(move |_req: &wiremock::Request| {
                 let body: Value =
-                    serde_json::from_slice(&_req.body.as_slice()).unwrap_or(Value::Null);
+                    serde_json::from_slice(_req.body.as_slice()).unwrap_or(Value::Null);
                 seen.lock()
                     .unwrap()
                     .push((_req.url.path().to_string(), body));
@@ -645,7 +645,7 @@ mod tests {
             .respond_with(move |req: &wiremock::Request| {
                 *seen.lock().unwrap() += 1;
                 let body: Value =
-                    serde_json::from_slice(&req.body.as_slice()).unwrap_or(Value::Null);
+                    serde_json::from_slice(req.body.as_slice()).unwrap_or(Value::Null);
                 assert_eq!(body["machine_id"], *posted, "created bound to this machine");
                 wiremock::ResponseTemplate::new(200).set_body_json(json!({
                     "id": Uuid::now_v7(), "name": body["name"].clone(), "folder": body["folder"].clone(),
