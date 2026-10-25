@@ -847,26 +847,67 @@ impl LinkRegistry {
     }
 }
 
+/// How often the supervisor checks that every key still has a running
+/// link task. A task that ends for any reason (a wedged runtime, a panic,
+/// a dropped socket) leaves the machine offline; without this tick nothing
+/// would ever restart it, because the registry only wakes on a config
+/// change.
+const LINK_WATCHDOG: Duration = Duration::from_secs(30);
+
 /// The link supervisor: spawns one [`run`] task per registry entry and
 /// follows the registry's spawn feed. Lives exactly one host cycle (the
 /// caller aborts its handle at teardown — the JoinSet aborts every child
-/// link task with it). The spawn feed may repeat a key; the supervisor
-/// spawns only the first request per key (the channel dedups configs).
+/// link task with it). The spawn feed may repeat a key: a key whose task
+/// is still running is skipped, a key whose task ended is respawned, so a
+/// dead link heals on the next publish and on the watchdog tick.
 pub async fn run_link_supervisor(
     shared: Shared,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) {
-    let mut spawned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut live: std::collections::HashMap<String, tokio::task::AbortHandle> =
+        std::collections::HashMap::new();
     let mut set = tokio::task::JoinSet::new();
-    while let Some(base) = rx.recv().await {
-        if spawned.contains(&base) {
-            continue;
+    let mut watchdog = tokio::time::interval(LINK_WATCHDOG);
+    watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            request = rx.recv() => {
+                let Some(base) = request else { return }; // spawn feed closed
+                spawn_if_dead(&shared, &mut set, &mut live, &base);
+            }
+            _ = watchdog.tick() => {
+                // Reap finished tasks so the JoinSet does not grow, then
+                // restart every key that has a config but no running link.
+                while set.try_join_next().is_some() {}
+                let dead: Vec<String> = live
+                    .iter()
+                    .filter(|(_, handle)| handle.is_finished())
+                    .map(|(base, _)| base.clone())
+                    .collect();
+                for base in dead {
+                    spawn_if_dead(&shared, &mut set, &mut live, &base);
+                }
+            }
         }
-        if let Some(cfg_rx) = shared.links.subscribe(&base) {
-            let handle = set.spawn(run(shared.clone(), cfg_rx));
-            spawned.insert(base);
-            let _ = handle; // the JoinSet aborts children on drop
-        }
+    }
+}
+
+/// Spawns one link task for `base` unless its previous task is still
+/// running. A key with no published config is left alone: the task would
+/// park on the channel until a config arrives.
+fn spawn_if_dead(
+    shared: &Shared,
+    set: &mut tokio::task::JoinSet<()>,
+    live: &mut std::collections::HashMap<String, tokio::task::AbortHandle>,
+    base: &str,
+) {
+    if live.get(base).is_some_and(|handle| !handle.is_finished()) {
+        return;
+    }
+    if let Some(cfg_rx) = shared.links.subscribe(base) {
+        // The JoinSet aborts children on drop, so a host cycle tears the
+        // links down with the supervisor.
+        live.insert(base.to_string(), set.spawn(run(shared.clone(), cfg_rx)));
     }
 }
 

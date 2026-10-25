@@ -647,14 +647,20 @@ async fn adopt_login_with_identity(
         .unwrap_or_else(|| Uuid::now_v7().to_string());
     auth_change_with_store(shared, AuthChange::Identify { machine_id }, store.clone())?;
     // The switcher's identity data (name + logo) rides the fresh token;
-    // best-effort, after the session is fully adopted.
-    shared
-        .session
-        .lock()
-        .unwrap()
-        .auth
-        .refresh_org_identity(&base_url, store.as_deref())
-        .await;
+    // best-effort, after the session is fully adopted. The fetch runs with
+    // the session lock released: the guard is a std::sync::Mutex, and
+    // holding it across the network await parks a worker thread that every
+    // other task needs (the daemon runs two workers), which wedges the
+    // daemon until restart.
+    let cloud = shared.session.lock().unwrap().auth.cloud_of(&base_url).cloned();
+    if let Some(cloud) = cloud {
+        if let Ok((name, logo)) = cloud.org_settings().await {
+            let mut session = shared.session.lock().unwrap();
+            session
+                .auth
+                .apply_org_identity(&base_url, name, logo, store.as_deref());
+        }
+    }
     Ok(())
 }
 
@@ -845,7 +851,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     };
 
     // Caller-assembled context (the client owns discovery — the webview
-    // via lib/context.ts, an engine client via its own assembly over the
+    // via lib/turn-context.ts, an engine client via its own assembly over the
     // fs.* bridge): the shim forwards it into the additive request fields.
     let skills_index = req.params["skills_index"].as_str().map(str::to_string);
     let agents_md = req.params["agents_md"].as_str().map(str::to_string);
