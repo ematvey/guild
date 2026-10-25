@@ -1,17 +1,7 @@
-import { VENDOR_API_MAX_CHARS, secret, secretOrNull, configString, trimTrailingSlash, pathSegment, fetchJson, clampNumber, callVendorApi } from "./shared.js";
+import { VENDOR_API_MAX_CHARS, secret, pathSegment, fetchJson, clampNumber, callVendorApi, langfuseBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- langfuse ----------
-
-function langfuseBaseUrl(config: Json, secrets: [string, string][]): string {
-  // The config base_url wins; the legacy `host` secret of pre-schema
-  // deployments is the fallback; else the public cloud.
-  const fromConfig = configString(config, "base_url");
-  if (fromConfig !== undefined) return trimTrailingSlash(fromConfig);
-  const host = secretOrNull(secrets, "host");
-  if (host !== null) return trimTrailingSlash(host);
-  return "https://cloud.langfuse.com";
-}
 
 async function langfuseGet(base: string, path: string, publicKey: string, secretKey: string): Promise<Json> {
   const basic = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");

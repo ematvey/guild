@@ -1,5 +1,5 @@
 import { createHash, createSign } from "node:crypto";
-import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi } from "./shared.js";
+import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- google_workspace ----------
@@ -9,8 +9,6 @@ const GOOGLE_SCOPES =
   "https://www.googleapis.com/auth/calendar.readonly " +
   "https://www.googleapis.com/auth/drive.readonly " +
   "https://www.googleapis.com/auth/admin.directory.user.readonly";
-const GOOGLE_DEFAULT_API_BASE = "https://www.googleapis.com";
-const GOOGLE_DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_JWT_TTL_SECS = 3600;
 /** A cached access token refreshes this long before its own expiry. */
 const GOOGLE_EXPIRY_MARGIN_MS = 60_000;
@@ -24,16 +22,6 @@ interface CachedGoogleToken {
  *  fingerprint` — one entry per acting identity AND credential, shared
  *  across calls in this process (the Rust GoogleWorkspace token cache). */
 const googleTokens = new Map<string, CachedGoogleToken>();
-
-function googleApiBase(config: Json): string {
-  const v = configString(config, "api_base");
-  return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_API_BASE;
-}
-
-function googleTokenUrl(config: Json): string {
-  const v = configString(config, "token_url");
-  return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_TOKEN_URL;
-}
 
 function googleServiceAccount(secrets: [string, string][]): { clientEmail: string; privateKey: string } {
   const raw = secret(secrets, "service_account_json");
@@ -116,7 +104,7 @@ async function googleAccessToken(config: Json, secrets: [string, string][], sub:
   return token;
 }
 
-async function googleAccessTokenFor(config: Json, secrets: [string, string][], actingAs: string | null): Promise<string> {
+export async function googleAccessTokenFor(config: Json, secrets: [string, string][], actingAs: string | null): Promise<string> {
   return googleAccessToken(config, secrets, googleActingIdentity(actingAs, googleAdminEmail(config, secrets)));
 }
 

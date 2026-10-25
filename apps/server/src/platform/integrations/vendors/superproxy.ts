@@ -1,4 +1,4 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, trimTrailingSlash, fetchJson, clampNumber, truncateWithMarker } from "./shared.js";
+import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, fetchJson, clampNumber, truncateWithMarker, superproxyBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- superproxy ----------
@@ -8,11 +8,10 @@ export async function superproxyExecute(config: Json, tool: string, args: Json, 
   const target = args["url"];
   if (typeof target !== "string") throw new Error("web_fetch requires url");
   const maxChars = clampNumber(args, "max_chars", MAX_BODY_CHARS, MAX_BODY_CHARS);
-  const base = configString(config, "base_url");
-  if (base === undefined) throw new Error("superproxy config requires base_url");
+  const base = superproxyBaseUrl(config);
   // The stored token secret wins; the config token is the legacy fallback.
   const token = secretOrNull(secrets, "token") ?? configString(config, "token");
-  const url = new URL(`${trimTrailingSlash(base)}/v1/fetch`);
+  const url = new URL(`${base}/v1/fetch`);
   url.searchParams.set("url", target);
   url.searchParams.set("format", "markdown");
   const headers: Record<string, string> = {};
