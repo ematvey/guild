@@ -35,7 +35,7 @@ die() {
 self_pid=$$
 host_bin=/usr/local/bin/juicefs
 host_lib=/usr/local/lib/juicefs
-mountpoint=/mnt/guild
+mountpoint="${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}"
 volume_name="${GUILD_JUICE_VOLUME:-guild-workspaces}"
 storage="${GUILD_JUICE_STORAGE:-s3}"
 
