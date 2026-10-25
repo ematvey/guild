@@ -12,6 +12,22 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The quality gate is one script, and the slow checks are cheaper
+  (2026-10-26).** `scripts/check.sh` runs the baseline checks concurrently,
+  prints PASS/FAIL with per-check seconds, and exits 1 on any failure; it
+  also orders the bindings check after the Rust tests, which rewrite the
+  generated bindings. `cargo nextest run --workspace` replaces
+  `cargo test --workspace` (13 s vs 39 s, same 241 tests; per-test process
+  isolation also removed the `machine_link` mock-socket failure). The TS
+  server suite drops from 50 s to 20 s by raising vitest to 14 workers (the
+  shared Postgres allows 500 connections) and by removing the ClickHouse
+  auth failure that every test harness logged. Strict clippy now covers
+  `--all-targets` and passes. The one real bug the gate found: the skill
+  home was read by two code paths, so `machine_link` skill sync honoured
+  `GUILD_SKILLS_ROOT` while the remote-context scan read the real home;
+  `fs_bridge::skills_home()` is now the single reader. No test was deleted
+  and no assertion was weakened.
+
 - **A dead workspace mount is repaired, not served (2026-10-26).** A JuiceFS
   remount leaves every container that bound the volume before it on the dead
   FUSE session: the sandbox cannot start its agent (`transport endpoint is
@@ -602,10 +618,12 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   sections live inside Settings (`/settings/<section>`); there is no
   separate admin app. Observability is the Activity surface, fed by traces
   and spans from ClickHouse.
-- **Quality baseline:** `cargo test --workspace`, the TS server suite
-  (`npm test --workspace apps/server`), desktop vitest, strict clippy, the
-  Windows compile check (`scripts/check-windows.sh`) and the bindings
-  freshness gate (`scripts/check-bindings.sh`).
+- **Quality baseline:** `scripts/check.sh` runs all of it in one pass:
+  `cargo nextest run --workspace`, the TS server suite
+  (`npm test --workspace apps/server`), desktop vitest, strict clippy
+  (`--all-targets`), the Windows compile check (`scripts/check-windows.sh`),
+  the bindings freshness gate (`scripts/check-bindings.sh`) and
+  `npm run coherence`.
 
 ## Next steps (ordered)
 
