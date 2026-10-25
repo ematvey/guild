@@ -222,11 +222,17 @@
     },
     {
       "id": "workspace-snapshot",
-      "definition": "One user's sidebar state — active chats, archived chats, projects, and the machine registry — built as wire rows for the workspace push on the member socket.",
+      "definition": "One user's sidebar state \u2014 active chats, archived chats, projects, and the machine registry \u2014 built as wire rows for the workspace push on the member socket.",
       "canonical": "apps/server/src/hub/workspace.ts",
-      "aliases": ["sidebar-snapshot", "workspace-push"],
+      "aliases": [
+        "sidebar-snapshot",
+        "workspace-push"
+      ],
       "representations": [
-        { "where": "apps/server/src/hub/workspace.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/hub/workspace.ts",
+          "role": "wire"
+        }
       ],
       "translations": []
     },
@@ -304,41 +310,6 @@
         }
       ],
       "translations": []
-    },
-    {
-      "id": "workspace-snapshot",
-      "definition": "The sidebar's whole live state, pushed as one frame: active chats, archived chats, projects and machines.",
-      "canonical": "apps/server/src/hub/workspace.ts",
-      "types": [],
-      "aliases": [
-        "thread_list"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/hub/workspace.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/hub/feed.ts",
-          "role": "wire"
-        },
-        {
-          "where": "apps/desktop/src/views/thread/hooks/use-chat-data.ts",
-          "role": "ui"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/hub/feed.ts"
-        },
-        {
-          "from": "wire",
-          "to": "ui",
-          "at": "apps/desktop/src/views/thread/hooks/use-chat-data.ts"
-        }
-      ]
     },
     {
       "id": "mime",
