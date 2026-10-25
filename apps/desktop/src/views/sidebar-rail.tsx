@@ -92,6 +92,8 @@ export function SidebarRail({
   onAddWorkspace,
   role,
   isMobile,
+  unreadChats,
+  unreadProjects,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
