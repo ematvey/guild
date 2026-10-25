@@ -19,13 +19,11 @@ export async function drainIdleInbox(conversation: Conversation): Promise<boolea
     const inbox = await tx.doc(InboxDoc, conversation.id);
     if (inbox.items.length === 0) return false;
     const items = inbox.items;
-    const writes = items.flatMap((item, index) => (item.mode === "write" ? [index] : []));
+    const writes = items.flatMap((item, index) => (item.mode === "write" ? [{ item, index }] : []));
     const steer = items.findIndex((item) => item.mode === "steer");
     const followUp = items.findIndex((item) => item.mode === "followUp");
     const users = [steer, followUp].filter((index) => index >= 0).sort((a, b) => a - b);
-    for (const index of writes) {
-      const item = items[index]!;
-      if (item.mode !== "write") continue;
+    for (const { item } of writes) {
       if (typeof item.entry.kind !== "string") throw new Error("queued entry has no kind");
       const draft = { ...item.entry, kind: item.entry.kind } as EntryDraft;
       if (typeof draft.head === "number" && head !== undefined && draft.head < head) {
@@ -52,7 +50,7 @@ export async function drainIdleInbox(conversation: Conversation): Promise<boolea
       tx.placeSubmission(item.id, entry.id);
       inputs.push(item.id);
     }
-    for (const index of [...writes, ...users].sort((a, b) => b - a)) items.splice(index, 1);
+    for (const index of [...writes.map((write) => write.index), ...users].sort((a, b) => b - a)) items.splice(index, 1);
     if (inputs.length === 0) return false;
     live.run = {
       taskId: await tx.createTask(
