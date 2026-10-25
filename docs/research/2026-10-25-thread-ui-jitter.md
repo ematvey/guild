@@ -34,8 +34,7 @@ navigation progress bar was softened in 0.6.8.
   signature, memoized sidebar, reducer identity, and settled text memo.
 
 Verification: desktop 506 tests, server 690 tests, typecheck, bindings
-fresh, three independent review rounds (round 3 PASS). Reports:
-`docs/reviews/2026-10-25-thread-ui-jitter-*.md`.
+fresh, three independent review rounds (round 3 PASS).
 
 Deferred: font preload, full work-run memoization, and browser frame
 profiling.

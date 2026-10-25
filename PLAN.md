@@ -60,8 +60,7 @@ first. Code comments describe only the present.
   `lib/api/*`. `machine_link.rs` gave up the platform identity probes
   (`machine_meta.rs`) and the frame classifier (`machine_frames.rs`). New
   tests cover session addressing and tokens, the two thread reads, the chat
-  write wire contracts, and the sidebar rows and panels. Still open, in
-  `docs/reviews/2026-10-25-decomposition-review.md`: the Rust
+  write wire contracts, and the sidebar rows and panels. Still open: the Rust
   `jsonrpc_loop.rs` and the Tauri shell.
 
 - **The chat view is the thread view (2026-10-25).** `views/WebChat.tsx`
@@ -206,8 +205,7 @@ first. Code comments describe only the present.
   that subtree. Measured on the 3000-event dev thread: one keystroke went
   from 23 ms to 4 ms (median, headless Chrome).
 
-- **Security hardening pass (2026-10-22).** The review in
-  `docs/reviews/2026-10-22-security-review.md` drove one batch of fixes. The
+- **Security hardening pass (2026-10-22).** A security review drove one batch of fixes. The
   Rust clients move to `rustls` 0.23.46, `rustls-webpki` 0.103.16 and the
   1.0.10 root bundles (distrusted-intermediate and TLS advisories); the
   dev-only npm tree moves to `vite` 7.3.7 and `vitest` 4.1.12 (audit now
