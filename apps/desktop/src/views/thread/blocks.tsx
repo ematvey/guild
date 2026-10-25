@@ -1,5 +1,6 @@
 // System-style transcript blocks: the loading skeleton, the reasoning frame,
 // the compaction card and the hover stamps under messages.
+import { useMemo } from "react";
 import { Brain } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -49,7 +50,9 @@ export function ThreadTitle({
 export function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
   // Collapsed row carries the head of the thoughts as a preview (CSS
   // truncates to whatever fits on the line); the full text opens below.
-  const head = text.replace(/\s+/g, " ").trim();
+  // Normalizing the live buffer on every delta is pure waste: it changes
+  // only when the text changes.
+  const head = useMemo(() => text.replace(/\s+/g, " ").trim(), [text]);
   return (
     <Frame
       icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
@@ -97,15 +100,33 @@ export function CompactionCard({ c }: { c: CompactionBlock }) {
 /// the message rather than a separate element.
 /// Locale-aware shortest unambiguous form: time only for today,
 /// + month/day within the year, + year for older messages.
+// Stamps repeat for every message on every render. The formatted text only
+// changes with the timestamp or with "today" rolling over, so cache it per
+// (timestamp, day). The cap keeps a long-lived tab from growing without end.
+const STAMP_CACHE_LIMIT = 500;
+const stampCache = new Map<string, string>();
+
 export function prettyStamp(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
   const now = new Date();
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return time;
-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
-  return `${d.toLocaleDateString(undefined, opts)}, ${time}`;
+  const day = now.toDateString();
+  const cacheKey = `${iso}|${day}`;
+  const cached = stampCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const d = new Date(iso);
+  let text = "";
+  if (!isNaN(d.getTime())) {
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === day) {
+      text = time;
+    } else {
+      const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+      if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+      text = `${d.toLocaleDateString(undefined, opts)}, ${time}`;
+    }
+  }
+  if (stampCache.size >= STAMP_CACHE_LIMIT) stampCache.clear();
+  stampCache.set(cacheKey, text);
+  return text;
 }
 
 export function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {

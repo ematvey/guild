@@ -52,24 +52,24 @@ export function offlineMachine(
   return { label: row.machine_label ?? row.machine_id };
 }
 
-/** A thread is read-only when it is absent from both the active and the
- * archived chat lists after those lists and the thread have loaded. Child
- * chats are execution transcripts: the sidebar filters them out by design,
- * so absence means "read-only child", never "new chat". The loading guards
- * keep a freshly created chat writable while its row is still in flight. */
-export function isReadOnlyThread(input: {
+/** What the composer may do for the visible thread. Active membership wins
+ *  over a late archived list; a child tree with a parent is read-only; an
+ *  unknown thread hides the composer rather than showing an editable one
+ *  that would flip a moment later. */
+export type ThreadAccess = "writable" | "readonly" | "unknown";
+
+export function threadAccess(input: {
   chatId: string | null;
   chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
   archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
-  threadLoading: boolean;
-}): boolean {
-  const { chatId, chats, archivedChats, threadLoading } = input;
-  if (chatId === null || chats === null || archivedChats === null || threadLoading) {
-    return false;
-  }
-  if (chats.some((c) => c.id === chatId)) return false;
-  if (archivedChats.some((c) => c.id === chatId)) return false;
-  return true;
+  childTree: { parent: unknown } | null;
+}): ThreadAccess {
+  const { chatId, chats, archivedChats, childTree } = input;
+  if (chatId === null) return "writable";
+  if (childTree !== null && childTree.parent !== null) return "readonly";
+  if (chats?.some((c) => c.id === chatId)) return "writable";
+  if (archivedChats?.some((c) => c.id === chatId)) return "readonly";
+  return "unknown";
 }
 
 /** Whether the open chat shows busy after a thread-list push: while a

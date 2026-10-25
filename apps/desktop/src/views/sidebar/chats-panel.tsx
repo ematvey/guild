@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
@@ -7,7 +7,7 @@ import { sidebarGrouping } from "../projects/projects";
 import { ChatListItem } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
 
-export function ChatsPanel({
+export const ChatsPanel = memo(function ChatsPanel({
   grouping,
   loadingChats,
   chatId,
@@ -122,4 +122,4 @@ export function ChatsPanel({
       </div>
     </div>
   );
-}
+});
