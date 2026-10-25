@@ -618,18 +618,28 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
    ignores it and uses its own env defaults (2 vCPU / 2 GiB / 512 pids). The
    per-agent 50 GiB JuiceFS quota is the only limit that actually applies.
    Decide: pass `resources` into the sandbox spec, or remove the field.
-3. **Set an org storage budget for shared agent workspaces.** The 50 GiB
+3. **Harden the sandbox volume against a remount.** The runner detects a
+   dead FUSE session by polling its volume roots, and the attach probe is a
+   second guard. Replace both with one rule: every runner interaction with
+   the volume goes through one helper, and `ENOTCONN` from that helper means
+   the volume is gone. The reaction is the same as today (remove the
+   sandboxes, restart the runner), but it fires on the failing call instead
+   of up to 10 s later, and no new interaction can forget the check. Then
+   drop the poll. The real fix stays open: mount the volume where the
+   containers can re-resolve it (the entrypoint TODO), so a remount stops
+   invalidating every container by construction.
+4. **Set an org storage budget for shared agent workspaces.** The 50 GiB
    quota is per agent, and agent count is unbounded, so one org can fill the
    object store. Decide the budget and where it is enforced.
-4. **Decide whether an archived thread can move to another agent.** Today a
+5. **Decide whether an archived thread can move to another agent.** Today a
    live thread moves with its transcript; an archived one has no such path.
-5. **Decide machine identity after an OS reinstall.** A changed hardware
+6. **Decide machine identity after an OS reinstall.** A changed hardware
    fingerprint matches no row, so the machine registers as new and its old
    chats go dark. Candidates: derive the fingerprint from the firmware/board
    UUID, or give the user an explicit takeover on the machines page.
-6. **Measure the rest of the long-thread path.** Composer typing is fixed.
+7. **Measure the rest of the long-thread path.** Composer typing is fixed.
    Initial load and scroll of the 3000-event dev thread were not measured.
-7. **Cover the review gaps in the next loop:** Windows-only engine paths
+8. **Cover the review gaps in the next loop:** Windows-only engine paths
    (compile-checked, never run), the desktop updater flow on a real install,
    and the integration connectors.
 
