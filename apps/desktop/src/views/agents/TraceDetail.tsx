@@ -58,10 +58,13 @@ function writeTraceView(view: TraceView): void {
 
 export function RunDetailPage({
   runId,
+  traceOnly = false,
   onNavigate,
   onOpenChat,
 }: {
   runId: string;
+  /** The route holds a trace id with no agent run behind it. */
+  traceOnly?: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
@@ -100,17 +103,21 @@ export function RunDetailPage({
         if (!live) return;
         setError(err instanceof Error ? err.message : "The trace did not load.");
       });
-    void getRun(runId)
-      .then((value) => {
-        if (live) setRun(value);
-      })
-      .catch(() => {
-        if (live) setRun(null);
-      });
+    if (traceOnly) {
+      setRun(null);
+    } else {
+      void getRun(runId)
+        .then((value) => {
+          if (live) setRun(value);
+        })
+        .catch(() => {
+          if (live) setRun(null);
+        });
+    }
     return () => {
       live = false;
     };
-  }, [runId, tick]);
+  }, [runId, traceOnly, tick]);
 
   const ordered = useMemo(
     () => [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time)),
@@ -180,12 +187,12 @@ export function RunDetailPage({
             <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />
           </div>
         )}
-        {error === null && trace === null && (
+        {error === null && trace === null && spans.length === 0 && (
           <div className="mx-auto w-full max-w-[90rem] px-4 pt-4 sm:px-6">
             <InlineLoading label="Loading trace" />
           </div>
         )}
-        {trace !== null && (
+        {(trace !== null || spans.length > 0) && (
           <div className="flex min-h-full w-full flex-col gap-4 px-4 pb-16 pt-4 sm:px-6 xl:h-full xl:min-h-0 xl:flex-row xl:pb-4">
             <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card xl:min-h-0 xl:flex-1">
               <div className="shrink-0 border-b border-border px-2">
@@ -213,6 +220,7 @@ export function RunDetailPage({
               </div>
             </div>
 
+            {trace !== null && (
             <aside className="w-full space-y-4 xl:min-h-0 xl:w-[36%] xl:min-w-[24rem] xl:max-w-[40rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
               <SpanDetail span={selected} admin={admin} />
               <div className="border-t border-border pt-3">
@@ -286,6 +294,7 @@ export function RunDetailPage({
                 </section>
               )}
             </aside>
+            )}
           </div>
         )}
       </div>

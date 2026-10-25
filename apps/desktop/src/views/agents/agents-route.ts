@@ -23,6 +23,7 @@ export type AgentsRoute =
     }
   | { view: "activity" }
   | { view: "run"; runId: string }
+  | { view: "trace"; traceId: string }
   | { view: "chat"; chatId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
@@ -65,6 +66,8 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
 
   if (parts[0] === "activity" && parts.length === 1) return AGENTS_ACTIVITY;
   if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
+  // A turn with no agent run has no run id; its trace id owns its own route.
+  if (parts[0] === "traces" && parts[1]) return { view: "trace", traceId: parts[1] };
   // Old activity chat links used /sessions/<id>; they now resolve to the
   // canonical /chats/<id> address.
   if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
@@ -109,6 +112,8 @@ export function agentsRoutePath(route: AgentsRoute): string {
       return "/activity";
     case "run":
       return `/runs/${segment(route.runId)}`;
+    case "trace":
+      return `/traces/${segment(route.traceId)}`;
     case "chat":
       return `/chats/${segment(route.chatId)}`;
     case "agent": {
@@ -136,7 +141,8 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 export function agentsRailTab(
   route: AgentsRoute,
 ): "agents" | "activity" {
-  if (route.view === "activity" || route.view === "run" || route.view === "chat") return "activity";
+  if (route.view === "activity" || route.view === "run" || route.view === "trace" || route.view === "chat")
+    return "activity";
   return "agents";
 }
 
