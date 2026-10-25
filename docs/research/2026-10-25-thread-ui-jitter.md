@@ -8,7 +8,8 @@ database, and the code paths below.
 
 ## Resolution
 
-Shipped in 0.6.7. The four reported issues are fixed and verified.
+Shipped in 0.6.7. The four reported issues are fixed and verified. The
+navigation progress bar was softened in 0.6.8.
 
 - **Status:** a new derived `working` flag covers a chat or any descendant
   run. The server computes it in the list query. The sidebar, project
@@ -27,6 +28,8 @@ Shipped in 0.6.7. The four reported issues are fixed and verified.
   memory replaces forced-bottom. A state timeout cancels a stuck swap.
 - **Scroll pin:** a `ResizeObserver` on the pane and the content column
   re-pins while the reader is at the bottom. `overflow-anchor` is off.
+- **Progress:** a soft gradient band sweeps the top edge while a swap waits.
+  There is no idle track and no pulsing block.
 - **Performance:** stamp cache, reasoning preview memo, draft-GC
   signature, memoized sidebar, reducer identity, and settled text memo.
 
