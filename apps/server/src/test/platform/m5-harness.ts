@@ -7,7 +7,7 @@ import WebSocket from "ws";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
 import { applyPlatformMigrations } from "../../platform/migrations.js";
-import { TEST_ADMIN_URL } from "./harness.js";
+import { TEST_ADMIN_URL, TEST_CLICKHOUSE_PASSWORD, TEST_CLICKHOUSE_USER } from "./harness.js";
 
 function randomSuffix(): string {
   const bytes = new Uint8Array(6);
@@ -50,6 +50,8 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     GUILD_DATABASE_URL: databaseUrl.toString(),
     GUILD_MASTER_KEY_HEX: "33".repeat(32),
     GUILD_JWT_SECRET: "m5-test-jwt-secret",
+    GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
+    GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_POOL_MAX: "5",
     GUILD_API_URL: "http://localhost:18080",
     GUILD_LOG_LEVEL: process.env.M5_TEST_LOG ?? "warn",
