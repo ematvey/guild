@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@guild/ui/components/select";
 import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
+import { count } from "../agents/activity-format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";
@@ -73,7 +74,7 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     pin !== null && item.latest_version !== null && pin !== item.latest_version
       ? item.latest_version
       : null;
-  const meta = `${item.latest_version ?? "—"} · ${item.installs} install${item.installs === 1 ? "" : "s"}`;
+  const meta = `${item.latest_version ?? "—"} · ${count(item.installs, "install")}`;
   return {
     slug: item.slug,
     description: item.description,
@@ -500,7 +501,7 @@ export function SkillsPanel({
                           <span className="min-w-[90px] whitespace-nowrap text-right">
                             <span className="font-medium text-foreground">{row.latestVersion}</span>
                             {' · '}
-                            {row.installsCount} install{row.installsCount === 1 ? '' : 's'}
+                            {count(row.installsCount, "install")}
                           </span>
                         </div>
                       </div>
