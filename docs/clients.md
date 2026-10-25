@@ -115,15 +115,15 @@ The field stays editable, so any URL can always be typed at login.
 |---|---|---|
 | rustup targets | cross std libs | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc` |
 | zig + cargo-zigbuild | macOS/Linux cross-linking (libc + frameworks without Xcode/gcc per target) | `pacman -S zig; cargo install cargo-zigbuild` |
-| macOS SDK | Apple headers/frameworks for the macOS builds | tar.xz from phracker/MacOSX-SDKs → `~/macos-sdks/MacOSX11.3.sdk` (script uses `SDKROOT` env, default that path) |
+| macOS SDK | Apple headers/frameworks for the macOS builds | tar.xz from phracker/MacOSX-SDKs, extracted to a local directory (the script reads `SDKROOT`) |
 | mingw-w64-gcc | Windows-gnu targets (engine CLI builds) | `pacman -S mingw-w64-gcc` |
 | cargo-xwin | MSVC-target Windows builds (GUI) — downloads the Windows SDK/CRT automatically | `cargo install --locked cargo-xwin` |
-| NSIS (makensis) | Windows installer bundling | not in Arch repos: extract `nsis` + `nsis-common` debs from Ubuntu archive into `/usr/share/nsis` + `makensis` on PATH (see `~/opt/nsis`) |
+| NSIS (makensis) | Windows installer bundling | not in Arch repos: extract `nsis` + `nsis-common` debs from Ubuntu archive into a local directory on `PATH` |
 | llvm + lld | `llvm-rc` (Windows resource compile), `lld-link` | `pacman -S llvm lld` |
-| linuxdeploy | AppImage assembly (bundles webkit2gtk libs) | `~/opt/linuxdeploy/linuxdeploy-x86_64.AppImage` (continuous release) |
+| linuxdeploy | AppImage assembly (bundles webkit2gtk libs) | the `linuxdeploy` AppImage on `PATH` (continuous release) |
 | hfsprogs | HFS+ format + fsck for macOS DMGs | AUR `hfsprogs` (`paru -S hfsprogs`) |
-| libdmg-hfsplus | wraps the raw HFS+ image into a real UDIF `.dmg` | `~/opt/libdmg-hfsplus` — built with two local patches: cmake ≥3.5 and an OpenSSL-3 `filevault_stub.c` (encrypted-DMG support removed) |
-| dmg2img | DMG round-trip verification | `~/opt/dmg2img` |
+| libdmg-hfsplus | wraps the raw HFS+ image into a real UDIF `.dmg` | a local build of `libdmg-hfsplus` — with two patches: cmake ≥3.5 and an OpenSSL-3 `filevault_stub.c` (encrypted-DMG support removed) |
+| dmg2img | DMG round-trip verification | `dmg2img` on `PATH` |
 | webkit2gtk-4.1 | Linux GUI build | `pacman -S webkit2gtk-4.1` |
 
 ## 4. Release process

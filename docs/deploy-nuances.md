@@ -183,7 +183,7 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
 - **config.env** needs `GUILD_SANDBOX_RUNNER_TOKEN` (shared by server and
   runner; `openssl rand -hex 32`). The server gets
   `GUILD_SANDBOX_RUNNER_URL` from compose.
-- **Two stacks on one host** (dev `compose`, prod `guild-prod`) each need
+- **Two stacks on one host** (dev `compose`, prod its own project) each need
   their own sandbox subnet and egress IP, set in `deploy/compose/.env`:
   `GUILD_SANDBOX_SUBNET` (default `10.213.0.0/24`) and
   `GUILD_SANDBOX_EGRESS_IP` (default `10.213.0.2`), plus

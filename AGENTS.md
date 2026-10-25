@@ -60,7 +60,7 @@ you.
 - **Never touch prod while developing.** Dev tasks act on the dev stack
   only (`:18080`, `compose`, db `guild` — including its release registry;
   publish client releases to dev so the dev-paired desktop sees them).
-  The prod stack (`:18081`, `~/guild-prod`, db `guild_prod`) is only
+  The prod stack (port 18081, its own checkout, database `guild_prod`) is only
   touched when the user explicitly asks for a prod deploy/release.
 - **Type sizes come from the theme scale.** `packages/ui/src/theme.css`
   declares the only steps (`text-3xs` … `text-2xl`). Views use those names;

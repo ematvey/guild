@@ -348,7 +348,7 @@ current cycle; this file keeps the rest. Same entry format.
   work targets the dev stack only (`:18080`), including client-release
   publishes (the dev-paired desktop polls dev's updater manifest — a
   release that skips dev leaves it showing the old version). Prod
-  (`:18081`, `~/guild-prod`) is touched only on the user's explicit ask.
+  (port 18081, its own checkout) is touched only on the user's explicit ask.
   Recorded in AGENTS.md and the workspace memory.
 
 - **Machine-dispatch IPC proxy shipped (`a94047b`) + dev worker soak
@@ -781,7 +781,7 @@ current cycle; this file keeps the rest. Same entry format.
 
 - **Prod releases move to a branch flow (2026-10-14).** A `prod` branch now
   tracks the deployed release: each release is a `--no-ff` merge of develop
-  into prod (release commit: `daff203`, 0.5.42), `~/guild-prod` deploys from
+  into prod (release commit: `daff203`, 0.5.42), the prod checkout deploys from
   it (detached HEAD at the merge commit — the branch name is taken by the
   main checkout), and the merge is also merged back into develop so the
   branches never diverge. The first merge surfaced real master-side fixes
@@ -821,7 +821,7 @@ current cycle; this file keeps the rest. Same entry format.
   `.env`'s `GUILD_SERVER_IMAGE` are deleted. Restate retired with it: container
   `guild-prod-restate-1` and volume `guild-prod_restate_data` removed. Cutover
   sequence per `docs/plans/2026-10-04-ts-server-prod-cutover-runbook.md`: pre-backup
-  `~/backups/guild_prod-2026-10-14-1300.sql`; final importer run on the prod DB
+  a dump of the prod database; final importer run on the prod DB
   (`6 chats → 6 conversations, 145 events → 145 entries` — exact match; note the
   host-run importer needs `host.docker.internal` rewritten to `localhost`, the
   runbook's literal command fails with ENOTFOUND); `schema_history` was already
@@ -958,7 +958,7 @@ current cycle; this file keeps the rest. Same entry format.
   deleted; provenance comments naming the Rust tree cleaned across the TS
   sources; README/AGENTS/deploy docs updated. Consequences: the dev stack
   is TS-only (:18080), prod (:18081) still runs the Rust server from its
-  own checkout (`~/guild-prod`) until its cutover — rollback for prod is a
+  own checkout until its cutover — rollback for prod is a
   checkout of git history, not a build from this tree. Workspace now:
   protocol, guild-core, app-server, codex-execpolicy(+utils), desktop
   Tauri.
@@ -1243,7 +1243,7 @@ current cycle; this file keeps the rest. Same entry format.
   `sessions` table, not JWTs. Design:
   `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
-  `agent-plane` (worktree `~/guild-wt-agent-plane`).
+  `agent-plane` worktree.
 
 - **TS server rebuild on pi-durable starts (2026-10-04).** The cloud server
   is rebuilt in TypeScript on `@earendil-works/pi-durable` (pinned `1.0.1`,
@@ -1255,7 +1255,7 @@ current cycle; this file keeps the rest. Same entry format.
   through the gateway over loopback. Routines are deferred (unused today).
   Design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
-  `agent-plane` (worktree `~/guild-wt-agent-plane`).
+  `agent-plane` worktree.
 
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server (2026-10-02).** The desktop client can now be signed into two guild servers
