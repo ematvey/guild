@@ -5,10 +5,10 @@
 // snake_case enum, fields in variant declaration order, `None` project
 // fields skipped, `has_more_events` always present.
 
-import { threadEventRowWire, type ThreadEventRow } from "../platform/domain/thread-events.js";
+import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import type { ChatsCtx } from "../platform/route-contexts.js";
 import type { PlatformPool } from "../platform/db.js";
-import type { WsServerMsg } from "../hub/protocol.js";
+import { serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
 import { ApiError } from "../platform/errors.js";
 import type { UserRow } from "../platform/store/identity.js";
 
@@ -64,22 +64,7 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
 
 /** Byte-exact ThreadState frame (`{"type":"thread_state",…}`). */
 export function threadStateWire(capture: ThreadStateCapture): string {
-  const field = (name: string, value: string | undefined): string | undefined =>
-    value === undefined ? undefined : `,"${name}":${value}`;
-  const parts = [
-    `{"type":"thread_state"`,
-    `,"chat_id":${JSON.stringify(capture.chatId)}`,
-    `,"seq":${capture.seq}`,
-    `,"events":[${capture.events.map(threadEventRowWire).join(",")}]`,
-    `,"text":${JSON.stringify(capture.text)}`,
-    `,"thinking":${JSON.stringify(capture.thinking)}`,
-    `,"generating":${capture.generating}`,
-    field("project_id", capture.projectId === undefined ? undefined : JSON.stringify(capture.projectId)),
-    field("project_name", capture.projectName === undefined ? undefined : JSON.stringify(capture.projectName)),
-    field("project_machine_label", capture.projectMachineLabel === undefined ? undefined : JSON.stringify(capture.projectMachineLabel)),
-    `,"has_more_events":${capture.hasMoreEvents}}`,
-  ];
-  return parts.filter((part) => part !== undefined).join("");
+  return serializeServerMsg(threadStateMsg(capture));
 }
 
 /** The ThreadState frame as a WsServerMsg object — the member-socket sync

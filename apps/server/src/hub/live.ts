@@ -81,20 +81,6 @@ export class LiveHub {
     return members + machines;
   }
 
-  /** Registers the only socket allowed for a machine. A newer connection
-   *  replaces the old holder and tells it to close before its sink drops —
-   *  but never a holder of a different user: a machine slot is owned, so a
-   *  foreign claim is refused instead of displacing the real executor.
-   *  (Rust `Hub::register_machine` — newest-wins form kept for callers that
-   *  predate instance tracking.) */
-  async registerMachine(m: LiveMember, machineId: string): Promise<MachineRegistration> {
-    const result = await this.registerMachineInstance(m, machineId, uuidv7(), false);
-    if (typeof result === "object" && "kind" in result) {
-      throw new Error("machine rejected");
-    }
-    return result;
-  }
-
   /** Registers a machine socket with instance tracking. The 0.5.25 live-slot
    *  rule: a LIVE machine slot is HELD, not displaced. A second instance
    *  connecting while one holds the slot is a duplicate daemon or an
@@ -334,10 +320,6 @@ export class LiveHub {
         ? { settled: "payload", payload: payload ?? null }
         : { settled: "rejected", error },
     );
-  }
-
-  machineConnection(machineId: string): string | null {
-    return this.machines.get(machineId)?.holder.conn_id ?? null;
   }
 
   machineOnline(machineId: string): boolean {
