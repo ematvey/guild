@@ -51,6 +51,7 @@ function swapped(
   state: NavigationState,
   chatId: string | null,
   abortTree: boolean,
+  clearBusy: boolean,
 ): NavigationDecision {
   return {
     state: {
@@ -62,7 +63,7 @@ function swapped(
       treeReady: true,
     },
     swapTo: chatId,
-    clearBusy: true,
+    ...(clearBusy ? { clearBusy: true } : {}),
     ...(abortTree ? { abortTree: true } : {}),
   };
 }
@@ -85,12 +86,15 @@ export function transitionNavigation(
         };
       }
       if (event.cached) {
-        // The reducer already has a synced view, even when it is empty.
-        return swapped(state, event.chatId, state.pendingChatId !== null);
+        // The reducer already has a synced view, even when it is empty. The
+        // open swap clears the old chat's busy before the target's first
+        // state takes over.
+        return swapped(state, event.chatId, state.pendingChatId !== null, true);
       }
       if (event.chatId === null) {
-        // The scratch composer is not fetched: it swaps at once.
-        return swapped(state, null, state.pendingChatId !== null);
+        // The scratch composer is not fetched: it swaps at once, before any
+        // target state exists.
+        return swapped(state, null, state.pendingChatId !== null, true);
       }
       const cold = state.displayedChatId === null;
       return {
@@ -113,7 +117,9 @@ export function transitionNavigation(
       if (event.chatId !== state.pendingChatId) return { state };
       if (state.stateReady) return { state };
       const next = { ...state, stateReady: true };
-      if (next.treeReady) return swapped(next, event.chatId, false);
+      // The target's state has landed: it owns the live turn, so the swap
+      // must not clear the busy it just set.
+      if (next.treeReady) return swapped(next, event.chatId, false, false);
       return { state: next };
     }
 
@@ -122,7 +128,9 @@ export function transitionNavigation(
       if (event.chatId !== state.pendingChatId) return { state };
       if (state.treeReady) return { state };
       const next = { ...state, treeReady: true };
-      if (next.stateReady) return swapped(next, event.chatId, false);
+      // A tree-driven swap follows the target's state: keep the busy the
+      // state set.
+      if (next.stateReady) return swapped(next, event.chatId, false, false);
       return { state: next };
     }
 

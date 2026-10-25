@@ -368,6 +368,42 @@ describe("member-socket feed", () => {
     }
   });
 
+  it("does not stall live frames when validation drops a sync request", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("dropped sync");
+    const ws = await memberSocket();
+    const orgRes = await stack.env.db.query<{ id: string }>(
+      "INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'fix-dropped-sync') RETURNING id",
+    );
+    const otherOrg = orgRes.rows[0]!.id;
+    try {
+      // The next client message reads the member in another org, so
+      // processClient returns before the bracket opens.
+      await stack.env.db.query("UPDATE users SET org_id = $1 WHERE id = $2", [otherOrg, stack.memberId]);
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      // A live frame after the dropped sync must still arrive: no orphan
+      // sync_start may hold the gate open.
+      await stack.env.db.query("SELECT pg_notify('guild_chat_status', $1)", [
+        JSON.stringify({
+          org_id: stack.orgId,
+          user_id: stack.memberId,
+          chat_id: chat.id,
+          generating: true,
+        }),
+      ]);
+      const status = await waitFrame(ws, (f) => f.type === "chat_status" && f.chat_id === chat.id);
+      expect(status.generating).toBe(true);
+      // Give the dropped sync time to drain, then check it opened nothing.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const syncFrames = textFrames(ws).filter(
+        (f) => f.type === "sync_begin" || f.type === "sync_done",
+      );
+      expect(syncFrames).toEqual([]);
+    } finally {
+      await stack.env.db.query("UPDATE users SET org_id = $1 WHERE id = $2", [stack.orgId, stack.memberId]);
+      ws.end();
+    }
+  });
+
   it("defers a live tree that arrives inside a sync bracket until after SyncDone", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("sync gate");
     const agentId = crypto.randomUUID();
@@ -404,11 +440,30 @@ describe("member-socket feed", () => {
       await treeGate;
       return originalTree(args);
     };
+    // Observe the live frame entering the sink: once it is queued while the
+    // bracket is still open, the gate must defer it. No production hook.
+    const sinks = platform.hub.sinksOfUser(stack.memberId);
+    let markQueued: () => void = () => {};
+    const queued = new Promise<void>((resolve) => { markQueued = resolve; });
+    const restoreSends = sinks.map((sink) => {
+      const original = sink.send.bind(sink);
+      sink.send = (msg: Parameters<typeof sink.send>[0]) => {
+        if (msg.type === "subagent_tree" && msg.chat_id === chat.id) markQueued();
+        return original(msg);
+      };
+      return () => { sink.send = original; };
+    });
     try {
       ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
       await ws.until((f) => f.kind === "text" && f.data.includes("sync_begin"));
       // The bracket is open. A live tree push for the same chat arrives now.
       await notifySubagentTree(platform.pool, childThread);
+      await Promise.race([
+        queued,
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error("live tree never reached the sink")), 5_000),
+        ),
+      ]);
       releaseTree();
 
       // The bracket's own tree and state arrive first; the deferred live tree
@@ -437,6 +492,7 @@ describe("member-socket feed", () => {
       expect(doneIndex).toBeLessThan(liveTree.index);
       expect((bracketTree.frame.nodes as { status: string | null }[]).some((n) => n.status === "running")).toBe(true);
     } finally {
+      for (const restore of restoreSends) restore();
       platform.wsSubagentTree = originalTree;
       ws.end();
     }
