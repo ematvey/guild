@@ -50,6 +50,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { Skeleton } from "@guild/ui/components/skeleton";
 
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
+import { FrameToggleContext } from "../frame";
 import { WorkedForBlock, viewEntries } from "../worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../lib/sidebar-width";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../../lib/chat-width";
@@ -125,8 +126,9 @@ type ThreadProps = {
    *  unmounts without waiting for the next apiMe. */
   onOnboarded?: () => void;
   /** Desktop multi-workspace: shows the pair/sign-in card over the running
-   *  app; the login activates the new workspace. Absent on the web. */
-  onAddWorkspace?: () => void;
+   *  app; the login activates the new workspace. The base_url argument is
+   *  set when a dead-token row asks to sign in again. Absent on the web. */
+  onAddWorkspace?: (baseUrl?: string) => void;
 };
 
 /** A render exception anywhere in the chat view must never unmount the app:
@@ -1213,6 +1215,13 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setAtBottom(true);
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, []);
+  // A frame toggle grows the content under the reader. Stop following the
+  // bottom, or the pin scrolls the row that was just clicked out from under
+  // the pointer one frame after the click.
+  const onFrameToggle = useCallback(() => {
+    stick.current = false;
+    setAtBottom(false);
+  }, []);
 
   return (
     <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
@@ -1459,6 +1468,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
           {navigating && <ThreadProgress />}
+          <FrameToggleContext.Provider value={onFrameToggle}>
           <div
             ref={pane}
             data-scrollable
@@ -1527,6 +1537,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 )}
             </div>
           </div>
+          </FrameToggleContext.Provider>
             {/* Column resize handles: one on each edge, so either side can
                 be dragged. Each sits at 50% ± half the width, capped at the
                 pane edge when the column fills it. */}
