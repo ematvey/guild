@@ -55,8 +55,9 @@ export function WorkspaceMenuItems({
   onReload,
 }: {
   list?: WorkspaceList | null;
-  /** Absent on the web (single server): the whole section hides. */
-  onAddWorkspace?: () => void;
+  /** Absent on the web (single server): the whole section hides. The
+   * base_url argument is set when a dead-token row asks to sign in again. */
+  onAddWorkspace?: (baseUrl?: string) => void;
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
@@ -84,7 +85,7 @@ export function WorkspaceMenuItems({
         <span className="text-xs font-medium text-muted-foreground">Workspaces</span>
         {onAddWorkspace && (
           <button
-            onClick={onAddWorkspace}
+            onClick={() => onAddWorkspace()}
             title="Add workspace"
             aria-label="Add workspace"
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
@@ -99,15 +100,20 @@ export function WorkspaceMenuItems({
         return (
           <DropdownMenuItem
             key={w.base_url}
-            disabled={!w.has_token}
+            disabled={!w.has_token && !onAddWorkspace}
             onClick={() => {
+              if (!w.has_token) {
+                // A dead token cannot switch — re-auth this server instead.
+                onAddWorkspace?.(w.base_url);
+                return;
+              }
               if (isActive) return; // switching to the current one is a no-op
               void switchTo(w.base_url);
             }}
             title={
               w.has_token
                 ? w.base_url
-                : "Sign in again to use this workspace"
+                : `Sign in again to ${w.base_url}`
             }
             className={isActive ? "bg-accent/40" : undefined}
           >
@@ -153,7 +159,7 @@ export function WorkspaceRailButton({
   onAddWorkspace,
   onReload,
 }: {
-  onAddWorkspace?: () => void;
+  onAddWorkspace?: (baseUrl?: string) => void;
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
@@ -204,7 +210,7 @@ export function WorkspaceSwitcher({
   onAddWorkspace,
   onReload,
 }: {
-  onAddWorkspace?: () => void;
+  onAddWorkspace?: (baseUrl?: string) => void;
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
