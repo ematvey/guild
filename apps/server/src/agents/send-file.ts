@@ -17,6 +17,7 @@ import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
 import type { Agent, AgentRun } from "./types.js";
 import { normalizeRelativePath } from "./files.js";
+import { agentWorkspaceDir } from "./workspace-config.js";
 
 const MAX_SEND_BYTES = 64 * 1024 * 1024;
 
@@ -88,7 +89,7 @@ async function resolveWorkspaceFile(root: string, relPath: string): Promise<{ ab
  *  row. A failed upload throws here, inside the tool call, before the turn
  *  ends. */
 export async function sendFile(context: SendFileContext, args: { path: string; as?: string }): Promise<SendFileResult> {
-  const root = path.resolve(context.workspaceRoot, "agents", context.agent.org_id, context.agent.id);
+  const root = agentWorkspaceDir(context.workspaceRoot, context.agent.org_id, context.agent.id);
   const { abs, rel } = await resolveWorkspaceFile(root, args.path);
   const filename = safeFilename((args.as ?? path.basename(rel)).trim());
   if (filename === null) throw new SendFileError("bad filename");

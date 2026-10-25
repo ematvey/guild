@@ -7,6 +7,7 @@ import { createReadStream, type ReadStream } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "../platform/errors.js";
+import { agentWorkspaceDir } from "./workspace-config.js";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -85,7 +86,7 @@ export class AgentFiles {
   constructor(private readonly workspaceRoot: string) {}
 
   private rootFor(orgId: string, agentId: string): string {
-    return path.resolve(this.workspaceRoot, "agents", orgId, agentId);
+    return agentWorkspaceDir(this.workspaceRoot, orgId, agentId);
   }
 
   /** Resolves a relative path inside the agent root (lexical containment)
