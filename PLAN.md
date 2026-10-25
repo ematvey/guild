@@ -12,6 +12,17 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The inbox is gone; the chat list carries the attention state (2026-10-25).**
+  Agent-initiated threads (routine messages, `send_message`) already land in
+  the chat list with their unread marker, so the separate Inbox tab, page,
+  badge and `/inbox` route are removed; an old `/inbox` link lands on Chats.
+  Chat rows and project rows now also carry a `blocked` flag — a tool call
+  waiting for approval — projected from the journaled `approval_request` with
+  no later `approval_decision`, bounded to ten minutes. A blocked row shows a
+  red dot that outranks the working spinner and the amber unread dot. The
+  flag rides the existing `thread_list` push, re-sent when an approval event
+  commits, so the sidebar moves live. Server notices stay for API consumers.
+
 - **The skill file viewer shows every bundle file, and folders fold (2026-10-25).**
   `GET /api/v1/skills/:slug/source` now returns each file's text body
   (`content`, null for binary bodies and files over 256 KiB) by reading the

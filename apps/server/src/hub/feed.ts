@@ -196,6 +196,17 @@ export class FeedForwarder implements GenerationStreamSink {
       return;
     }
     this.dirtyChats.delete(chatId);
+    // A pending approval is a list-level state (the red row indicator):
+    // an approval request or decision that just committed re-pushes the
+    // sidebar list, which carries the chat's blocked flag.
+    const last = await this.ctx.pool.query<{ type: string }>(
+      "SELECT type FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
+      [chatId],
+    );
+    const lastType = last.rows[0]?.type;
+    if (lastType === "approval_request" || lastType === "approval_decision") {
+      void this.pushThreadList(chat.orgId, chat.userId).catch(() => {});
+    }
     // An open turn owns the view: instead of re-broadcasting the whole
     // thread per append, fan out only the rows committed since the last
     // fan-out (thread_events frames). Tool calls, approval cards and
