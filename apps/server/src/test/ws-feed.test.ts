@@ -559,6 +559,7 @@ describe("member-socket feed", () => {
       [agentId, stack.orgId, stack.memberId],
     );
     const rootThread = crypto.randomUUID();
+    expect(rootThread).not.toBe(chat.id);
     await stack.env.db.query(
       `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
        VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
@@ -575,6 +576,7 @@ describe("member-socket feed", () => {
 
     // A child thread + run changes the subtree: the NOTIFY pushes it whole.
     const childChat = await createChat("tree push child");
+    expect(childChat.id).not.toBe(chat.id);
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
       `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
