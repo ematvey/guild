@@ -260,24 +260,29 @@ impl AuthState {
         persisted
     }
 
-    /// Fetches one workspace's display name + logo from its server and
-    /// stores the result (persisting the workspace store). Best-effort on
-    /// the network — a failure keeps whatever identity is already known.
-    /// Called after login/pair and by the restore path.
-    pub async fn refresh_org_identity(&mut self, base_url: &str, store: Option<&Path>) {
+    /// Stores one workspace's display name + logo and persists the store.
+    /// The fetch happens in the caller, with no lock held: the session lock
+    /// is a `std::sync::Mutex`, and holding it across the network await
+    /// parks a worker thread the rest of the daemon needs. Returns false
+    /// when the workspace is gone (the token changed while the fetch was
+    /// out), so a stale fetch never writes into another account.
+    pub fn apply_org_identity(
+        &mut self,
+        base_url: &str,
+        name: String,
+        logo: Option<String>,
+        store: Option<&Path>,
+    ) -> bool {
         let base = session_store::normalize_base(base_url);
-        let Some(cloud) = self.workspaces.get(&base).and_then(|w| w.cloud.clone()) else {
-            return;
+        let Some(w) = self.workspaces.get_mut(&base) else {
+            return false;
         };
-        if let Ok((name, logo)) = cloud.org_settings().await {
-            if let Some(w) = self.workspaces.get_mut(&base) {
-                w.org_name = Some(name);
-                w.org_logo_url = logo;
-            }
-            if let Some(path) = store {
-                let _ = self.persist(path);
-            }
+        w.org_name = Some(name);
+        w.org_logo_url = logo;
+        if let Some(path) = store {
+            let _ = self.persist(path);
         }
+        true
     }
 
     /// Removes one workspace, returning its normalized base_url (the
