@@ -20,6 +20,7 @@ import {
   readSummary,
   shaPrefix,
   initialsOf,
+  isMarkdownPath,
   skillMdPreviewBody,
   sparkRects,
   updateAvailable,
@@ -233,6 +234,16 @@ describe("shaPrefix (the versions table's Bundle cell)", () => {
   it("falls back to — for a missing sha", () => {
     expect(shaPrefix(null)).toBe("—");
     expect(shaPrefix("")).toBe("—");
+  });
+});
+
+describe("isMarkdownPath (viewer mode for a bundle file)", () => {
+  it("previews markdown files and shows the rest as raw text", () => {
+    expect(isMarkdownPath("references/scoring-rules.md")).toBe(true);
+    expect(isMarkdownPath("SKILL.MD")).toBe(true);
+    expect(isMarkdownPath("notes.markdown")).toBe(true);
+    expect(isMarkdownPath("scripts/run.sh")).toBe(false);
+    expect(isMarkdownPath("huntflow-api.md.bak")).toBe(false);
   });
 });
 
