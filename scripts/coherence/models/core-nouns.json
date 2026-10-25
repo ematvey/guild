@@ -275,7 +275,7 @@
       "definition": "The cloud login token the local engine holds on the user's behalf.",
       "canonical": "crates/app-server/src/session_store.rs",
       "types": [
-        "Session",
+        "EngineState",
         "StoredSession",
         "AuthState",
         "AuthChange"

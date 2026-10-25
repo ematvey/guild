@@ -87,7 +87,7 @@ Seam default for this round: `owner=@maintainer until=2027-01-31`.
 | Two folder browsers | Extract the shared body; each keeps its transport and path adapter. UNC stays. |
 | Two folder equality rules | One lookup with a path-key function that names the Windows rule. |
 | Settings views call endpoint paths directly | Move every settings call behind a `lib/api` module. |
-| Default assistant prompt twice | The read response carries the effective default; the client stops hardcoding it. |
+| Default assistant prompt twice | The read response carries the effective default; the client stops hardcoding it. This touches the server read endpoint, which is allowed for this lane. |
 | Machine presence, two sources | The machines store is the only presence source; the chat row stops carrying `machine_online`. |
 | Three settings caches | One clear registry that every cache registers with. |
 | Each section parses the detail string | One codec interface per section; the string stays the wire shape. |
@@ -104,7 +104,7 @@ Seam default for this round: `owner=@maintainer until=2027-01-31`.
 | `workspace` = server and folder | The switcher says "server": `ServerRow`, `/api servers`. The engine keeps `workspace` for the folder. |
 | `/runs/<id>` takes two ids | `run.id` owns the route; a trace-only turn gets its own route. |
 | `call` vs `span` | Labels only: the tab says "Model calls", tool rows stay spans. |
-| Two instruction rules | One rule: the server builds the chain from the bound project folder. The client chain is deleted. |
+| Two instruction rules | One rule with two readers. The file set and budget are `AGENTS.md` (override beats plain) plus `MEMORY.md`, 32 KiB total, for both sides. The client keeps its reader because only it can see a machine-bound folder; the server keeps its reader for sandbox chats. The server's 8 KiB per file and 24 KiB total, and its `MEMORY.md`-only set, go. |
 | Two HTTP clients for skills | One client: `lib/api/skills.ts` calls `skills-api.ts`. |
 | `ChatMessage` two shapes | Both readers map into the protocol `Message` shape. |
 | Agent export and delete dialog twice | One `AgentActions` block; the settings tab renders it. |
