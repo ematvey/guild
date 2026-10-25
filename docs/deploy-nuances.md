@@ -66,6 +66,31 @@ Guild can run on two stacks on one host: a dev stack and a prod stack.
   hold the pre-cutover data — keep until confident.
   `docker compose down -v` destroys all of it.
 
+### Other stacks on this host
+
+Each stack is its own checkout with its own compose project, database and
+object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
+
+| Stack | Checkout | Project | Port | Public host |
+|---|---|---|---|---|
+| dev | `~/guild` (`deploy/compose`) | `compose` | 18080 | `guild.example.com` |
+| prod | `~/guild-live` | `guild-live` | 18081 | `guild.example.org` |
+| ezh | `~/guild-stage` | `guild-stage` | 18088 | `ezh.example.com` |
+
+- Dev and prod track `master`; work happens on `develop`.
+- Each stack gets fresh `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`,
+  `GUILD_INTERNAL_KEY` and `GUILD_SANDBOX_RUNNER_TOKEN`, plus its own
+  database, ClickHouse database and S3 bucket.
+- Sandbox networks must not overlap: dev `10.213.0.0/24`, prod
+  `10.215.0.0/24`, ezh `10.216.0.0/24`.
+- Agent workspaces are per stack: `GUILD_WORKSPACE_HOST_DIR` sets both the
+  JuiceFS mountpoint and the bind source of the `guild_workspaces` volume
+  (`/mnt/guild` for dev and prod, `/mnt/guild-stage` for ezh). Each stack also
+  needs its own JuiceFS volume name, metadata database and bucket.
+- Public hosts are ingress rules in `/etc/cloudflared/config.yml` (the
+  `cloudflared` tunnel), each pointing at the stack's port. Add a host with
+  `cloudflared tunnel route dns <tunnel> <host>` and restart the service.
+
 ### The legacy Node stack on :9330 — removed
 
 If a reverse proxy or tunnel fronts the deployment, point it at
