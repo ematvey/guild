@@ -5,7 +5,7 @@
 // (serde_json BTreeMap key order, `data: …\n\n` frames, `[DONE]` end).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
+import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, missingFieldError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
 import {
   accumulate,
@@ -216,10 +216,7 @@ function toOpenAiToolCalls(calls: ToolCall[]): unknown {
 }
 
 function missingField(field: string, req: FastifyRequest): TextError {
-  return new TextError(
-    422,
-    `${DESERIALIZE_PREFIX}missing field \`${field}\` at line 1 column ${(req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0}`,
-  );
+  return missingFieldError(field, (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
 }
 
 function invalidType(value: unknown, req: FastifyRequest): TextError {
