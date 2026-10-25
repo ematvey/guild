@@ -1,6 +1,6 @@
 // The thread view's floating surfaces: the device-setup dialog, the
 // onboarding guide and the create-project dialog.
-import { apiOnboarded } from "../../lib/api/workspaces";
+import { apiOnboarded } from "../../lib/api/servers";
 import { machineId } from "../../lib/machine-rpc";
 import { IS_TAURI } from "../../lib/session";
 import type { MachineInfo } from "../../lib/api/machines";
