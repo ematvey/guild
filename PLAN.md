@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Chat rows carry the unread count (2026-10-25).** The sidebar badge shows
+  how many assistant turns are newer than the reader's marker instead of a
+  plain dot (`unread_count` on the chat list row, `0` when read). The count
+  comes from the same `chat_reads` watermark as the `unread` flag, and the
+  feed re-pushes `thread_list` when an assistant turn commits, so the number
+  moves live in background chats. A project row sums its chats' counts. The
+  client zeroes the open chat's count, because the server watermark lags the
+  local read POST.
+
 - **The inbox is gone; the chat list carries the attention state (2026-10-25).**
   Agent-initiated threads (routine messages, `send_message`) already land in
   the chat list with their unread marker, so the separate Inbox tab, page,

@@ -40,6 +40,8 @@ export interface ChatListRow {
   /** This chat or any descendant thread has a queued/running run. */
   working: boolean;
   unread: boolean;
+  /** Assistant turns newer than the caller's read marker. */
+  unread_count: number;
   /** A tool call is waiting for the user's approval in this chat. */
   blocked: boolean;
   project_id: string | null;
@@ -80,10 +82,8 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     c.machine_id, c.machine_label, c.generating,
     (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
     pr.name AS project_name, m.label AS project_machine_label,
-    (c.generating = false AND EXISTS (
-      SELECT 1 FROM thread_events e
-      WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread,
+    (c.generating = false AND COALESCE(ur.n, 0) > 0) AS unread,
+    COALESCE(ur.n, 0) AS unread_count,
     EXISTS (
       SELECT 1 FROM thread_events e
       WHERE e.chat_id = c.id AND e.type = 'approval_request'
@@ -96,6 +96,11 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
   FROM chats c
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
+  LEFT JOIN LATERAL (
+    SELECT count(*)::int AS n FROM thread_events e
+    WHERE e.chat_id = c.id AND e.type = 'assistant_message'
+      AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)
+  ) ur ON true
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
   LEFT JOIN projects pr ON pr.id = c.project_id
   LEFT JOIN machines m ON m.machine_id = pr.machine_id
@@ -261,6 +266,7 @@ export class ChatStore {
               c.machine_id, c.machine_label, c.generating,
               (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
               pr.name AS project_name, m.label AS project_machine_label, false AS unread,
+              0 AS unread_count,
               EXISTS (
                 SELECT 1 FROM thread_events e
                 WHERE e.chat_id = c.id AND e.type = 'approval_request'
@@ -615,6 +621,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     generating: Boolean(r.generating),
     working: Boolean(r.working),
     unread: Boolean(r.unread),
+    unread_count: Number(r.unread_count ?? 0),
     blocked: Boolean(r.blocked),
     project_id: (r.project_id as string | null) ?? null,
     project_name: (r.project_name as string | null) ?? null,

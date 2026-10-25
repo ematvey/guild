@@ -106,7 +106,7 @@ function RowActions({
   );
 }
 
-type RowState = { generating: boolean; working?: boolean; unread: boolean; blocked?: boolean };
+type RowState = { generating: boolean; working?: boolean; unread: boolean; unreadCount?: number; blocked?: boolean };
 
 /** The row's one indicator, by priority: a blocked tool call (red) beats
  *  the working spinner, which beats the unread dot. */
@@ -133,13 +133,25 @@ function RowStatus({ status }: { status: RowState }) {
           aria-label={status.generating ? "Generating" : "Working"}
         />
       );
-    case "unread":
+    case "unread": {
+      const count = status.unreadCount ?? 0;
+      if (count < 1) {
+        return (
+          <span
+            className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
+            title="unseen replies"
+          />
+        );
+      }
       return (
         <span
-          className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
-          title="unseen replies"
-        />
+          className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-400 px-1 text-3xs font-semibold leading-none text-black/80"
+          title={`${count} unseen ${count === 1 ? "reply" : "replies"}`}
+        >
+          {count > 99 ? "99+" : count}
+        </span>
       );
+    }
     default:
       return null;
   }
