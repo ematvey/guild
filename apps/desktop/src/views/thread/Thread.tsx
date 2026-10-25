@@ -1275,7 +1275,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
                 onSignOut={signOut}
                 onAddWorkspace={onAddWorkspace}
-                      role={role}
+                role={role}
+                unreadChats={unreadChats}
+                unreadProjects={unreadProjects}
                 isMobile
               />
               <div className="flex min-w-0 flex-1 flex-col">{sidebar}</div>
