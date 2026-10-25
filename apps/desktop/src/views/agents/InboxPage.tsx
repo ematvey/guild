@@ -42,9 +42,11 @@ export function inboxTone(kind: InboxKind): "danger" | "warning" | "info" | "neu
     case "approval":
       return "warning";
     case "routine_failed":
+    case "routine_disabled":
       return "danger";
     case "question":
       return "info";
+    case "agent_message":
     case "routine_message":
       return "neutral";
   }
