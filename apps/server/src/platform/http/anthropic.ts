@@ -23,7 +23,7 @@ import {
   type GatewayCredential,
   type RoutedCall,
 } from "./llm.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ToolSpec, type ToolCall } from "../provider/types.js";
 import { sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";

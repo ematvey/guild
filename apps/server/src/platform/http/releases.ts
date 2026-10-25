@@ -9,7 +9,7 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
 import { SIGNING_SEED_KV } from "../store/org_kv.js";
 import { uuidv7 } from "../time.js";
