@@ -6,8 +6,12 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { JsonView } from "./JsonView";
+import type { Message } from "../../../../../crates/protocol/bindings/Message";
+import type { JsonValue } from "../../../../../crates/protocol/bindings/serde_json/JsonValue";
 
-export interface ChatMessage {
+/** One message as it appears inside an LLM request payload: OpenAI's shape,
+ *  not the protocol's. The mapper below turns it into a Message. */
+interface PayloadMessage {
   role?: string;
   content?: string | { type?: string; text?: string; [key: string]: unknown }[] | null;
   name?: string;
@@ -18,6 +22,46 @@ export interface ChatMessage {
     function?: { name?: string; arguments?: string };
   }[];
   reasoning_content?: string;
+}
+
+function parseArguments(value: string | undefined): JsonValue {
+  if (value === undefined) return {};
+  try {
+    return JSON.parse(value) as JsonValue;
+  } catch {
+    return value;
+  }
+}
+
+/** Maps one request payload's messages into the protocol Message shape. */
+export function payloadMessages(value: unknown): Message[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((raw) => {
+    const row = raw as PayloadMessage;
+    const content =
+      typeof row.content === "string"
+        ? row.content
+        : Array.isArray(row.content)
+          ? row.content
+              .map((part) => (typeof part.text === "string" ? part.text : ""))
+              .filter((text) => text !== "")
+              .join("\n")
+          : "";
+    const toolCalls = row.tool_calls?.map((call, index) => ({
+      id: call.id ?? String(index),
+      name: call.function?.name ?? "tool_call",
+      arguments: parseArguments(call.function?.arguments),
+    }));
+    return {
+      role: row.role ?? "unknown",
+      content,
+      images: [],
+      audio: [],
+      ...(toolCalls !== undefined ? { tool_calls: toolCalls } : {}),
+      ...(row.tool_call_id !== undefined ? { tool_call_id: row.tool_call_id } : {}),
+      ...(row.reasoning_content !== undefined ? { reasoning: row.reasoning_content } : {}),
+    };
+  });
 }
 
 const ROLE_STYLE: Record<string, string> = {
@@ -36,7 +80,7 @@ export function MessagesView({
   messages,
   className,
 }: {
-  messages: ChatMessage[];
+  messages: Message[];
   className?: string;
 }) {
   if (messages.length === 0) {
@@ -45,7 +89,7 @@ export function MessagesView({
   return (
     <div className={className}>
       {messages.map((message, index) => {
-        const role = message.role ?? "unknown";
+        const role = message.role;
         const content = message.content;
         const isSystem = role === "system" || role === "developer";
         const text = typeof content === "string" ? content : null;
@@ -56,9 +100,6 @@ export function MessagesView({
           >
             <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-2xs">
               <span className="shrink-0 font-medium uppercase tracking-wide">{role}</span>
-              {message.name !== undefined && (
-                <span className="max-w-[10rem] truncate text-muted-foreground">{message.name}</span>
-              )}
               {message.tool_call_id !== undefined && (
                 <span className="min-w-0 max-w-full truncate font-mono text-muted-foreground">
                   {message.tool_call_id}
@@ -104,19 +145,19 @@ export function MessagesView({
               <div className="mt-2 space-y-1.5">
                 {message.tool_calls.map((call, callIndex) => (
                   <div key={call.id ?? callIndex} className="rounded-md border border-border bg-background/60 p-2">
-                    <p className="font-mono text-2xs text-foreground">{call.function?.name ?? "tool_call"}</p>
-                    <JsonView value={call.function?.arguments ?? ""} maxHeight="max-h-40" className="mt-1" />
+                    <p className="font-mono text-2xs text-foreground">{call.name}</p>
+                    <JsonView value={JSON.stringify(call.arguments)} maxHeight="max-h-40" className="mt-1" />
                   </div>
                 ))}
               </div>
             )}
-            {message.reasoning_content !== undefined && message.reasoning_content !== "" && (
+            {message.reasoning !== undefined && message.reasoning !== "" && (
               <details className="mt-2">
                 <summary className="cursor-pointer select-none text-2xs text-muted-foreground hover:text-foreground">
                   Reasoning
                 </summary>
                 <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-2xs leading-5 text-muted-foreground">
-                  {message.reasoning_content}
+                  {message.reasoning}
                 </pre>
               </details>
             )}
