@@ -10,10 +10,20 @@ describe("settings reads distinguish failures from defaults", () => {
     await expect(transport[name]()).rejects.toThrow("503");
   });
 
-  it("preserves a successful absent assistant override", async () => {
+  it("preserves a successful absent assistant override and the effective default", async () => {
     const { getAssistantPrompt } = await import("./approvals");
     vi.stubGlobal("localStorage", { getItem: () => null });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ prompt: null }), { status: 200 })));
-    await expect(getAssistantPrompt()).resolves.toBeNull();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ prompt: null, default: "You are a helpful assistant." }), {
+          status: 200,
+        }),
+      ),
+    );
+    await expect(getAssistantPrompt()).resolves.toEqual({
+      prompt: null,
+      default: "You are a helpful assistant.",
+    });
   });
 });
