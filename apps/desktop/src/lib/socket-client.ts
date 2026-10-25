@@ -113,7 +113,7 @@ export function startSocket(
     getOpenChatId: () => string | null;
     socketFactory?: SocketFactory;
   },
-): { stop: () => void; resync: () => void; markRead: (chatId: string) => void } {
+): { stop: () => void; resync: () => void; markRead: (chatId: string) => boolean } {
   const factory = opts.socketFactory ?? ((url: string) => openSocket(url));
   let socket: SocketLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -269,10 +269,17 @@ export function startSocket(
     },
     resync: () => sendSync(),
     // The duplex read-mark: rides the member socket the turn's frames
-    // already arrive on — no separate HTTP request per new content.
-    markRead: (chatId: string) => {
-      if (socket?.readyState !== 1) return;
-      socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+    // already arrive on — no separate HTTP request per new content. Returns
+    // whether the frame left the socket, so the caller retries a dropped
+    // mark instead of clearing the dot for a write that never happened.
+    markRead: (chatId: string): boolean => {
+      if (socket?.readyState !== 1) return false;
+      try {
+        socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+        return true;
+      } catch {
+        return false;
+      }
     },
   };
 } // shared with the settings window client code

@@ -146,6 +146,26 @@ describe("startSocket", () => {
     connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
   });
 
+  it("reports a dropped read mark instead of claiming it was sent", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", { getItem: () => "client" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })));
+    const sockets: FakeSocket[] = [];
+    const connection = startSocket({
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      getOpenChatId: () => "chat",
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connection.markRead("chat")).toBe(false);
+    sockets[0].open();
+    expect(connection.markRead("chat")).toBe(true);
+    expect(sockets[0].sent.some((frame) => frame.includes('"type":"read"'))).toBe(true);
+    sockets[0].close();
+    expect(connection.markRead("chat")).toBe(false);
+    connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+  });
+
   it.each([false, true])("refreshes before reminting, including transient refresh failure (%s)", async (transientFailure) => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "token", setItem: () => {} });

@@ -585,7 +585,9 @@ export class ChatStore {
 
   /** Marks the chat read for the caller: the marker moves to the newest
    *  thread event's `seq` (migration 0066 shape — event ids cannot order
-   *  events; the BIGSERIAL write order is the comparison space). A chat
+   *  events; the BIGSERIAL write order is the comparison space). The marker
+   *  only ever moves forward: a read frame that arrives late, or a repeat
+   *  sent after a reconnect, cannot resurrect an already-cleared dot. A chat
    *  with no events has nothing unread — no marker. */
   async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
     await this.getChat(orgId, chatId, caller);
@@ -597,7 +599,8 @@ export class ChatStore {
     if (lastReadSeq === undefined) return;
     await this.pool.query(
       `INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
-       ON CONFLICT (chat_id, user_id) DO UPDATE SET last_read_seq = EXCLUDED.last_read_seq`,
+       ON CONFLICT (chat_id, user_id) DO UPDATE
+         SET last_read_seq = GREATEST(chat_reads.last_read_seq, EXCLUDED.last_read_seq)`,
       [chatId, caller.id, lastReadSeq],
     );
   }

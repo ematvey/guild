@@ -12,6 +12,19 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The read marker follows the route chat and is retried (2026-10-26).**
+  Opening an uncached thread never marked it read on the server: the read
+  frame was gated on the painted chat, and the first state of an uncached
+  open is what triggers the swap, so the paint ref still named the old
+  chat. The dot was hidden locally anyway, then came back on reload. The
+  mark now keys on the route chat, hides the dot only after the frame left
+  the socket, and is re-sent on every sync that applied a state (open,
+  reconnect, tab wake) — the event-id guard throttles live frames only.
+  A hidden tab no longer hides its own dot, and a `thread_list` push may
+  hide an open chat's dot only after a read was actually sent. The store
+  write is monotonic (`GREATEST`), so a late or repeated frame cannot move
+  the marker backwards.
+
 - **Machine presence is pushed, not polled (2026-10-26).** The sidebar's
   project dot and the settings machine list read `connected` from one HTTP
   snapshot taken at mount, so they stayed stale until a reload. The hub now
