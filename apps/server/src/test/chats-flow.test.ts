@@ -225,16 +225,17 @@ describe("chats CRUD wire", () => {
       { type: "assistant_message", turn: 1, step: 1, blocks: [{ type: "text", text: "turn reply" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
       "00000000-0000-7000-8000-000000000001", // uuid v7-shaped, sorts low
     );
-    const listUnread = async () => {
+    const listRow = async () => {
       const res = await stack.env.app.inject({
         method: "GET",
         url: "/api/v1/chats",
         headers: auth(stack.memberToken),
       });
-      const chats = (JSON.parse(res.body) as { chats: { id: string; unread: boolean }[] }).chats;
-      return chats.find((c) => c.id === chat.id)!.unread;
+      const chats = (JSON.parse(res.body) as { chats: { id: string; unread: boolean; unread_count?: number }[] }).chats;
+      return chats.find((c) => c.id === chat.id)!;
     };
-    expect(await listUnread()).toBe(true);
+    expect((await listRow()).unread).toBe(true);
+    expect((await listRow()).unread_count).toBe(1);
     const read = await stack.env.app.inject({
       method: "POST",
       url: `/api/v1/chats/${chat.id}/read`,
@@ -243,13 +244,15 @@ describe("chats CRUD wire", () => {
     });
     expect(read.statusCode).toBe(200);
     // The v4 user event out-sorts the v7 marker id — seq ordering must say read.
-    expect(await listUnread()).toBe(false);
+    expect((await listRow()).unread).toBe(false);
+    expect((await listRow()).unread_count).toBe(0);
     // A newer turn re-marks the chat unread.
     await platform.threads.appendEvent(
       chat.id,
       { type: "assistant_message", turn: 2, step: 2, blocks: [{ type: "text", text: "second turn" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
     );
-    expect(await listUnread()).toBe(true);
+    expect((await listRow()).unread).toBe(true);
+    expect((await listRow()).unread_count).toBe(1);
   });
 });
 
