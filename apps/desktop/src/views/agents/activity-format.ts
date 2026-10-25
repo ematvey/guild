@@ -24,8 +24,6 @@ export const time = (iso: string | null): string =>
 export const totalTokens = (row: { tokens_in: number; tokens_out: number }): number =>
   row.tokens_in + row.tokens_out;
 
-export const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
-
 export function toneOf(status: string): "success" | "danger" | "info" | "warning" | "neutral" {
   if (status === "succeeded" || status === "ok") return "success";
   if (status === "failed" || status === "error") return "danger";

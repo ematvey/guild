@@ -58,7 +58,8 @@ import {
   TabBar,
   ToneBadge,
 } from "./agent-ui";
-import { compact, count, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
+import { count } from "../../lib/format";
+import { compact, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
 
 const PERIODS: ReadonlyArray<readonly [ActivityPeriod, string]> = [
   ["24h", "24h"],
