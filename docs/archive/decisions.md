@@ -924,10 +924,8 @@ current cycle; this file keeps the rest. Same entry format.
   composer, never the previously selected chat. `ChatRoute` gained a `tab`
   field; `chatRoutePath` takes it as a fifth parameter.
 
-- **Org-wide skills shipped (2026-10-13).** The 17-task plan
-  (`docs/superpowers/plans/2026-10-13-org-skills.md`, spec
-  `docs/superpowers/specs/2026-10-13-org-skills-design.md`) is complete and
-  deployed: registry items gain team/owner ownership, maintainer gating and
+- **Org-wide skills shipped (2026-10-13).** The 17-task plan and its
+  design spec are complete and deployed: registry items gain team/owner ownership, maintainer gating and
   tombstone unpublish (revival via the editor route republishes at
   max-version+1); skill HTTP surface (catalog, detail with read_stats,
   source, install/uninstall/pin/gate/unpublish, fork, activity,
