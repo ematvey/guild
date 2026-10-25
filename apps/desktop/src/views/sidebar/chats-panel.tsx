@@ -76,7 +76,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                 key={c.id}
                 title={c.title}
                 active={c.id === chatId}
-                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
+                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, unreadCount: c.unread_count, blocked: !!c.blocked }}
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}

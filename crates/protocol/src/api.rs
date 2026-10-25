@@ -166,6 +166,10 @@ pub struct Chat {
     /// The reader has an unseen assistant turn (sidebar dot).
     #[serde(default)]
     pub unread: bool,
+    /// Assistant turns newer than the reader's marker (sidebar badge);
+    /// zero is omitted from list rows.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unread_count: u32,
     /// The project (named workspace folder) the chat runs in; None =
     /// folderless. Defaults for old clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +183,10 @@ pub struct Chat {
     /// for unbound chats.
     #[serde(default)]
     pub machine_online: bool,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// One durable machine-registry row for the machines page (spec §2.3),

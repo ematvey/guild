@@ -137,7 +137,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
         );
         setChats((prev) =>
-          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
+          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false, unread_count: 0 } : c)) ?? prev,
         );
       }
     }
@@ -156,15 +156,26 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         markBusy(false);
       },
       onThreadList: (nextChats) => {
-        setChats(nextChats);
+        // The open chat's turns are on screen: the server's read watermark
+        // lags the local read POST, so a push landing in between must not
+        // raise its unread badge.
+        const open = openChatIdRef.current;
+        const rows = open === null
+          ? nextChats
+          : nextChats.map((c) =>
+              c.id === open && (c.unread || c.unread_count)
+                ? { ...c, unread: false, unread_count: 0 }
+                : c,
+            );
+        setChats(rows);
         // Merge, not replace: a child thread is never in the list, so its
         // live status must survive every sidebar push.
-        setChatStatus((prev) => ({ ...prev, ...statusFromThreads(nextChats) }));
+        setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));
         // busyAfterThreadPush keeps the optimistic busy while a send's
         // HTTP round trip is in flight (the push predates the server's
         // generating flag — clearing busy here would let a second send
         // race the first).
-        markBusy(busyAfterThreadPush(nextChats, openChatIdRef.current, sendingRef.current, busyRef.current));
+        markBusy(busyAfterThreadPush(rows, open, sendingRef.current, busyRef.current));
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
