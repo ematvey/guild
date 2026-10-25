@@ -13,7 +13,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
-import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { resolveIntegrations, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { toolCurate } from "../platform/integrations/policy.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { chatSubagentNodes } from "./tree.js";
@@ -61,7 +62,7 @@ async function integrationToolCatalog(
 ): Promise<{ name: string; label: string; group: string; description: string; safe: boolean }[]> {
   let turns;
   try {
-    turns = await resolvePlugins(gateway, orgId, () => {});
+    turns = await resolveIntegrations(gateway, orgId, () => {});
   } catch {
     return [];
   }
