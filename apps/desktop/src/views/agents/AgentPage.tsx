@@ -702,17 +702,6 @@ function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const download = async () => {
-    setExporting(true);
-    try {
-      await downloadAgentExport(agent);
-    } finally {
-      setExporting(false);
-    }
-  };
 
   useEffect(() => {
     void listModels().then((rows) => setModels(rows ?? []));
@@ -996,57 +985,22 @@ function AgentSettings({
         title="Danger zone"
         description={`Deleting starts a grace period. The default is 30 days; the org can change it.`}
       >
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              if (agent.status === "active") await archiveAgent(agent.id);
-              else await restoreAgent(agent.id);
-              onChanged();
-            }}
-          >
-            {agent.status === "active" ? <Archive /> : <ArchiveRestore />}
-            {agent.status === "active" ? "Archive agent" : "Restore agent"}
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
-            <Trash2 />
-            Delete agent
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <AgentActions
+            agent={agent}
+            manage={manage}
+            onChanged={onChanged}
+            onDeleted={onDeleted}
+          />
+          <span className="text-xs text-muted-foreground">
+            Archive, restore, export or delete this agent.
+          </span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
             Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
-        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The agent stops now and disappears from the directory. Its workspace, threads and
-                runs stay recoverable during the organization&apos;s grace period (30 days by
-                default); after that they are purged. Download an export first if you need the
-                definitions and run history.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button variant="outline" onClick={() => void download()} disabled={exporting}>
-                <Download />
-                {exporting ? "Preparing…" : "Download export"}
-              </Button>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => {
-                  void deleteAgent(agent.id).then(onDeleted);
-                }}
-              >
-                Delete agent
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
         <p className="mt-2 text-xs text-muted-foreground">
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>
