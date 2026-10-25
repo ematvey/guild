@@ -824,4 +824,74 @@ describe("member-socket feed", () => {
     expect(doneRow?.working).toBe(false);
     ws.end();
   });
+  it("pushes every workspace list on connect", { timeout: TEST_TIMEOUT }, async () => {
+    const ws = await memberSocket();
+    // The legacy chat list is first (old clients wait for it); the rest of
+    // the sidebar state follows on the same bootstrap.
+    await waitFrame(ws, (f) => f.type === "archived_thread_list");
+    await waitFrame(ws, (f) => f.type === "project_list");
+    await waitFrame(ws, (f) => f.type === "machine_list");
+    ws.end();
+  });
+
+  it("pushes the updated workspace on a chat rename and archive", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("rename me");
+    const ws = await memberSocket();
+
+    const renamed = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { title: "Renamed chat" },
+    });
+    expect(renamed.statusCode).toBe(200);
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "thread_list" &&
+        (f.chats as { id: string; title?: string }[]).some(
+          (c) => c.id === chat.id && c.title === "Renamed chat",
+        ),
+    );
+
+    const archived = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { archived: true },
+    });
+    expect(archived.statusCode).toBe(200);
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "archived_thread_list" &&
+        (f.chats as { id: string }[]).some((c) => c.id === chat.id),
+    );
+    ws.end();
+  });
+
+  it("pushes project_list when a project is created", { timeout: TEST_TIMEOUT }, async () => {
+    const machineId = "fix-workspace-project-m1";
+    await stack.env.db.query(
+      `INSERT INTO machines (machine_id, org_id, user_id, label)
+       VALUES ($1, $2, $3, 'Desk') ON CONFLICT DO NOTHING`,
+      [machineId, stack.orgId, stack.memberId],
+    );
+    const ws = await memberSocket();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      headers: auth(stack.memberToken),
+      payload: { folder: "/tmp/fix-workspace-project", machine_id: machineId },
+    });
+    expect(res.statusCode).toBe(200);
+    const project = JSON.parse(res.body) as { id: string };
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "project_list" &&
+        (f.projects as { id: string }[]).some((p) => p.id === project.id),
+    );
+    ws.end();
+  });
 });

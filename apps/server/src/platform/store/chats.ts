@@ -352,7 +352,13 @@ export class ChatStore {
         );
       }
       await client.query("COMMIT");
-      return rowToChat(res.rows[0]!);
+      const row = res.rows[0]!;
+      // A rename or archive moves the sidebar lists: the workspace push
+      // carries the new title, or the row's move into the archived list.
+      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+      ]);
+      return rowToChat(row);
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
@@ -572,7 +578,7 @@ export class ChatStore {
         [threadId, chatId, clean],
       );
       await client.query("COMMIT");
-      await this.pool.query("SELECT pg_notify('guild_thread_title', $1)", [
+      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
         JSON.stringify({ org_id: orgId, user_id: row.user_id, chat_id: chatId }),
       ]);
     } catch (error) {

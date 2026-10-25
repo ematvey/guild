@@ -184,6 +184,22 @@ pub enum WsServerMsg {
         machine_id: String,
         online: bool,
     },
+    /// The caller's archived chats (the sidebar's Archived section), sent
+    /// with every workspace push. Daemons tag-peek and ignore it.
+    ArchivedThreadList {
+        chats: Vec<serde_json::Value>,
+    },
+    /// The caller's projects: active and archived rows, sent with every
+    /// workspace push. Daemons tag-peek and ignore it.
+    ProjectList {
+        projects: Vec<serde_json::Value>,
+        archived_projects: Vec<serde_json::Value>,
+    },
+    /// The caller's machine registry rows with their live socket flag.
+    /// Sent with every workspace push. Daemons tag-peek and ignore it.
+    MachineList {
+        machines: Vec<serde_json::Value>,
+    },
 }
 
 #[cfg(test)]
