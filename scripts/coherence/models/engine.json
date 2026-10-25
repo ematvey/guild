@@ -1,0 +1,507 @@
+{
+  "model_roots": [
+    "crates/guild-core/src",
+    "crates/app-server/src"
+  ],
+  "concepts": [
+    {
+      "id": "daemon",
+      "definition": "The per-user engine process that owns sessions and agent runs across client exits.",
+      "canonical": "crates/app-server/src/daemon.rs",
+      "types": [
+        "Pair"
+      ],
+      "aliases": [
+        "local-engine",
+        "app-server"
+      ],
+      "representations": [
+        {
+          "where": "crates/app-server/src/daemon.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/daemon_client.rs",
+          "role": "wire"
+        },
+        {
+          "where": "crates/app-server/src/daemon_install.rs",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "crates/app-server/src/jsonrpc_loop.rs"
+        }
+      ]
+    },
+    {
+      "id": "machine-link",
+      "definition": "The daemon's single WebSocket to the cloud, over which tool calls are dispatched.",
+      "canonical": "crates/app-server/src/machine_link.rs",
+      "types": [
+        "LinkRegistry",
+        "MachineLinkConfig",
+        "ServerFrame",
+        "MachineMeta"
+      ],
+      "aliases": [
+        "machine-socket",
+        "executor-link"
+      ],
+      "representations": [
+        {
+          "where": "crates/app-server/src/machine_link.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/machine_frames.rs",
+          "role": "wire"
+        },
+        {
+          "where": "crates/app-server/src/machine_meta.rs",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/machines/dispatch.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "crates/app-server/src/machine_frames.rs"
+        }
+      ]
+    },
+    {
+      "id": "agent-session",
+      "definition": "One running agent turn inside the local engine, with its model, tools and history.",
+      "canonical": "crates/app-server/src/agent_session.rs",
+      "types": [],
+      "aliases": [
+        "engine-turn"
+      ],
+      "representations": [
+        {
+          "where": "crates/app-server/src/agent_session.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/agent_start.rs",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "crates/app-server/src/agent_start.rs"
+        }
+      ]
+    },
+    {
+      "id": "tool",
+      "definition": "One executable capability the engine offers the model, with its policy and outcome.",
+      "canonical": "crates/guild-core/src/tools/mod.rs",
+      "types": [
+        "ToolRegistry",
+        "ToolOutcome",
+        "ToolFailure",
+        "Approval",
+        "ReadFile",
+        "WriteFile",
+        "EditFile",
+        "RunCommand"
+      ],
+      "aliases": [
+        "tool-registry"
+      ],
+      "representations": [
+        {
+          "where": "crates/guild-core/src/tools/mod.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/guild-core/src/tools/fs.rs",
+          "role": "db"
+        },
+        {
+          "where": "crates/guild-core/src/tools/shell.rs",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "crates/guild-core/src/tools/mod.rs"
+        }
+      ]
+    },
+    {
+      "id": "artifact",
+      "definition": "A large tool output saved as a file and addressed by path instead of inlined.",
+      "canonical": "crates/guild-core/src/tools/artifacts.rs",
+      "types": [
+        "ArtifactPath",
+        "ArtifactIndex",
+        "ArtifactHooks",
+        "ToolArtifact"
+      ],
+      "aliases": [
+        "spill"
+      ],
+      "representations": [
+        {
+          "where": "crates/guild-core/src/tools/artifacts.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/artifacts.rs",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/store/toolArtifacts.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/store/toolArtifacts.ts"
+        }
+      ]
+    },
+    {
+      "id": "skill-sync",
+      "definition": "The machine-side convergence of the user's skill folder to the server's install list.",
+      "canonical": "crates/app-server/src/skill_sync.rs",
+      "types": [
+        "SkillEntry",
+        "SkillProvenance"
+      ],
+      "aliases": [
+        "skills.sync_v1"
+      ],
+      "representations": [
+        {
+          "where": "crates/app-server/src/skill_sync.rs",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/store/skills.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "crates/app-server/src/skill_sync.rs"
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "definition": "The root folder a local agent may read and write, with its allowlist.",
+      "canonical": "crates/guild-core/src/tools/workspace.rs",
+      "types": [
+        "WorkspaceKind",
+        "WorkspaceInfo",
+        "WorkspaceStore",
+        "Allowlist"
+      ],
+      "aliases": [
+        "workdir"
+      ],
+      "representations": [
+        {
+          "where": "crates/guild-core/src/tools/workspace.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/fs_bridge.rs",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "crates/app-server/src/fs_bridge.rs"
+        }
+      ]
+    },
+    {
+      "id": "mcp-server",
+      "definition": "An external MCP server the engine starts and whose tools it exposes.",
+      "canonical": "crates/app-server/src/mcp.rs",
+      "types": [
+        "McpFile",
+        "McpHandle",
+        "McpServerConfig",
+        "McpTool"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "crates/app-server/src/mcp.rs",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/domain/mcp.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/domain/mcp.ts"
+        }
+      ]
+    },
+    {
+      "id": "exec-policy",
+      "definition": "The static rule set that decides whether a command may run, ask, or be blocked, with no runtime state.",
+      "canonical": "crates/codex-execpolicy/src/policy.rs",
+      "types": [
+        "Policy",
+        "Evaluation",
+        "Decision",
+        "RuleMatch",
+        "PrefixRule",
+        "PrefixPattern",
+        "PatternToken",
+        "NetworkRule",
+        "NetworkRuleProtocol",
+        "MatchOptions",
+        "RequirementsExecPolicy",
+        "PolicyParser",
+        "Error",
+        "ErrorLocation",
+        "TextPosition",
+        "TextRange",
+        "AmendError",
+        "ExecPolicyCheckCommand"
+      ],
+      "aliases": [
+        "execpolicy",
+        "prefix-rule",
+        "network-rule"
+      ],
+      "representations": [
+        {
+          "where": "crates/codex-execpolicy/src/policy.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/rule.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/decision.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/error.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/executable_name.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/parser.rs",
+          "role": "db"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/amend.rs",
+          "role": "db"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/sandbox_migration.rs",
+          "role": "db"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/sandbox_migration_tests.rs",
+          "role": "db"
+        },
+        {
+          "where": "crates/codex-execpolicy/src/execpolicycheck.rs",
+          "role": "report"
+        },
+        {
+          "where": "crates/codex-execpolicy/tests/basic.rs",
+          "role": "report"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "crates/codex-execpolicy/src/parser.rs"
+        },
+        {
+          "from": "domain",
+          "to": "report",
+          "at": "crates/codex-execpolicy/src/execpolicycheck.rs"
+        }
+      ]
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "crates/app-server/src/main.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/lib.rs",
+      "reason": "barrel"
+    },
+    {
+      "where": "crates/app-server/src/cli.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/dtrace.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/cloud.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/remote_context.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/mcp.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/guild-core/src/lib.rs",
+      "reason": "barrel"
+    },
+    {
+      "where": "crates/guild-core/src/registry.rs",
+      "reason": "barrel"
+    },
+    {
+      "where": "crates/codex-execpolicy/src/lib.rs",
+      "reason": "barrel"
+    },
+    {
+      "where": "crates/codex-execpolicy/src/main.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/codex-utils-absolute-path/src/lib.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/codex-utils-absolute-path/src/absolutize.rs",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "crates/protocol/build.rs",
+      "reason": "infrastructure"
+    }
+  ],
+  "types_no_concept": [
+    {
+      "type": "CloudClient",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "CloudError",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "CloudArtifacts",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "DaemonClient",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "LineReader",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "Shared",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "IdentifyParams",
+      "reason": "infrastructure"
+    },
+    {
+      "type": "PublishResult",
+      "reason": "infrastructure"
+    }
+  ],
+  "attaches": [
+    {
+      "where": "crates/app-server/tests/auth_state.rs",
+      "concept": "engine-session",
+      "role": "db"
+    },
+    {
+      "where": "crates/app-server/tests/daemon.rs",
+      "concept": "daemon",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/engine_stdio.rs",
+      "concept": "daemon",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/machine_link_dispatch.rs",
+      "concept": "machine-link",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/machine_link_idle.rs",
+      "concept": "machine-link",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/machine_link_reconnect.rs",
+      "concept": "machine-link",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/mcp_skills.rs",
+      "concept": "mcp-server",
+      "role": "wire"
+    },
+    {
+      "where": "crates/app-server/tests/registry_client.rs",
+      "concept": "registry-bundle",
+      "role": "domain"
+    },
+    {
+      "where": "crates/app-server/tests/ws_cloud.rs",
+      "concept": "ws-frame",
+      "role": "wire"
+    },
+    {
+      "where": "crates/guild-core/tests/tools.rs",
+      "concept": "tool",
+      "role": "domain"
+    },
+    {
+      "where": "crates/app-server/src/registry_client.rs",
+      "concept": "skill-sync",
+      "role": "db"
+    }
+  ]
+}

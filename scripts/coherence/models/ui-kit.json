@@ -1,0 +1,117 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "theme",
+      "definition": "The light/dark token set every surface draws its colors and type sizes from.",
+      "canonical": "packages/ui/src/theme.css",
+      "types": [],
+      "aliases": [
+        "design-tokens"
+      ],
+      "representations": [
+        {
+          "where": "packages/ui/src/theme.css",
+          "role": "style"
+        },
+        {
+          "where": "packages/ui/src/theme.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/theme.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "style",
+          "to": "ui",
+          "at": "packages/ui/src/theme.tsx"
+        }
+      ]
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "packages/ui/src/lib/utils.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "packages/ui/src/hooks/use-mobile.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "packages/ui/src/components/alert-dialog.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/avatar.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/badge.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/button.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/card.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/chart.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/data-table.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/dialog.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/dropdown-menu.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/input.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/select.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/sheet.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/skeleton.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/spinner.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/textarea.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/toaster.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/tooltip.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "packages/ui/src/components/working-indicator.tsx",
+      "reason": "presentational"
+    }
+  ]
+}

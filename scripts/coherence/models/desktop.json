@@ -1,0 +1,273 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "chat-route",
+      "definition": "The URL address of a chat surface, parsed and applied without local-only state.",
+      "canonical": "apps/desktop/src/views/thread/route.ts",
+      "types": [
+        "ChatRoute",
+        "RoutePatch",
+        "ChatOverlay"
+      ],
+      "aliases": [
+        "route"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/thread/route.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-thread-route.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-thread-route.ts"
+        }
+      ]
+    },
+    {
+      "id": "thread-state",
+      "definition": "The authoritative snapshot of one chat's events and in-flight buffers.",
+      "canonical": "apps/desktop/src/lib/thread-events.ts",
+      "types": [
+        "ThreadState",
+        "ThreadEventsPage",
+        "ThreadEventRow",
+        "StreamFrame"
+      ],
+      "aliases": [
+        "thread-store"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/thread-events.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/thread-reducer.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-thread-store.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/lib/thread-reducer.ts"
+        },
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-thread-store.ts"
+        }
+      ]
+    },
+    {
+      "id": "chat-list",
+      "definition": "The sidebar's ordered chats with unread, blocked and working flags.",
+      "canonical": "apps/desktop/src/views/thread/hooks/use-chat-data.ts",
+      "types": [
+        "ChatSummary"
+      ],
+      "aliases": [
+        "sidebar-list"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/chats.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-chat-data.ts",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/sidebar/rows.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-chat-data.ts"
+        }
+      ]
+    },
+    {
+      "id": "session-token",
+      "definition": "The bearer token this client sends to the server.",
+      "canonical": "apps/desktop/src/lib/session.ts",
+      "types": [],
+      "aliases": [
+        "bearer-token"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/session.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/admin-api.ts",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/App.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": []
+    },
+    {
+      "id": "member-socket",
+      "definition": "The one client WebSocket that carries all live chat and status state.",
+      "canonical": "apps/desktop/src/lib/socket-client.ts",
+      "types": [
+        "SocketLike",
+        "SocketFactory",
+        "SocketHandlers"
+      ],
+      "aliases": [
+        "socket"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/socket-client.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-member-socket.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-member-socket.ts"
+        }
+      ]
+    },
+    {
+      "id": "composer",
+      "definition": "The message input, its mention completion and its send path.",
+      "canonical": "apps/desktop/src/views/thread/hooks/use-composer.ts",
+      "types": [],
+      "aliases": [
+        "prompt-box"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-composer.ts",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/lib/skill-mention.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-composer.ts"
+        }
+      ]
+    },
+    {
+      "id": "draft",
+      "definition": "The unsent message text kept per chat across navigation.",
+      "canonical": "apps/desktop/src/lib/drafts.ts",
+      "types": [],
+      "aliases": [
+        "unsent"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/drafts.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-composer.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-composer.ts"
+        }
+      ]
+    },
+    {
+      "id": "file-bridge",
+      "definition": "The allowlisted filesystem operations the webview calls on the local engine.",
+      "canonical": "apps/desktop/src/lib/fs-bridge.ts",
+      "types": [],
+      "aliases": [
+        "fs"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/fs-bridge.ts",
+          "role": "wire"
+        },
+        {
+          "where": "crates/app-server/src/fs_bridge.rs",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/desktop/src/lib/fs-bridge.ts"
+        }
+      ]
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "apps/desktop/src/main.tsx",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/App.tsx",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/index.css",
+      "reason": "style"
+    },
+    {
+      "where": "apps/desktop/src/theme.tsx",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/telemetry.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/open-external.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/sidebar-width.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/chat-width.ts",
+      "reason": "infrastructure"
+    }
+  ]
+}
