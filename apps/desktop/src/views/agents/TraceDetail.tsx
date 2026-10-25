@@ -34,7 +34,7 @@ import {
 import type { AgentsRoute } from "./agents-route";
 import { compact, money, ms, spanPreview, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { JsonView } from "./JsonView";
-import { MessagesView, type ChatMessage } from "./MessagesView";
+import { MessagesView, payloadMessages } from "./MessagesView";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 
 type TraceView = "transcript" | "tree" | "timeline";
@@ -800,10 +800,10 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
   const responseRaw = payloads?.find((row) => row.kind === "response")?.body ?? "";
   const request = parseObject(requestRaw);
   const response = parseObject(responseRaw);
-  const messages = Array.isArray(request?.["messages"]) ? (request["messages"] as ChatMessage[]) : null;
+  const messages = payloadMessages(request?.["messages"]);
   const responseContent = typeof response?.["content"] === "string" ? response["content"] : "";
   const inputText =
-    messages !== null && !rawInput ? JSON.stringify(messages) : span.input || requestRaw;
+    messages !== null && !rawInput ? JSON.stringify(request?.["messages"]) : span.input || requestRaw;
   const outputText = responseContent || span.output || responseRaw;
   const attributesText = JSON.stringify(span.attributes, null, 2);
 
