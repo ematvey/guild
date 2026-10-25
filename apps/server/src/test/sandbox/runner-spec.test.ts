@@ -176,6 +176,26 @@ describe("always-on agent sandboxes", () => {
     expect(calls.some((c) => c.includes("bbbbbbbbbbbbbbbbbbbb"))).toBe(false);
     expect(calls.some((c) => c.includes("cccccccccccccccccccc") && c.includes("/stop"))).toBe(true);
   });
+
+  it("attach removes a sandbox whose workspace mount died", async () => {
+    const name = "guild-sbx-compose-dddddddddddddddddddd";
+    const calls: string[] = [];
+    const docker = {
+      request: async (method: string, path: string) => {
+        calls.push(`${method} ${path}`);
+        if (path === `/containers/${name}/json`) {
+          return { Id: "1", Name: name, State: { Running: true, Status: "running" }, Config: { Labels: { "guild.sandbox.project": "compose" } } };
+        }
+        if (path === `/containers/${name}/exec`) return { Id: "exec-1" };
+        if (path === "/exec/exec-1/json") return { Running: false, ExitCode: 1 };
+        return {};
+      },
+    } as unknown as DockerClient;
+    const manager = new SandboxManager(config, docker, log);
+    await expect(manager.attach(name)).rejects.toThrow(/mount is dead/);
+    expect(calls).toContain("POST /exec/exec-1/start");
+    expect(calls).toContain(`DELETE /containers/${name}?force=true`);
+  });
 });
 
 describe("wire codec", () => {

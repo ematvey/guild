@@ -254,7 +254,28 @@ export class SandboxManager {
     return container;
   }
 
-  /** Starts one agent process in the sandbox and returns its stream. */
+  /** A container started before the workspace volume was remounted keeps the
+   *  dead FUSE session: even resolving a binary in PATH fails. Ask the
+   *  container itself, with absolute paths so PATH cannot be the answer. */
+  private async workspaceAlive(name: string): Promise<boolean> {
+    const exec = await this.docker.request<{ Id: string }>("POST", `/containers/${name}/exec`, {
+      AttachStdout: false,
+      AttachStderr: false,
+      Tty: false,
+      Cmd: ["/bin/sh", "-c", "/usr/bin/stat /workspace >/dev/null"],
+    });
+    await this.docker.request("POST", `/exec/${exec.Id}/start`, { Detach: true, Tty: false });
+    for (let i = 0; i < 50; i++) {
+      const info = await this.docker.request<{ Running: boolean; ExitCode: number | null }>("GET", `/exec/${exec.Id}/json`);
+      if (!info.Running) return info.ExitCode === 0;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
+  /** Starts one agent process in the sandbox and returns its stream. A
+   *  sandbox whose mount died is removed, not served: its files live on the
+   *  volume, and the next ensure creates a container on the live mount. */
   async attach(name: string): Promise<{ stream: ExecStream; release: () => void }> {
     const container = await this.owned(name);
     if (!container.State.Running) {
@@ -262,6 +283,11 @@ export class SandboxManager {
         await this.makeRoom(name);
         await this.docker.request("POST", `/containers/${name}/start`);
       });
+    }
+    if (!(await this.workspaceAlive(name))) {
+      this.log.warn({ name }, "sandbox workspace mount is dead; removing the sandbox");
+      await this.withLock(name, () => this.removeSandbox(name));
+      throw new RunnerError(503, "sandbox workspace mount is dead; the sandbox was removed");
     }
     const exec = await this.docker.request<{ Id: string }>("POST", `/containers/${name}/exec`, agentExecSpec(this.config));
     const stream = await this.docker.execAttach(exec.Id);

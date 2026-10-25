@@ -13,6 +13,17 @@ import type { Wire } from "./protocol.js";
  *  wedged. A bounded failure ends the tool call instead of the turn. */
 const ATTACH_TIMEOUT_MS = 30_000;
 
+/** A failed attach, carrying the runner's status: 503 means the runner
+ *  removed a sandbox whose workspace mount died. */
+export class SandboxAttachError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 export interface SandboxTarget {
   /** Stable sandbox identity: `ws:<org>:<name>` or `chat:<org>:<conversationId>`. */
   key: string;
@@ -67,7 +78,7 @@ export class RunnerClient {
       const closeListeners: Array<(error?: Error) => void> = [];
       let closed = false;
       let opened = false;
-      const timer = setTimeout(() => fail(new Error(`sandbox attach timed out after ${this.attachTimeoutMs} ms`)), this.attachTimeoutMs);
+      const timer = setTimeout(() => fail(new SandboxAttachError(`sandbox attach timed out after ${this.attachTimeoutMs} ms`, 0)), this.attachTimeoutMs);
       timer.unref?.();
       /** Settles the open promise exactly once. The socket is terminated, so
        *  an upgrade that never answers cannot leave the caller waiting. */
@@ -90,14 +101,16 @@ export class RunnerClient {
       // ws reports a refused or aborted handshake as `error` with the socket
       // already CLOSING, so the ready state cannot decide this.
       ws.on("close", () => {
-        fail(new Error("sandbox attach closed before it opened"));
+        fail(new SandboxAttachError("sandbox attach closed before it opened", 0));
         end();
       });
       ws.on("error", (error) => {
-        fail(error);
+        fail(error instanceof SandboxAttachError ? error : new SandboxAttachError(error.message, 0));
         end(error);
       });
-      ws.on("unexpected-response", (_req, res) => fail(new Error(`sandbox attach failed: ${res.statusCode}`)));
+      ws.on("unexpected-response", (_req, res) =>
+        fail(new SandboxAttachError(`sandbox attach failed: ${res.statusCode}`, res.statusCode ?? 0)),
+      );
       ws.on("open", () => {
         opened = true;
         clearTimeout(timer);
@@ -147,10 +160,7 @@ export class SandboxPool {
       const env: SandboxExecutionEnv = new SandboxExecutionEnv({
         id: `sandbox:${target.key}`,
         cwd: "/workspace",
-        connect: async () => {
-          const name = await this.options.runner.ensure(target);
-          return this.options.runner.connect(name);
-        },
+        connect: () => this.attach(target),
         onConnected: async () => {
           try {
             await this.options.onConnected?.(target, env);
@@ -164,6 +174,19 @@ export class SandboxPool {
     }
     entry.lastUsed = Date.now();
     return entry.env;
+  }
+
+  /** Opens the agent wire. A sandbox whose workspace mount died cannot start
+   *  its agent: the runner removes it and answers 503, so one retry lands on a
+   *  container created on the live mount. */
+  private async attach(target: SandboxTarget): Promise<Wire> {
+    try {
+      return await this.options.runner.connect(await this.options.runner.ensure(target));
+    } catch (error) {
+      if (!(error instanceof SandboxAttachError) || error.status !== 503) throw error;
+      this.options.log.warn({ err: error, key: target.key }, "sandbox replaced after a dead workspace mount");
+      return await this.options.runner.connect(await this.options.runner.ensure(target));
+    }
   }
 
   private sweep(): void {
