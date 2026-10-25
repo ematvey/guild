@@ -34,6 +34,7 @@ use uuid::Uuid;
 /// session sat "connected" forever while the server had long freed the
 /// slot (machine offline until the daemon restarted). Env-overridable for
 /// tests.
+// coherence:seam owner=@maintainer until=2027-01-31 reason="test hook shortens the heartbeat"
 fn heartbeat_secs() -> u64 {
     std::env::var("GUILD_LINK_HEARTBEAT_SECS")
         .ok()
@@ -41,6 +42,7 @@ fn heartbeat_secs() -> u64 {
         .unwrap_or(15)
 }
 
+// coherence:seam owner=@maintainer until=2027-01-31 reason="test hook shortens the idle verdict"
 fn idle_secs() -> u64 {
     std::env::var("GUILD_LINK_IDLE_SECS")
         .ok()
