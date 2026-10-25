@@ -14,8 +14,8 @@
 # Gatekeeper: right-click -> Open on first run.
 #
 # Build-host requirements: zig + cargo-zigbuild, macOS SDK at $SDKROOT,
-# mingw-w64-gcc, makensis, llvm (llvm-rc), linuxdeploy at ~/opt/linuxdeploy,
-# libdmg-hfsplus at ~/opt/libdmg-hfsplus, hfsprogs, 7z.
+# mingw-w64-gcc, makensis, llvm (llvm-rc), linuxdeploy and libdmg-hfsplus on
+# PATH, hfsprogs, 7z.
 #
 # Each updater-capable artifact is minisign-signed with the tauri updater key
 # (~/.tauri/guild.key; override with UPDATER_KEY) and published with its

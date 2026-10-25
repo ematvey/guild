@@ -530,7 +530,7 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   usage, rustfs for objects. Agent workspaces ride a JuiceFS volume; tools
   run in gVisor sandboxes via `sandbox-runner`.
 - **Version:** dev runs 0.5.105. Prod is a separate checkout
-  (`~/guild-live`, branch master, `:18081`), runs 0.5.82, and stays in
+  (branch master, port 18081), runs 0.5.82, and stays in
   supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
 - **Clients:** desktop 0.5.105 is published on the dev updater manifest for
   all four platforms (six artifacts: Windows NSIS, Linux AppImage, macOS
@@ -629,7 +629,7 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
 - **Sessions run this repo concurrently** — check `git log`/`git status`
   before and after editing; pull rather than clobber.
 - **Review-loop branch topology:** `review/roundN-<agent>`, `fix/roundN`,
-  `verify/roundN` worktrees under `~/guild-wt/`, merged `--no-ff`, branches
+  `verify/roundN` worktrees, merged `--no-ff`, branches
   and worktrees retired after merge; orchestrator prompt/report files stay
   out of the repo root (reports live in git history).
 - Comments describe what code IS and does now — no history narration. Docs

@@ -1,7 +1,7 @@
 # Persistent agents — design
 
 Status: decisions settled; implementation starting.
-Branch `feat/agents-vfs`, worktree `~/guild-wt/agents-vfs`, based on `develop`.
+Branch `feat/agents-vfs`, based on `develop`.
 
 This is the living design doc for persistent agents: named agents that own a
 durable workspace, a default conversation, additional conversations, and
