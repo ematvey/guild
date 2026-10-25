@@ -2,7 +2,7 @@
 // live turn flags, scroll geometry and the thread-tree node.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { fetchChatTree, type ChatSubagentNode, type ChatTree } from "../../../lib/api/chats";
+import { fetchChatTree, type ChatTree } from "../../../lib/api/chats";
 import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
 import { createThreadReducer, type Block, type ThreadReducer } from "../../../lib/thread-reducer";
 import { EARLIER_PAGE_SIZE } from "../mentions";
@@ -34,10 +34,6 @@ export function useThreadStore(chatId: string | null) {
   // list). The local stream state is per-view and is lost on a thread switch;
   // this keeps the window's in-progress state alive across switches.
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
-  // The open chat's thread subtree, pushed whole on every change (sync
-  // bracket and the guild_subagent_tree NOTIFY). No poll: the tree is live
-  // display state.
-  const [subagentNodes, setSubagentNodes] = useState<ChatSubagentNode[]>([]);
   // The open chat's thread-tree node: a child header renders from its parent.
   // The node keeps the chat it describes, so a switch never applies the
   // previous chat's parent and a sync refresh never blanks the header.
@@ -144,7 +140,6 @@ export function useThreadStore(chatId: string | null) {
    *  the skeleton holds until the first thread state arrives. */
   const openForChat = (cid: string | null, skipBusyReset = false) => {
     loadSeq.current++;
-    setSubagentNodes([]);
     if (!skipBusyReset) markBusy(false);
     stick.current = true;
     setAtBottom(true);
@@ -182,8 +177,6 @@ export function useThreadStore(chatId: string | null) {
     reducerRef,
     contextRevision,
     updateContextRevision,
-    subagentNodes,
-    setSubagentNodes,
     childTreeNode,
     childTree,
     stopping,

@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
-import { Skeleton } from "@guild/ui/components/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -92,14 +91,14 @@ import {
 } from "../agents/subagent-blocks";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "../sidebar-rail";
-import { ThreadSkeleton, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
+import { ThreadSkeleton, ThreadTitle, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES, APPROVAL_MODE_LABELS } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
-import { isReadOnlyThread, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout } from "./status";
+import { isReadOnlyThread, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
@@ -160,7 +159,7 @@ export default function Thread(props: ThreadProps) {
 }
 
 function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: ThreadProps) {
-  const { chats, setChats, chatsRef, chatStatus, setChatStatus, refreshChats, archivedChats, refreshArchivedChats, projects, machines, refreshProjects, archivedProjects, refreshArchivedProjects } = useChatData();
+  const { chats, setChats, chatsRef, chatStatus, setChatStatus, subagentTrees, setSubagentTree, refreshChats, archivedChats, refreshArchivedChats, projects, machines, refreshProjects, archivedProjects, refreshArchivedProjects } = useChatData();
   const { route, setRoute, pushRoute } = useThreadRoute();
   const chatId = route.chatId;
   const overlay = route.overlay;
@@ -168,7 +167,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const {
     blocks, setBlocks, threadLoading, setThreadLoading, compacting, setCompacting,
     hasMore, setHasMore, hasMoreRef, loadingEarlier, loadingEarlierRef, oldestSeqRef, earlierAnchor, reducerRef,
-    contextRevision, updateContextRevision, subagentNodes, setSubagentNodes,
+    contextRevision, updateContextRevision,
     childTree, stopping, setStopping, busy, busyRef, markBusy, sendingRef,
     loadStateRef, pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
     loadEarlier, openForChat,
@@ -219,6 +218,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setCreateProjectOpen(true);
   };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+  // The open chat's subtree, from the per-chat map the socket fills. It
+  // survives navigation, so returning to a chat renders its tree at once.
+  const subagentNodes = chatId ? subagentTrees[chatId] ?? [] : [];
+  const openWorking = workingForChat(
+    {
+      generating: openGenerating,
+      working: !!(chatStatus[chatId ?? ""]?.working || openRow?.working),
+    },
+    chatId ? subagentTrees[chatId] : undefined,
+  );
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   // Ref mirror for effects that must read the pick without re-running on
   // every pick change.
@@ -241,7 +250,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const { socketRef, machineTakenOver } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks,
     markBusy, busyRef, sendingRef, openChatIdRef, updateContextRevision, hasMoreRef,
-    oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentNodes,
+    oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
   // The composer floats over the chat content; the scroll pane needs its
@@ -790,8 +799,18 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   })();
 
   const grouping = useMemo(
-    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
-    [chats, chatStatus],
+    () => sidebarGrouping(chats === null ? null : chats.map((c) => {
+      const status = chatStatus[c.id];
+      return {
+        ...c,
+        ...(status ?? {}),
+        working: workingForChat(
+          { generating: status?.generating ?? c.generating, working: !!(status?.working || c.working) },
+          subagentTrees[c.id],
+        ),
+      };
+    })),
+    [chats, chatStatus, subagentTrees],
   );
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
@@ -1243,12 +1262,21 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           {readOnlyThread && childTree?.parent ? (
             <ChildThreadHeader tree={childTree} onBack={openChat} />
           ) : (
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {threadLoading && blocks.length === 0 ? (
-                <Skeleton className="h-4 w-28 rounded-md" />
-              ) : (
-                activeTitle
-              )}
+            <ThreadTitle
+              chatId={chatId}
+              title={activeTitle}
+              loading={threadLoading && blocks.length === 0}
+            />
+          )}
+          {chatId && openWorking && !openGenerating && (
+            <span
+              className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+              title="Working"
+              aria-label="Working"
+              role="status"
+            >
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              <span>Working</span>
             </span>
           )}
           {chatId && !readOnlyThread && (

@@ -20,6 +20,28 @@ describe("ChatListItem", () => {
     expect(html).toContain("Row actions");
   });
 
+  it("shows a spinner while a descendant is working", () => {
+    const html = renderToStaticMarkup(
+      <ChatListItem
+        title="t"
+        active={false}
+        status={{ generating: false, working: true, unread: false }}
+        onClick={() => {}}
+      />,
+    );
+    expect(html).toContain("animate-spin");
+    expect(html).toContain('aria-label="Working"');
+    expect(html).not.toContain("unseen replies");
+  });
+
+  it("keeps a fixed row height and a title line box when the title is empty", () => {
+    const html = renderToStaticMarkup(
+      <ChatListItem title="" active={false} status={idle} onClick={() => {}} />,
+    );
+    expect(html).toContain("h-8");
+    expect(html).toContain("data-title-placeholder");
+  });
+
   it("shows a spinner while generating and a dot when unread", () => {
     const generating = renderToStaticMarkup(
       <ChatListItem title="t" active={false} status={{ generating: true, unread: true }} onClick={() => {}} />,
