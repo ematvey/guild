@@ -14,8 +14,8 @@ import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { busyAfterThreadPush, statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
+import { IS_TAURI } from "../../../lib/session";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface MemberSocketDeps {
   signOut: () => void;
@@ -60,7 +60,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
   useEffect(() => {
-    if (!isTauri) return;
+    if (!IS_TAURI) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void watchMachinePresence(presence => {
@@ -178,7 +178,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
-    if (isTauri) void setMachineIdentity(machineId()).catch(() => {});
+    if (IS_TAURI) void setMachineIdentity(machineId()).catch(() => {});
     const connection = startSocket({
       onConnect: () => {
         syncingChatsRef.current.clear();
