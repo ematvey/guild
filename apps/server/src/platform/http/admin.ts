@@ -21,6 +21,7 @@ import {
 } from "../integrations/plugins.js";
 import { toolCurate } from "../integrations/policy.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
+import { DEFAULT_PERSONA } from "../../harness/extension.js";
 import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org_kv.js";
 import { randomUUID } from "node:crypto";
 /** Upper bound on a custom prompt — personas are short; this is abuse
@@ -124,7 +125,7 @@ export function registerAdminPromptRoutes(app: FastifyInstance, ctx: IdentityCtx
   app.get("/api/v1/admin/assistant-prompt", async (req, reply) => {
     const admin = await requireAdmin(ctx, req);
     const prompt = await ctx.orgKv.get(admin.org_id, ASSISTANT_PROMPT_KEY);
-    sendJson(reply, { prompt });
+    sendJson(reply, { prompt, default: DEFAULT_PERSONA });
     return reply;
   });
 

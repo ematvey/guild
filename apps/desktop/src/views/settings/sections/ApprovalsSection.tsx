@@ -13,7 +13,7 @@ import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 
 export function ApprovalsSection() {
-  const [policyDefault, setPolicyDefault] = useState<"server" | "ask" | "allow" | "never">("server");
+  const [policyDefault, setPolicyDefault] = useState<"default" | "ask" | "allow" | "never">("default");
   const [overridesText, setOverridesText] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,7 @@ export function ApprovalsSection() {
     getApproval()
       .then((p) => {
         setLoaded(true);
-        setPolicyDefault(p?.default ?? "server");
+        setPolicyDefault(p?.default ?? "default");
         setOverridesText(
           p?.overrides && Object.keys(p.overrides).length > 0
             ? JSON.stringify({ overrides: p.overrides }, null, 2)
@@ -44,7 +44,7 @@ export function ApprovalsSection() {
     setError(null);
     setSaved(false);
     let policy: ApprovalPolicy | null = null;
-    if (policyDefault !== "server") {
+    if (policyDefault !== "default") {
       policy = { default: policyDefault };
       const txt = overridesText.trim();
       if (txt) {
@@ -84,7 +84,7 @@ export function ApprovalsSection() {
   };
 
   const modes: { id: typeof policyDefault; label: string; hint: string }[] = [
-    { id: "server", label: "Server default", hint: "approve for me — AI approves routine actions, asks on flagged ones" },
+    { id: "default", label: "Server default", hint: "approve for me — AI approves routine actions, asks on flagged ones" },
     { id: "ask", label: "Ask", hint: "approval card per state-changing tool call" },
     { id: "allow", label: "Allow all", hint: "tools run without approval cards" },
     { id: "never", label: "Deny all", hint: "every tool call is refused" },

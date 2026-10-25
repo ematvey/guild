@@ -6,7 +6,9 @@ import { applyRoutePatch, chatRoutePath, parseChatRoute, type ChatRoute, type Ro
 
 
 export function useThreadRoute() {
-  const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
+  const [route, setRoute] = useState<ChatRoute>(() =>
+    parseChatRoute(window.location.pathname, window.location.search),
+  );
   // A malformed escape parses to the default route; the address is rewritten
   // to match, so reload and back/forward do not land on the broken one again.
   useEffect(() => {
@@ -16,7 +18,8 @@ export function useThreadRoute() {
   // chatId effect takes care of (re)loading or clearing the thread, and the
   // settings/device surfaces follow the parsed route.
   useEffect(() => {
-    const onPop = () => setRoute(parseChatRoute(window.location.pathname));
+    const onPop = () =>
+      setRoute(parseChatRoute(window.location.pathname, window.location.search));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -35,8 +38,10 @@ export function useThreadRoute() {
       resolved.settingsDetail,
       resolved.newChat,
       resolved.agents,
+      resolved.usage,
     );
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+    if (`${window.location.pathname}${window.location.search}` !== path)
+      window.history.pushState(null, "", path);
     setRoute(resolved);
   };
 

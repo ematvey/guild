@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { apiMe } from "../../lib/api/workspaces";
 import type { SectionDetailProps } from "./section-nav";
+import type { UsageQuery } from "./usage-route";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
@@ -100,16 +101,27 @@ export function SettingsSectionPane({
   email,
   detail,
   onDetailChange,
+  usage,
+  onUsageChange,
 }: {
   sectionId: string;
   email: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
+  usage: UsageQuery;
+  onUsageChange: (usage: UsageQuery) => void;
 }) {
   const def =
     SETTINGS_SECTIONS.find((s) => s.id === sectionId) ?? SETTINGS_SECTIONS[0];
   return (
-    <SectionPane def={def} email={email} detail={detail} onDetailChange={onDetailChange} />
+    <SectionPane
+      def={def}
+      email={email}
+      detail={detail}
+      onDetailChange={onDetailChange}
+      usage={usage}
+      onUsageChange={onUsageChange}
+    />
   );
 }
 
@@ -118,11 +130,15 @@ function SectionPane({
   email,
   detail,
   onDetailChange,
+  usage,
+  onUsageChange,
 }: {
   def: SectionDef;
   email: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
+  usage: UsageQuery;
+  onUsageChange: (usage: UsageQuery) => void;
 }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-8">
@@ -131,6 +147,8 @@ function SectionPane({
         email={email}
         detail={detail}
         onDetailChange={onDetailChange}
+        usage={usage}
+        onUsageChange={onUsageChange}
       />
     </div>
   );
@@ -141,11 +159,15 @@ function SectionBody({
   email,
   detail,
   onDetailChange,
+  usage,
+  onUsageChange,
 }: {
   id: SectionId;
   email: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
+  usage: UsageQuery;
+  onUsageChange: (usage: UsageQuery) => void;
 }) {
   switch (id) {
     case "general":
@@ -174,6 +196,8 @@ function SectionBody({
           name="UsageSection"
           detail={detail}
           onDetailChange={onDetailChange}
+          usage={usage}
+          onUsageChange={onUsageChange}
         />
       );
     case "assistant":
@@ -252,11 +276,15 @@ function LazySection({
   name,
   detail,
   onDetailChange,
+  usage,
+  onUsageChange,
 }: {
   load: () => Promise<{ default: React.ComponentType<SectionDetailProps> }>;
   name: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
+  usage?: UsageQuery;
+  onUsageChange?: (usage: UsageQuery) => void;
 }) {
   const [Comp, setComp] = useState<React.ComponentType<SectionDetailProps> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -276,7 +304,7 @@ function LazySection({
     return (
       <SkeletonForm />
     );
-  return <Comp detail={detail} onDetailChange={onDetailChange} />;
+  return <Comp detail={detail} onDetailChange={onDetailChange} usage={usage} onUsageChange={onUsageChange} />;
 }
 
 function AccountSection({ email }: { email: string }) {

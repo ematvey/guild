@@ -7,10 +7,19 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
+import { rowDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
+import { registerCacheClear } from "../use-cached-api";
+import {
+  createMcpServer,
+  deleteMcpServer,
+  probeMcpServer,
+  probeMcpServerById,
+  SETTINGS_PATHS,
+  updateMcpServer,
+} from "../../../lib/api/settings";
 import { Plug, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -61,6 +70,8 @@ interface ProbeResult {
 /** Client-side cache of the last probe's tool count per server id — the
  *  list's tool-count column reads it; a fresh probe updates it. */
 const toolCounts = new Map<string, number>();
+
+registerCacheClear(() => toolCounts.clear());
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
@@ -139,7 +150,7 @@ function headersPayload(rows: HeaderDraft[]): Record<string, string> | undefined
 }
 
 export default function McpSection({ detail = null, onDetailChange }: SectionDetailProps) {
-  const list = useCachedGet<{ servers: ServerRow[] }>("/api/v1/mcp/servers");
+  const list = useCachedGet<{ servers: ServerRow[] }>(SETTINGS_PATHS.mcpServers);
   const rows = list.data?.servers ?? null;
   const reload = list.reload;
 
@@ -196,7 +207,10 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
     [],
   );
 
-  if (detail !== null) {
+  const view = rowDetailCodec.parse(detail);
+  const open = (id: string | null) => onDetailChange(rowDetailCodec.format(id));
+
+  if (view !== null) {
     if (rows === null) {
       if (list.error) return <p role="alert" className="text-sm text-destructive">{list.error}</p>;
       return (
@@ -205,13 +219,13 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
         </div>
       );
     }
-    const server = rows.find((r) => r.id === detail);
+    const server = rows.find((r) => r.id === view);
     if (!server) {
       return (
         <div>
           <PageHeader
             title="MCP servers"
-            back={{ label: "MCP servers", onClick: () => onDetailChange(null) }}
+            back={{ label: "MCP servers", onClick: () => open(null) }}
           />
           <p className="text-sm text-muted-foreground">This server no longer exists.</p>
         </div>
@@ -222,7 +236,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
         key={server.id}
         server={server}
         onChanged={reload}
-        onBack={() => onDetailChange(null)}
+        onBack={() => open(null)}
       />
     );
   }
@@ -259,7 +273,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
           }
         />
       ) : (
-        <DataTable columns={columns} data={rows} onRowClick={(row) => onDetailChange(row.id)} />
+        <DataTable columns={columns} data={rows} onRowClick={(row) => open(row.id)} />
       )}
       <AddServerDialog
         open={addOpen}
@@ -267,7 +281,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
         onCreated={(id) => {
           reload();
           setAddOpen(false);
-          onDetailChange(id);
+          open(id);
         }}
       />
     </div>
@@ -298,7 +312,7 @@ function AddServerDialog({
   };
 
   const createServer = async (): Promise<string> => {
-    const res = await api<{ server: { id: string } }>("POST", "/api/v1/mcp/servers", {
+    const res = await createMcpServer<{ server: { id: string } }>({
       name,
       url,
       headers: headersPayload(headers),
@@ -310,7 +324,7 @@ function AddServerDialog({
     setBusy(true);
     setProbe(null);
     try {
-      const res = await api<ProbeResult>("POST", "/api/v1/mcp/probe", { name, url, headers: headersPayload(headers) });
+      const res = await probeMcpServer<ProbeResult>({ name, url, headers: headersPayload(headers) });
       setProbe(res);
     } catch (e) {
       setProbe({ ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -405,7 +419,7 @@ function McpDetail({
   const save = async (extra?: { enabled?: boolean }) => {
     setBusy(true);
     try {
-      await api(`PATCH`, `/api/v1/mcp/servers/${server.id}`, {
+      await updateMcpServer(server.id, {
         name,
         url,
         ...(headers.length > 0 ? { headers: headersPayload(headers) } : {}),
@@ -426,7 +440,7 @@ function McpDetail({
     setBusy(true);
     setProbe(null);
     try {
-      const res = await api<ProbeResult>("POST", `/api/v1/mcp/servers/${server.id}/probe`, {});
+      const res = await probeMcpServerById<ProbeResult>(server.id);
       setProbe(res);
       if (res.ok && res.tools !== undefined) toolCounts.set(server.id, res.tools.length);
     } catch (e) {
@@ -438,7 +452,7 @@ function McpDetail({
 
   const remove = async () => {
     try {
-      await api("DELETE", `/api/v1/mcp/servers/${server.id}`);
+      await deleteMcpServer(server.id);
       toast.success("MCP server deleted", { description: name });
       onChanged();
       onBack();
