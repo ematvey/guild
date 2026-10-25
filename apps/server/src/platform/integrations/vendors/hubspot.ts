@@ -1,11 +1,7 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, trimTrailingSlash, pathSegment, fetchTimeout, transportCause, clampNumber, callVendorApi } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, clampNumber, callVendorApi, hubspotBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- hubspot ----------
-
-function hubspotBaseUrl(config: Json): string {
-  return trimTrailingSlash(configString(config, "base_url") ?? "https://api.hubapi.com");
-}
 
 const HUBSPOT_SEARCH_TOOLS: [string, string][] = [
   ["search_contacts", "contacts"],

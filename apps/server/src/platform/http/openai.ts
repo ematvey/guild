@@ -23,7 +23,7 @@ import {
   type GatewayTraceEmission,
 } from "./llm.js";
 import type { GatewayCtx } from "../route-contexts.js";
-import { rustJsonText, serializeRustJson } from "../provider/sse.js";
+import { rustJsonText, serializeRustJson } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
 import { sseDataFrame, sseReply } from "./sse-writer.js";

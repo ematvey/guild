@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import type { ProjectRow } from "../store/projects.js";
 
 /** The display name for a folder: its last path segment (Windows or POSIX
