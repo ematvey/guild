@@ -829,14 +829,14 @@ mod entry_reaper_tests {
 
     /// Shared shape for a daemon entry: every completed agent run the
     /// reaper must drain lands in `agents`.
-    async fn drive_entry_reaping(
-        entry: fn(
-            PathBuf,
-            Shared,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
-        >,
-    ) {
+    type Entry = fn(
+        PathBuf,
+        Shared,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
+    >;
+
+    async fn drive_entry_reaping(entry: Entry) {
         let path = std::env::temp_dir().join(format!(
             "guild-reap-{}-{}",
             std::process::id(),
