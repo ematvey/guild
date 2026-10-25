@@ -27,9 +27,13 @@ import {
 } from "@guild/ui/components/select";
 import { apiMe } from "../../lib/api/servers";
 import {
+  AGENTS_ACTIVITY,
   RUN_STATUS_LABEL,
   RUN_TRIGGER_LABEL,
   agentsRoutePath,
+  type ActivityFilters,
+  type ActivityPeriod,
+  type ActivityTab,
   type AgentsRoute,
 } from "./agents-route";
 import {
@@ -37,10 +41,8 @@ import {
   listChatActivity,
   listSpans,
   listTraces,
-  type ActivityPeriod,
   type ActivityQuery,
   type ActivitySummary,
-  type ActivityTab,
   type ChatActivityRow,
   type SpanRow,
   type TraceRow,
@@ -75,62 +77,6 @@ const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
-interface ListState {
-  tab: ActivityTab;
-  period: ActivityPeriod;
-  status: string;
-  trigger: string;
-  q: string;
-  caller: string;
-  model: string;
-}
-
-const DEFAULTS: ListState = {
-  tab: "traces",
-  period: "7d",
-  status: "all",
-  trigger: "all",
-  q: "",
-  caller: "all",
-  model: "",
-};
-
-function readListState(url: URL): ListState {
-  const q = url.searchParams;
-  const tab = q.get("tab");
-  const period = q.get("period");
-  return {
-    tab: tab === "calls" || tab === "chats" || tab === "sessions" ? (tab === "sessions" ? "chats" : tab) : DEFAULTS.tab,
-    period: period === "24h" || period === "30d" ? period : DEFAULTS.period,
-    status: q.get("status") ?? DEFAULTS.status,
-    trigger: q.get("trigger") ?? DEFAULTS.trigger,
-    q: q.get("q") ?? DEFAULTS.q,
-    caller: q.get("caller") ?? DEFAULTS.caller,
-    model: q.get("model") ?? DEFAULTS.model,
-  };
-}
-
-function writeListState(state: ListState): void {
-  const url = new URL(window.location.href);
-  const params: Record<string, string> = {
-    tab: state.tab,
-    period: state.period,
-    status: state.status,
-    trigger: state.trigger,
-    q: state.q,
-    caller: state.caller,
-    model: state.model,
-  };
-  for (const [key, value] of Object.entries(params)) {
-    if (value === "" || value === "all" || value === DEFAULTS[key as keyof ListState]) {
-      url.searchParams.delete(key);
-    } else {
-      url.searchParams.set(key, value);
-    }
-  }
-  if (url.toString() !== window.location.href) window.history.pushState(null, "", url);
-}
-
 function windowQuery(period: ActivityPeriod): ActivityQuery {
   const now = Date.now();
   return {
@@ -140,18 +86,22 @@ function windowQuery(period: ActivityPeriod): ActivityQuery {
 }
 
 export function ActivityPage({
+  filters,
+  onFiltersChange,
   onNavigate,
   onOpenChat,
   agentId,
   embedded = false,
 }: {
+  /** The activity filters named by the route. */
+  filters: ActivityFilters;
+  onFiltersChange: (filters: ActivityFilters) => void;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
   /** Per-agent projection when set. */
   agentId?: string;
   embedded?: boolean;
 }) {
-  const [state, setState] = useState<ListState>(() => readListState(new URL(window.location.href)));
   const [role, setRole] = useState<string | null>(null);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
@@ -165,23 +115,15 @@ export function ActivityPage({
     apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
   }, []);
 
-  useEffect(() => {
-    const onPop = () => setState(readListState(new URL(window.location.href)));
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  const set = (next: Partial<ListState>) => {
-    const merged = { ...state, ...next };
-    writeListState(merged);
-    setState(merged);
+  const set = (next: Partial<ActivityFilters>) => {
+    onFiltersChange({ ...filters, ...next });
   };
 
-  const range = windowQuery(state.period);
-  const filters: ActivityQuery = {
+  const range = windowQuery(filters.period);
+  const query: ActivityQuery = {
     ...range,
     ...(agentId !== undefined ? { agent: agentId } : {}),
-    ...(state.q.trim() !== "" ? { q: state.q.trim() } : {}),
+    ...(filters.q.trim() !== "" ? { q: filters.q.trim() } : {}),
   };
 
   useEffect(() => {
@@ -198,27 +140,27 @@ export function ActivityPage({
         if (live) setSummary(null);
       });
     const load =
-      state.tab === "calls"
+      filters.tab === "calls"
         ? listSpans({
-            ...filters,
+            ...query,
             type: "llm",
-            ...(state.caller !== "all" ? { caller: state.caller as "model" | "judge" } : {}),
-            ...(state.model !== "" ? { model: state.model } : {}),
+            ...(filters.caller !== "all" ? { caller: filters.caller as "model" | "judge" } : {}),
+            ...(filters.model !== "" ? { model: filters.model } : {}),
           }).then((res) => {
             if (!live) return;
             setSpans(res.spans);
             setTotal(res.total);
           })
-        : state.tab === "chats"
-          ? listChatActivity(filters).then((res) => {
+        : filters.tab === "chats"
+          ? listChatActivity(query).then((res) => {
               if (!live) return;
               setChats(res.chats);
               setTotal(res.total);
             })
           : listTraces({
-              ...filters,
-              ...(state.status !== "all" ? { status: state.status } : {}),
-              ...(state.trigger !== "all" ? { trigger: state.trigger } : {}),
+              ...query,
+              ...(filters.status !== "all" ? { status: filters.status } : {}),
+              ...(filters.trigger !== "all" ? { trigger: filters.trigger } : {}),
             }).then((res) => {
               if (!live) return;
               setTraces(res.traces);
@@ -235,14 +177,14 @@ export function ActivityPage({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.tab, state.period, state.status, state.trigger, state.q, state.caller, state.model, agentId, tick]);
+  }, [filters.tab, filters.period, filters.status, filters.trigger, filters.q, filters.caller, filters.model, agentId, tick]);
 
   const admin = role === "admin";
   const body = (
     <>
       <SummaryCards summary={summary} admin={admin} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Select value={state.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
+        <Select value={filters.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
           <SelectTrigger aria-label="Period" className="h-8 w-28 text-xs">
             <SelectValue />
           </SelectTrigger>
@@ -254,9 +196,9 @@ export function ActivityPage({
             ))}
           </SelectContent>
         </Select>
-        {state.tab === "traces" && (
+        {filters.tab === "traces" && (
           <>
-            <Select value={state.status} onValueChange={(v) => set({ status: v })}>
+            <Select value={filters.status} onValueChange={(v) => set({ status: v })}>
               <SelectTrigger aria-label="Filter by status" className="h-8 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -269,7 +211,7 @@ export function ActivityPage({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={state.trigger} onValueChange={(v) => set({ trigger: v })}>
+            <Select value={filters.trigger} onValueChange={(v) => set({ trigger: v })}>
               <SelectTrigger aria-label="Filter by trigger" className="h-8 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -284,7 +226,7 @@ export function ActivityPage({
             </Select>
           </>
         )}
-        {state.tab === "calls" && (
+        {filters.tab === "calls" && (
           <>
             <div className="flex items-center gap-1">
               {(["all", "model", "judge"] as const).map((value) => (
@@ -292,7 +234,7 @@ export function ActivityPage({
                   key={value}
                   onClick={() => set({ caller: value })}
                   className={`rounded-md px-2 py-1 text-xs capitalize transition-colors ${
-                    state.caller === value
+                    filters.caller === value
                       ? "bg-primary text-primary-foreground"
                       : "bg-accent/50 text-muted-foreground hover:text-foreground"
                   }`}
@@ -302,7 +244,7 @@ export function ActivityPage({
               ))}
             </div>
             <input
-              value={state.model}
+              value={filters.model}
               onChange={(e) => set({ model: e.target.value })}
               placeholder="model filter"
               className="w-40 rounded-md border border-border bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground/60"
@@ -312,15 +254,15 @@ export function ActivityPage({
         <div className="relative min-w-32 max-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
-            value={state.q}
+            value={filters.q}
             onChange={(e) => set({ q: e.target.value })}
-            placeholder={state.tab === "traces" ? "Search summary or agent" : "Search"}
+            placeholder={filters.tab === "traces" ? "Search summary or agent" : "Search"}
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, state.tab === "chats" ? "chat" : state.tab === "calls" ? "call" : "trace")}
+            {count(total, filters.tab === "chats" ? "chat" : filters.tab === "calls" ? "call" : "trace")}
           </span>
           <Button
             variant="ghost"
@@ -338,7 +280,7 @@ export function ActivityPage({
         {error !== null && (
           <ErrorState title="Could not load activity" message={error} onRetry={() => setTick((t) => t + 1)} />
         )}
-        {error === null && state.tab === "traces" && (
+        {error === null && filters.tab === "traces" && (
           <TracesTable
             rows={traces}
             admin={admin}
@@ -346,7 +288,7 @@ export function ActivityPage({
             onOpen={(id) => onNavigate({ view: "run", runId: id })}
           />
         )}
-        {error === null && state.tab === "calls" && (
+        {error === null && filters.tab === "calls" && (
           <CallsTable
             rows={spans}
             admin={admin}
@@ -357,7 +299,7 @@ export function ActivityPage({
             }}
           />
         )}
-        {error === null && state.tab === "chats" && (
+        {error === null && filters.tab === "chats" && (
           <ChatsTable
             rows={chats}
             admin={admin}
@@ -375,7 +317,7 @@ export function ActivityPage({
           <TabBar
             label="Activity views"
             tabs={ACTIVITY_TABS}
-            value={state.tab}
+            value={filters.tab}
             onChange={(tab) => set({ tab })}
           />
         </div>
@@ -393,7 +335,7 @@ export function ActivityPage({
           <TabBar
             label="Activity views"
             tabs={ACTIVITY_TABS}
-            value={state.tab}
+            value={filters.tab}
             onChange={(tab) => set({ tab })}
           />
         }
@@ -742,7 +684,7 @@ export function ChatActivityPage({
         description={chatId}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "activity" })}>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
               <ArrowLeft />
               Activity
             </Button>

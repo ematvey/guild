@@ -29,13 +29,21 @@ export function AgentsPanel({
           tab={route.tab}
           routineId={route.routineId}
           filePath={route.filePath}
+          filters={route.filters}
           viewer={viewer}
           onNavigate={onNavigate}
           onOpenChat={onOpenChat}
         />
       );
     case "activity":
-      return <ActivityPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+      return (
+        <ActivityPage
+          filters={route.filters}
+          onFiltersChange={(filters) => onNavigate({ view: "activity", filters })}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
+      );
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
     case "trace":
