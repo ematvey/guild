@@ -12,8 +12,9 @@ import {
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 import type { IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
+import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
 
-export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
+export { ASSISTANT_PROMPT_KEY };
 
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
