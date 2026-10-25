@@ -2,11 +2,12 @@
 // archived chats, projects and machines.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { listArchivedChats, listChats, type ChatSummary } from "../../../lib/api/chats";
+import { listArchivedChats, listChats, type ChatSubagentNode, type ChatSummary } from "../../../lib/api/chats";
+import { applySubagentTree } from "../status";
 import { listArchivedProjects, listProjects, type Project } from "../../../lib/api/projects";
 import { listMachines, type MachineInfo } from "../../../lib/api/machines";
 
-export type ChatStatus = Record<string, { generating: boolean; unread: boolean }>;
+export type ChatStatus = Record<string, { generating: boolean; working: boolean; unread: boolean }>;
 
 export function useChatData() {
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
@@ -15,6 +16,13 @@ export function useChatData() {
   // reconciles the rest. mark-read happens on thread load for the visible
   // open chat; a hidden tab never swallows its own dot.
   const [chatStatus, setChatStatus] = useState<ChatStatus>({});
+  // Every chat's thread subtree, keyed by chat id. The socket updates a
+  // chat's entry whether or not that chat is open, so switching back to a
+  // chat reuses the last tree instead of waiting for a fresh sync.
+  const [subagentTrees, setSubagentTrees] = useState<Record<string, ChatSubagentNode[]>>({});
+  const setSubagentTree = useCallback((chatId: string, nodes: ChatSubagentNode[]) => {
+    setSubagentTrees((prev) => applySubagentTree(prev, chatId, nodes));
+  }, []);
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
 
@@ -66,6 +74,8 @@ export function useChatData() {
     chatsRef,
     chatStatus,
     setChatStatus,
+    subagentTrees,
+    setSubagentTree,
     refreshChats,
     archivedChats,
     setArchivedChats,

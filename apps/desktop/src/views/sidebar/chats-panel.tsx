@@ -76,7 +76,7 @@ export function ChatsPanel({
                 key={c.id}
                 title={c.title}
                 active={c.id === chatId}
-                status={{ generating: !!c.generating, unread: !!c.unread }}
+                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread }}
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}
@@ -109,7 +109,7 @@ export function ChatsPanel({
                     key={c.id}
                     title={c.title}
                     active={c.id === chatId}
-                    status={{ generating: !!c.generating, unread: false }}
+                    status={{ generating: !!c.generating, working: !!c.working, unread: false }}
                     onClick={() => onOpenChat(c.id)}
                     archiveLabel="Unarchive"
                     onArchive={onUnarchiveChat ? () => onUnarchiveChat(c.id) : undefined}

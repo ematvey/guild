@@ -11,8 +11,10 @@ export interface ChatSummary {
   created_at: string;
   machine_id?: string;
   machine_label?: string;
-  /** A generation is in flight (sidebar spinner). */
+  /** A generation is in flight (Stop, queue mode, "Stopping"). */
   generating?: boolean;
+  /** This chat or any descendant thread has a queued/running run. */
+  working?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
   /** The project (named workspace folder) the chat runs in; absent =

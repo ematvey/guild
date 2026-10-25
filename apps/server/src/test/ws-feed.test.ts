@@ -286,7 +286,7 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
-  it("answers sync with SyncBegin → byte-exact ThreadState → SyncDone", { timeout: TEST_TIMEOUT }, async () => {
+  it("answers sync with SyncBegin → SubagentTree → byte-exact ThreadState → SyncDone", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("sync chat");
     const ws = await memberSocket();
 
@@ -303,10 +303,15 @@ describe("member-socket feed", () => {
     ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
     const beginIdx = await ws.until((f) => f.kind === "text" && f.data.includes("sync_begin"));
     const beginPos = ws.frames.indexOf(beginIdx);
+    const treeFrame = ws.frames
+      .slice(beginPos)
+      .find((f) => f.kind === "text" && (JSON.parse(f.data) as Record<string, unknown>).type === "subagent_tree");
+    expect(treeFrame).toBeDefined();
     const stateFrame = ws.frames
       .slice(beginPos)
       .find((f) => f.kind === "text" && (JSON.parse(f.data) as Record<string, unknown>).type === "thread_state");
     expect(stateFrame).toBeDefined();
+    expect(ws.frames.indexOf(treeFrame!)).toBeLessThan(ws.frames.indexOf(stateFrame!));
     const state = JSON.parse((stateFrame as { data: string }).data) as Record<string, unknown>;
     const doneFrame = ws.frames
       .slice(beginPos)
@@ -554,6 +559,7 @@ describe("member-socket feed", () => {
       [agentId, stack.orgId, stack.memberId],
     );
     const rootThread = crypto.randomUUID();
+    expect(rootThread).not.toBe(chat.id);
     await stack.env.db.query(
       `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
        VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
@@ -570,6 +576,7 @@ describe("member-socket feed", () => {
 
     // A child thread + run changes the subtree: the NOTIFY pushes it whole.
     const childChat = await createChat("tree push child");
+    expect(childChat.id).not.toBe(chat.id);
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
       `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
@@ -583,6 +590,19 @@ describe("member-socket feed", () => {
       [runId, agentId, stack.memberId, childThread],
     );
     await notifySubagentTree(platform.pool, childThread);
+
+    // The list computes working from the whole chat subtree, not only the
+    // chat's own generating flag.
+    const workingList = await stack.env.app.inject({
+      method: "GET",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+    });
+    expect(workingList.statusCode).toBe(200);
+    const workingRow = (JSON.parse(workingList.body) as { chats: { id: string; working: boolean }[] })
+      .chats.find((row) => row.id === chat.id);
+    expect(workingRow?.working).toBe(true);
+
     const pushed = await waitFrame(
       ws,
       (f) => f.type === "subagent_tree" && f.chat_id === chat.id
@@ -603,6 +623,16 @@ describe("member-socket feed", () => {
         && (f.nodes as { status: string | null }[]).some((n) => n.status === "succeeded"),
     );
     expect((done.nodes as { status: string | null }[])[1]!.status).toBe("succeeded");
+
+    const doneList = await stack.env.app.inject({
+      method: "GET",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+    });
+    expect(doneList.statusCode).toBe(200);
+    const doneRow = (JSON.parse(doneList.body) as { chats: { id: string; working: boolean }[] })
+      .chats.find((row) => row.id === chat.id);
+    expect(doneRow?.working).toBe(false);
     ws.end();
   });
 });

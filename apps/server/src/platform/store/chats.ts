@@ -37,6 +37,8 @@ export interface ChatListRow {
   machine_id: string | null;
   machine_label: string | null;
   generating: boolean;
+  /** This chat or any descendant thread has a queued/running run. */
+  working: boolean;
   unread: boolean;
   project_id: string | null;
   project_name: string | null;
@@ -50,12 +52,31 @@ const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
     to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
     machine_id, machine_label, generating, project_id FROM chats`;
 
+/** The chat subtree's running set for the whole list: one recursive walk over
+ *  agent_threads, then the chats whose subtree holds a queued/running run. */
+const WORKING_CTE = `WITH RECURSIVE subtree AS (
+    SELECT t.id AS thread_id, t.chat_id AS root_chat
+    FROM agent_threads t
+    JOIN chats rc ON rc.id = t.chat_id
+    WHERE rc.org_id = $1 AND rc.user_id = $2
+    UNION ALL
+    SELECT c.id, s.root_chat
+    FROM agent_threads c JOIN subtree s ON c.parent_thread_id = s.thread_id
+  ),
+  working_chats AS (
+    SELECT DISTINCT s.root_chat AS chat_id
+    FROM subtree s
+    JOIN agent_runs r ON r.thread_id = s.thread_id
+    WHERE r.status IN ('queued', 'running')
+  )`;
+
 /** Shared SELECT/JOIN for the sidebar lists: the unread projection reads the
  *  caller's read watermark (an assistant turn newer than the marker, on a
  *  non-generating chat); the project and machine joins feed the grouping. */
-const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
+const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-    c.machine_id, c.machine_label, c.generating, c.project_id,
+    c.machine_id, c.machine_label, c.generating,
+    (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
     pr.name AS project_name, m.label AS project_machine_label,
     (c.generating = false AND EXISTS (
       SELECT 1 FROM thread_events e
@@ -65,6 +86,7 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
   FROM chats c
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
+  LEFT JOIN working_chats wc ON wc.chat_id = c.id
   LEFT JOIN projects pr ON pr.id = c.project_id
   LEFT JOIN machines m ON m.machine_id = pr.machine_id
   LEFT JOIN LATERAL (
@@ -224,13 +246,15 @@ export class ChatStore {
 
   async listArchivedChats(orgId: string, userId: string): Promise<ChatListRow[]> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT c.id, c.org_id, c.user_id, c.title,
+      `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
               to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-              c.machine_id, c.machine_label, c.generating, c.project_id,
+              c.machine_id, c.machine_label, c.generating,
+              (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
               pr.name AS project_name, m.label AS project_machine_label, false AS unread,
               to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
        FROM chats c
+       LEFT JOIN working_chats wc ON wc.chat_id = c.id
        LEFT JOIN projects pr ON pr.id = c.project_id
        LEFT JOIN machines m ON m.machine_id = pr.machine_id
        LEFT JOIN LATERAL (
@@ -571,6 +595,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     machine_id: (r.machine_id as string | null) ?? null,
     machine_label: (r.machine_label as string | null) ?? null,
     generating: Boolean(r.generating),
+    working: Boolean(r.working),
     unread: Boolean(r.unread),
     project_id: (r.project_id as string | null) ?? null,
     project_name: (r.project_name as string | null) ?? null,

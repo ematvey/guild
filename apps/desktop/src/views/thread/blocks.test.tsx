@@ -1,7 +1,7 @@
 // Markup contracts for the extracted transcript blocks.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CompactionCard, HoverStamp, ReasoningFrame, ThreadSkeleton } from "./blocks";
+import { CompactionCard, HoverStamp, ReasoningFrame, ThreadSkeleton, ThreadTitle } from "./blocks";
 
 describe("ReasoningFrame", () => {
   it("labels a live reasoning block as Thinking…", () => {
@@ -43,5 +43,20 @@ describe("ThreadSkeleton", () => {
     const html = renderToStaticMarkup(<ThreadSkeleton width={720} />);
     expect(html).toContain('role="status"');
     expect(html).toContain("Loading conversation");
+    expect(html).toContain("px-4");
+  });
+});
+
+describe("ThreadTitle", () => {
+  it("renders a fixed-size placeholder while a chat id has no title yet", () => {
+    const html = renderToStaticMarkup(<ThreadTitle chatId="c1" title="" loading={false} />);
+    expect(html).toContain('aria-label="Loading title"');
+    expect(html).toContain("w-28");
+  });
+
+  it("renders the title once it is known", () => {
+    const html = renderToStaticMarkup(<ThreadTitle chatId="c1" title="Deploy notes" loading={false} />);
+    expect(html).toContain("Deploy notes");
+    expect(html).not.toContain("Loading title");
   });
 });

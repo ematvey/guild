@@ -13,7 +13,7 @@ import { captureThreadState, threadStateMsg } from "./thread-state.js";
 import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
 
 /** Installs the sync seam: a `sync` client message answers SyncBegin →
- *  ThreadState → SubagentTree → SyncDone (errors ride an Error frame inside
+ *  SubagentTree → ThreadState → SyncDone (errors ride an Error frame inside
  *  the bracket — http/ws.ts owns the bracket). */
 export function wireWsSync(ctx: PlatformContext): void {
   ctx.wsSync = async (args: { chatId: string; user: UserRow }): Promise<WsServerMsg> => {

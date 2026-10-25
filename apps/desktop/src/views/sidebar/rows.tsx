@@ -117,7 +117,7 @@ export function ChatListItem({
 }: {
   title: string;
   active: boolean;
-  status: { generating: boolean; unread: boolean };
+  status: { generating: boolean; working?: boolean; unread: boolean };
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
@@ -128,7 +128,7 @@ export function ChatListItem({
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
+      <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
         <RenameInput
           initial={title}
           onDone={(v) => {
@@ -156,11 +156,24 @@ export function ChatListItem({
       <button
         onClick={onClick}
         title={title}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left outline-none"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
-        <FadeTitle text={title} />
-        {status.generating ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        {title === "" ? (
+          <span
+            data-title-placeholder
+            aria-hidden="true"
+            className="block min-w-0 flex-1 whitespace-nowrap"
+          >
+            &nbsp;
+          </span>
+        ) : (
+          <FadeTitle text={title} />
+        )}
+        {status.generating || status.working ? (
+          <Loader2
+            className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+            aria-label={status.generating ? "Generating" : "Working"}
+          />
         ) : status.unread ? (
           <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
         ) : null}
@@ -199,7 +212,7 @@ export function ProjectHeader({
   machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
-  status: { generating: boolean; unread: boolean };
+  status: { generating: boolean; working?: boolean; unread: boolean };
   open: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
@@ -212,7 +225,7 @@ export function ProjectHeader({
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
+      <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
         <RenameInput
           initial={name}
           onDone={(v) => {
@@ -245,8 +258,11 @@ export function ProjectHeader({
           <span className="max-w-20 truncate">{machine.name}</span>
         </span>
       )}
-      {status.generating ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      {status.generating || status.working ? (
+        <Loader2
+          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+          aria-label={status.generating ? "Generating" : "Working"}
+        />
       ) : status.unread ? (
         <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
       ) : null}
