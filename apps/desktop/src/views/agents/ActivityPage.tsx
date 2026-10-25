@@ -352,6 +352,7 @@ export function ActivityPage({
             admin={admin}
             onOpen={(span) => {
               if (span.run_id !== null) onNavigate({ view: "run", runId: span.run_id });
+              else if (span.trace_id !== "") onNavigate({ view: "trace", traceId: span.trace_id });
               else if (span.chat_id !== null && onOpenChat !== undefined) onOpenChat(span.chat_id);
             }}
           />

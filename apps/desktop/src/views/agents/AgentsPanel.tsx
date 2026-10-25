@@ -38,6 +38,15 @@ export function AgentsPanel({
       return <ActivityPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+    case "trace":
+      return (
+        <RunDetailPage
+          runId={route.traceId}
+          traceOnly
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
+      );
     case "chat":
       return <ChatActivityPage chatId={route.chatId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
   }
