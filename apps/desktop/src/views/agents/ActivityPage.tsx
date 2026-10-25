@@ -70,7 +70,7 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
 };
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
   ["traces", "Traces"],
-  ["calls", "Calls"],
+  ["calls", "Model calls"],
   ["chats", "Chats"],
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
@@ -407,7 +407,7 @@ function SummaryCards({ summary, admin }: { summary: ActivitySummary | null; adm
   const totals = summary?.totals;
   const cards = [
     { label: "Traces", value: totals === undefined ? null : compact(totals.traces), icon: <Activity className="size-3.5" /> },
-    { label: "Calls", value: totals === undefined ? null : compact(totals.calls), icon: <MessageSquare className="size-3.5" /> },
+    { label: "Model calls", value: totals === undefined ? null : compact(totals.calls), icon: <MessageSquare className="size-3.5" /> },
     {
       label: "Tokens",
       value: totals === undefined ? null : compact(totals.tokens_in + totals.tokens_out),
@@ -467,7 +467,7 @@ function TracesTable({
         <span>Trace</span>
         <span>Agent</span>
         <span>Status</span>
-        <span className="text-right">Calls</span>
+        <span className="text-right">Model calls</span>
         <span className="text-right">Tokens</span>
         <span className="text-right">Duration</span>
         <span />
@@ -554,8 +554,8 @@ function CallsTable({
     return (
       <EmptyState
         icon={<MessageSquare className="size-5" />}
-        title="No calls in this window"
-        body="Calls are recorded on every gateway model request and approval judge verdict."
+        title="No model calls in this window"
+        body="Model calls are recorded on every gateway model request and approval judge verdict."
       />
     );
   }
@@ -767,7 +767,7 @@ export function ChatActivityPage({
                   <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.traces}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Calls</dt>
+                  <dt className="text-muted-foreground">Model calls</dt>
                   <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.calls}</dd>
                 </div>
                 <div>
