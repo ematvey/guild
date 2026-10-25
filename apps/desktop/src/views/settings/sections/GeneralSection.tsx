@@ -9,8 +9,9 @@ import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
-import { api, ApiError, getToken } from "../admin-api";
+import { ApiError } from "../admin-api";
 import { apiUrl, serverUrl } from "../../../lib/session";
+import { deleteOrgLogo, getOrg, putOrgName, uploadOrgLogo } from "../../../lib/api/settings";
 
 interface OrgSettings {
   name: string;
@@ -26,7 +27,7 @@ export default function GeneralSection() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api<OrgSettings>("GET", "/api/v1/org")
+    getOrg<OrgSettings>()
       .then((v) => {
         setOrg(v);
         setName(v.name);
@@ -39,7 +40,7 @@ export default function GeneralSection() {
     if (!trimmed) return;
     setBusy(true);
     try {
-      await api("PUT", "/api/v1/org", { name: trimmed });
+      await putOrgName(trimmed);
       setOrg((o) => (o ? { ...o, name: trimmed } : o));
       toast.success("Workspace name saved");
     } catch (e) {
@@ -57,23 +58,7 @@ export default function GeneralSection() {
       }
       setBusy(true);
       try {
-        const token = getToken();
-        const res = await fetch(
-          apiUrl(`/api/v1/org/logo?content_type=${encodeURIComponent(file.type)}`),
-          {
-            method: "PUT",
-            headers: {
-              "content-type": "application/octet-stream",
-              ...(token ? { authorization: `Bearer ${token}` } : {}),
-            },
-            body: file,
-          },
-        );
-        if (!res.ok) {
-          const v = await res.json().catch(() => ({}));
-          throw new Error(v?.error?.message ?? res.statusText);
-        }
-        const v = (await res.json()) as { logo_url: string };
+        const v = await uploadOrgLogo(file);
         setOrg((o) => (o ? { ...o, logo_url: v.logo_url } : o));
         setLogoTick((t) => t + 1);
         toast.success("Logo updated");
@@ -89,7 +74,7 @@ export default function GeneralSection() {
   const removeLogo = async () => {
     setBusy(true);
     try {
-      await api("DELETE", "/api/v1/org/logo");
+      await deleteOrgLogo();
       setOrg((o) => (o ? { ...o, logo_url: null } : o));
       toast.success("Logo removed");
     } catch (e) {
