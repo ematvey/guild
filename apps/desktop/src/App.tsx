@@ -85,6 +85,9 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sso, setSso] = useState<{ org_id: string } | null>(null);
+  // SSO-first sign-in: the password form stays hidden until the user asks
+  // for it, so the IdP button is the only default path.
+  const [showPassword, setShowPassword] = useState(false);
 
   // SSO availability is public: the sign-in page offers the IdP button when
   // the org has OIDC configured.
@@ -119,37 +122,50 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
           <CardTitle className="text-xl">Guild</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Input
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-          />
-          <Input
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-          />
-          {error && <p className="text-base text-destructive">{error}</p>}
-          <Button onClick={submit} disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </Button>
-          {sso && (
+          {sso && !showPassword ? (
             <>
-              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-                <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
-              </div>
               <Button
-                variant="outline"
-                onClick={
-                  () =>
-                    (window.location.href = beginOidcLogin(sso.org_id))
-                }
+                onClick={() => (window.location.href = beginOidcLogin(sso.org_id))}
               >
                 Continue with SSO
               </Button>
+              <button
+                className="text-center text-xs text-muted-foreground outline-none hover:text-foreground"
+                onClick={() => setShowPassword(true)}
+              >
+                Use login and password
+              </button>
+            </>
+          ) : (
+            <>
+              <Input
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+              />
+              <Input
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+              />
+              {error && <p className="text-base text-destructive">{error}</p>}
+              <Button onClick={submit} disabled={busy}>
+                {busy ? "Signing in…" : "Sign in"}
+              </Button>
+              {sso && (
+                <button
+                  className="text-center text-xs text-muted-foreground outline-none hover:text-foreground"
+                  onClick={() => {
+                    setShowPassword(false);
+                    setError(null);
+                  }}
+                >
+                  Use SSO instead
+                </button>
+              )}
             </>
           )}
         </CardContent>
