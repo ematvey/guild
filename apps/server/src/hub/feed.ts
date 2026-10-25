@@ -11,10 +11,7 @@
 
 import type { PlatformContext } from "../platform/root-context.js";
 import type { ChatsCtx } from "../platform/route-contexts.js";
-import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { pgTimestampToRfc3339 } from "../platform/time.js";
-import { NOT_EXECUTION_TRANSCRIPT } from "../platform/store/chats.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
 import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
@@ -407,7 +404,7 @@ export class FeedForwarder implements GenerationStreamSink {
       if (!changed) continue;
       let list;
       try {
-        list = await threadListSnapshot(this.ctx, this.ctx.pool, { org_id: bindings.orgId, id: userId } as UserRow);
+        list = await threadListSnapshot(this.ctx, { org_id: bindings.orgId, id: userId } as UserRow);
       } catch {
         continue;
       }
@@ -416,7 +413,7 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   private async pushThreadList(orgId: string, userId: string): Promise<void> {
-    const list = await threadListSnapshot(this.ctx, this.ctx.pool, {
+    const list = await threadListSnapshot(this.ctx, {
       org_id: orgId,
       id: userId,
     } as UserRow);
@@ -457,45 +454,9 @@ export class FeedForwarder implements GenerationStreamSink {
 /** The same thread-list payload as GET /api/v1/chats (Rust
  *  feed::thread_list_filtered), computed for a push: every active
  *  (non-archived) chat of the caller with the hub's live machine state. */
-export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, user: Pick<UserRow, "org_id" | "id">): Promise<unknown[]> {
-  const res = await pool.query<{
-    id: string;
-    org_id: string;
-    user_id: string;
-    title: string | null;
-    created_at: string;
-    machine_id: string | null;
-    machine_label: string | null;
-    generating: boolean;
-    unread: boolean;
-    project_id: string | null;
-    project_name: string | null;
-    project_machine_label: string | null;
-    last_activity_at: string;
-  }>(
-    `SELECT c.id, c.org_id, c.user_id, c.title,
-            to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-            c.machine_id, c.machine_label, c.generating, c.project_id, pr.name AS project_name,
-            m.label AS project_machine_label,
-            c.generating = false AND EXISTS (
-              SELECT 1 FROM thread_events e
-              WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-                AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)) AS unread,
-            to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
-                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
-     FROM chats c
-     LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
-     LEFT JOIN projects pr ON pr.id = c.project_id
-     LEFT JOIN machines m ON m.machine_id = pr.machine_id
-     LEFT JOIN LATERAL (
-       SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
-     ) le ON true
-     WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
-       AND ${NOT_EXECUTION_TRANSCRIPT}
-     ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC`,
-    [user.org_id, user.id],
-  );
-  return res.rows.map((chat) => {
+export async function threadListSnapshot(chats: ChatsCtx, user: Pick<UserRow, "org_id" | "id">): Promise<unknown[]> {
+  const rows = await chats.chats.listChats(user.org_id, user.id);
+  return rows.map((chat) => {
     const online = chat.machine_id !== null && chats.hub.machineOnline(chat.machine_id);
     // Old chats stored the raw machine id as their label; the live hub label
     // (the machine's hostname) is the truth when the slot is up.
@@ -507,10 +468,10 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
     // serde_json::Value (json! BTreeMap), so the wire order is ALPHABETICAL —
     // verified against the Rust server's captured frames (ws-golden.json).
     return {
-      created_at: pgTimestampToRfc3339(chat.created_at),
+      created_at: chat.created_at,
       generating: chat.generating,
       id: chat.id,
-      last_activity_at: pgTimestampToRfc3339(chat.last_activity_at),
+      last_activity_at: chat.last_activity_at,
       ...(chat.machine_id !== null ? { machine_id: chat.machine_id } : {}),
       ...(label !== null ? { machine_label: label } : {}),
       machine_online: online,
@@ -523,6 +484,7 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
       ...(chat.title !== null ? { title: chat.title } : {}),
       unread: chat.unread,
       user_id: chat.user_id,
+      working: chat.working,
     };
   });
 }

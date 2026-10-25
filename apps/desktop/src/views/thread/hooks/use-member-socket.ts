@@ -33,7 +33,7 @@ export interface MemberSocketDeps {
   setHasMore: (v: boolean) => void;
   setThreadLoading: (v: boolean) => void;
   setCompacting: (v: boolean) => void;
-  setSubagentNodes: (nodes: ChatSubagentNode[]) => void;
+  setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
   outgoingRef: RefObject<Map<string, OutgoingCommand>>;
   observedUserIdsRef: RefObject<Set<string>>;
   settleOutgoing: (command: OutgoingCommand) => void;
@@ -44,7 +44,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
     busyRef, sendingRef, openChatIdRef, updateContextRevision, hasMoreRef, oldestSeqRef,
-    setHasMore, setThreadLoading, setCompacting, setSubagentNodes, outgoingRef,
+    setHasMore, setThreadLoading, setCompacting, setSubagentTree, outgoingRef,
     observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
@@ -82,6 +82,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     }
     setChatStatus(prev => ({ ...prev, [cid]: {
       generating: state.generating,
+      working: state.generating || (prev[cid]?.working ?? false),
       unread: cid === openChatIdRef.current ? false :
         (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
     } }));
@@ -154,7 +155,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onChatStatus: () => {},
       onThreadState: (state) => applyHistory(state),
       onSubagentTree: (cid, nodes) => {
-        if (cid === openChatIdRef.current) setSubagentNodes(nodes);
+        // Every chat id updates the cache: the open thread reads its entry,
+        // and a later switch reuses the tree without a fresh sync.
+        setSubagentTree(cid, nodes);
       },
       onThreadEvents: (cid, _seq, events) => {
         // Incremental durable-log fan-out: the same rows a refresh replays,
