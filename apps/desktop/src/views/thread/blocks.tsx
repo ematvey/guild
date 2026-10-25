@@ -24,6 +24,20 @@ export function ThreadSkeleton({ width }: { width: number }) {
   );
 }
 
+/// A thread swap in flight: one soft band sweeps the top edge. There is no
+/// track, so an idle view shows no line.
+export function ThreadProgress() {
+  return (
+    <div
+      role="progressbar"
+      aria-label="Loading thread"
+      className="absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden"
+    >
+      <div className="h-full w-1/3 bg-gradient-to-r from-transparent via-primary to-transparent opacity-70 motion-safe:animate-thread-progress" />
+    </div>
+  );
+}
+
 /// The chat header's title slot: a fixed-size placeholder while the title is
 /// still unknown, so the header height never changes when it lands.
 export function ThreadTitle({
