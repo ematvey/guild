@@ -19,16 +19,14 @@ import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../lib/session";
+import type { ChatRoute } from "./thread/route";
 
-export type SidebarTab =
-  | "chats"
-  | "agents"
-  | "work"
-  | "activity"
-  | "skills"
-  | "settings";
+/** A rail entry is a projection of the route, never stored panel state: the
+ *  panel tabs come from ChatRoute.tab, and the full-page surfaces from
+ *  their own route fields. */
+export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills";
 
-const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
+const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
@@ -95,8 +93,8 @@ export function SidebarRail({
   unreadChats,
   unreadProjects,
 }: {
-  activeTab: SidebarTab;
-  onTabChange: (tab: SidebarTab) => void;
+  activeTab: RailTab;
+  onTabChange: (tab: RailTab) => void;
   /** The big help/learn popup (a route overlay, not a panel tab). */
   onOpenHelp: () => void;
   email: string;
