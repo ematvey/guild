@@ -1018,3 +1018,60 @@ describe("subagent records (child events)", () => {
     expect(applied.blocks[1]!.childResult).toMatchObject({ finalText: "found three" });
   });
 });
+
+describe("open cache reports synced, not non-empty", () => {
+  it("a previously synced empty thread swaps without a skeleton", () => {
+    const r = createThreadReducer();
+    r.open("empty");
+    r.applyState(state("empty", 1, []));
+    expect(r.open("other").restored).toBe(false);
+    const back = r.open("empty");
+    expect(back.restored).toBe(true);
+    expect(back.synced).toBe(true);
+    expect(back.blocks).toEqual([]);
+  });
+});
+
+describe("live tool frames keep the React state contract", () => {
+  it("tool_started and tool_completed replace the tool object and the block array", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    const started = r.applyFrame({
+      type: "tool_started",
+      call_id: "call-1",
+      name: "bash",
+      arguments: "{}",
+      executor: "server",
+    });
+    const startedBlock = started.blocks[0];
+    expect(startedBlock.kind).toBe("tool");
+    const startedTool = startedBlock.kind === "tool" ? startedBlock.tool! : null;
+    expect(startedTool?.status).toBe("running");
+
+    const again = r.applyFrame({
+      type: "tool_started",
+      call_id: "call-1",
+      name: "bash",
+      arguments: "{}",
+      executor: "server",
+    });
+    expect(again.blocks).not.toBe(started.blocks);
+    expect(again.blocks[0]).not.toBe(startedBlock);
+    const againTool = again.blocks[0].kind === "tool" ? again.blocks[0].tool! : null;
+    expect(againTool).not.toBe(startedTool);
+    expect(startedTool?.status).toBe("running");
+
+    const completed = r.applyFrame({
+      type: "tool_completed",
+      call_id: "call-1",
+      name: "bash",
+      content: "ok",
+      is_error: false,
+    });
+    expect(completed.blocks).not.toBe(again.blocks);
+    const completedTool = completed.blocks[0].kind === "tool" ? completed.blocks[0].tool! : null;
+    expect(completedTool).not.toBe(againTool);
+    expect(completedTool?.status).toBe("done");
+    expect(againTool?.status).toBe("running");
+  });
+});

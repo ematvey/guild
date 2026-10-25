@@ -654,9 +654,12 @@ export interface ApplyResult {
   /// a null-vs-null comparison holds and the "Compacting thread…" line
   /// flashes on every first send.
   compacting: boolean;
-  /// open()/adopt(): whether the view already held content (a cached thread
-  /// renders immediately — no loading skeleton over known blocks). Always
-  /// true on the other transitions.
+  /// open()/adopt(): whether an authoritative sync has already built this
+  /// view. A synced view renders immediately, even when it is empty — a
+  /// repeat visit must not flash a skeleton over a known thread.
+  synced: boolean;
+  /// Backwards-compatible alias of `synced` for callers that read the
+  /// original field name.
   restored: boolean;
   /// An older page exists before the view's oldest loaded event.
   hasMore: boolean;
@@ -788,11 +791,12 @@ export function createThreadReducer(): ThreadReducer {
     return v;
   };
 
-  const result = (v: ChatView, stale = false, restored = true): ApplyResult => ({
+  const result = (v: ChatView, stale = false, synced = true): ApplyResult => ({
     blocks: v.blocks,
     stale,
     compacting: compactingChat !== null && current !== LOOSE && compactingChat === current,
-    restored,
+    synced,
+    restored: synced,
     hasMore: v.hasMore,
     oldestSeq: v.events[0]?.seq ?? -1,
   });
@@ -1079,7 +1083,7 @@ export function createThreadReducer(): ThreadReducer {
       }
       current = chatId;
       const v = viewOf(chatId);
-      return result(v, false, v.blocks.length > 0);
+      return result(v, false, v.synced);
     },
 
     adopt(chatId) {
@@ -1227,8 +1231,9 @@ export function createThreadReducer(): ThreadReducer {
         case "tool_started": {
           const tb = frame.call_id ? v.toolsByCall.get(frame.call_id) : undefined;
           if (tb) {
-            tb.status = "running";
-            tb.ts = tb.ts ?? nowIso();
+            const next = { ...tb, status: "running" as const, ts: tb.ts ?? nowIso() };
+            v.toolsByCall.set(tb.callId, next);
+            v.blocks = v.blocks.map((b) => (b.kind === "tool" && b.tool === tb ? { ...b, tool: next } : b));
           } else if (frame.call_id) {
             // The row's carrying assistant step fans out through the event
             // lane a beat later: provision the block now so the call shows
@@ -1242,16 +1247,21 @@ export function createThreadReducer(): ThreadReducer {
               ts: nowIso(),
             };
             v.toolsByCall.set(frame.call_id, fresh);
-            v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
+            v.blocks = [...v.blocks, { kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` }];
           }
           break;
         }
         case "tool_completed": {
           const tb = frame.call_id ? v.toolsByCall.get(frame.call_id) : undefined;
           if (tb) {
-            tb.status = frame.is_error ? "error" : "done";
-            tb.content = frame.content ?? tb.content;
-            tb.endTs = nowIso();
+            const next = {
+              ...tb,
+              status: frame.is_error ? "error" as const : "done" as const,
+              content: frame.content ?? tb.content,
+              endTs: nowIso(),
+            };
+            v.toolsByCall.set(tb.callId, next);
+            v.blocks = v.blocks.map((b) => (b.kind === "tool" && b.tool === tb ? { ...b, tool: next } : b));
           } else if (frame.call_id) {
             // A fast tool's completion frame can beat the anchor event's
             // notify fan-out: provision the finished row here — the durable
@@ -1267,7 +1277,7 @@ export function createThreadReducer(): ThreadReducer {
               endTs: nowIso(),
             };
             v.toolsByCall.set(frame.call_id, fresh);
-            v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
+            v.blocks = [...v.blocks, { kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` }];
           }
           break;
         }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { MachineInfo } from "../../lib/api/machines";
@@ -12,7 +12,7 @@ import {
 import { ChatListItem, ProjectHeader } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
 
-export function WorkPanel({
+export const WorkPanel = memo(function WorkPanel({
   grouping,
   loadingChats,
   projects,
@@ -186,4 +186,4 @@ export function WorkPanel({
       </div>
     </div>
   );
-}
+});

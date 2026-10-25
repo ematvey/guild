@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   busyAfterThreadPush,
   sendButtonState,
-  isReadOnlyThread,
+  threadAccess,
   pruneStopping,
   statusFromThreads,
   offlineMachine,
@@ -37,31 +37,71 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 
-describe("read-only transcript threads", () => {
+describe("thread access", () => {
   const base = {
     chatId: "child-chat",
     chats: [{ id: "parent-chat" }],
     archivedChats: [{ id: "archived-chat" }],
-    threadLoading: false,
+    childTree: null,
   };
 
-  it("marks a chat absent from both lists as read-only", () => {
-    expect(isReadOnlyThread(base)).toBe(true);
+  it("treats an unknown thread as unknown, never editable", () => {
+    expect(threadAccess(base)).toBe("unknown");
+    expect(threadAccess({ ...base, chats: null })).toBe("unknown");
+    expect(threadAccess({ ...base, archivedChats: null })).toBe("unknown");
   });
 
-  it("keeps active and archived chats writable", () => {
-    expect(isReadOnlyThread({ ...base, chats: [{ id: "child-chat" }] })).toBe(false);
-    expect(isReadOnlyThread({ ...base, archivedChats: [{ id: "child-chat" }] })).toBe(false);
+  it("keeps active chats writable and archived chats read-only", () => {
+    expect(threadAccess({ ...base, chats: [{ id: "child-chat" }] })).toBe("writable");
+    expect(threadAccess({ ...base, archivedChats: [{ id: "child-chat" }] })).toBe("readonly");
   });
 
-  it("does not decide while the lists or the thread are loading", () => {
-    expect(isReadOnlyThread({ ...base, chats: null })).toBe(false);
-    expect(isReadOnlyThread({ ...base, archivedChats: null })).toBe(false);
-    expect(isReadOnlyThread({ ...base, threadLoading: true })).toBe(false);
+  it("lets active membership win over a late archived list", () => {
+    expect(threadAccess({
+      ...base,
+      chats: [{ id: "child-chat" }],
+      archivedChats: [{ id: "child-chat" }],
+    })).toBe("writable");
+  });
+
+  it("marks a child tree with a parent read-only even before the lists load", () => {
+    expect(threadAccess({
+      ...base,
+      chats: null,
+      archivedChats: null,
+      childTree: { parent: { chat_id: "parent" } },
+    })).toBe("readonly");
+  });
+
+  it("falls back to read-only when a synced child's tree fetch failed", () => {
+    expect(threadAccess({
+      ...base,
+      treeFailed: true,
+      synced: true,
+    })).toBe("readonly");
+  });
+
+  it("keeps the composer editable for a just-created chat whose row is in flight", () => {
+    expect(threadAccess({
+      ...base,
+      chats: [],
+      archivedChats: [],
+      treeFailed: true,
+      synced: true,
+      justCreated: true,
+    })).toBe("writable");
+  });
+
+  it("does not use the failed-tree fallback before the view is synced", () => {
+    expect(threadAccess({
+      ...base,
+      treeFailed: true,
+      synced: false,
+    })).toBe("unknown");
   });
 
   it("never marks the scratch composer read-only", () => {
-    expect(isReadOnlyThread({ ...base, chatId: null })).toBe(false);
+    expect(threadAccess({ ...base, chatId: null })).toBe("writable");
   });
 });
 
