@@ -12,6 +12,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A dead workspace mount is repaired, not served (2026-10-26).** A JuiceFS
+  remount leaves every container that bound the volume before it on the dead
+  FUSE session: the sandbox cannot start its agent (`transport endpoint is
+  not connected`), the runner cannot create a workspace dir, and the chat
+  shows `sandbox connection lost; outcome unknown`. The 2026-10-21 fix
+  covered only the full-stack boot, and a sidecar-only restart skips it.
+  Now the runner checks its own two volume roots every 10 s and before each
+  ensure/attach: a dead one exits the process, the restart policy brings it
+  back, boot re-resolves the mount and removes the sandboxes on the dead
+  session. Attach also probes `/workspace` inside the container and removes
+  a sandbox whose mount died. The server retries a 503 (and a refused
+  connection) three times, 2 s apart, so a remount costs a few seconds and
+  no failed tool call. The files never move: they live on the volume.
+
 - **The sidebar lists are pushed, never fetched (2026-10-26).** A new chat's
   title could appear and then vanish: the client still re-read the chat list
   over HTTP after a create, and that snapshot (taken before the title model
