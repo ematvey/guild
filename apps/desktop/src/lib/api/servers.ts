@@ -1,44 +1,45 @@
-// Multi-workspace sessions and sign-in (desktop only — the browser is
+// Signed-in servers and sign-in (desktop only — the browser is
 // single-server), plus the account-level reads the shell needs.
 
 import { IS_TAURI, apiUrl, clearToken, getToken, setToken } from "../session";
 import { rpcCall } from "../machine-rpc";
 
-// ---- Multi-workspace (desktop only — the browser is single-server) ----
+// ---- Signed-in servers (desktop only — the browser is single-server) ----
 
-/** One live session: server origin + its signed-in email + whether a
- * usable token survived the last restore (false = "sign in again"), plus
- * the workspace's display name and logo URL (server-relative). */
-export type WorkspaceRow = {
+/** One signed-in server: origin + its signed-in email + whether a usable
+ * token survived the last restore (false = "sign in again"), plus the
+ * server's display name and logo URL (server-relative). */
+export type ServerRow = {
   base_url: string;
   email?: string | null;
   has_token: boolean;
   name?: string | null;
   logo_url?: string | null;
 };
-export type WorkspaceList = {
+export type ServerList = {
   active: string | null;
-  workspaces: WorkspaceRow[];
+  /** Wire field name from workspace.list; each entry is one server. */
+  workspaces: ServerRow[];
 };
 
-/** Every live session plus the active pointer (the switcher's data). */
-export async function workspaceList(): Promise<WorkspaceList | null> {
+/** Every signed-in server plus the active pointer (the switcher's data). */
+export async function serverList(): Promise<ServerList | null> {
   if (!IS_TAURI) return null;
   const res = await rpcCall("workspace.list", {}, 20_000);
   if (res.error) throw new Error(res.error.message ?? "workspace.list failed");
-  return res.result as WorkspaceList;
+  return res.result as ServerList;
 }
 
-/** Makes another live workspace active. The caller mirrors the returned
+/** Makes another signed-in server active. The caller mirrors the returned
  * session.info shape into localStorage and reloads. */
-export async function workspaceSwitch(baseUrl: string): Promise<void> {
+export async function serverSwitch(baseUrl: string): Promise<void> {
   const res = await rpcCall("workspace.switch", { base_url: baseUrl }, 30_000);
   if (res.error) throw new Error(res.error.message ?? "workspace.switch failed");
 }
 
-/** Signs one workspace out (active when omitted) — full engine sign-out,
- * not the webview-token-only default. */
-export async function workspaceSignOut(baseUrl?: string): Promise<void> {
+/** Signs one server out (active when omitted) — full engine sign-out, not
+ * the webview-token-only default. */
+export async function serverSignOut(baseUrl?: string): Promise<void> {
   const res = await rpcCall(
     "session.clear",
     baseUrl ? { base_url: baseUrl } : {},
