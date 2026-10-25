@@ -25,8 +25,6 @@ export interface ChatSummary {
   project_id?: string;
   project_name?: string;
   project_machine_label?: string;
-  /** Whether the bound machine's socket is live right now. */
-  machine_online?: boolean;
   /** The chat's latest thread event (RFC3339), falling back to created_at —
    *  the sidebar's recent-activity sort key. List rows carry it; the live
    *  thread-event fan-out moves it forward as turns land. */
