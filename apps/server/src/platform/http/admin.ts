@@ -14,10 +14,12 @@ import { builtinConnectorByName, manifestToolClass, toolClassOf } from "../integ
 import { mcpConnect } from "../integrations/mcp.js";
 import {
   envelopeHeaders,
+  manifestSecretNames,
   namespacedTool,
   registryManifest,
   toolCurate,
 } from "../integrations/plugins.js";
+import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
 import { randomUUID } from "node:crypto";
 
 /** Org KV key holding the admin-configured assistant persona prompt. */
@@ -27,14 +29,6 @@ const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 /** Upper bound on a custom prompt — personas are short; this is abuse
  *  protection, not a context-window budget. */
 const ASSISTANT_PROMPT_MAX = 10_000;
-
-/** The built-in "Approve for me" auto-approval policy prompt (crates/
- *  server/src/worker/restate.rs DEFAULT_APPROVAL_POLICY_PROMPT). */
-const DEFAULT_APPROVAL_POLICY_PROMPT =
-  "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\n" +
-  "Approve routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\n" +
-  "Ask the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\n" +
-  'Reply with ONLY a JSON object, no other text: {"approve": true, "reason": "one short sentence"} where approve=true means run it silently and approve=false means the user must be asked first.';
 
 function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
@@ -227,7 +221,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
       // plugin shadows the compiled-in kind of the same slug.
       const categories = mcpClaimed ? ["mcp"] : connectorByName(row.name)?.categories ?? ["other"];
       const secretNames = mcpClaimed
-        ? declaredV2SecretNames(manifest)
+        ? manifestSecretNames(manifest ?? {})
         : connectorByName(row.name)?.secret_names ?? [];
       const settings = mcpClaimed ? (manifest?.["settings"] ?? null) : connectorMetadataFor(row.name)?.settings ?? null;
       rowValues.push({
@@ -476,24 +470,6 @@ function readMcpUrl(config: Record<string, unknown>): string | null {
   return null;
 }
 
-/** Secret names a v2 MCP manifest declares: the settings schema's
- *  secret-kind fields when it yields any, else the auth block's list. */
-function declaredV2SecretNames(manifest: Record<string, unknown> | null): string[] {
-  if (manifest === null) return [];
-  const settings = manifest["settings"];
-  if (settings !== null && typeof settings === "object" && Array.isArray((settings as Record<string, unknown>)["fields"])) {
-    const derived = ((settings as Record<string, unknown>)["fields"] as Record<string, unknown>[])
-      .filter((f) => f["kind"] === "secret" && typeof f["name"] === "string")
-      .map((f) => f["name"] as string);
-    if (derived.length > 0) return derived;
-  }
-  const auth = manifest["auth"];
-  if (auth !== null && typeof auth === "object" && Array.isArray((auth as Record<string, unknown>)["secret_names"])) {
-    return (auth as Record<string, unknown>)["secret_names"] as string[];
-  }
-  return [];
-}
-
 function param(req: FastifyRequest, name: string): string {
   return (req.params as Record<string, string>)[name] ?? "";
 }
@@ -612,7 +588,7 @@ async function saveIntegration(
     validateMcpConfig(config);
     const enabled =
       typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
-    const declared = declaredV2SecretNames(registryManifestValue);
+    const declared = manifestSecretNames(registryManifestValue ?? {});
     if (enabled && readMcpUrl(config) === null) {
       throw ApiError.badRequest("mcp plugin needs an mcp.url before enabling");
     }
