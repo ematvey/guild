@@ -31,7 +31,7 @@ import {
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
-import type { AgentsRoute } from "./agents-route";
+import { AGENTS_ACTIVITY, type AgentsRoute } from "./agents-route";
 import { compact, money, ms, spanPreview, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { JsonView } from "./JsonView";
 import { MessagesView, payloadMessages } from "./MessagesView";
@@ -145,7 +145,7 @@ export function RunDetailPage({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <header className="border-b border-border px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => onNavigate({ view: "activity" })}>
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
             <ArrowLeft />
             Activity
           </Button>

@@ -68,7 +68,9 @@ import {
 } from "./agents-api";
 import {
   AGENT_TABS,
+  DEFAULT_ACTIVITY_FILTERS,
   VISIBILITY_LABEL,
+  type ActivityFilters,
   type AgentTab,
   type AgentVisibility,
   type AgentsRoute,
@@ -117,6 +119,7 @@ export function AgentPage({
   threadId,
   routineId,
   filePath,
+  filters,
   viewer,
   onNavigate,
   onOpenChat,
@@ -126,6 +129,7 @@ export function AgentPage({
   threadId?: string;
   routineId?: string;
   filePath?: string;
+  filters?: ActivityFilters;
   viewer: Viewer;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
@@ -154,7 +158,11 @@ export function AgentPage({
   const manage = agent !== null && canManageAgent(agent, viewer);
 
   const setTab = (next: AgentTab) => {
-    onNavigate({ view: "agent", agentId, tab: next });
+    onNavigate(
+      next === "activity"
+        ? { view: "agent", agentId, tab: next, filters: DEFAULT_ACTIVITY_FILTERS }
+        : { view: "agent", agentId, tab: next },
+    );
   };
 
   /** A thread has one canonical address: its chat. */
@@ -321,6 +329,10 @@ export function AgentPage({
             <ActivityPage
               embedded
               agentId={agent.id}
+              filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
+              onFiltersChange={(next) =>
+                onNavigate({ view: "agent", agentId, tab: "activity", filters: next })
+              }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
             />

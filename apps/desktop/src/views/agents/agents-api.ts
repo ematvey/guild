@@ -711,9 +711,6 @@ export function groupTools(
 // calls), sessions (chats) and the summary. One shape for the whole
 // observability surface; the server owns the wire truth.
 
-export type ActivityTab = "traces" | "calls" | "chats";
-export type ActivityPeriod = "24h" | "7d" | "30d";
-
 export interface TraceRow {
   trace_id: string;
   org_id: string;

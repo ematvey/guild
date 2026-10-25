@@ -81,7 +81,7 @@ export const isImeEnter = (e: {
   nativeEvent?: { isComposing?: boolean };
 }): boolean => e.nativeEvent?.isComposing === true || e.keyCode === 229;
 
-export const parseChatRoute = (pathname: string): ChatRoute => {
+export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   const decoded = raw.map(decodeSegment);
   // A malformed escape cannot name anything: fall back to the default route
@@ -134,7 +134,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   }
   // The agents surface owns its whole address space (/agents, /activity,
   // /runs/<id>): parse it before the chat prefixes.
-  const agents = parseAgentsRoute(pathname);
+  const agents = parseAgentsRoute(search === "" ? pathname : `${pathname}?${search}`);
   if (agents !== null) {
     return {
       chatId: null,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENTS_ACTIVITY,
+  DEFAULT_ACTIVITY_FILTERS,
   agentTabRoute,
   agentsRailTab,
   agentsRoutePath,
@@ -22,9 +24,10 @@ const routes: AgentsRoute[] = [
   { view: "agent", agentId: "a1", tab: "routines", routineId: "r1" },
   { view: "agent", agentId: "a1", tab: "files" },
   { view: "agent", agentId: "a1", tab: "files", filePath: "notes/today.md" },
-  { view: "agent", agentId: "a1", tab: "activity" },
+  { view: "agent", agentId: "a1", tab: "activity", filters: DEFAULT_ACTIVITY_FILTERS },
   { view: "agent", agentId: "a1", tab: "settings" },
-  { view: "activity" },
+  AGENTS_ACTIVITY,
+  { view: "activity", filters: { ...DEFAULT_ACTIVITY_FILTERS, tab: "calls", period: "30d", q: "deploy" } },
   { view: "run", runId: "run-1" },
   { view: "trace", traceId: "trace-1" },
   { view: "chat", chatId: "chat-1" },
@@ -39,12 +42,13 @@ describe("agents route contract", () => {
   });
 
   it("maps every route to exactly one rail tab", () => {
-    expect(agentsRailTab({ view: "activity" })).toBe("activity");
+    expect(agentsRailTab(AGENTS_ACTIVITY)).toBe("activity");
     expect(agentsRailTab({ view: "run", runId: "r" })).toBe("activity");
     expect(agentsRailTab({ view: "trace", traceId: "t" })).toBe("activity");
     expect(agentsRailTab({ view: "chat", chatId: "c" })).toBe("activity");
     expect(agentsRailTab({ view: "directory" })).toBe("agents");
     expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe("agents");
+    expect(agentsRailTab({ view: "agent", agentId: "a", tab: "activity" })).toBe("agents");
   });
 
   it("keeps the agent tab from the URL", () => {

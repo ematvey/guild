@@ -12,6 +12,7 @@ import {
   tabPaneLayout,
 } from "./status";
 import { chatRoutePath, isImeEnter, parseChatRoute } from "./route";
+import { AGENTS_ACTIVITY } from "../agents/agents-route";
 import { mentionCandidates, composerSkills } from "./mentions";
 import { accountDefaultLabel } from "./approval";
 import { parseSearchResults, toolLabel, toolDisplayName } from "./tool-text";
@@ -134,7 +135,7 @@ describe("parseChatRoute / chatRoutePath", () => {
     ).toBe("/agents/a1/files/notes/today.md");
     expect(parseChatRoute("/inbox").agents).toBeNull();
     expect(parseChatRoute("/inbox").tab).toBe("chats");
-    expect(parseChatRoute("/activity").agents).toEqual({ view: "activity" });
+    expect(parseChatRoute("/activity").agents).toEqual(AGENTS_ACTIVITY);
     expect(parseChatRoute("/runs/r1").agents).toEqual({ view: "run", runId: "r1" });
     expect(parseChatRoute("/sessions/c1").agents).toEqual({ view: "chat", chatId: "c1" });
     expect(parseChatRoute("/traces/t1").agents).toEqual({ view: "trace", traceId: "t1" });
