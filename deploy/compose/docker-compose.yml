@@ -107,7 +107,7 @@ services:
       juicefs-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "nsenter -t 1 -m -- stat -f -c %T /mnt/guild | grep -qi fuse"]
+      test: ["CMD-SHELL", "nsenter -t 1 -m -- stat -f -c %T $${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild} | grep -qi fuse"]
       interval: 5s
       timeout: 5s
       retries: 60
