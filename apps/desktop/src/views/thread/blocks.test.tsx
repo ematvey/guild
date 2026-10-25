@@ -1,7 +1,7 @@
 // Markup contracts for the extracted transcript blocks.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CompactionCard, HoverStamp, ReasoningFrame, ThreadSkeleton, ThreadTitle, prettyStamp } from "./blocks";
+import { CompactionCard, HoverStamp, ReasoningFrame, ThreadProgress, ThreadSkeleton, ThreadTitle, prettyStamp } from "./blocks";
 
 describe("ReasoningFrame", () => {
   it("labels a live reasoning block as Thinking…", () => {
@@ -44,6 +44,17 @@ describe("ThreadSkeleton", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("Loading conversation");
     expect(html).toContain("px-4");
+  });
+});
+
+describe("ThreadProgress", () => {
+  it("sweeps a soft band with no idle track", () => {
+    const html = renderToStaticMarkup(<ThreadProgress />);
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain("Loading thread");
+    expect(html).toContain("animate-thread-progress");
+    expect(html).not.toContain("animate-pulse");
+    expect(html).not.toContain("bg-border");
   });
 });
 

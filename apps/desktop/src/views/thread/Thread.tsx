@@ -92,7 +92,7 @@ import {
 } from "../agents/subagent-blocks";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import { SidebarRail, type SidebarTab } from "../sidebar-rail";
-import { ThreadSkeleton, ThreadTitle, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
+import { ThreadSkeleton, ThreadTitle, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
@@ -1489,15 +1489,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           )
         ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
-          {navigating && (
-            <div
-              role="progressbar"
-              aria-label="Loading thread"
-              className="absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden bg-border"
-            >
-              <div className="h-full w-1/3 animate-pulse bg-primary" />
-            </div>
-          )}
+          {navigating && <ThreadProgress />}
           <div
             ref={pane}
             data-scrollable

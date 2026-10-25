@@ -131,6 +131,7 @@ b {
   --color-input: var(--input);
   --color-ring: var(--ring);
   --animate-caret: caret-blink 1.1s step-end infinite;
+  --animate-thread-progress: thread-progress 1.2s ease-in-out infinite;
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -143,6 +144,18 @@ b {
   }
   50% {
     opacity: 0;
+  }
+}
+
+/* Navigation progress: one soft band sweeps across the top edge while a
+   thread swap waits for its state and tree. No track, so an idle view shows
+   nothing. */
+@keyframes thread-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
   }
 }
 
