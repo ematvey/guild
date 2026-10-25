@@ -14,7 +14,7 @@ import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../registry-manifest.js";
-import { packBundle, parseBundle } from "../bundle.js";
+import { packBundle, parseBundle, type ParsedBundle } from "../bundle.js";
 import { nextVersion } from "../store/registry.js";
 import { publishBundleBytes } from "./registry.js";
 
@@ -157,6 +157,37 @@ async function applyOwnerTeam(
     throw ApiError.forbidden();
   }
   await gateway.registry.setOwnerTeam(user.org_id, "skill", slug, ownerTeamId);
+}
+
+/** Inline cap for a bundle file shown in the skill panel. Larger files are
+ *  listed without a body instead of bloating the source response. */
+const SOURCE_FILE_INLINE_LIMIT = 256 * 1024;
+
+/** Text bodies of a published skill's bundle files, keyed by path. Files that
+ *  are binary, missing from the bundle, or over the inline cap are absent. */
+async function sourceFileContents(
+  objects: ObjectStore,
+  objectKey: string,
+  files: Array<{ path: string; size: number }>,
+): Promise<Map<string, string>> {
+  const wanted = new Set(files.filter((f) => f.size <= SOURCE_FILE_INLINE_LIMIT).map((f) => f.path));
+  const out = new Map<string, string>();
+  if (wanted.size === 0) return out;
+  let bundle: ParsedBundle;
+  try {
+    bundle = await parseBundle(await objects.get(objectKey));
+  } catch {
+    return out;
+  }
+  for (const entry of bundle.entries) {
+    if (!entry.file || entry.content === undefined || !wanted.has(entry.path)) continue;
+    try {
+      out.set(entry.path, new TextDecoder("utf-8", { fatal: true }).decode(entry.content));
+    } catch {
+      // binary body: listed, no text
+    }
+  }
+  return out;
 }
 
 export function registerSkillRoutes(
@@ -386,12 +417,17 @@ export function registerSkillRoutes(
     if (version === undefined || version === null) throw ApiError.notFound("no such skill version");
     const meta = await gateway.registry.getVersionMeta(user.org_id, "skill", slug, version);
     if (meta === null) throw ApiError.notFound("no such skill version");
+    // The version row carries only path+size+sha per file; the panel reads
+    // text bodies from the bundle itself so every listed file is viewable.
+    const contents = await sourceFileContents(objects, meta.object_key, meta.files ?? []);
     sendJson(reply, {
       version,
       skill_md: meta.skill_md_text ?? "",
       // manifest.json is bundle metadata (never materialized on installs) —
       // keep it out of the agent-facing file list.
-      files: (meta.files ?? []).filter((f) => f.path !== "manifest.json"),
+      files: (meta.files ?? [])
+        .filter((f) => f.path !== "manifest.json")
+        .map((f) => ({ ...f, content: contents.get(f.path) ?? null })),
     });
     return reply;
   });

@@ -228,16 +228,17 @@ export async function myTeams(): Promise<EditorTeam[] | null> {
     .map((t) => ({ id: t.id as string, name: t.name as string }));
 }
 
-/** One extra bundle file in a version's source manifest (path + sha only —
- *  the manifest never carries file contents). */
+/** One extra bundle file in a version's source manifest: path, size, sha and
+ *  the file's text body (null for binary bodies or files over the inline cap). */
 export interface SkillSourceFile {
   path: string;
   size: number;
   sha256: string;
+  content: string | null;
 }
 
 /** GET /api/v1/skills/:slug/source — one version's SKILL.md body plus the
- *  bundle's extra files as path+sha (no content); without an explicit
+ *  bundle's extra files as path+sha+text; without an explicit
  *  version the server resolves the caller's pin, then latest. The editor's
  *  edit mode passes the latest version so the publish diff always runs
  *  against the newest published content. */
@@ -263,6 +264,7 @@ export async function skillsSource(
           path: f.path as string,
           size: typeof f.size === "number" ? f.size : 0,
           sha256: typeof f.sha256 === "string" ? f.sha256 : "",
+          content: typeof f.content === "string" ? f.content : null,
         }))
     : [];
   return { version: v.version, skill_md: v.skill_md, files };

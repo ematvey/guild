@@ -154,6 +154,30 @@ describe("skills api", () => {
     expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md"]);
   });
 
+  it("source carries each bundle file's text body", async () => {
+    const slug = "source-files-skill";
+    const bundle = packBundle({
+      "manifest.json": Buffer.from(JSON.stringify({ kind: "skill", slug, version: "v1", description: "d" })),
+      "SKILL.md": Buffer.from("# body", "utf8"),
+      "references/notes.md": Buffer.from("# notes\nrule one\n", "utf8"),
+      "scripts/run.sh": Buffer.from("echo hi\n", "utf8"),
+    });
+    const pub = await e.env.app.inject({
+      method: "POST",
+      url: `/api/v1/registry/skill?slug=${slug}&version=v1`,
+      headers: { authorization: `Bearer ${e.memberToken}`, "content-type": "application/octet-stream" },
+      payload: bundle,
+    });
+    expect(pub.statusCode).toBe(200);
+
+    const src = await inject("GET", `/api/v1/skills/${slug}/source`, e.memberToken);
+    expect(src.statusCode).toBe(200);
+    const body = src.json() as { files: Array<{ path: string; content: string | null }> };
+    const byPath = new Map(body.files.map((f) => [f.path, f.content]));
+    expect(byPath.get("references/notes.md")).toBe("# notes\nrule one\n");
+    expect(byPath.get("scripts/run.sh")).toBe("echo hi\n");
+  });
+
   it("collapses a multi-line description to one line on save", async () => {
     await inject("POST", "/api/v1/skills", e.memberToken, {
       slug: "single-line-skill",

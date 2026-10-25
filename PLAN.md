@@ -12,6 +12,14 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The skill file viewer shows every bundle file, and folders fold (2026-10-25).**
+  `GET /api/v1/skills/:slug/source` now returns each file's text body
+  (`content`, null for binary bodies and files over 256 KiB) by reading the
+  published bundle, not just the version row's path/size/sha. The detail
+  page renders markdown files as markdown and the rest as raw text, instead
+  of "content not inlined", and directory rows in the file tree toggle open
+  and closed.
+
 - **One chat view: the agent's turn details fold into its work row (2026-10-25).**
   The casual/technical switch is gone, with its `/api/v1/me/settings`
   `chat_view` key. Every contiguous agent-work run — thinking, tool calls

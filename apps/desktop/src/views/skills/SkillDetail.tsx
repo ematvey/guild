@@ -9,7 +9,7 @@
 // plus the breadcrumb in the top bar.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ChevronRight, File, Folder, Info, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, File, Folder, Info, Lock } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -114,6 +114,11 @@ export function actionVariant(label: string): "default" | "outline" | "ghost" {
  *  "—" when the version carries no sha. */
 export function shaPrefix(sha: string | null): string {
   return sha === null || sha === "" ? "—" : sha.slice(0, 12);
+}
+
+/** True when a bundle file renders as markdown rather than raw text. */
+export function isMarkdownPath(path: string): boolean {
+  return /\.(md|markdown)$/i.test(path);
 }
 
 /** The file list the detail page renders from the source manifest: SKILL.md
@@ -303,6 +308,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   } | null>(null);
   const [sourceLoading, setSourceLoading] = useState(true);
   const [selectedFile, setSelectedFile] = useState("SKILL.md");
+  const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   const [rawSkillMd, setRawSkillMd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
@@ -398,15 +404,29 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     nodes.map((node) =>
       node.kind === "dir" ? (
         <div key={node.path}>
-          <div
-            className="flex items-center gap-1.5 rounded-md py-1 pr-2 text-sm text-muted-foreground"
+          <button
+            type="button"
+            aria-expanded={!collapsedDirs.has(node.path)}
+            onClick={() =>
+              setCollapsedDirs((prev) => {
+                const next = new Set(prev);
+                if (next.has(node.path)) next.delete(node.path);
+                else next.add(node.path);
+                return next;
+              })
+            }
+            className="flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm text-muted-foreground outline-none hover:bg-accent"
             style={{ paddingLeft: `${8 + depth * 14}px` }}
           >
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            {collapsedDirs.has(node.path) ? (
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
             <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-            {node.name}/
-          </div>
-          {renderTree(node.children, depth + 1)}
+            <span className="truncate">{node.name}/</span>
+          </button>
+          {collapsedDirs.has(node.path) ? null : renderTree(node.children, depth + 1)}
         </div>
       ) : (
         <button
@@ -429,16 +449,27 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     currentPath === "SKILL.md"
       ? `${source?.skill_md.split("\n").length ?? 0} lines`
       : `${selectedSourceFile?.size ?? 0} bytes`;
+  const extraBody = selectedSourceFile?.content ?? null;
   const viewerBody =
     sourceLoading ? <SkeletonText lines={6} className="p-4" /> : source === null ? (
       <p className="p-10 text-center text-sm text-muted-foreground">
         File contents unavailable — the bundle manifest could not be loaded.
       </p>
-    ) : currentPath !== "SKILL.md" ? (
+    ) : currentPath !== "SKILL.md" && extraBody === null ? (
       <p className="p-10 text-center text-sm text-muted-foreground">
-        Content not inlined in the bundle manifest.
+        No text preview — this file is binary or larger than 256 KiB. Download the bundle to read it.
       </p>
-    ) : currentPath === "SKILL.md" && !rawSkillMd ? (
+    ) : currentPath !== "SKILL.md" && isMarkdownPath(currentPath) ? (
+      <div className={`px-4 py-3 text-sm leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {extraBody!}
+        </Markdown>
+      </div>
+    ) : currentPath !== "SKILL.md" ? (
+      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs leading-[1.55] text-foreground">
+        {extraBody}
+      </pre>
+    ) : !rawSkillMd ? (
       <div className={`px-4 py-3 text-sm leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {skillMdPreviewBody(source.skill_md)}
@@ -462,8 +493,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           >
             {rawSkillMd ? "Preview" : "Raw"}
           </button>
-        )}
-        <span className="shrink-0 tabular-nums">{sourceLoading ? <Skeleton className="h-3 w-12" /> : source === null ? "" : viewerMeta}</span>
+        )}        <span className="shrink-0 tabular-nums">{sourceLoading ? <Skeleton className="h-3 w-12" /> : source === null ? "" : viewerMeta}</span>
       </div>
       {viewerBody}
     </div>
