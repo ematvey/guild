@@ -1,12 +1,24 @@
 //! UsageSection — admin settings: spend summary cards, a cost-over-time
 //! chart, a per-group breakdown (table + bars), all scoped by a period
-//! selector. The period and group live in the URL (?period=&group=), so
-//! back/forward, reloads and deep links restore the exact view.
+//! selector. The period, group and metric ride in the route query
+//! (?period=&group=&metric=), so back/forward, reloads and deep links
+//! restore the exact view.
 
 import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { quantizeIso, useCachedGet } from "../use-cached-api";
+import {
+  DEFAULT_USAGE,
+  USAGE_GROUPS as GROUPS,
+  USAGE_METRICS as METRICS,
+  USAGE_PERIODS as PERIODS,
+  type UsageMetric as Metric,
+  type UsagePeriod as Period,
+  type UsageQuery,
+} from "../usage-route";
+import { SETTINGS_PATHS, usageBreakdownPath, usageSeriesPath } from "../../../lib/api/settings";
+import type { SectionDetailProps } from "../section-nav";
 import {
   ChartContainer,
   ChartTooltip,
@@ -37,30 +49,10 @@ const money = (v: number | undefined) => `$${(v ?? 0).toFixed(4)}`;
 const compact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
 
-const PERIODS = ["24h", "7d", "30d"] as const;
-type Period = (typeof PERIODS)[number];
 const PERIOD_MS: Record<Period, number> = {
   "24h": 24 * 3_600_000,
   "7d": 7 * 24 * 3_600_000,
   "30d": 30 * 24 * 3_600_000,
-};
-
-const GROUPS = ["user", "team", "model"] as const;
-type Group = (typeof GROUPS)[number];
-
-const METRICS = ["cost", "tokens"] as const;
-type Metric = (typeof METRICS)[number];
-
-const readQuery = (): { period: Period; group: Group; metric: Metric } => {
-  const q = new URLSearchParams(window.location.search);
-  const period = q.get("period") as Period | null;
-  const group = q.get("group") as Group | null;
-  const metric = q.get("metric") as Metric | null;
-  return {
-    period: (PERIODS as readonly string[]).includes(period ?? "") ? period! : "7d",
-    group: (GROUPS as readonly string[]).includes(group ?? "") ? group! : "model",
-    metric: (METRICS as readonly string[]).includes(metric ?? "") ? metric! : "cost",
-  };
 };
 
 const dayLabel = (iso: string) =>
@@ -69,33 +61,18 @@ const hourLabel = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: "numeric" });
 const fullStamp = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
 
-export default function UsageSection() {
+export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: SectionDetailProps) {
   const summaryRes = useCachedGet<{
     today_cost_usd: number;
     month_cost_usd: number;
     today_tokens?: number;
     month_tokens?: number;
-  }>("/api/v1/usage/summary");
+  }>(SETTINGS_PATHS.usageSummary);
   const summary = summaryRes.data;
-  const [{ period, group, metric }, setView] = useState(readQuery);
+  const { period, group, metric } = usage;
 
-  // Back/forward: re-read period + group from the URL.
-  useEffect(() => {
-    const onPop = () => setView(readQuery());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  const pick = (next: Partial<{ period: Period; group: Group; metric: Metric }>) => {
-    const merged = { period, group, metric, ...next };
-    const url = new URL(window.location.href);
-    url.searchParams.set("period", merged.period);
-    url.searchParams.set("group", merged.group);
-    url.searchParams.set("metric", merged.metric);
-    if (url.toString() !== window.location.href) {
-      window.history.pushState(null, "", url);
-    }
-    setView(merged);
+  const pick = (next: Partial<UsageQuery>) => {
+    onUsageChange?.({ period, group, metric, ...next });
   };
 
   // Query paths quantize timestamps to 10-minute buckets so cache keys
@@ -105,10 +82,10 @@ export default function UsageSection() {
   const from = quantizeIso(600_000, Date.now() - PERIOD_MS[period]);
   const to = quantizeIso(600_000, Date.now() + 600_000);
   const breakdownRes = useCachedGet<{ rows: UsageRow[] }>(
-    `/api/v1/usage?group_by=${group}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    usageBreakdownPath(group, from, to),
   );
   const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(
-    `/api/v1/usage/series?group_by=none&bucket=${period === "24h" ? "hour" : "day"}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    usageSeriesPath("none", period === "24h" ? "hour" : "day", from, to),
   );
   const rows = breakdownRes.data?.rows ?? null;
   const error = summaryRes.error ?? breakdownRes.error ?? seriesRes.error;

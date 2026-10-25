@@ -38,6 +38,12 @@ import {
   type AgentsRoute,
 } from "../agents/agents-route";
 import { SKILLS_CATALOG, type SkillsRoute } from "../skills/skills-route";
+import {
+  DEFAULT_USAGE,
+  parseUsageQuery,
+  usageQueryString,
+  type UsageQuery,
+} from "../settings/usage-route";
 
 export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | null;
 export interface ChatRoute {
@@ -59,6 +65,9 @@ export interface ChatRoute {
    * section lives in pane state. */
   settingsSection: string | null;
   settingsDetail: string | null;
+  /** The usage section's query state (?period=&group=&metric=); defaults on
+   *  every other route. */
+  usage: UsageQuery;
   /** Set when the pathname held a malformed escape: the route is the default
    *  one and the caller rewrites the address (a reload must not re-enter it). */
   invalid?: true;
@@ -81,7 +90,8 @@ export const isImeEnter = (e: {
   nativeEvent?: { isComposing?: boolean };
 }): boolean => e.nativeEvent?.isComposing === true || e.keyCode === 229;
 
-export const parseChatRoute = (pathname: string): ChatRoute => {
+export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  const usage = parseUsageQuery(search);
   const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   const decoded = raw.map(decodeSegment);
   // A malformed escape cannot name anything: fall back to the default route
@@ -98,6 +108,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       newChat: false,
       settingsSection: null,
       settingsDetail: null,
+      usage,
       invalid: true,
     };
   }
@@ -115,6 +126,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       newChat: false,
       settingsSection: null,
       settingsDetail: null,
+      usage,
     };
   }
   // The inbox surface is gone: agent-initiated threads live in the chat
@@ -130,6 +142,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       newChat: false,
       settingsSection: null,
       settingsDetail: null,
+      usage,
     };
   }
   // The agents surface owns its whole address space (/agents, /activity,
@@ -146,6 +159,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       newChat: false,
       settingsSection: null,
       settingsDetail: null,
+      usage,
     };
   }
   // The rail's panel tabs own top-level addresses: /chats (the default),
@@ -173,9 +187,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   const newChat = parts[0] === "new" && chatId === null;
   if (newChat) parts.shift();
   if (parts[0] === "device")
-    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
   if (parts[0] === "onboard" || parts[0] === "help")
-    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -195,6 +209,7 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       agents: null,
       settingsSection: section,
       settingsDetail: detail,
+      usage,
       newChat: false,
     };
   }
@@ -202,9 +217,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills, agents: null, tab: "chats", settingsSection: null, settingsDetail: null, newChat: false };
+    return { chatId: null, projectId: null, overlay: null, skills, agents: null, tab: "chats", settingsSection: null, settingsDetail: null, usage, newChat: false };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null, agents: null, settingsSection: null, settingsDetail: null, newChat };
+  return { chatId, projectId, tab, overlay: null, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -231,6 +246,7 @@ export interface RoutePatch {
   newChat?: boolean;
   settingsSection?: string | null;
   settingsDetail?: string | null;
+  usage?: UsageQuery;
 }
 
 /** The route a navigation lands on: history and route state move together,
@@ -286,7 +302,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
         : tab === "settings" && sk === null && ag === null
           ? route.settingsDetail
           : null;
-  return { chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail };
+  return { chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail, usage: "usage" in next ? (next.usage as UsageQuery) : route.usage };
 };
 
 export const chatRoutePath = (
@@ -299,6 +315,7 @@ export const chatRoutePath = (
   settingsDetail: string | null = null,
   newChat = false,
   agents: AgentsRoute | null = null,
+  usage: UsageQuery = DEFAULT_USAGE,
 ): string => {
   // The agents surface is chat-independent: its route owns the whole URL.
   if (agents !== null) return agentsRoutePath(agents);
@@ -352,6 +369,6 @@ export const chatRoutePath = (
       settingsDetail !== null
         ? "/" + settingsDetail.split("/").map(encodeURIComponent).join("/")
         : ""
-    }`;
+    }${settingsSection === "usage" ? usageQueryString(usage) : ""}`;
   return base || "/";
 };
