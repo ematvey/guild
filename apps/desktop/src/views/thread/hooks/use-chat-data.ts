@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { listArchivedChats, listChats, type ChatSubagentNode, type ChatSummary } from "../../../lib/api/chats";
-import { applySubagentTree } from "../status";
+import { applySubagentTree, clearSubagentTrees } from "../status";
 import { listArchivedProjects, listProjects, type Project } from "../../../lib/api/projects";
 import { listMachines, type MachineInfo } from "../../../lib/api/machines";
 
@@ -23,6 +23,10 @@ export function useChatData() {
   const setSubagentTree = useCallback((chatId: string, nodes: ChatSubagentNode[]) => {
     setSubagentTrees((prev) => applySubagentTree(prev, chatId, nodes));
   }, []);
+  // A reconnect makes every cached tree suspect: a run can finish while the
+  // socket is down and no tree push arrives. The bracket and NOTIFY re-push
+  // live trees; the list's working flag is the fallback until then.
+  const resetSubagentTrees = useCallback(() => setSubagentTrees(clearSubagentTrees()), []);
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
 
@@ -76,6 +80,7 @@ export function useChatData() {
     setChatStatus,
     subagentTrees,
     setSubagentTree,
+    resetSubagentTrees,
     refreshChats,
     archivedChats,
     setArchivedChats,

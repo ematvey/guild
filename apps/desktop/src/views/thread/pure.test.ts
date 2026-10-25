@@ -2,7 +2,7 @@
 // resolution, sidebar status, tool labels/previews and stamps.
 import { describe, expect, it } from "vitest";
 import { applyRoutePatch, chatRoutePath, parseChatRoute } from "./route";
-import { applySubagentTree, statusFromThreads, workingForChat } from "./status";
+import { applySubagentTree, clearSubagentTrees, statusFromThreads, workingForChat } from "./status";
 import { codemodeDuration, safeUrl, toolKind, toolPreview } from "./tool-text";
 import { prettyStamp } from "./blocks";
 import type { ToolBlock } from "../../lib/thread-reducer";
@@ -139,6 +139,25 @@ describe("workingForChat", () => {
       { generating: false, working: false },
       [node("running")],
     )).toBe(true);
+  });
+});
+
+describe("clearSubagentTrees", () => {
+  it("drops every cached tree so the list working flag is the fallback", () => {
+    const trees = applySubagentTree({}, "parent", [{
+      thread_id: "t1",
+      parent_thread_id: null,
+      title: "child",
+      agent_name: "agent",
+      depth: 1,
+      status: "running",
+      chat_id: "child",
+    }]);
+    expect(workingForChat({ generating: false, working: false }, trees.parent)).toBe(true);
+    const cleared = clearSubagentTrees();
+    expect(cleared).toEqual({});
+    expect(workingForChat({ generating: false, working: true }, cleared.parent)).toBe(true);
+    expect(workingForChat({ generating: false, working: false }, cleared.parent)).toBe(false);
   });
 });
 

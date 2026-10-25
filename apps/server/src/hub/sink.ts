@@ -14,6 +14,7 @@ import type { WsServerMsg } from "./protocol.js";
 export type SocketOutput =
   | { kind: "message"; msg: WsServerMsg }
   | { kind: "sync_start" }
+  | { kind: "sync_message"; msg: WsServerMsg }
   | { kind: "ping"; payload: Buffer }
   | { kind: "pong"; payload: Buffer };
 
@@ -93,6 +94,13 @@ export class SocketSink {
 
   startSync(): boolean {
     return this.enqueue({ kind: "sync_start" });
+  }
+
+  /** A bracket message: written in order while the bracket is open, never
+   *  deferred by the live-frame gate. */
+  sendSync(msg: WsServerMsg): boolean {
+    if (this.dead) return false;
+    return this.enqueue({ kind: "sync_message", msg });
   }
 
   pong(payload: Buffer): boolean {
