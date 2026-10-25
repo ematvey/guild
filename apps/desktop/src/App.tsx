@@ -236,6 +236,20 @@ function DesktopApp() {
   // is active; the restore path re-points everything).
   const [addWorkspace, setAddWorkspace] = useState(false);
 
+  /** Opens the pair/sign-in card. A base_url (from a dead-token workspace
+   * row) prefills the manual form so re-auth hits that same server, which
+   * the daemon's login adopts-or-replaces — no duplicate row. */
+  const openAddWorkspace = (baseUrl?: string) => {
+    if (baseUrl) {
+      setMode("manual");
+      setUrl(baseUrl);
+      setEmail("");
+      setPassword("");
+    }
+    setError(null);
+    setAddWorkspace(true);
+  };
+
   // Surface the build the webview is actually running — pairing hangs are
   // almost always a stale binary or stale background daemon; make the
   // version visible so that's checkable at a glance (web: not a Tauri
@@ -393,7 +407,7 @@ function DesktopApp() {
           displayName={displayName}
           avatarUrl={avatarUrl}
           onSignOut={signOut}
-          onAddWorkspace={() => setAddWorkspace(true)}
+          onAddWorkspace={openAddWorkspace}
         />
         <UpdateToast />
       </>

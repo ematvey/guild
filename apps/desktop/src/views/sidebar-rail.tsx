@@ -103,7 +103,7 @@ export function SidebarRail({
   onOpenDevice: () => void;
   onSignOut: () => void;
   /** Desktop multi-workspace: the rail's first button hosts the switcher. */
-  onAddWorkspace?: () => void;
+  onAddWorkspace?: (baseUrl?: string) => void;
   /** Activity is an admin surface; members never see its rail entry. */
   role?: string;
   /** Mobile drawer: the skills page is a desktop-only surface (its main
