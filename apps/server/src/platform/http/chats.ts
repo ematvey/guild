@@ -33,7 +33,7 @@ import { ThreadAgentLocked } from "../../harness/runtime.js";
 // ---------------------------------------------------------------------------
 
 /** The hub-aware online flag for a chat row's bound machine — the same
- *  truth threadListSnapshot (ws push) and GET /api/v1/machines use. Null
+ *  truth the workspace push and GET /api/v1/machines use. Null
  *  binding → false (the flag is hub-coupled only when a machine exists). */
 export function machineOnlineOf(chats: ChatsCtx, row: { machine_id: string | null }): boolean {
   return row.machine_id !== null && chats.hub.machineOnline(row.machine_id);
@@ -87,7 +87,7 @@ export function chatWire(row: {
 }
 
 /** The thread list rows (http/feed.rs thread_list) — hub-aware online
- *  flags, identical to the ws push's threadListSnapshot. */
+ *  flags, identical to the workspace push's chat rows. */
 async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
   const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
   return rows.map((row) =>

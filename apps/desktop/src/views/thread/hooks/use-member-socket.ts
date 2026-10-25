@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { machineId, watchMachinePresence } from "../../../lib/machine-rpc";
 import { setMachineIdentity } from "../../../lib/api/folders";
 import { startSocket } from "../../../lib/socket-client";
-import { applyMachineStatus, refreshMachines } from "../../../lib/machines-store";
+import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
+import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
@@ -21,7 +22,9 @@ export interface MemberSocketDeps {
   chatsRef: RefObject<ChatSummary[] | null>;
   setChats: (update: ChatSummary[] | ((prev: ChatSummary[] | null) => ChatSummary[] | null)) => void;
   setChatStatus: (update: (prev: ChatStatus) => ChatStatus) => void;
-  refreshChats: () => Promise<void>;
+  setArchivedChats: (chats: ChatSummary[]) => void;
+  setProjects: (projects: Project[]) => void;
+  setArchivedProjects: (projects: Project[]) => void;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: Block[]) => void;
   markBusy: (v: boolean) => void;
@@ -48,7 +51,8 @@ export interface MemberSocketDeps {
 
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
-    signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
+    signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
+    setArchivedProjects, reducerRef, setBlocks, markBusy,
     busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
     setHasMore, setThreadLoading, setCompacting, setSubagentTree, resetSubagentTrees,
@@ -141,7 +145,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           : c,
       ) ?? prev,
     );
-    if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
     if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
     // The route chat's live turn is the target's status even while the old
@@ -187,11 +190,14 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         reducerRef.current.invalidate();
         resetSubagentTrees();
         markBusy(false);
-        // A presence flip while the socket was down sends no frame: the
-        // registry snapshot is the durable resync.
-        void refreshMachines();
       },
       onMachineStatus: applyMachineStatus,
+      onMachineList: applyMachineList,
+      onArchivedThreadList: (next) => setArchivedChats(next),
+      onProjectList: (next, archived) => {
+        setProjects(next);
+        setArchivedProjects(archived);
+      },
       onThreadList: (nextChats) => {
         // The open chat's turns are on screen: the server's read watermark
         // lags the local read POST, so a push landing in between must not
@@ -204,7 +210,14 @@ export function useMemberSocket(deps: MemberSocketDeps) {
                 ? { ...c, unread: false }
                 : c,
             );
-        setChats(rows);
+        // A title is write-once after it is set: a snapshot without one is
+        // older than the row we already hold. Keep the known title.
+        const known = new Map((chatsRef.current ?? []).map((c) => [c.id, c.title]));
+        const titled = rows.map((c) => {
+          const prior = known.get(c.id);
+          return prior && !c.title ? { ...c, title: prior } : c;
+        });
+        setChats(titled);
         // Merge, not replace: a child thread is never in the list, so its
         // live status must survive every sidebar push.
         setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));

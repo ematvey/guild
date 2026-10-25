@@ -211,7 +211,7 @@ export class PlatformContext {
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
     // Presence flips ride the member socket: the sidebar dot and the
     // machine list move live instead of holding a registry snapshot.
-    this.hub.onMachineStatus = (machineId, userId, online) => this.feed.machineStatus(machineId, userId, online);
+    this.hub.onMachineStatus = (machineId, userId, orgId, online) => this.feed.machineStatus(machineId, userId, orgId, online);
     // The dispatch lane's tool-result completion + connect sweep (the
     // ws.ts seams; no-op until a test/lane sets richer behavior).
     this.wsToolResult = async ({ member, frame }) => {

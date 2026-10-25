@@ -46,7 +46,9 @@ export function CreateProjectDialog({
    * opens it instead of creating a duplicate. */
   projects: Project[] | null;
   /** Called with the opened-or-created project (the caller selects it). */
-  onCreated: (project: Project) => void;
+  /** Optional: the server pushes the project list, so callers that only
+   *  need the sidebar to update pass nothing. */
+  onCreated?: (project: Project) => void;
 }) {
   const [view, setView] = useState<View>({ kind: "sources" });
   const [distros, setDistros] = useState<Distro[] | null>(null);
@@ -107,14 +109,14 @@ export function CreateProjectDialog({
     const existing =
       machineId === localMachineId ? existingFor(folder) : existingForMachine(machineId)(folder);
     if (existing) {
-      onCreated(existing);
+      onCreated?.(existing);
       onOpenChange(false);
       return;
     }
     setBusy(true);
     try {
       const project = await createProject({ folder, machine_id: machineId });
-      onCreated(project);
+      onCreated?.(project);
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));

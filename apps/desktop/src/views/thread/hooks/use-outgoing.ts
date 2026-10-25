@@ -61,7 +61,6 @@ export interface OutgoingDeps {
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
   sendingRef: RefObject<boolean>;
-  refreshChats: () => Promise<void>;
   projects: Project[] | null;
   openRow: { machine_id?: string | null } | undefined;
   currentProject: PickedProject | null;
@@ -81,7 +80,7 @@ export function useOutgoing(deps: OutgoingDeps) {
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
     deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef, setBlocks,
-    markBusy, openChatIdRef, loadSeq, sendingRef, refreshChats, projects, openRow,
+    markBusy, openChatIdRef, loadSeq, sendingRef, projects, openRow,
     currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping, setStopping,
     justCreatedApprovalRef, justCreatedBusyRef, pushRoute,
   } = deps;
@@ -219,7 +218,6 @@ export function useOutgoing(deps: OutgoingDeps) {
             justCreatedBusyRef.current = cid;
             markBusy(true);
             pushRoute({ chatId: cid, overlay: null });
-            void refreshChats();
           }
         },
         upload: (cid, attachment) => {

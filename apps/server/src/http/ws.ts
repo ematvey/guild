@@ -24,7 +24,6 @@ import { uuidv7 } from "../platform/time.js";
 import { LiveHub, type LiveMember } from "../hub/live.js";
 import { SocketSink } from "../hub/sink.js";
 import { parseClientMsg, serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
-import { threadListSnapshot } from "../hub/feed.js";
 import type { TicketIdentity } from "../hub/tickets.js";
 
 // A socket that cannot flush its terminal notice within this deadline is
@@ -538,16 +537,10 @@ async function driveSocket(
     // dispatch lane's; a no-op until wired.
     await chats.wsMachineReconcile?.(machineId, connId);
   }
-  try {
-    const list = await threadListSnapshot(chats, user);
-    sink.send({ type: "thread_list", chats: list });
-  } catch (error) {
-
-    sink.send({
-      type: "error",
-      message: error instanceof ApiError ? error.message : "internal server error",
-    });
-  }
+  // The first paint: the same serialized workspace push every later change
+  // rides. It sends the legacy thread_list plus the archived, project and
+  // machine lists, so the client never reads them over HTTP.
+  await chats.feed.pushWorkspace(user.org_id, user.id);
 
   // --- heartbeat (Rust heartbeat task) ---------------------------------------
   const heartbeatLoop = (async (): Promise<void> => {

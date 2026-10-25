@@ -4,7 +4,7 @@
 // adoption) and on a 30s-throttled ping heartbeat (last_seen).
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import type { PlatformPool, PoolClient } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 
 export interface MachineRow {
@@ -86,6 +86,14 @@ export class MachineStore {
    *  A machine_id already registered to a DIFFERENT org is left untouched
    *  (client-issued ids make cross-org claims untrustworthy); the returned
    *  row is the untouched foreign row and the connect is not registered. */
+  /** Tells the feed that the owner's registry rows moved. Runs inside the
+   *  writing transaction, so the notify lands with the commit. */
+  private async notifyWorkspace(client: PoolClient, orgId: string, userId: string): Promise<void> {
+    await client.query("SELECT pg_notify('guild_workspace', $1)", [
+      JSON.stringify({ org_id: orgId, user_id: userId }),
+    ]);
+  }
+
   async upsertConnected(
     orgId: string,
     userId: string,
@@ -143,6 +151,7 @@ export class MachineStore {
           [machineId, label, fingerprint, os, osVersion, appVersion, ip],
         );
         await client.query("COMMIT");
+        await this.notifyWorkspace(client, orgId, userId);
         return { row: toRow(rowRes.rows[0]!), adopted_from: null };
       }
 
@@ -183,6 +192,7 @@ export class MachineStore {
             );
           }
           await client.query("COMMIT");
+          await this.notifyWorkspace(client, orgId, userId);
           return { row: toRow(rowRes.rows[0]!), adopted_from: old.machine_id };
         }
       }
@@ -195,6 +205,7 @@ export class MachineStore {
         [machineId, orgId, userId, label, fingerprint, os, osVersion, appVersion, ip],
       );
       await client.query("COMMIT");
+      await this.notifyWorkspace(client, orgId, userId);
       return { row: toRow(rowRes.rows[0]!), adopted_from: null };
     } catch (error) {
       try {
