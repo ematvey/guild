@@ -3,8 +3,10 @@
 // (agents/<org>/<agentId>) and sandbox (agent:<org>:<agentId>). Every other
 // chat keeps its per-conversation sandbox.
 
-import path from "node:path";
 import type { PlatformPool } from "../platform/db.js";
+import { agentWorkspaceDir, agentWorkspaceSubpath } from "./workspace-config.js";
+
+export { agentWorkspaceSubpath } from "./workspace-config.js";
 
 export interface AgentThreadRef {
   thread_id: string;
@@ -20,11 +22,6 @@ export interface ConversationWorkspace {
   hostDir: string;
   chatId: string | null;
   agentId: string | null;
-}
-
-/** The agent workspace subpath (POSIX, relative to the workspace volume). */
-export function agentWorkspaceSubpath(orgId: string, agentId: string): string {
-  return `agents/${orgId}/${agentId}`;
 }
 
 /** The agent row behind a chat journal row, or null for a plain chat. */
@@ -64,7 +61,7 @@ export async function resolveConversationWorkspace(
     return {
       key: `agent:${agent.org_id}:${agent.agent_id}`,
       subpath,
-      hostDir: path.resolve(args.agentWorkspaceRoot, subpath),
+      hostDir: agentWorkspaceDir(args.agentWorkspaceRoot, agent.org_id, agent.agent_id),
       chatId: args.chatId,
       agentId: agent.agent_id,
     };
