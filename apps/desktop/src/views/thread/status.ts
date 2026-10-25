@@ -1,10 +1,38 @@
 // Pure derivations of the thread view's live status: what the sidebar shows,
 // whether the open thread is writable, and which state the send button has.
 import type { SidebarTab } from "../sidebar-rail";
-import type { ChatSummary } from "../../lib/api/chats";
+import type { ChatSubagentNode, ChatSummary } from "../../lib/api/chats";
 
 export function statusFromThreads(chats: ChatSummary[]) {
-  return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));
+  return Object.fromEntries(chats.map(chat => [chat.id, {
+    generating: !!chat.generating,
+    working: !!chat.working,
+    unread: !!chat.unread,
+  }]));
+}
+
+/** A queued or running run in the chat's subtree. */
+export function hasRunningSubagent(nodes: readonly ChatSubagentNode[] | undefined): boolean {
+  return (nodes ?? []).some((node) => node.status === "running" || node.status === "queued");
+}
+
+/** The chat's work state: its own live turn, a descendant run, or the list
+ *  row's precomputed subtree flag. `generating` stays the narrower flag for
+ *  Stop, queue mode and "Stopping". */
+export function workingForChat(
+  chat: Pick<ChatSummary, "generating" | "working"> | undefined,
+  nodes: readonly ChatSubagentNode[] | undefined,
+): boolean {
+  return !!chat?.generating || !!chat?.working || hasRunningSubagent(nodes);
+}
+
+/** Stores one chat's whole subtree, whether or not that chat is open. */
+export function applySubagentTree(
+  trees: Record<string, ChatSubagentNode[]>,
+  chatId: string,
+  nodes: ChatSubagentNode[],
+): Record<string, ChatSubagentNode[]> {
+  return { ...trees, [chatId]: nodes };
 }
 
 /** The open chat's remote bound machine when its socket is down — the

@@ -2,11 +2,11 @@
 // resolution, sidebar status, tool labels/previews and stamps.
 import { describe, expect, it } from "vitest";
 import { applyRoutePatch, chatRoutePath, parseChatRoute } from "./route";
-import { statusFromThreads } from "./status";
+import { applySubagentTree, statusFromThreads, workingForChat } from "./status";
 import { codemodeDuration, safeUrl, toolKind, toolPreview } from "./tool-text";
 import { prettyStamp } from "./blocks";
 import type { ToolBlock } from "../../lib/thread-reducer";
-import type { ChatSummary } from "../../lib/api/chats";
+import type { ChatSubagentNode, ChatSummary } from "../../lib/api/chats";
 
 const route = () => parseChatRoute("/chats");
 
@@ -87,15 +87,62 @@ describe("applyRoutePatch (navigation precedence)", () => {
 });
 
 describe("statusFromThreads", () => {
-  it("maps the generating and unread flags by chat id", () => {
+  it("maps the generating, working and unread flags by chat id", () => {
     const chats = [
-      { id: "a", generating: true, unread: false },
-      { id: "b", generating: false, unread: true },
+      { id: "a", generating: true, working: true, unread: false },
+      { id: "b", generating: false, working: false, unread: true },
     ] as ChatSummary[];
     expect(statusFromThreads(chats)).toEqual({
-      a: { generating: true, unread: false },
-      b: { generating: false, unread: true },
+      a: { generating: true, working: true, unread: false },
+      b: { generating: false, working: false, unread: true },
     });
+  });
+});
+
+describe("workingForChat", () => {
+  const node = (status: string | null): ChatSubagentNode => ({
+    thread_id: `t-${status ?? "none"}`,
+    chat_id: "c1",
+    parent_thread_id: null,
+    agent_name: "a",
+    title: "t",
+    depth: 1,
+    status,
+  });
+
+  it("is true for the chat's own generating turn", () => {
+    expect(workingForChat({ generating: true, working: false }, undefined)).toBe(true);
+  });
+
+  it("is true when a descendant run is running", () => {
+    expect(workingForChat({ generating: false, working: false }, [node("running")])).toBe(true);
+    expect(workingForChat({ generating: false, working: false }, [node("queued")])).toBe(true);
+  });
+
+  it("is false when every descendant run is done", () => {
+    expect(workingForChat({ generating: false, working: false }, [node("succeeded"), node("cancelled")])).toBe(false);
+  });
+
+  it("falls back to the list row's working flag", () => {
+    expect(workingForChat({ generating: false, working: true }, undefined)).toBe(true);
+  });
+});
+
+describe("applySubagentTree", () => {
+  it("keeps the tree for a chat that is not open", () => {
+    const first = applySubagentTree({}, "open", []);
+    const second = applySubagentTree(first, "background", [{
+      thread_id: "t1",
+      chat_id: "background",
+      parent_thread_id: null,
+      agent_name: "a",
+      title: "background work",
+      depth: 1,
+      status: "running",
+    }]);
+    expect(second.open).toEqual([]);
+    expect(second.background).toHaveLength(1);
+    expect(second).not.toBe(first);
   });
 });
 

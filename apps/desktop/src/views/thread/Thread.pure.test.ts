@@ -710,7 +710,7 @@ describe("authoritative socket state", () => {
     expect(second?.reasoningText).toBe("part one part two");
   });
   it("replaces a stale generating overlay from the server list", () => {
-    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, unread: false } });
+    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false } });
   });
 });
 
@@ -767,6 +767,12 @@ describe("sendButtonState (pending submit holds the button until the turn exists
   it("an existing turn outranks the pending submit; the stop click refines Stop", () => {
     expect(sendButtonState({ ...base, hasContent: false, generating: true, submitting: true })).toBe("stop");
     expect(sendButtonState({ ...base, hasContent: false, generating: true, stopping: true })).toBe("stopping");
+  });
+
+  it("a chat that is only working keeps the send button", () => {
+    // working covers a running descendant, not this chat's own turn: the
+    // composer must stay in send mode and never offer Stop.
+    expect(sendButtonState({ ...base, generating: false })).toBe("send");
   });
 });
 

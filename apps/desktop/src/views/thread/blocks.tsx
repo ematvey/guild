@@ -15,12 +15,33 @@ import type { CompactionBlock } from "../../lib/thread-reducer";
 export function ThreadSkeleton({ width }: { width: number }) {
   return (
     <div role="status" aria-label="Loading conversation" className="min-h-0 flex-1 overflow-hidden">
-      <div className="mx-auto w-full space-y-8 px-5 py-6" style={{ maxWidth: width }}>
+      <div className="mx-auto w-full space-y-8 px-4 py-6" style={{ maxWidth: width }}>
         <div className="flex justify-end"><Skeleton className="h-4 w-2/5" /></div>
         <SkeletonText lines={4} />
       </div>
     </div>
   );
+}
+
+/// The chat header's title slot: a fixed-size placeholder while the title is
+/// still unknown, so the header height never changes when it lands.
+export function ThreadTitle({
+  chatId,
+  title,
+  loading,
+}: {
+  chatId: string | null;
+  title: string;
+  loading: boolean;
+}) {
+  if (chatId !== null && (loading || title === "")) {
+    return (
+      <span className="min-w-0 flex-1">
+        <Skeleton className="h-4 w-28 rounded-md" aria-label="Loading title" />
+      </span>
+    );
+  }
+  return <span className="min-w-0 flex-1 truncate font-medium">{title}</span>;
 }
 
 /// Collapsible "Thinking" frame for a reasoning block; default collapsed,

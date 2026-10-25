@@ -90,7 +90,7 @@ export async function buildApp(config: Config) {
   // plugin, see register.ts, so the M1 error envelope and content parsers
   // apply). The upgrade listener is the server's ONLY 'upgrade' handler.
   platform.wsLog = (message) => logger.info({ ws: message }, "ws");
-  attachWsUpgrade(app.server, platform, platform, platform.pool);
+  attachWsUpgrade(app.server, platform, platform);
 
   // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
   wireWsSync(platform);

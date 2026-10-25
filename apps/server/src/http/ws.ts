@@ -17,7 +17,6 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
-import type { PlatformPool } from "../platform/db.js";
 import { ApiError } from "../platform/errors.js";
 import { requireUser } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
@@ -115,7 +114,7 @@ export function registerWsRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: Ide
  *  is removed in app.ts, because two listeners double-assign the socket
  *  (ERR_HTTP_SOCKET_ASSIGNED, the M0 trap note). Rollback = re-enable the
  *  proxy flag and delete this attach call. */
-export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityCtx, pool: PlatformPool): void {
+export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityCtx): void {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let query: UpgradeQuery;
@@ -141,7 +140,7 @@ export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityC
       }
       const peerIp = ipOf(req);
       wss.handleUpgrade(req, socket, head, (ws) => {
-        void driveSocket(chats, auth, pool, identity, query, peerIp, ws);
+        void driveSocket(chats, auth, identity, query, peerIp, ws);
       });
     });
   });
@@ -290,6 +289,7 @@ class SocketGate {
     return (
       message.type === "live_frame" ||
       message.type === "chat_status" ||
+      message.type === "subagent_tree" ||
       message.type === "org_event" ||
       message.type === "error"
     );
@@ -320,7 +320,6 @@ class SocketGate {
 async function driveSocket(
   chats: ChatsCtx,
   auth: IdentityCtx,
-  pool: PlatformPool,
   identity: TicketIdentity,
   query: UpgradeQuery,
   peerIp: string | null,
@@ -540,7 +539,7 @@ async function driveSocket(
     await chats.wsMachineReconcile?.(machineId, connId);
   }
   try {
-    const list = await threadListSnapshot(chats, pool, user);
+    const list = await threadListSnapshot(chats, user);
     sink.send({ type: "thread_list", chats: list });
   } catch (error) {
 
@@ -665,8 +664,9 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
 }
 
 /** One chat's state-sync bracket (Rust run_sync_started): SyncBegin, the
- *  authoritative snapshot (the chats lane's capture via the ctx seam), then
- *  SyncDone — errors ride an Error frame inside the bracket. */
+ *  subtree (small, independent), the authoritative snapshot (the chats
+ *  lane's capture via the ctx seam), then SyncDone — errors ride an Error
+ *  frame inside the bracket. */
 async function runSyncStarted(
   chats: ChatsCtx,
   user: UserRow,
@@ -675,13 +675,17 @@ async function runSyncStarted(
 ): Promise<void> {
   sink.send({ type: "sync_begin", chat_id: chatId });
   try {
-    const snapshot = await chats.wsSync?.({ chatId, user, sink });
+    // Both reads start together; the tree is small and goes first so the
+    // running-subagent block does not wait for the full thread capture.
+    const [tree, snapshot] = await Promise.all([
+      chats.wsSubagentTree?.({ chatId, user, sink }),
+      chats.wsSync?.({ chatId, user, sink }),
+    ]);
+    if (tree !== undefined && tree !== null) sink.send(tree);
     if (snapshot !== undefined && snapshot !== null) sink.send(snapshot);
     else if (chats.wsSync === undefined) {
       sink.send({ type: "error", message: "sync unavailable" });
     }
-    const tree = await chats.wsSubagentTree?.({ chatId, user, sink });
-    if (tree !== undefined && tree !== null) sink.send(tree);
   } catch (error) {
     sink.send({
       type: "error",
