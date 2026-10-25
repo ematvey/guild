@@ -2,7 +2,7 @@
 // attach, idle stop/remove, capacity, and removal of the containers a
 // previous runner process left behind.
 
-import { chown, lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import { chown, lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Logger } from "pino";
 import { DockerClient, DockerError, type ExecStream } from "./docker.js";
@@ -51,6 +51,7 @@ const NAME_PATTERN = /^guild-sbx-[A-Za-z0-9_.-]+-[0-9a-f]{20}$/;
 export class SandboxManager {
   private readonly usage = new Map<string, Usage>();
   private reaper: NodeJS.Timeout | null = null;
+  private volumeWatch: NodeJS.Timeout | null = null;
   /** Serializes ensure/start per container name. */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -80,6 +81,39 @@ export class SandboxManager {
     await this.removeStale();
     this.reaper = setInterval(() => void this.reap().catch((error) => this.log.warn({ err: error }, "reap failed")), 30_000);
     this.reaper.unref();
+    this.volumeWatch = setInterval(() => void this.volumesAlive().then((dead) => dead !== null && this.restartForVolume(dead)), 10_000);
+    this.volumeWatch.unref();
+  }
+
+  /** The dir whose volume this process can no longer read, or null. A JuiceFS
+   *  remount leaves every container that bound the volume before it on the
+   *  dead FUSE session, this one included. */
+  private async volumesAlive(): Promise<string | null> {
+    for (const dir of [this.config.agentDataDir, this.config.dataDir]) {
+      try {
+        await stat(dir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOTCONN") return dir;
+      }
+    }
+    return null;
+  }
+
+  /** Only a new container re-resolves the mount, so a dead volume costs the
+   *  runner process: the restart policy brings it back, boot re-resolves the
+   *  volume and removes the sandboxes left on the dead session. */
+  private restartForVolume(dir: string): void {
+    this.log.error({ dir }, "sandbox volume is gone; restarting the runner");
+    setTimeout(() => process.exit(1), 100).unref();
+  }
+
+  /** Refuses work when this process's own volume view is dead: it could not
+   *  create the workspace dir, and the client retries after the restart. */
+  private async requireVolumes(): Promise<void> {
+    const dead = await this.volumesAlive();
+    if (dead === null) return;
+    this.restartForVolume(dead);
+    throw new RunnerError(503, "sandbox runner volume is stale; the runner is restarting");
   }
 
   /** Sandboxes are disposable: their files live on the volume, and every
@@ -100,6 +134,7 @@ export class SandboxManager {
 
   stop(): void {
     if (this.reaper) clearInterval(this.reaper);
+    if (this.volumeWatch) clearInterval(this.volumeWatch);
   }
 
   private async list(): Promise<ContainerSummary[]> {
@@ -221,6 +256,7 @@ export class SandboxManager {
   async ensure(key: string, subpath: string): Promise<{ name: string; state: string }> {
     if (!validKey(key)) throw new RunnerError(400, "invalid sandbox key");
     if (!validSubpath(subpath)) throw new RunnerError(400, "invalid workspace subpath");
+    await this.requireVolumes();
     const name = containerName(this.config, key);
     return this.withLock(name, async () => {
       let existing = await this.inspect(name);
@@ -277,6 +313,7 @@ export class SandboxManager {
    *  sandbox whose mount died is removed, not served: its files live on the
    *  volume, and the next ensure creates a container on the live mount. */
   async attach(name: string): Promise<{ stream: ExecStream; release: () => void }> {
+    await this.requireVolumes();
     const container = await this.owned(name);
     if (!container.State.Running) {
       await this.withLock(name, async () => {
