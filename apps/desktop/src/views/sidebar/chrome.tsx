@@ -33,9 +33,6 @@ export function FadeTitle({ text }: { text: string }) {
   );
 }
 
-/** Inline rename field: Enter or blur commits, Esc cancels; `onDone(null)`
-
-
 /** Collapse button shared by every panel header (desktop only). The
  *  tooltip carries the toggle hotkey like the rail's tooltips do. */
 export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
@@ -53,9 +50,6 @@ export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
     </DesktopTooltip>
   ) : null;
 }
-
-/** Drawer close for the mobile sidebar sheet: the built-in SheetContent
- *  corner close is suppressed there (it would sit on top of the header's
 
 /** Drawer close for the mobile sidebar sheet: the built-in SheetContent
  *  corner close is suppressed there (it would sit on top of the header's

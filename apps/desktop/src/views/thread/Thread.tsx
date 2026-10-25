@@ -111,8 +111,6 @@ import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
 import { useChatActions } from "./hooks/use-chat-actions";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
 type ThreadProps = {
   email: string;
   role?: string;
@@ -740,7 +738,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     }
     return { entries, finalAgent, lastAgent };
   }, [blocks]);
-  const offlineMachineBanner = offlineMachine(chats, viewChatId, isTauri, isTauri ? machineId() : undefined);
+  const offlineMachineBanner = offlineMachine(chats, viewChatId, IS_TAURI, IS_TAURI ? machineId() : undefined);
   const streaming = busy || openGenerating;
 
   // Restore the visible chat's saved reading position once per swap. A chat
@@ -1114,7 +1112,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // back to the catalog). Every panel state derives from it; user actions
   // navigate through pushRoute, so the URL is always the truth.
   const skillsRoute =
-    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, isTauri) : null;
+    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, IS_TAURI) : null;
   // The Skills route's main pane IS the skills page — the whole column right
   // of the rail, no sidebar panel at all (the inlineSettings pattern). The
   // chat thread only comes back when another route is navigated to.
@@ -1878,7 +1876,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                       ? row.machine_id
                       : projects?.find((p) => p.id === currentProject?.id)?.machine_id;
                   const remoteMachine =
-                    !!chipMachineId && (!isTauri || chipMachineId !== machineId());
+                    !!chipMachineId && (!IS_TAURI || chipMachineId !== machineId());
                   // The chat row may be absent right after a create (route
                   // pushed before the refetched list lands) — the chip then
                   // renders without a live socket state instead of crashing.

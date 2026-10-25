@@ -26,11 +26,9 @@ export const APPROVAL_MODES: Record<
   },
 };
 
-export const APPROVAL_MODE_LABELS: Record<ChatApprovalMode, string> = {
-  ask: "Ask for approval",
-  approve_for_me: "Approve for me",
-  full_access: "Full access",
-};
+export const APPROVAL_MODE_LABELS = Object.fromEntries(
+  Object.entries(APPROVAL_MODES).map(([mode, entry]) => [mode, entry.label]),
+) as Record<ChatApprovalMode, string>;
 
 /// Label for an unset chat (the account default applies). The server treats
 /// no stored account policy as the AI judge (approve_for_me); an explicit
