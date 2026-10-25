@@ -43,6 +43,7 @@ import {
 } from "@guild/ui/components/select";
 import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
 import { relativeTime } from "../../lib/relative-time";
+import { count } from "./activity-format";
 import {
   archiveAgent,
   createAgentThread,
@@ -243,7 +244,7 @@ export function AgentPage({
             <span>·</span>
             <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
-            <span>{agent.tools.length} tools</span>
+            <span>{count(agent.tools.length, "tool")}</span>
           </span>
         }
         actions={
@@ -339,6 +340,17 @@ export function AgentPage({
   );
 }
 
+async function downloadAgentExport(agent: Agent): Promise<void> {
+  const bundle = await exportAgent(agent.id);
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function AgentActions({
   agent,
   manage,
@@ -375,14 +387,7 @@ function AgentActions({
   const download = async () => {
     setExporting(true);
     try {
-      const bundle = await exportAgent(agent.id);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      await downloadAgentExport(agent);
     } finally {
       setExporting(false);
     }
@@ -703,14 +708,7 @@ function AgentSettings({
   const download = async () => {
     setExporting(true);
     try {
-      const bundle = await exportAgent(agent.id);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${agent.name.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}-export.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      await downloadAgentExport(agent);
     } finally {
       setExporting(false);
     }
