@@ -470,7 +470,13 @@ async function driveSocket(
       if (current.org_id !== user.org_id) return;
 
       if (message.type === "sync") {
-        if (message.chat_id !== null) await runSyncStarted(chats, current, message.chat_id, sink);
+        if (message.chat_id !== null) {
+          // The gate opens only after validation: an early return above must
+          // never leave an unmatched sync_start behind. The writer owns a
+          // failed enqueue; the socket teardown follows.
+          if (!sink.startSync()) return;
+          await runSyncStarted(chats, current, message.chat_id, sink);
+        }
         return;
       }
       if (message.type === "read") {
@@ -515,12 +521,6 @@ async function driveSocket(
     if (message.type === "ping") {
       sink.send({ type: "pong" });
       return;
-    }
-    if (message.type === "sync" && message.chat_id !== null) {
-      if (!sink.startSync()) {
-        finish("reader");
-        return;
-      }
     }
     processClient(message);
   });
