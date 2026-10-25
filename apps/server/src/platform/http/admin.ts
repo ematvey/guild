@@ -8,24 +8,21 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
-import { CONNECTORS, connectorByName, type ConnectorManifest } from "../integration-catalog.js";
-import { builtinConnectorByName, manifestToolClass, toolClassOf } from "../integrations/connectors.js";
+import { rustJsonText } from "../provider/rust-json.js";
+import { INTEGRATIONS, integrationByName, type IntegrationManifest } from "../integration-catalog.js";
+import { isToolClass, manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import {
   envelopeHeaders,
   manifestSecretNames,
   namespacedTool,
   registryManifest,
-  toolCurate,
+  registryManifestIfApproved,
 } from "../integrations/plugins.js";
+import { toolCurate } from "../integrations/policy.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
+import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org_kv.js";
 import { randomUUID } from "node:crypto";
-
-/** Org KV key holding the admin-configured assistant persona prompt. */
-const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
-/** Org KV key holding the admin-configured "Approve for me" policy prompt. */
-const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 /** Upper bound on a custom prompt — personas are short; this is abuse
  *  protection, not a context-window budget. */
 const ASSISTANT_PROMPT_MAX = 10_000;
@@ -177,7 +174,7 @@ async function setOrgPrompt(
 
 /** The schema/secret/categories metadata one connector contributes to the
  *  admin list (both as a configured row and in the available list). */
-function connectorMetadata(m: ConnectorManifest): {
+function connectorMetadata(m: IntegrationManifest): {
   categories: string[];
   secret_names: string[];
   settings: unknown;
@@ -204,6 +201,20 @@ async function latestIntegrationManifest(
     : null;
 }
 
+/** Approved manifest for a save: the same approval + bundle-hash check the
+ *  turn path enforces, with a missing approval read as null. */
+async function saveManifest(
+  gateway: GatewayCtx,
+  orgId: string,
+  slug: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await registryManifestIfApproved(gateway, orgId, slug);
+  } catch (error) {
+    throw ApiError.badRequest(`invalid registry manifest: ${(error as Error).message}`);
+  }
+}
+
 export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: GatewayCtx, identity: IdentityCtx): void {
   // Lists this org's integration plugins (configured and unconfigured).
   // `available` holds the compiled-in kinds plus approved registry v2
@@ -219,10 +230,10 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
       const mcpClaimed = (manifest !== null && manifest["mcp"] !== null && manifest["mcp"] !== undefined) || mcpUrl !== null;
       // A compiled-in kind reports its own categories; a registry v2 MCP
       // plugin shadows the compiled-in kind of the same slug.
-      const categories = mcpClaimed ? ["mcp"] : connectorByName(row.name)?.categories ?? ["other"];
+      const categories = mcpClaimed ? ["mcp"] : integrationByName(row.name)?.categories ?? ["other"];
       const secretNames = mcpClaimed
         ? manifestSecretNames(manifest ?? {})
-        : connectorByName(row.name)?.secret_names ?? [];
+        : integrationByName(row.name)?.secret_names ?? [];
       const settings = mcpClaimed ? (manifest?.["settings"] ?? null) : connectorMetadataFor(row.name)?.settings ?? null;
       rowValues.push({
         id: row.id,
@@ -236,7 +247,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
       });
     }
     const available: unknown[] = [];
-    for (const connector of CONNECTORS) {
+    for (const connector of INTEGRATIONS) {
       // A compiled-in kind with an existing row is configured — it leaves
       // the available list (an installed registry bundle of the same slug
       // shadows it).
@@ -280,7 +291,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     // Known connectors only: a compiled-in kind, or an installed registry v2
     // bundle whose manifest declares an MCP server.
     const known =
-      builtinConnectorByName(name) !== undefined ||
+      integrationByName(name) !== undefined ||
       (await latestIntegrationManifest(gateway, admin.org_id, name))?.["mcp"] != null;
     if (!known) throw ApiError.notFound(`unknown integration ${name}`);
     await saveIntegration(gateway, admin.org_id, name, null, body);
@@ -353,7 +364,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     const rowConfig = (integrationRow.config ?? {}) as Record<string, unknown>;
     const mcpUrl = readMcpUrl(rowConfig);
     if (mcpUrl === null) {
-      const connector = builtinConnectorByName(integrationRow.name);
+      const connector = integrationByName(integrationRow.name);
       if (connector === undefined) {
         throw ApiError.notFound(`unknown integration kind ${integrationRow.name}`);
       }
@@ -456,7 +467,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
 }
 
 function connectorMetadataFor(name: string): { settings: unknown } | null {
-  const connector = connectorByName(name);
+  const connector = integrationByName(name);
   return connector === undefined ? null : { settings: connectorMetadata(connector).settings };
 }
 
@@ -498,7 +509,7 @@ function validateMcpConfig(config: Record<string, unknown>): void {
         throw ApiError.badRequest("tool_policy role value must be a class list");
       }
       for (const c of classes) {
-        if (c !== "read" && c !== "write" && c !== "admin") {
+        if (!isToolClass(c)) {
           throw ApiError.badRequest("tool_policy classes must be read, write, or admin");
         }
       }
@@ -551,7 +562,7 @@ async function saveIntegration(
     // An MCP plugin from the registry seeds its stub with the manifest's
     // mcp/auth blocks (as registry install does): the settings editor can
     // then complete and enable it — an empty stub can never enable.
-    const manifest = await latestIntegrationManifest(gateway, orgId, name);
+    const manifest = await saveManifest(gateway, orgId, name);
     const config: Record<string, unknown> =
       manifest !== null && manifest["mcp"] != null
         ? { mcp: manifest["mcp"], auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" }, tool_policy: {} }
@@ -559,7 +570,7 @@ async function saveIntegration(
     await gateway.integrations.upsert(orgId, name, config, false);
     return;
   }
-  const registryManifestValue = await latestIntegrationManifest(gateway, orgId, name);
+  const registryManifestValue = await saveManifest(gateway, orgId, name);
   const v2Claimed =
     (registryManifestValue !== null && registryManifestValue["mcp"] != null) ||
     readMcpUrl(existingConfig) !== null;
@@ -620,7 +631,7 @@ async function saveIntegration(
     await gateway.integrations.upsert(orgId, name, config, enabled);
     return;
   }
-  const connector = builtinConnectorByName(name);
+  const connector = integrationByName(name);
   if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
   let config = body["config"] !== undefined ? body["config"] : existing?.config ?? {};
   // Per-tool curation is admin state with a single writer — the PUT tools
@@ -641,7 +652,7 @@ async function saveIntegration(
   } catch (error) {
     throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
   }
-  const schemaFields = CONNECTORS.find((c) => c.name === name)!.fields;
+  const schemaFields = INTEGRATIONS.find((c) => c.name === name)!.fields;
   const enabled =
     typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
   // Required settings must be filled (a missing optional falls back to the

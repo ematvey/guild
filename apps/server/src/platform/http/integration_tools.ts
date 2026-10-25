@@ -10,16 +10,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { callPlugin } from "../integrations/execute.js";
-import {
-  resolveActingAs,
-  resolvePlugins,
-  toolAllowed,
-  toolCurate,
-  unnamespacedTool,
-  type PluginTurn,
-} from "../integrations/plugins.js";
+import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../integrations/plugins.js";
+import { resolveActingAs, toolAllowed, toolCurate } from "../integrations/policy.js";
 
 /** The caller of the script API: an org member (session) or an org API key.
  *  API keys act with their creating user's role (usage attributes the same
@@ -68,9 +62,9 @@ function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
 }
 
-async function turns(gateway: GatewayCtx, orgId: string): Promise<PluginTurn[]> {
+async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTurn[]> {
   try {
-    return await resolvePlugins(gateway, orgId);
+    return await resolveIntegrations(gateway, orgId);
   } catch {
     // The resolved plugins of the caller's org — a broken plugin contributes
     // nothing (spec §8).
