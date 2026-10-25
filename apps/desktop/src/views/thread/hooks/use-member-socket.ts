@@ -27,6 +27,8 @@ export interface MemberSocketDeps {
   busyRef: RefObject<boolean>;
   sendingRef: RefObject<boolean>;
   openChatIdRef: RefObject<string | null>;
+  displayedChatIdRef: RefObject<string | null>;
+  onThreadStateApplied: (cid: string) => void;
   updateContextRevision: (cid: string, events: ThreadState["events"]) => void;
   hasMoreRef: RefObject<boolean>;
   oldestSeqRef: RefObject<number>;
@@ -43,7 +45,8 @@ export interface MemberSocketDeps {
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
-    busyRef, sendingRef, openChatIdRef, updateContextRevision, hasMoreRef, oldestSeqRef,
+    busyRef, sendingRef, openChatIdRef, displayedChatIdRef, onThreadStateApplied,
+    updateContextRevision, hasMoreRef, oldestSeqRef,
     setHasMore, setThreadLoading, setCompacting, setSubagentTree, outgoingRef,
     observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
@@ -75,6 +78,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     // only its new events (a stale one changes nothing anywhere).
     const applied = reducerRef.current.applyState(state);
     if (applied.stale) return;
+    onThreadStateApplied(cid);
     for (const row of state.events) {
       if (row.event.type === "user_message") observedUserIdsRef.current.add(row.id);
       const command = outgoingRef.current.get(row.id);
@@ -107,8 +111,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     );
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
-    updateContextRevision(cid, state.events);
+    // The route chat's live turn is the target's status even while the old
+    // thread is still displayed (the composer is disabled during the swap).
     markBusy(state.generating);
+    // A pending target's state stays in the reducer until the display swap;
+    // the visible thread must not receive another chat's blocks.
+    if (cid !== displayedChatIdRef.current) return;
+    updateContextRevision(cid, state.events);
     setBlocks(applied.blocks);
     hasMoreRef.current = applied.hasMore;
     oldestSeqRef.current = applied.oldestSeq;
@@ -183,7 +192,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           });
         }
         if (applied.stale) return;
-        if (cid === openChatIdRef.current) {
+        if (cid === openChatIdRef.current && cid === displayedChatIdRef.current) {
           updateContextRevision(cid, events);
           setBlocks(applied.blocks);
           hasMoreRef.current = applied.hasMore;
@@ -200,6 +209,10 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           else syncingChatsRef.current.delete(cid);
         }
         if (cid !== openChatIdRef.current) return;
+        // Only the visible thread owns the skeleton flag. A pending target
+        // shows the thin navigation bar instead; a cold deep link already
+        // set threadLoading before its first sync.
+        if (cid !== displayedChatIdRef.current) return;
         if (phase === "begin") {
           setThreadLoading(true);
         } else if (!syncingChatsRef.current.has(cid)) {
@@ -212,7 +225,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onFrame: (frame) => {
         if (frame.chat_id === openChatIdRef.current) {
           const applied = reducerRef.current.applyFrame(frame.event);
-          if (!applied.stale) {
+          if (!applied.stale && frame.chat_id === displayedChatIdRef.current) {
             setBlocks(applied.blocks);
           }
           if (frame.event.type === "error") {

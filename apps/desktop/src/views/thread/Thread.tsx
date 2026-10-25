@@ -1,7 +1,7 @@
 // The thread view: transcript, composer and sidebar for one chat. State
 // lives in the hooks under thread/hooks/, pure derivations in the sibling
 // modules, and this file assembles the component tree.
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -98,8 +98,9 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES, APPROVAL_MODE_LABELS } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
-import { isReadOnlyThread, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, workingForChat } from "./status";
+import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
+import type { Block } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
@@ -149,6 +150,33 @@ class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
   }
 }
 
+/** A settled agent text block. Markdown parsing dominates a long transcript,
+ *  and the reducer keeps earlier block objects identical across live deltas
+ *  and state publishes, so this memo hits for every settled block. */
+const TextBlock = memo(function TextBlock({
+  b,
+  showStamp,
+  showInterrupted,
+}: {
+  b: Block;
+  showStamp: boolean;
+  showInterrupted: boolean;
+}) {
+  return (
+    <div className="group relative">
+      <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {b.text}
+        </Markdown>
+        {b.interrupted && showInterrupted && (
+          <div className="text-xs text-muted-foreground">stopped</div>
+        )}
+      </div>
+      {showStamp && <HoverStamp ts={b.ts} side="left" />}
+    </div>
+  );
+});
+
 export default function Thread(props: ThreadProps) {
   const scope = `${apiUrl("")}\n${props.email}`;
   return (
@@ -167,11 +195,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const {
     blocks, setBlocks, threadLoading, setThreadLoading, compacting, setCompacting,
     hasMore, setHasMore, hasMoreRef, loadingEarlier, loadingEarlierRef, oldestSeqRef, earlierAnchor, reducerRef,
-    contextRevision, updateContextRevision,
+    contextRevision, updateContextRevision, onThreadStateApplied,
     childTree, stopping, setStopping, busy, busyRef, markBusy, sendingRef,
     loadStateRef, pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
-    loadEarlier, openForChat,
+    scrollRestoreRef, displayedChatId, navigating, loadEarlier, openForChat,
   } = thread;
+  // What the screen shows: the old thread while a swap is pending, the cold
+  // deep-link target while its skeleton is up, and the route chat otherwise.
+  const viewChatId = displayedChatId ?? chatId;
+  const displayedChatIdRef = useRef<string | null>(null);
+  displayedChatIdRef.current = displayedChatId;
   const composer = useComposer({ email, chatId, onSignOut, openChatIdRef });
   const {
     draftStorage, fileStore, filesReady, mountedRef, storageFailure, persistCommand,
@@ -191,9 +224,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
   const [model, setModel] = useState("");
   const openGenerating =
-    !!chatId &&
-    (chatStatus[chatId]?.generating ??
-      (chats?.find((c) => c.id === chatId)?.generating ?? false));
+    !!viewChatId &&
+    (chatStatus[viewChatId]?.generating ??
+      (chats?.find((c) => c.id === viewChatId)?.generating ?? false));
   // The chat a pre-send pick belongs to: the first send creates the chat and
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
@@ -214,19 +247,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const openCreateProject = () => {
-    setCreateProjectOpen(true);
-  };
-  const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  // The open chat's subtree, from the per-chat map the socket fills. It
+  const openRow = viewChatId ? chats?.find((c) => c.id === viewChatId) : undefined;
+  // The visible chat's subtree, from the per-chat map the socket fills. It
   // survives navigation, so returning to a chat renders its tree at once.
-  const subagentNodes = chatId ? subagentTrees[chatId] ?? [] : [];
+  const subagentNodes = viewChatId ? subagentTrees[viewChatId] ?? [] : [];
   const openWorking = workingForChat(
     {
       generating: openGenerating,
-      working: !!(chatStatus[chatId ?? ""]?.working || openRow?.working),
+      working: !!(chatStatus[viewChatId ?? ""]?.working || openRow?.working),
     },
-    chatId ? subagentTrees[chatId] : undefined,
+    viewChatId ? subagentTrees[viewChatId] : undefined,
   );
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   // Ref mirror for effects that must read the pick without re-running on
@@ -249,7 +279,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef, machineTakenOver } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks,
-    markBusy, busyRef, sendingRef, openChatIdRef, updateContextRevision, hasMoreRef,
+    markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, onThreadStateApplied,
+    updateContextRevision, hasMoreRef,
     oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
@@ -262,6 +293,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // padding froze at a stale height (the reported clipped-last-line bug).
   const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null);
   const [composerH, setComposerH] = useState(128);
+  // The content column is observed together with the pane: any change in
+  // either height re-pins the bottom while the reader is at the bottom.
+  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
+  const anchorGuard = useRef(false);
   useEffect(() => {
     if (!composerEl) return;
     const ro = new ResizeObserver(() => setComposerH(composerEl.offsetHeight));
@@ -477,30 +512,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } });
   }, [onboarded, route.overlay, pushRoute]);
 
-  // Layout effect: the correction must land before paint, or the new block
-  // shows for a frame at the old scroll offset (the reported 1-frame jump).
-  useLayoutEffect(() => {
-    if (!stick.current) return;
-    const el = pane.current;
-    // True max scroll, not scrollIntoView on a bottom sentinel: a sentinel
-    // sits above the composer-offset padding, and aligning it with the
-    // scrollport bottom leaves the last lines behind the floating composer.
-    // composerH rides along: a composer stack growth (queued chips,
-    // attachments, a taller textarea) deepens the padding and must re-stick
-    // even when no block changed.
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [blocks, composerH]);
-
-  // Scroll anchor for the older-page prepend: keep the reader on the same
-  // content after blocks are inserted above the viewport.
-  useLayoutEffect(() => {
-    const anchor = earlierAnchor.current;
-    const el = pane.current;
-    if (!anchor || !el) return;
-    earlierAnchor.current = null;
-    el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
-  }, [blocks]);
-
 
 
   // The scratch pick is route state: the addressed new-chat surface
@@ -527,8 +538,18 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // Draft GC: per-chat draft keys would otherwise accumulate forever and
   // outlive their chats. Drop the keys whose chat left the sidebar lists
   // (archived or deleted); the scratch draft ("new") and the open chat's
-  // key always stay, and unloaded lists prune nothing.
+  // key always stay, and unloaded lists prune nothing. A live activity
+  // stamp rebuilds the chat array without changing the id set, so the
+  // expensive localStorage walk runs only when membership changes.
+  const draftGcSignature = useRef<string | null>(null);
   useEffect(() => {
+    if (chats === null) return;
+    const signature =
+      chats.map((c) => c.id).sort().join(",") +
+      "|" +
+      (archivedChats ?? []).map((c) => c.id).sort().join(",");
+    if (draftGcSignature.current === signature) return;
+    draftGcSignature.current = signature;
     gcDraftKeys(chats, archivedChats);
     // Unresolved sends own their draft keys; the helper reads the live map.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -537,6 +558,13 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const {
     renameChat, archiveChat, unarchiveChat, renameProject, archiveProject, unarchiveProject,
   } = useChatActions({ refreshChats, refreshArchivedChats, refreshProjects, refreshArchivedProjects });
+  const renameChatRow = useCallback((id: string, title: string) => { void renameChat(id, title); }, [renameChat]);
+  const archiveChatRow = useCallback((id: string) => { void archiveChat(id); }, [archiveChat]);
+  const unarchiveChatRow = useCallback((id: string) => { void unarchiveChat(id); }, [unarchiveChat]);
+  const openCreateProject = useCallback(() => setCreateProjectOpen(true), []);
+  const renameProjectRow = useCallback((id: string, name: string) => { void renameProject(id, name); }, [renameProject]);
+  const archiveProjectRow = useCallback((id: string) => { void archiveProject(id); }, [archiveProject]);
+  const unarchiveProjectRow = useCallback((id: string) => { void unarchiveProject(id); }, [unarchiveProject]);
 
   // Chat switches keep cached content visible until the socket's History
   // frame overwrites it, then request a fresh sync for the new chat. The
@@ -552,7 +580,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
 
-  const openChat = (id: string) => {
+  const openChat = useCallback((id: string) => {
     // Navigation only: the chatId effect performs the actual load, so back/
     // forward, deep links and sidebar picks all share one code path. The
     // chat's project rides along so the sidebar's project filter stays in
@@ -560,7 +588,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     const row = chatsRef.current?.find((c) => c.id === id);
     setOpen(false);
     pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
-  };
+  }, [chatsRef, pushRoute]);
 
   // A stable opener for the pinned child list: the chevron must not rebuild
   // the rows on every composer key.
@@ -568,7 +596,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   openChatRef.current = openChat;
   const openChildChat = useCallback((id: string) => openChatRef.current(id), []);
 
-  const newChat = () => {
+  const newChat = useCallback(() => {
     // Navigation only: the route moves to the addressed scratch composer
     // (/chats/new, or /work/new when entered from the Work tab); the
     // chatId effect clears the thread and the pick effect drops any pick.
@@ -582,7 +610,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     });
     setOpen(false);
     ta.current?.focus();
-  };
+  }, [pushRoute, route.tab, ta]);
 
   /** The open chat is gone server-side (a sync hits "no such chat"): fall
    * back to a fresh chat silently, carrying the composer text over so a
@@ -623,11 +651,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Navigates to the project's addressed scratch view — the pick effect
    * derives the composer's binding from the route. */
-  const newChatInProject = (project: PickedProject) => {
+  const newChatInProject = useCallback((project: PickedProject) => {
     pushRoute({ chatId: null, projectId: project.id, overlay: null, skills: null, newChat: true });
     setOpen(false);
     ta.current?.focus();
-  };
+  }, [pushRoute, ta]);
 
 
 
@@ -639,21 +667,22 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setStopping((prev) => pruneStopping(prev, chatStatus, chats) ?? prev);
   }, [chats, chatStatus]);
 
-  const activeChat = chats?.find((c) => c.id === chatId);
+  const activeChat = chats?.find((c) => c.id === viewChatId);
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
   // sync's begin/done bracket must never flash a composer into a child
-  // thread.
-  const childThreadNode = childTree !== null && childTree.parent !== null;
-  const readOnlyThread =
-    childThreadNode || isReadOnlyThread({ chatId, chats, archivedChats, threadLoading });
+  // thread. An unknown thread hides the composer instead of showing an
+  // editable one that would flip a moment later.
+  const access = threadAccess({ chatId: viewChatId, chats, archivedChats, childTree });
+  const readOnlyThread = access === "readonly";
+  const composerUnknown = access === "unknown";
   const activeTitle = readOnlyThread
     ? childTree?.title ?? "Subagent thread"
-    : activeChat?.title ?? (chatId === null ? "New chat" : "");
+    : activeChat?.title ?? (viewChatId === null ? "New chat" : "");
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
-  const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
+  const chatArchived = !!archivedChats?.some((c) => c.id === viewChatId);
   // The header menu's rename: a popup dialog around the sidebar's rename
   // transport. Enter or Save commits, Esc/cancel discards.
   const [renameOpen, setRenameOpen] = useState(false);
@@ -663,20 +692,20 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setRenameOpen(false);
     const current = activeChat?.title;
     if (!v || v === current) return;
-    if (!chatId) return;
-    await renameChat(chatId, v);
-  }, [chatId, renameValue, activeChat, renameChat]);
+    if (!viewChatId) return;
+    await renameChat(viewChatId, v);
+  }, [viewChatId, renameValue, activeChat, renameChat]);
   // The header menu's archive: the open chat navigates back to the chats
   // list after archiving (an archived thread is a dead end for sending).
   const headerArchive = useCallback(async () => {
-    if (!chatId) return;
+    if (!viewChatId) return;
     if (chatArchived) {
-      await unarchiveChat(chatId);
+      await unarchiveChat(viewChatId);
       return;
     }
-    await archiveChat(chatId);
+    await archiveChat(viewChatId);
     pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
-  }, [chatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
+  }, [viewChatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
   // View entries: each contiguous thinking/tool run becomes one
   // WorkedForBlock; everything else (user, text, errors, compaction cards,
   // queued-send chips, approvals) stays 1:1.
@@ -702,8 +731,77 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     }
     return { entries, finalAgent, lastAgent };
   }, [blocks]);
-  const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
+  const offlineMachineBanner = offlineMachine(chats, viewChatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
+
+  // Restore the visible chat's saved reading position once per swap. A chat
+  // that was at the bottom (or was never opened) pins to the bottom; one
+  // that was scrolled up returns to the same offset.
+  useLayoutEffect(() => {
+    const restore = scrollRestoreRef.current;
+    if (!restore) return;
+    const el = pane.current;
+    if (!el) return;
+    scrollRestoreRef.current = null;
+    if (restore.atBottom) {
+      stick.current = true;
+      setAtBottom(true);
+      el.scrollTop = el.scrollHeight;
+    } else {
+      stick.current = false;
+      setAtBottom(false);
+      el.scrollTop = restore.top;
+    }
+  }, [displayedChatId, blocks, scrollRestoreRef]);
+
+  // Scroll anchor for the older-page prepend: keep the reader on the same
+  // content after blocks are inserted above the viewport. The guard keeps
+  // the observer's bottom pin from running over this restore in the same
+  // frame.
+  useLayoutEffect(() => {
+    const anchor = earlierAnchor.current;
+    const el = pane.current;
+    if (!anchor || !el) return;
+    earlierAnchor.current = null;
+    el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
+    anchorGuard.current = true;
+    requestAnimationFrame(() => { anchorGuard.current = false; });
+  }, [blocks]);
+
+  // State-only height changes (the subagent tree, compaction line, working
+  // indicator, banners, hasMore, streaming) have no block change to trigger
+  // the observer. Re-pin them explicitly; the observer covers the rest.
+  useLayoutEffect(() => {
+    if (!stick.current || anchorGuard.current) return;
+    const el = pane.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [subagentNodes, compacting, streaming, hasMore, offlineMachineBanner?.label, composerH, displayedChatId]);
+
+  // Geometry pin: observe the content column and the pane. The observer
+  // catches late blocks, removed tail blocks, window/sidebar/column resizes
+  // and the mobile keyboard's visual-viewport shrink. One rAF coalesces a
+  // burst of resize callbacks into one scroll write.
+  useEffect(() => {
+    const paneEl = pane.current;
+    if (!paneEl || !contentEl) return;
+    let raf = 0;
+    const pin = () => {
+      if (!stick.current || anchorGuard.current) return;
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!stick.current || anchorGuard.current) return;
+        paneEl.scrollTop = paneEl.scrollHeight;
+      });
+    };
+    const observer = new ResizeObserver(pin);
+    observer.observe(contentEl);
+    observer.observe(paneEl);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [contentEl, displayedChatId, blocks.length === 0]);
   // The transcript is the expensive subtree: every keystroke in the
   // composer re-renders the whole view, and a long thread holds thousands
   // of markdown blocks. Memoizing the element list keeps those elements
@@ -770,19 +868,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               {e.b.text}
             </div>
           ) : (
-            <div key={e.b.key} className="group relative">
-              <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-                <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {e.b.text}
-                </Markdown>
-                {e.b.interrupted && !streaming && (
-                  <div className="text-xs text-muted-foreground">stopped</div>
-                )}
-              </div>
-              {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
-                <HoverStamp ts={e.b.ts} side="left" />
-              )}
-            </div>
+            <TextBlock
+              key={e.b.key}
+              b={e.b}
+              showStamp={finalAgent.has(e.i) && !(streaming && e.i === lastAgent)}
+              showInterrupted={!streaming}
+            />
           )
         );
       }),
@@ -916,9 +1007,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       onOpenChat={openChat}
       onCollapse={sidebarCollapse}
       onClose={sidebarClose}
-      onRenameChat={(id, title) => void renameChat(id, title)}
-      onArchiveChat={(id) => void archiveChat(id)}
-      onUnarchiveChat={(id) => void unarchiveChat(id)}
+      onRenameChat={renameChatRow}
+      onArchiveChat={archiveChatRow}
+      onUnarchiveChat={unarchiveChatRow}
     />
   );
   const sidebar =
@@ -935,11 +1026,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         onClose={sidebarClose}
         onNewChatInProject={newChatInProject}
         onNewProject={openCreateProject}
-        onRenameChat={(id, title) => void renameChat(id, title)}
-        onArchiveChat={(id) => void archiveChat(id)}
-        onRenameProject={(id, name) => void renameProject(id, name)}
-        onArchiveProject={(id) => void archiveProject(id)}
-        onUnarchiveProject={(id) => void unarchiveProject(id)}
+        onRenameChat={renameChatRow}
+        onArchiveChat={archiveChatRow}
+        onRenameProject={renameProjectRow}
+        onArchiveProject={archiveProjectRow}
+        onUnarchiveProject={unarchiveProjectRow}
       />
     ) : sidebarTab === "settings" ? (
       <SettingsPanel
@@ -1263,7 +1354,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             <ChildThreadHeader tree={childTree} onBack={openChat} />
           ) : (
             <ThreadTitle
-              chatId={chatId}
+              chatId={viewChatId}
               title={activeTitle}
               loading={threadLoading && blocks.length === 0}
             />
@@ -1364,10 +1455,19 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           )
         ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
+          {navigating && (
+            <div
+              role="progressbar"
+              aria-label="Loading thread"
+              className="absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden bg-border"
+            >
+              <div className="h-full w-1/3 animate-pulse bg-primary" />
+            </div>
+          )}
           <div
             ref={pane}
             data-scrollable
-            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [overflow-anchor:none] [scrollbar-gutter:stable]"
             onScroll={() => {
               const el = pane.current;
               if (!el) return;
@@ -1382,6 +1482,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             }}
           >
             <div
+              ref={setContentEl}
               className={`mx-auto w-full space-y-5 px-4 pt-6 text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
                 chatResizing ? "" : "transition-[max-width] duration-150"
               }`}
@@ -1499,6 +1600,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               style={{ maxWidth: chatWidth }}
             >
               Subagent thread. Read-only — the parent agent drives this conversation.
+            </div>
+          ) : composerUnknown ? (
+            <div
+              aria-label="Loading thread composer"
+              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
+              style={{ maxWidth: chatWidth }}
+            >
+              Loading thread…
             </div>
           ) : (
           <div
@@ -1655,6 +1764,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 }
               }}
               onKeyDown={(e) => {
+                if (navigating) return;
                 if (mentionMatches.length > 0) {
                   if (e.key === "ArrowDown") {
                     e.preventDefault();
@@ -1705,7 +1815,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               // during generation (send is guarded by `busy` anyway).
               // readOnly (not disabled) for the held first send too — the
               // screen stays frozen with the sent text until navigation.
-              readOnly={holdingFirstSend}
+              readOnly={holdingFirstSend || navigating}
               disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
@@ -1718,7 +1828,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   variant="ghost"
                   className="size-7 rounded-full text-muted-foreground hover:text-foreground"
                   onClick={() => fileInput.current?.click()}
-                  disabled={busy}
+                  disabled={busy || navigating}
                   title="Attach images, audio, or files"
                 >
                   <Plus className="size-4" />
@@ -1829,8 +1939,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <ContextRing chatId={chatId} model={model}
-                  revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
+                <ContextRing chatId={viewChatId} model={model}
+                  revision={contextRevision?.chatId === viewChatId ? contextRevision.seq : null} />
                 {(() => {
                   const chipAgent = pickedAgent;
                   return agentLocked ? (
@@ -1948,6 +2058,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                           : void send(generating ? "queue" : "normal")
                       }
                       disabled={
+                        navigating ||
                         mode === "pending" ||
                         mode === "stopping" ||
                         (mode === "send" && (!model || !hasContent))
