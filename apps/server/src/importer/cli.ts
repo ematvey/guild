@@ -3,9 +3,8 @@
 //
 // Reads GUILD_DATABASE_URL (or --database) and GUILD_S3_* from the
 // environment, truncates + rebuilds the durable_* tables and the
-// chat_conversations mapping from `thread_events`. Run the cutover runbook
-// (apps/server/M3-REPORT.md §Cutover runbook) — in particular: stop the TS
-// server while the importer owns the store.
+// chat_conversations mapping from `thread_events`. Stop the TS server while
+// the importer owns the store.
 
 import pg from "pg";
 import { loadConfig } from "../config.js";

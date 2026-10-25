@@ -7,7 +7,7 @@ import Thread from "./views/thread/Thread";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
-import { IS_TAURI, clearToken, setToken } from "./lib/session";
+import { IS_TAURI, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/workspaces";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
@@ -37,7 +37,7 @@ function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
 
 function defaultServerUrl(): string {
   try {
-    return localStorage.getItem("guild.serverUrl") ?? BAKED_URL;
+    return localStorage.getItem(SERVER_URL_KEY) ?? BAKED_URL;
   } catch {
     return BAKED_URL;
   }
@@ -306,10 +306,10 @@ function DesktopApp() {
     // profile lookup with the OLD or missing credential — a fresh admin
     // login after sign-out deterministically landed on the member fallback.
     try {
-      localStorage.setItem("guild.serverUrl", baseUrl);
+      localStorage.setItem(SERVER_URL_KEY, baseUrl);
       // Unified shell: the webview talks to the same server over HTTP, so the
       // engine's session token becomes the webview's chat token.
-      if (info.result?.token) localStorage.setItem("guild_token", info.result.token);
+      if (info.result?.token) setToken(info.result.token);
     } catch {
       /* private mode: pref simply not remembered */
     }

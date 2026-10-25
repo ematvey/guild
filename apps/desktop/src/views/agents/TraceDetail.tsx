@@ -21,6 +21,7 @@ import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
 import { apiMe } from "../../lib/api/workspaces";
 import { relativeTime } from "../../lib/relative-time";
+import { formatBytes } from "../../lib/format";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import {
   getRun,
@@ -325,12 +326,6 @@ function traceTitle(trace: TraceRow): string {
     .find((line) => line !== "");
   if (first === undefined || first === "") return trace.agent_name || "Trace";
   return first.length > 140 ? `${first.slice(0, 140).trimEnd()}…` : first;
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

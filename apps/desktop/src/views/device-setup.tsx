@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { createPairingToken, pairingCode } from "../lib/api/folders";
 import { downloadRelease, listReleases, type Release } from "../lib/api/releases";
 import { serverUrl } from "../lib/session";
+import { formatBytes } from "../lib/format";
 
 type DesktopOs = "mac" | "windows" | "linux";
 
@@ -44,10 +45,6 @@ function platformLabel(platform: string): string {
   if (platform === "linux-x86_64") return "Linux — 64-bit";
   if (platform === "linux-aarch64") return "Linux — ARM64";
   return platform;
-}
-
-function formatSize(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 export function DeviceSetupDialog({
@@ -147,7 +144,7 @@ export function DeviceSetupDialog({
                       {platformLabel(r.platform)}
                     </p>
                     <p className="text-muted-foreground">
-                      v{r.version} · {formatSize(r.size_bytes)}
+                      v{r.version} · {formatBytes(r.size_bytes, { binary: true })}
                     </p>
                   </div>
                   <Button size="sm" onClick={() => startDownload(r)} disabled={dlBusy === r.id}>

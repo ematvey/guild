@@ -25,8 +25,7 @@ import { LiveHub, type LiveMember } from "../hub/live.js";
 import { SocketSink } from "../hub/sink.js";
 import { parseClientMsg, serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
 import { threadListSnapshot } from "../hub/feed.js";
-import { TicketStore, type TicketIdentity } from "../hub/tickets.js";
-void TicketStore;
+import type { TicketIdentity } from "../hub/tickets.js";
 
 // A socket that cannot flush its terminal notice within this deadline is
 // treated as dead. No socket write may delay eviction beyond this bound.

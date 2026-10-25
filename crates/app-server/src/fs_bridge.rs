@@ -1,7 +1,7 @@
 //! The file bridge: primitive, allowlisted filesystem operations the
 //! webview calls over the RPC channel (unification spec §3 item 2). The
 //! discovery *logic* (skills index, AGENTS.md chain, `/name` expansion)
-//! lives in TS (`apps/desktop/src/lib/context.ts`); Rust only touches
+//! lives in TS (`apps/desktop/src/lib/turn-context.ts`); Rust only touches
 //! bytes — reads/writes/existence/listing inside the allowlist.
 //!
 //! Read roots: the bound project folder, its ancestor chain up to and
