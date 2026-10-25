@@ -266,8 +266,9 @@ Live tables (verify against `apps/server/src/platform/store/` +
 
 The `routines`, `routine_runs` and `routine_schedule_starts` tables are
 leftovers from the removed integration routines; no code reads them.
-Schema changes go through embedded, checksummed migrations applied under an
-advisory lock.
+The `llm_calls` table named in older notes has no live writer; the live LLM
+record is an `llm` span in `agent_spans` (SRS-27). Schema changes go through
+embedded, checksummed migrations applied under an advisory lock.
 
 **SRS-27 — ClickHouse holds usage events.**
 `usage_events` (ts, org_id, user_id, team_id, session_id, model, provider, 

@@ -36,8 +36,10 @@ import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
 import type { TraceStore } from "../platform/trace.js";
+import { APPROVAL_POLICY_PROMPT_KEY } from "../platform/store/org_kv.js";
+import { clientToolClass } from "../platform/domain/tool-class.js";
 
-export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
+export { APPROVAL_POLICY_PROMPT_KEY };
 
 /** Built-in "Approve for me" policy prompt (codex-style: only escalate
  *  potentially unsafe actions). Admin-tunable via the org KV key. */
@@ -57,27 +59,6 @@ const INTERNAL_JUDGE_SESSION_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-ses
  *  tools flow, state-changing tools ask. */
 export const SERVER_DEFAULT_POLICY = { default: "ask", overrides: { read_file: "allow" } };
 
-/** The pi-durable tool names → the guild-core tool classes the policy
- *  vocabulary (overrides, the admin surface) is keyed by. */
-export function toolClass(name: string): string {
-  switch (name) {
-    case "read":
-      return "read_file";
-    case "bash":
-    case "agent_bash":
-      return "execute";
-    case "write":
-    case "agent_write":
-      return "write_file";
-    case "edit":
-    case "agent_edit":
-      return "edit_file";
-    case "agent_read":
-      return "read_file";
-    default:
-      return name;
-  }
-}
 
 export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
@@ -567,7 +548,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       } else if (chat_mode === "ask" || chat_mode === "never") {
         decision = "ask";
       } else if (user_policy !== null) {
-        decision = forTool(resolvePolicy(user_policy), toolClass(call.name));
+        decision = forTool(resolvePolicy(user_policy), clientToolClass(call.name));
       } else {
         decision = "ask";
       }

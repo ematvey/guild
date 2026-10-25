@@ -3,7 +3,7 @@
 // unreachable ClickHouse never breaks a turn.
 
 import { clickhouseDateTime, ClickhouseClient } from "./clickhouse.js";
-import { errorText } from "./usage.js";
+import { errorText, primaryTeamId } from "./usage.js";
 import type { PlatformPool } from "./db.js";
 
 export interface SkillReadEvent {
@@ -44,16 +44,8 @@ export class SkillReadSink {
       // a failed ensure is caught below with the insert — ClickHouse being
       // down drops the read, never breaks the turn.
       await this.ensureOnce();
-      let teamId = event.team_id ?? "";
-      if (event.team_id === null && this.pool !== null) {
-        // Membership has no primary flag; the earliest-created team is primary.
-        const res = await this.pool.query<{ id: string }>(
-          "SELECT t.id FROM teams t JOIN team_members m ON m.team_id = t.id " +
-            "WHERE m.user_id = $1 AND t.org_id = $2 ORDER BY t.created_at, t.id LIMIT 1",
-          [event.user_id, event.org_id],
-        );
-        teamId = res.rows[0]?.id ?? "";
-      }
+      const teamId =
+        event.team_id ?? (await primaryTeamId(this.pool, event.user_id, event.org_id)) ?? "";
       await this.client.insert("skill_reads", [
         {
           ts: clickhouseDateTime(event.ts),
