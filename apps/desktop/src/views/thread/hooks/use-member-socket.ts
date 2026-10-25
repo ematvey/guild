@@ -37,6 +37,8 @@ export interface MemberSocketDeps {
   setThreadLoading: (v: boolean) => void;
   setCompacting: (v: boolean) => void;
   setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
+  resetSubagentTrees: () => void;
+  cancelPending: (cid: string) => void;
   outgoingRef: RefObject<Map<string, OutgoingCommand>>;
   observedUserIdsRef: RefObject<Set<string>>;
   settleOutgoing: (command: OutgoingCommand) => void;
@@ -48,8 +50,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
     busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
-    setHasMore, setThreadLoading, setCompacting, setSubagentTree, outgoingRef,
-    observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
+    setHasMore, setThreadLoading, setCompacting, setSubagentTree, resetSubagentTrees,
+    cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
   useEffect(() => {
@@ -150,6 +152,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         syncingChatsRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
+        resetSubagentTrees();
         markBusy(false);
       },
       onThreadList: (nextChats) => {
@@ -247,6 +250,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           // of showing an error the user cannot act on.
           recoverMissingChatRef.current();
         } else {
+          const route = openChatIdRef.current;
+          if (route !== null) cancelPending(route);
           setThreadLoading(false);
           // One toast per connection problem: the socket retries every few
           // seconds, and identical stacked toasts read as spam.

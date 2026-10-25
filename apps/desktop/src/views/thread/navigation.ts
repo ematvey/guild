@@ -26,6 +26,9 @@ export interface NavigationDecision {
   state: NavigationState;
   /** Present when this transition displays a chat (null = scratch view). */
   swapTo?: string | null;
+  /** A swap starts a clean live-turn display: the old chat's busy must not
+   *  leak onto the target before its first ThreadState. */
+  clearBusy?: true;
   /** The chat whose child tree must be fetched now. */
   fetchTree?: string;
   /** Abort the pending chat's in-flight child tree fetch. */
@@ -59,6 +62,7 @@ function swapped(
       treeReady: true,
     },
     swapTo: chatId,
+    clearBusy: true,
     ...(abortTree ? { abortTree: true } : {}),
   };
 }

@@ -301,7 +301,7 @@ class SocketGate {
       return [];
     }
     const message = output.msg!;
-    if (this.syncDepth > 0 && SocketGate.isLive(message)) {
+    if (output.kind !== "sync_message" && this.syncDepth > 0 && SocketGate.isLive(message)) {
       this.deferred.push(message);
       return [];
     }
@@ -433,6 +433,7 @@ async function driveSocket(
         continue;
       }
       if (output.kind === "sync_start") {
+        gate.push(output);
         sink.ackSyncStart();
         continue;
       }
@@ -673,29 +674,34 @@ async function runSyncStarted(
   chatId: string,
   sink: SocketSink,
 ): Promise<void> {
-  sink.send({ type: "sync_begin", chat_id: chatId });
+  sink.sendSync({ type: "sync_begin", chat_id: chatId });
   try {
     // Both reads start together; the tree is small and is sent as soon as it
     // lands, so the running-subagent block does not wait for the full thread
-    // capture.
+    // capture. The tree is auxiliary: its failure leaves the transcript sync
+    // intact.
     const treeRead = chats.wsSubagentTree?.({ chatId, user, sink });
     const stateRead = chats.wsSync?.({ chatId, user, sink });
     // The state read may reject while the tree is still awaited: attach a
     // handler now so that rejection is not unhandled. The await below still
     // rethrows through this bracket's catch.
     stateRead?.catch(() => {});
-    const tree = await treeRead;
-    if (tree !== undefined && tree !== null) sink.send(tree);
+    try {
+      const tree = await treeRead;
+      if (tree !== undefined && tree !== null) sink.sendSync(tree);
+    } catch {
+      // The child tree is auxiliary; the authoritative state still goes.
+    }
     const snapshot = await stateRead;
-    if (snapshot !== undefined && snapshot !== null) sink.send(snapshot);
+    if (snapshot !== undefined && snapshot !== null) sink.sendSync(snapshot);
     else if (chats.wsSync === undefined) {
-      sink.send({ type: "error", message: "sync unavailable" });
+      sink.sendSync({ type: "error", message: "sync unavailable" });
     }
   } catch (error) {
-    sink.send({
+    sink.sendSync({
       type: "error",
       message: error instanceof ApiError ? error.message : "internal server error",
     });
   }
-  sink.send({ type: "sync_done", chat_id: chatId });
+  sink.sendSync({ type: "sync_done", chat_id: chatId });
 }
