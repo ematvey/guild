@@ -329,6 +329,39 @@
           "at": "apps/desktop/src/views/thread/hooks/use-chat-data.ts"
         }
       ]
+    },
+    {
+      "id": "mime",
+      "definition": "The content type and modality of a file or tool result, decided once from its extension or declared type.",
+      "canonical": "apps/server/src/platform/domain/mime.ts",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/domain/mime.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/send-file.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/chats/turn-text.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/platform/domain/mime.ts"
+        },
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/server/src/chats/turn-text.ts"
+        }
+      ]
     }
   ],
   "attaches": [
