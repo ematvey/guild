@@ -29,13 +29,30 @@ docs/archive        older decision log
 
 ## Build & test
 
+`scripts/check.sh` is the one gate. It runs the baseline checks concurrently,
+prints PASS/FAIL and the time for each, then a summary. It exits 1 if any
+check fails.
+
 ```bash
-cargo fmt --all
+scripts/check.sh              # the full gate
+scripts/check.sh --fast       # skip cargo test and the server suite
+scripts/check.sh --only coherence
+```
+
+The gate runs, in this order of dependency (the bindings check waits for
+cargo test, because cargo test rewrites the generated bindings):
+
+```bash
 cargo test --workspace
-cargo clippy --workspace -- -D warnings
 npm test --workspace apps/server        # TS server suite (disposable PG/CH databases)
 cd apps/desktop && npm test             # frontend vitest
+cargo clippy --workspace -- -D warnings
+scripts/check-windows.sh                # SKIP when the Windows target is absent
+scripts/check-bindings.sh               # runs after cargo test
+npm run coherence
 ```
+
+Format before you commit: `cargo fmt --all`.
 
 ## Run the stack
 
