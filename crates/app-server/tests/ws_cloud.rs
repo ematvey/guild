@@ -211,15 +211,12 @@ async fn cloud_command_buffers_frames_that_arrive_before_the_ack() {
     tokio::pin!(stream_fut);
     // Drive the client until the command is in flight: the client socket is
     // up and the gateway holds the request while its ack is delayed.
-    loop {
-        tokio::select! {
-            command = commands_rx.recv() => {
-                let _command = command.expect("gateway saw the command");
-                break;
-            }
-            _ = &mut stream_fut => {
-                panic!("chat_stream must not complete before the ack")
-            }
+    tokio::select! {
+        command = commands_rx.recv() => {
+            let _command = command.expect("gateway saw the command");
+        }
+        _ = &mut stream_fut => {
+            panic!("chat_stream must not complete before the ack")
         }
     }
     frames_tx

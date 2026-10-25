@@ -359,7 +359,7 @@ async fn two_workspaces_stay_independent() {
     state
         .transition(
             AuthChange::Switch {
-                base_url: a.uri().into(),
+                base_url: a.uri(),
             },
             Some(&store),
             &links,
@@ -400,7 +400,7 @@ async fn two_workspaces_stay_independent() {
     state
         .transition(
             AuthChange::SignOutWorkspace {
-                base_url: b.uri().into(),
+                base_url: b.uri(),
             },
             Some(&store),
             &links,

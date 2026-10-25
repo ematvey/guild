@@ -108,9 +108,7 @@ struct ToolExecutions(std::collections::HashMap<String, tokio::task::JoinHandle<
 impl ToolExecutions {
     fn spawn(&mut self, id: String, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.0.retain(|_, task| !task.is_finished());
-        if !self.0.contains_key(&id) {
-            self.0.insert(id, tokio::spawn(work));
-        }
+        self.0.entry(id).or_insert_with(|| tokio::spawn(work));
     }
 
     fn cancel(&mut self, id: &str) {
@@ -346,15 +344,6 @@ const FS_LIST_MAX_ENTRIES: usize = 1000;
 /// must not ride the executor socket as one frame.
 const FS_READ_MAX_BYTES: usize = 1024 * 1024;
 
-/// The skill scope `skills.sync_v1` converges: the machine user's home
-/// (`~/.agents/skills` — the same root the remote-context skill scan
-/// reads). Env-overridable for tests.
-fn skills_root() -> PathBuf {
-    std::env::var("GUILD_SKILLS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::fs_bridge::home_dir())
-}
-
 /// Fills each sync entry's bundle URL when the server omitted it: the
 /// machine's own authenticated registry bundle endpoint — the same one
 /// install_skill uses.
@@ -393,7 +382,7 @@ async fn sync_skills(
             let cloud = cloud.clone();
             async move { crate::skill_sync::fetch_bundle(&cloud, &url).await }
         },
-        &skills_root(),
+        &crate::fs_bridge::skills_home(),
     )
     .await
 }
@@ -408,7 +397,7 @@ async fn sync_skills(
 /// golden replay pins the machine-connect frame stream byte-exactly —
 /// hence this pull.
 async fn pull_skills(cloud: &CloudClient) -> Result<serde_json::Value, String> {
-    pull_skills_at(cloud, &skills_root()).await
+    pull_skills_at(cloud, &crate::fs_bridge::skills_home()).await
 }
 
 /// `pull_skills` with an explicit root — the test seam (the env-var root

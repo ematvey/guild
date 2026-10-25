@@ -260,6 +260,28 @@ model: another session edited `crates/app-server/src/machine_link.rs` in the
 same checkout. `floor.json` was updated once, at merge, and records the tree
 as it is.
 
+## Workspace snapshot (2026-10-25, commit 0539451f)
+
+`apps/server/src/hub/workspace.ts` held the sidebar push snapshot and had no
+model entry. It is now `workspace-snapshot` in `srv-domain.json`: canonical
+`workspace.ts`, role `wire`, aliases `sidebar-snapshot` and `workspace-push`.
+The concept is one user's whole sidebar state (active chats, archived chats,
+projects, machine registry) built for the member socket.
+
+`unmapped_files` returned to 0. `files` rose 531 -> 532 and `loc` 122428 ->
+122682. The file counter is this one file. The line counter is the net of the
+whole commit across 29 files; every other file in it was already modelled.
+The floor records the tree as it is, and no counter is excused.
+
+## Gate work (2026-10-26, commits 9b466d16..61e90f78)
+
+`loc` rose 122682 -> 122733 (+51) when the three gate branches merged. No new
+source file appeared (`files` stays 532). The lines are the merged work: the
+`skills_home()` consolidation in `fs_bridge.rs` and `machine_link.rs`, the
+ClickHouse credential helpers in the test harness, and the poll helpers that
+replace fixed sleeps in the server tests. `floor.json` was updated once, after
+the merge, and records the tree as it is.
+
 ---
 
 # Round 1 fixes (2026-10-25, six fixer lanes in worktrees)

@@ -221,6 +221,16 @@
       "translations": []
     },
     {
+      "id": "workspace-snapshot",
+      "definition": "One user's sidebar state — active chats, archived chats, projects, and the machine registry — built as wire rows for the workspace push on the member socket.",
+      "canonical": "apps/server/src/hub/workspace.ts",
+      "aliases": ["sidebar-snapshot", "workspace-push"],
+      "representations": [
+        { "where": "apps/server/src/hub/workspace.ts", "role": "wire" }
+      ],
+      "translations": []
+    },
+    {
       "id": "projection-cursor",
       "definition": "The stored position in a chat's durable entry log that the transcript projection has already copied into thread_events, with its turn and step.",
       "canonical": "apps/server/src/chats/projection.ts",
