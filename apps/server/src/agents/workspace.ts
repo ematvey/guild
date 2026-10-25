@@ -1,5 +1,5 @@
-// Workspace resolution for agent threads: a chat that belongs to an
-// agent_threads row runs in the agent's shared workspace
+// sandboxWorkspace: the sandbox target for a chat. A chat that belongs to an
+// agent_threads row runs in the agent's shared directory
 // (agents/<org>/<agentId>) and sandbox (agent:<org>:<agentId>). Every other
 // chat keeps its per-conversation sandbox.
 
