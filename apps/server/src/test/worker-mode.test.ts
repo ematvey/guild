@@ -148,14 +148,19 @@ describe("worker-per-chat (fork supervisor)", () => {
     ]);
     await submit(chatId, "hello through a forked worker");
     await waitFor(async () => (await lastAssistant(chatId)).includes("worker mode answer"));
-    const chatList = await stack.env.app.inject({
-      method: "GET",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-    });
-    const listed = (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats
-      .find((c) => c.id === chatId);
-    expect(listed!.generating).toBe(false);
+    const listedOf = async () => {
+      const chatList = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+      });
+      return (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats
+        .find((c) => c.id === chatId);
+    };
+    // The answer is committed before the run lifecycle clears `generating`,
+    // so poll for the settled row rather than reading once.
+    await waitFor(async () => (await listedOf())?.generating === false);
+    expect((await listedOf())!.generating).toBe(false);
     expect(stack.env.app.platform.supervisor!.pidOf(chatId)).toBeDefined();
   }, 90_000);
 
@@ -280,12 +285,21 @@ describe("worker-per-chat (fork supervisor)", () => {
     // B must finish undisturbed; A's worker respawns and re-drives its turn.
     await waitFor(async () => (await lastAssistant(chatB)).includes("bee"));
     await waitFor(async () => (await lastAssistant(chatA)).includes("resumed after kill"));
-    const chatList = await stack.env.app.inject({
-      method: "GET",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
+    const listedOf = async () => {
+      const chatList = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+      });
+      return (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats;
+    };
+    // The answer is committed before the run lifecycle clears `generating`,
+    // so poll for the settled rows rather than reading once.
+    await waitFor(async () => {
+      const listed = await listedOf();
+      return listed.find((c) => c.id === chatA)?.generating === false && listed.find((c) => c.id === chatB)?.generating === false;
     });
-    const listed = (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats;
+    const listed = await listedOf();
     expect(listed.find((c) => c.id === chatA)!.generating).toBe(false);
     expect(listed.find((c) => c.id === chatB)!.generating).toBe(false);
     const threadA = await stack.env.app.inject({

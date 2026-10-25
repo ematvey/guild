@@ -12,11 +12,11 @@ export default defineConfig({
     // Each suite worker holds several Postgres connections (app pool,
     // seeding pools, the notify client) on the shared dev server, which also
     // serves temporal/posthog. It ran 300 connections before 2026-10-22 and
-    // 500 since, so four workers at a time stay well inside the budget; the
-    // files are independent stacks (own database, own ClickHouse database,
-    // own temp roots), so running them side by side is safe.
+    // 500 since; fourteen workers hold at most ~140 of them, well inside the
+    // budget. The files are independent stacks (own database, own ClickHouse
+    // database, own temp roots), so running them side by side is safe.
     fileParallelism: true,
-    maxWorkers: 4,
+    maxWorkers: 14,
     minWorkers: 1,
   },
 });

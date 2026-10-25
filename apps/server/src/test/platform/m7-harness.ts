@@ -20,12 +20,14 @@ import { loadConfig } from "../../config.js";
 // vitest runs with cwd = apps/server; the migrations live in the Rust tree
 // (the historical record the TS schema ports verbatim).
 import { applyPlatformMigrations } from "../../platform/migrations.js";
-import { testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
+import { testClickhousePassword, testClickhouseUser, testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
 
 const TEST_ADMIN_URL = process.env.GUILD_M7_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
 const TEST_S3_URL = process.env.GUILD_M7_TEST_S3_URL ?? "http://localhost:9950";
 const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_M7_TEST_S3_ACCESS_KEY_ID");
 const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_M7_TEST_S3_SECRET_ACCESS_KEY");
+const TEST_CLICKHOUSE_USER = testClickhouseUser();
+const TEST_CLICKHOUSE_PASSWORD = testClickhousePassword();
 
 function randomSuffix(): string {
   const bytes = new Uint8Array(6);
@@ -80,6 +82,8 @@ export async function createM7TestEnv(logLevel = "error", extraEnv: Record<strin
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     GUILD_MASTER_KEY_HEX: "22".repeat(32),
     GUILD_JWT_SECRET: "m7-test-jwt-secret",
+    GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
+    GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_API_URL: "http://localhost:18080",
     GUILD_LOG_LEVEL: logLevel,
     ...extraEnv,
