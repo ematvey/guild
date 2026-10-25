@@ -7,7 +7,7 @@
 import { ApiError } from "../errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
-import { serializeRustJson } from "../provider/sse.js";
+import { serializeRustJson } from "../provider/rust-json.js";
 import type { TraceStore } from "../trace.js";
 import type { GatewayStore } from "../store/gateway.js";
 

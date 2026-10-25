@@ -9,7 +9,7 @@
 // JSON.stringify preserves string-key insertion order.
 
 import { threadEventRowWire } from "../platform/domain/thread-events.js";
-import { rustFloatText } from "../platform/provider/sse.js";
+import { rustFloatText } from "../platform/provider/rust-json.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
