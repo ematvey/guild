@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Collision-proof loopback listener (see tests/agent_rpc.rs).
+/// Collision-proof loopback listener.
 async fn standalone_listener() -> tokio::net::TcpListener {
     loop {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
