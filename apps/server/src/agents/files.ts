@@ -7,6 +7,7 @@ import { createReadStream, type ReadStream } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "../platform/errors.js";
+import { agentWorkspaceDir } from "./workspace-config.js";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -81,15 +82,69 @@ function entryFor(rel: string, stats: Awaited<ReturnType<typeof lstat>>, symlink
   };
 }
 
+/** Resolves the root and proves it exists. */
+async function realRootOf(root: string): Promise<string> {
+  return realpath(root).catch(() => {
+    throw ApiError.notFound("no such path");
+  });
+}
+
+/** Proves the real path stays under the resolved root. Callers run it only
+ *  after the symlink check, so a symlink can never redirect the read. */
+async function assertContained(realRoot: string, abs: string): Promise<void> {
+  const realAbs = await realpath(abs).catch(() => {
+    throw ApiError.notFound("no such path");
+  });
+  if (realAbs !== realRoot && !realAbs.startsWith(realRoot + path.sep)) {
+    throw badPath("path escapes the agent workspace");
+  }
+}
+
+/** Refuses any path whose segments include a symlink. */
+async function assertNoSymlink(root: string, rel: string): Promise<void> {
+  if (rel === "") return;
+  let current = root;
+  for (const segment of rel.split("/")) {
+    current = path.join(current, segment);
+    let stats;
+    try {
+      stats = await lstat(current);
+    } catch {
+      throw ApiError.notFound("no such path");
+    }
+    if (stats.isSymbolicLink()) throw badPath("symlink paths are not followed");
+  }
+}
+
+/** Resolves a relative path inside one agent workspace under the read policy:
+ *  lexical containment, no symlink on any segment, and a real path under the
+ *  resolved root. */
+export async function resolveAgentReadPath(
+  workspaceRoot: string,
+  orgId: string,
+  agentId: string,
+  relPath: string | undefined,
+): Promise<{ root: string; realRoot: string; rel: string; abs: string }> {
+  const rel = normalizeRelativePath(relPath);
+  const root = agentWorkspaceDir(workspaceRoot, orgId, agentId);
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) throw badPath("path escapes the agent workspace");
+  const realRoot = await realRootOf(root);
+  await assertNoSymlink(root, rel);
+  await assertContained(realRoot, abs);
+  return { root, realRoot, rel, abs };
+}
+
 export class AgentFiles {
   constructor(private readonly workspaceRoot: string) {}
 
   private rootFor(orgId: string, agentId: string): string {
-    return path.resolve(this.workspaceRoot, "agents", orgId, agentId);
+    return agentWorkspaceDir(this.workspaceRoot, orgId, agentId);
   }
 
   /** Resolves a relative path inside the agent root (lexical containment)
-   *  and resolves the root itself for the realpath check. */
+   *  and resolves the root itself. The final segment may be a symlink: the
+   *  metadata reads report it instead of following it. */
   private async resolvePath(orgId: string, agentId: string, relPath: string | undefined): Promise<{
     root: string;
     realRoot: string;
@@ -100,37 +155,8 @@ export class AgentFiles {
     const root = this.rootFor(orgId, agentId);
     const abs = path.resolve(root, rel);
     if (abs !== root && !abs.startsWith(root + path.sep)) throw badPath("path escapes the agent workspace");
-    const realRoot = await realpath(root).catch(() => {
-      throw ApiError.notFound("no such path");
-    });
+    const realRoot = await realRootOf(root);
     return { root, realRoot, rel, abs };
-  }
-
-  /** Proves the real path stays under the resolved root. Callers run it only
-   *  after the symlink check, so a symlink can never redirect the read. */
-  private async assertContained(realRoot: string, abs: string): Promise<void> {
-    const realAbs = await realpath(abs).catch(() => {
-      throw ApiError.notFound("no such path");
-    });
-    if (realAbs !== realRoot && !realAbs.startsWith(realRoot + path.sep)) {
-      throw badPath("path escapes the agent workspace");
-    }
-  }
-
-  /** Refuses any path whose segments include a symlink. */
-  private async assertNoSymlink(root: string, rel: string): Promise<void> {
-    if (rel === "") return;
-    let current = root;
-    for (const segment of rel.split("/")) {
-      current = path.join(current, segment);
-      let stats;
-      try {
-        stats = await lstat(current);
-      } catch {
-        throw ApiError.notFound("no such path");
-      }
-      if (stats.isSymbolicLink()) throw badPath("symlink paths are not followed");
-    }
   }
 
   async listDir(orgId: string, agentId: string, relPath?: string, showHidden = false): Promise<AgentDirListing> {
@@ -144,9 +170,7 @@ export class AgentFiles {
       if (rel !== "") throw ApiError.notFound("no such path");
       return { path: "", entries: [] };
     }
-    const { root, realRoot, rel, abs } = await this.resolvePath(orgId, agentId, relPath);
-    await this.assertNoSymlink(root, rel);
-    await this.assertContained(realRoot, abs);
+    const { root, realRoot, rel, abs } = await resolveAgentReadPath(this.workspaceRoot, orgId, agentId, relPath);
     const target = await lstat(abs).catch(() => {
       throw ApiError.notFound("no such path");
     });
@@ -155,8 +179,8 @@ export class AgentFiles {
     if (!target.isDirectory()) {
       const parentRel = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
       const parentAbs = path.dirname(abs);
-      await this.assertNoSymlink(root, parentRel);
-      await this.assertContained(realRoot, parentAbs);
+      await assertNoSymlink(root, parentRel);
+      await assertContained(realRoot, parentAbs);
       return { path: parentRel, entries: await this.entriesOf(parentAbs, parentRel, showHidden), file: rel };
     }
     return { path: rel, entries: await this.entriesOf(abs, rel, showHidden) };
@@ -186,16 +210,14 @@ export class AgentFiles {
       throw ApiError.notFound("no such path");
     });
     if (target.isSymbolicLink()) return entryFor(rel, target, true);
-    await this.assertNoSymlink(root, rel);
-    await this.assertContained(realRoot, abs);
+    await assertNoSymlink(root, rel);
+    await assertContained(realRoot, abs);
     return entryFor(rel, target, false);
   }
 
   /** Reads a text file up to 1 MiB; binary files are rejected. */
   async readText(orgId: string, agentId: string, relPath?: string): Promise<AgentTextFile> {
-    const { root, realRoot, rel, abs } = await this.resolvePath(orgId, agentId, relPath);
-    await this.assertNoSymlink(root, rel);
-    await this.assertContained(realRoot, abs);
+    const { rel, abs } = await resolveAgentReadPath(this.workspaceRoot, orgId, agentId, relPath);
     const stats = await lstat(abs).catch(() => {
       throw ApiError.notFound("no such path");
     });
@@ -221,9 +243,7 @@ export class AgentFiles {
 
   /** Opens a streamed download up to 64 MiB. */
   async streamDownload(orgId: string, agentId: string, relPath?: string): Promise<AgentDownload> {
-    const { root, realRoot, rel, abs } = await this.resolvePath(orgId, agentId, relPath);
-    await this.assertNoSymlink(root, rel);
-    await this.assertContained(realRoot, abs);
+    const { rel, abs } = await resolveAgentReadPath(this.workspaceRoot, orgId, agentId, relPath);
     const stats = await lstat(abs).catch(() => {
       throw ApiError.notFound("no such path");
     });

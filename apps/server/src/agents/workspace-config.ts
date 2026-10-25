@@ -1,6 +1,6 @@
-// The agent workspace config files: seeding from the templates and reading
-// them back for the system prompt. The server owns the volume path, so no
-// sandbox round trip is needed; a read is one small file open.
+// promptFiles: the agent config files (AGENTS.md, MEMORY.md) that seed the
+// workspace and ride the system prompt. The server owns the volume path, so
+// no sandbox round trip is needed; a read is one small file open.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,8 +24,13 @@ export interface AgentConfigFiles {
   missing: string[];
 }
 
+/** The agent workspace subpath, relative to the workspace volume. */
+export function agentWorkspaceSubpath(orgId: string, agentId: string): string {
+  return `agents/${orgId}/${agentId}`;
+}
+
 export function agentWorkspaceDir(writeRoot: string, orgId: string, agentId: string): string {
-  return path.resolve(writeRoot, "agents", orgId, agentId);
+  return path.resolve(writeRoot, agentWorkspaceSubpath(orgId, agentId));
 }
 
 /** Seeds the workspace with the template files it does not have yet. An
