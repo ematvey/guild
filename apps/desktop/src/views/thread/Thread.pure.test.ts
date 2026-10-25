@@ -136,6 +136,7 @@ describe("parseChatRoute / chatRoutePath", () => {
     expect(parseChatRoute("/inbox").tab).toBe("chats");
     expect(parseChatRoute("/activity").agents).toEqual({ view: "activity" });
     expect(parseChatRoute("/runs/r1").agents).toEqual({ view: "run", runId: "r1" });
+    expect(parseChatRoute("/sessions/c1").agents).toEqual({ view: "chat", chatId: "c1" });
     // A chat deep link still parses as a chat, not an agents route.
     expect(parseChatRoute("/thread/c1").agents).toBeNull();
   });

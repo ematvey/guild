@@ -23,7 +23,7 @@ export type AgentsRoute =
     }
   | { view: "activity" }
   | { view: "run"; runId: string }
-  | { view: "session"; sessionId: string };
+  | { view: "chat"; chatId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
 export const AGENTS_ACTIVITY: AgentsRoute = { view: "activity" };
@@ -65,7 +65,10 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
 
   if (parts[0] === "activity" && parts.length === 1) return AGENTS_ACTIVITY;
   if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
-  if (parts[0] === "sessions" && parts[1]) return { view: "session", sessionId: parts[1] };
+  // Old activity chat links used /sessions/<id>; they now resolve to the
+  // canonical /chats/<id> address.
+  if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
+    return { view: "chat", chatId: parts[1] };
   if (parts[0] !== "agents") return null;
   if (parts.length === 1) return AGENTS_DIRECTORY;
   if (parts[1] === "new" && parts.length === 2) return { view: "new" };
@@ -106,8 +109,8 @@ export function agentsRoutePath(route: AgentsRoute): string {
       return "/activity";
     case "run":
       return `/runs/${segment(route.runId)}`;
-    case "session":
-      return `/sessions/${segment(route.sessionId)}`;
+    case "chat":
+      return `/chats/${segment(route.chatId)}`;
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
@@ -133,7 +136,7 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 export function agentsRailTab(
   route: AgentsRoute,
 ): "agents" | "activity" {
-  if (route.view === "activity" || route.view === "run" || route.view === "session") return "activity";
+  if (route.view === "activity" || route.view === "run" || route.view === "chat") return "activity";
   return "agents";
 }
 
