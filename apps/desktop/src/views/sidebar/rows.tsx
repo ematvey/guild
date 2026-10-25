@@ -106,6 +106,45 @@ function RowActions({
   );
 }
 
+type RowState = { generating: boolean; working?: boolean; unread: boolean; blocked?: boolean };
+
+/** The row's one indicator, by priority: a blocked tool call (red) beats
+ *  the working spinner, which beats the unread dot. */
+export function rowIndicator(status: RowState): "blocked" | "working" | "unread" | null {
+  if (status.blocked) return "blocked";
+  if (status.generating || status.working) return "working";
+  if (status.unread) return "unread";
+  return null;
+}
+
+function RowStatus({ status }: { status: RowState }) {
+  switch (rowIndicator(status)) {
+    case "blocked":
+      return (
+        <span
+          className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_4px_1px_rgba(239,68,68,0.6)]"
+          title="waiting for approval"
+        />
+      );
+    case "working":
+      return (
+        <Loader2
+          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+          aria-label={status.generating ? "Generating" : "Working"}
+        />
+      );
+    case "unread":
+      return (
+        <span
+          className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
+          title="unseen replies"
+        />
+      );
+    default:
+      return null;
+  }
+}
+
 export function ChatListItem({
   title,
   active,
@@ -117,7 +156,7 @@ export function ChatListItem({
 }: {
   title: string;
   active: boolean;
-  status: { generating: boolean; working?: boolean; unread: boolean };
+  status: RowState;
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
@@ -169,14 +208,7 @@ export function ChatListItem({
         ) : (
           <FadeTitle text={title} />
         )}
-        {status.generating || status.working ? (
-          <Loader2
-            className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-            aria-label={status.generating ? "Generating" : "Working"}
-          />
-        ) : status.unread ? (
-          <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
-        ) : null}
+        <RowStatus status={status} />
       </button>
       <RowActions
         onRename={onRename ? () => setEditing(true) : undefined}
@@ -212,7 +244,7 @@ export function ProjectHeader({
   machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
-  status: { generating: boolean; working?: boolean; unread: boolean };
+  status: RowState;
   open: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
@@ -258,14 +290,7 @@ export function ProjectHeader({
           <span className="max-w-20 truncate">{machine.name}</span>
         </span>
       )}
-      {status.generating || status.working ? (
-        <Loader2
-          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-          aria-label={status.generating ? "Generating" : "Working"}
-        />
-      ) : status.unread ? (
-        <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
-      ) : null}
+      <RowStatus status={status} />
       {onNewChat && (
         <span
           role="button"

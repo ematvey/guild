@@ -52,6 +52,7 @@ export function chatWire(row: {
   /** List rows only: this chat or a descendant has a queued/running run. */
   working?: boolean;
   unread?: boolean;
+  blocked?: boolean;
   project_id: string | null;
   project_name?: string | null;
   project_machine_label?: string | null;
@@ -76,6 +77,7 @@ export function chatWire(row: {
   out.generating = row.generating;
   if (row.working !== undefined) out.working = row.working;
   out.unread = row.unread ?? false;
+  if (row.blocked !== undefined) out.blocked = row.blocked;
   if (row.last_activity_at !== undefined) out.last_activity_at = row.last_activity_at;
   if (row.project_id !== null) out.project_id = row.project_id;
   if (row.project_name) out.project_name = row.project_name;
@@ -100,6 +102,7 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
       generating: row.generating,
       working: row.working,
       unread: row.unread,
+      blocked: row.blocked,
       project_id: row.project_id,
       project_name: row.project_name,
       project_machine_label: row.project_machine_label,

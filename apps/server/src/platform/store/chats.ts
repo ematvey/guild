@@ -40,6 +40,8 @@ export interface ChatListRow {
   /** This chat or any descendant thread has a queued/running run. */
   working: boolean;
   unread: boolean;
+  /** A tool call is waiting for the user's approval in this chat. */
+  blocked: boolean;
   project_id: string | null;
   project_name: string | null;
   project_machine_label: string | null;
@@ -82,6 +84,14 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
       SELECT 1 FROM thread_events e
       WHERE e.chat_id = c.id AND e.type = 'assistant_message'
         AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread,
+    EXISTS (
+      SELECT 1 FROM thread_events e
+      WHERE e.chat_id = c.id AND e.type = 'approval_request'
+        AND e.created_at > now() - interval '10 minutes'
+        AND NOT EXISTS (
+          SELECT 1 FROM thread_events d
+          WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
+            AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
   FROM chats c
@@ -251,6 +261,14 @@ export class ChatStore {
               c.machine_id, c.machine_label, c.generating,
               (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
               pr.name AS project_name, m.label AS project_machine_label, false AS unread,
+              EXISTS (
+                SELECT 1 FROM thread_events e
+                WHERE e.chat_id = c.id AND e.type = 'approval_request'
+                  AND e.created_at > now() - interval '10 minutes'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM thread_events d
+                    WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
+                      AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
        FROM chats c
@@ -597,6 +615,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     generating: Boolean(r.generating),
     working: Boolean(r.working),
     unread: Boolean(r.unread),
+    blocked: Boolean(r.blocked),
     project_id: (r.project_id as string | null) ?? null,
     project_name: (r.project_name as string | null) ?? null,
     project_machine_label: (r.project_machine_label as string | null) ?? null,

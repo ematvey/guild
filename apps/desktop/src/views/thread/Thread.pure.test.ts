@@ -132,7 +132,8 @@ describe("parseChatRoute / chatRoutePath", () => {
         deep.agents,
       ),
     ).toBe("/agents/a1/files/notes/today.md");
-    expect(parseChatRoute("/inbox").agents).toEqual({ view: "inbox" });
+    expect(parseChatRoute("/inbox").agents).toBeNull();
+    expect(parseChatRoute("/inbox").tab).toBe("chats");
     expect(parseChatRoute("/activity").agents).toEqual({ view: "activity" });
     expect(parseChatRoute("/runs/r1").agents).toEqual({ view: "run", runId: "r1" });
     // A chat deep link still parses as a chat, not an agents route.
@@ -750,7 +751,7 @@ describe("authoritative socket state", () => {
     expect(second?.reasoningText).toBe("part one part two");
   });
   it("replaces a stale generating overlay from the server list", () => {
-    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false } });
+    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false, blocked: false } });
   });
 });
 

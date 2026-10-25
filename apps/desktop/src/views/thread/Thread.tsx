@@ -78,12 +78,11 @@ import { AgentsPanel } from "../agents/AgentsPanel";
 import {
   AGENTS_ACTIVITY,
   AGENTS_DIRECTORY,
-  AGENTS_INBOX,
   agentsRoutePath,
   agentsRailTab,
   type AgentsRoute,
 } from "../agents/agents-route";
-import { listAgents, listInbox, type Agent } from "../agents/agents-api";
+import { listAgents, type Agent } from "../agents/agents-api";
 import { RunningSubagents } from "../agents/RunningSubagents";
 import {
   SubagentClosedRecord,
@@ -317,29 +316,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, []);
   // The agents the caller can use. Every chat runs with one of them; the
   // composer picks which, and the choice binds the chat.
-  // Inbox badge: attention items only, never activity. Refreshed on route
-  // moves and once a minute while the app is open.
-  const [inboxUnread, setInboxUnread] = useState(0);
-  const [inboxRevision, setInboxRevision] = useState(0);
-  useEffect(() => {
-    let live = true;
-    const load = () => {
-      void listInbox()
-        .then((items) => {
-          if (live) setInboxUnread(items.filter((item) => !item.read_at).length);
-        })
-        .catch(() => {
-          // A server without the inbox API leaves the badge at zero.
-        });
-    };
-    load();
-    const timer = window.setInterval(load, 60_000);
-    return () => {
-      live = false;
-      window.clearInterval(timer);
-    };
-  }, [route.agents, route.chatId, inboxRevision]);
-
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -967,10 +943,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
       return;
     }
-    if (tab === "inbox") {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_INBOX });
-      return;
-    }
     if (tab === "agents") {
       pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY });
       return;
@@ -1001,11 +973,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
   };
   // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
-  // route tabs (inbox / agents / activity) render in the main column, so the
+  // route tabs (agents / activity) render in the main column, so the
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: SidebarTab) => {
-    if (tab === "inbox" || tab === "agents" || tab === "activity") {
+    if (tab === "agents" || tab === "activity") {
       switchTab(tab);
       setOpen(false);
       return;
@@ -1159,7 +1131,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
         }
         onOpenChat={openChat}
-        onInboxChanged={() => setInboxRevision((value) => value + 1)}
       />
     </div>
   ) : null;
@@ -1261,7 +1232,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
           onSignOut={signOut}
           onAddWorkspace={onAddWorkspace}
-          inboxUnread={inboxUnread}
           role={role}
         />
       )}
@@ -1289,8 +1259,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
                 onSignOut={signOut}
                 onAddWorkspace={onAddWorkspace}
-                inboxUnread={inboxUnread}
-                role={role}
+                      role={role}
                 isMobile
               />
               <div className="flex min-w-0 flex-1 flex-col">{sidebar}</div>

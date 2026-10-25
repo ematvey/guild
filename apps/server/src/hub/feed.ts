@@ -483,6 +483,7 @@ export async function threadListSnapshot(chats: ChatsCtx, user: Pick<UserRow, "o
         : {}),
       ...(chat.title !== null ? { title: chat.title } : {}),
       unread: chat.unread,
+      blocked: chat.blocked,
       user_id: chat.user_id,
       working: chat.working,
     };

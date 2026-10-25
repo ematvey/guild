@@ -26,7 +26,6 @@ const routes: AgentsRoute[] = [
   { view: "agent", agentId: "a1", tab: "activity" },
   { view: "agent", agentId: "a1", tab: "settings" },
   { view: "activity" },
-  { view: "inbox" },
   { view: "run", runId: "run-1" },
   { view: "session", sessionId: "session-1" },
 ];
@@ -40,7 +39,6 @@ describe("agents route contract", () => {
   });
 
   it("maps every route to exactly one rail tab", () => {
-    expect(agentsRailTab({ view: "inbox" })).toBe("inbox");
     expect(agentsRailTab({ view: "activity" })).toBe("activity");
     expect(agentsRailTab({ view: "run", runId: "r" })).toBe("activity");
     expect(agentsRailTab({ view: "session", sessionId: "s" })).toBe("activity");

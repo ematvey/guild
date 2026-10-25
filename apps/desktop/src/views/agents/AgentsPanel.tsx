@@ -2,7 +2,6 @@ import { AgentsDirectory } from "./AgentsDirectory";
 import { AgentCreate } from "./AgentCreate";
 import { AgentPage, type Viewer } from "./AgentPage";
 import { ActivityPage, RunDetailPage, SessionDetailPage } from "./ActivityPage";
-import { InboxPage } from "./InboxPage";
 import type { AgentsRoute } from "./agents-route";
 
 /** The agents surface's main-column page. Every visible page derives from
@@ -12,13 +11,11 @@ export function AgentsPanel({
   viewer,
   onNavigate,
   onOpenChat,
-  onInboxChanged,
 }: {
   route: AgentsRoute;
   viewer: Viewer;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
-  onInboxChanged?: () => void;
 }) {
   switch (route.view) {
     case "directory":
@@ -39,14 +36,6 @@ export function AgentsPanel({
       );
     case "activity":
       return <ActivityPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
-    case "inbox":
-      return (
-        <InboxPage
-          onNavigate={onNavigate}
-          onOpenChat={onOpenChat}
-          onChanged={onInboxChanged}
-        />
-      );
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
     case "session":
