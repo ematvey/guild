@@ -42,6 +42,15 @@ pub fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// The user skill scope root: `~/.agents` lives under it. `GUILD_SKILLS_ROOT`
+/// overrides it for tests. `skills.sync_v1` writes here and the
+/// remote-context skill scan reads here, so both see one root.
+pub fn skills_home() -> PathBuf {
+    std::env::var("GUILD_SKILLS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir())
+}
+
 impl Allowlist {
     /// Roots for a session bound to `project_dir` (None → config + user
     /// scopes only; the webview passes the project dir explicitly per
@@ -583,7 +592,7 @@ mod tests {
             assert!(read_text_with(&allow, &via_link).is_err());
             // A dangling link whose target is outside the roots must not
             // become a write path either.
-            std::os::unix::fs::symlink(&tmp.join("no-such-dir"), project.join("dangling")).unwrap();
+            std::os::unix::fs::symlink(tmp.join("no-such-dir"), project.join("dangling")).unwrap();
             assert!(write_text_with(
                 &allow,
                 &format!("{}/dangling/x.txt", project.display()),
