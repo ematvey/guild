@@ -1,6 +1,6 @@
 // Activity: one observability surface for agent work. Traces are agent
 // runs (one per turn), spans are the LLM calls and tool calls inside a
-// trace, sessions group traces by chat. The list and the trace detail read
+// trace, chats group traces by conversation. The list and the trace detail read
 // the same ClickHouse model the gateway and the tool hook write, so a run
 // and its calls are one story. Navigation stays in the URL: the tab,
 // period and filters ride the query, the open trace is /runs/<id>.
@@ -25,23 +25,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { apiMe } from "../../lib/api/workspaces";
+import { apiMe } from "../../lib/api/servers";
 import {
+  AGENTS_ACTIVITY,
   RUN_STATUS_LABEL,
   RUN_TRIGGER_LABEL,
   agentsRoutePath,
+  type ActivityFilters,
+  type ActivityPeriod,
+  type ActivityTab,
   type AgentsRoute,
 } from "./agents-route";
 import {
   getActivitySummary,
-  listSessions,
+  listChatActivity,
   listSpans,
   listTraces,
-  type ActivityPeriod,
   type ActivityQuery,
   type ActivitySummary,
-  type ActivityTab,
-  type SessionRow,
+  type ChatActivityRow,
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
@@ -70,67 +72,11 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
 };
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
   ["traces", "Traces"],
-  ["calls", "Calls"],
-  ["sessions", "Sessions"],
+  ["calls", "Model calls"],
+  ["chats", "Chats"],
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
-interface ListState {
-  tab: ActivityTab;
-  period: ActivityPeriod;
-  status: string;
-  trigger: string;
-  q: string;
-  caller: string;
-  model: string;
-}
-
-const DEFAULTS: ListState = {
-  tab: "traces",
-  period: "7d",
-  status: "all",
-  trigger: "all",
-  q: "",
-  caller: "all",
-  model: "",
-};
-
-function readListState(url: URL): ListState {
-  const q = url.searchParams;
-  const tab = q.get("tab");
-  const period = q.get("period");
-  return {
-    tab: tab === "calls" || tab === "sessions" ? tab : DEFAULTS.tab,
-    period: period === "24h" || period === "30d" ? period : DEFAULTS.period,
-    status: q.get("status") ?? DEFAULTS.status,
-    trigger: q.get("trigger") ?? DEFAULTS.trigger,
-    q: q.get("q") ?? DEFAULTS.q,
-    caller: q.get("caller") ?? DEFAULTS.caller,
-    model: q.get("model") ?? DEFAULTS.model,
-  };
-}
-
-function writeListState(state: ListState): void {
-  const url = new URL(window.location.href);
-  const params: Record<string, string> = {
-    tab: state.tab,
-    period: state.period,
-    status: state.status,
-    trigger: state.trigger,
-    q: state.q,
-    caller: state.caller,
-    model: state.model,
-  };
-  for (const [key, value] of Object.entries(params)) {
-    if (value === "" || value === "all" || value === DEFAULTS[key as keyof ListState]) {
-      url.searchParams.delete(key);
-    } else {
-      url.searchParams.set(key, value);
-    }
-  }
-  if (url.toString() !== window.location.href) window.history.pushState(null, "", url);
-}
-
 function windowQuery(period: ActivityPeriod): ActivityQuery {
   const now = Date.now();
   return {
@@ -140,23 +86,27 @@ function windowQuery(period: ActivityPeriod): ActivityQuery {
 }
 
 export function ActivityPage({
+  filters,
+  onFiltersChange,
   onNavigate,
   onOpenChat,
   agentId,
   embedded = false,
 }: {
+  /** The activity filters named by the route. */
+  filters: ActivityFilters;
+  onFiltersChange: (filters: ActivityFilters) => void;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
   /** Per-agent projection when set. */
   agentId?: string;
   embedded?: boolean;
 }) {
-  const [state, setState] = useState<ListState>(() => readListState(new URL(window.location.href)));
   const [role, setRole] = useState<string | null>(null);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
-  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const [chats, setChats] = useState<ChatActivityRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -165,23 +115,15 @@ export function ActivityPage({
     apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
   }, []);
 
-  useEffect(() => {
-    const onPop = () => setState(readListState(new URL(window.location.href)));
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  const set = (next: Partial<ListState>) => {
-    const merged = { ...state, ...next };
-    writeListState(merged);
-    setState(merged);
+  const set = (next: Partial<ActivityFilters>) => {
+    onFiltersChange({ ...filters, ...next });
   };
 
-  const range = windowQuery(state.period);
-  const filters: ActivityQuery = {
+  const range = windowQuery(filters.period);
+  const query: ActivityQuery = {
     ...range,
     ...(agentId !== undefined ? { agent: agentId } : {}),
-    ...(state.q.trim() !== "" ? { q: state.q.trim() } : {}),
+    ...(filters.q.trim() !== "" ? { q: filters.q.trim() } : {}),
   };
 
   useEffect(() => {
@@ -198,27 +140,27 @@ export function ActivityPage({
         if (live) setSummary(null);
       });
     const load =
-      state.tab === "calls"
+      filters.tab === "calls"
         ? listSpans({
-            ...filters,
+            ...query,
             type: "llm",
-            ...(state.caller !== "all" ? { caller: state.caller as "model" | "judge" } : {}),
-            ...(state.model !== "" ? { model: state.model } : {}),
+            ...(filters.caller !== "all" ? { caller: filters.caller as "model" | "judge" } : {}),
+            ...(filters.model !== "" ? { model: filters.model } : {}),
           }).then((res) => {
             if (!live) return;
             setSpans(res.spans);
             setTotal(res.total);
           })
-        : state.tab === "sessions"
-          ? listSessions(filters).then((res) => {
+        : filters.tab === "chats"
+          ? listChatActivity(query).then((res) => {
               if (!live) return;
-              setSessions(res.sessions);
+              setChats(res.chats);
               setTotal(res.total);
             })
           : listTraces({
-              ...filters,
-              ...(state.status !== "all" ? { status: state.status } : {}),
-              ...(state.trigger !== "all" ? { trigger: state.trigger } : {}),
+              ...query,
+              ...(filters.status !== "all" ? { status: filters.status } : {}),
+              ...(filters.trigger !== "all" ? { trigger: filters.trigger } : {}),
             }).then((res) => {
               if (!live) return;
               setTraces(res.traces);
@@ -229,20 +171,20 @@ export function ActivityPage({
       setError(err instanceof Error ? err.message : "The activity API did not answer.");
       setTraces(null);
       setSpans(null);
-      setSessions(null);
+      setChats(null);
     });
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.tab, state.period, state.status, state.trigger, state.q, state.caller, state.model, agentId, tick]);
+  }, [filters.tab, filters.period, filters.status, filters.trigger, filters.q, filters.caller, filters.model, agentId, tick]);
 
   const admin = role === "admin";
   const body = (
     <>
       <SummaryCards summary={summary} admin={admin} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Select value={state.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
+        <Select value={filters.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
           <SelectTrigger aria-label="Period" className="h-8 w-28 text-xs">
             <SelectValue />
           </SelectTrigger>
@@ -254,9 +196,9 @@ export function ActivityPage({
             ))}
           </SelectContent>
         </Select>
-        {state.tab === "traces" && (
+        {filters.tab === "traces" && (
           <>
-            <Select value={state.status} onValueChange={(v) => set({ status: v })}>
+            <Select value={filters.status} onValueChange={(v) => set({ status: v })}>
               <SelectTrigger aria-label="Filter by status" className="h-8 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -269,7 +211,7 @@ export function ActivityPage({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={state.trigger} onValueChange={(v) => set({ trigger: v })}>
+            <Select value={filters.trigger} onValueChange={(v) => set({ trigger: v })}>
               <SelectTrigger aria-label="Filter by trigger" className="h-8 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -284,7 +226,7 @@ export function ActivityPage({
             </Select>
           </>
         )}
-        {state.tab === "calls" && (
+        {filters.tab === "calls" && (
           <>
             <div className="flex items-center gap-1">
               {(["all", "model", "judge"] as const).map((value) => (
@@ -292,7 +234,7 @@ export function ActivityPage({
                   key={value}
                   onClick={() => set({ caller: value })}
                   className={`rounded-md px-2 py-1 text-xs capitalize transition-colors ${
-                    state.caller === value
+                    filters.caller === value
                       ? "bg-primary text-primary-foreground"
                       : "bg-accent/50 text-muted-foreground hover:text-foreground"
                   }`}
@@ -302,7 +244,7 @@ export function ActivityPage({
               ))}
             </div>
             <input
-              value={state.model}
+              value={filters.model}
               onChange={(e) => set({ model: e.target.value })}
               placeholder="model filter"
               className="w-40 rounded-md border border-border bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground/60"
@@ -312,15 +254,15 @@ export function ActivityPage({
         <div className="relative min-w-32 max-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
-            value={state.q}
+            value={filters.q}
             onChange={(e) => set({ q: e.target.value })}
-            placeholder={state.tab === "traces" ? "Search summary or agent" : "Search"}
+            placeholder={filters.tab === "traces" ? "Search summary or agent" : "Search"}
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
+            {count(total, filters.tab === "chats" ? "chat" : filters.tab === "calls" ? "call" : "trace")}
           </span>
           <Button
             variant="ghost"
@@ -338,7 +280,7 @@ export function ActivityPage({
         {error !== null && (
           <ErrorState title="Could not load activity" message={error} onRetry={() => setTick((t) => t + 1)} />
         )}
-        {error === null && state.tab === "traces" && (
+        {error === null && filters.tab === "traces" && (
           <TracesTable
             rows={traces}
             admin={admin}
@@ -346,21 +288,22 @@ export function ActivityPage({
             onOpen={(id) => onNavigate({ view: "run", runId: id })}
           />
         )}
-        {error === null && state.tab === "calls" && (
+        {error === null && filters.tab === "calls" && (
           <CallsTable
             rows={spans}
             admin={admin}
             onOpen={(span) => {
               if (span.run_id !== null) onNavigate({ view: "run", runId: span.run_id });
+              else if (span.trace_id !== "") onNavigate({ view: "trace", traceId: span.trace_id });
               else if (span.chat_id !== null && onOpenChat !== undefined) onOpenChat(span.chat_id);
             }}
           />
         )}
-        {error === null && state.tab === "sessions" && (
-          <SessionsTable
-            rows={sessions}
+        {error === null && filters.tab === "chats" && (
+          <ChatsTable
+            rows={chats}
             admin={admin}
-            onOpen={(id) => onNavigate({ view: "session", sessionId: id })}
+            onOpen={(id) => onNavigate({ view: "chat", chatId: id })}
           />
         )}
       </div>
@@ -374,7 +317,7 @@ export function ActivityPage({
           <TabBar
             label="Activity views"
             tabs={ACTIVITY_TABS}
-            value={state.tab}
+            value={filters.tab}
             onChange={(tab) => set({ tab })}
           />
         </div>
@@ -392,7 +335,7 @@ export function ActivityPage({
           <TabBar
             label="Activity views"
             tabs={ACTIVITY_TABS}
-            value={state.tab}
+            value={filters.tab}
             onChange={(tab) => set({ tab })}
           />
         }
@@ -406,7 +349,7 @@ function SummaryCards({ summary, admin }: { summary: ActivitySummary | null; adm
   const totals = summary?.totals;
   const cards = [
     { label: "Traces", value: totals === undefined ? null : compact(totals.traces), icon: <Activity className="size-3.5" /> },
-    { label: "Calls", value: totals === undefined ? null : compact(totals.calls), icon: <MessageSquare className="size-3.5" /> },
+    { label: "Model calls", value: totals === undefined ? null : compact(totals.calls), icon: <MessageSquare className="size-3.5" /> },
     {
       label: "Tokens",
       value: totals === undefined ? null : compact(totals.tokens_in + totals.tokens_out),
@@ -466,7 +409,7 @@ function TracesTable({
         <span>Trace</span>
         <span>Agent</span>
         <span>Status</span>
-        <span className="text-right">Calls</span>
+        <span className="text-right">Model calls</span>
         <span className="text-right">Tokens</span>
         <span className="text-right">Duration</span>
         <span />
@@ -553,8 +496,8 @@ function CallsTable({
     return (
       <EmptyState
         icon={<MessageSquare className="size-5" />}
-        title="No calls in this window"
-        body="Calls are recorded on every gateway model request and approval judge verdict."
+        title="No model calls in this window"
+        body="Model calls are recorded on every gateway model request and approval judge verdict."
       />
     );
   }
@@ -628,12 +571,12 @@ function CallsTable({
   );
 }
 
-function SessionsTable({
+function ChatsTable({
   rows,
   admin,
   onOpen,
 }: {
-  rows: SessionRow[] | null;
+  rows: ChatActivityRow[] | null;
   admin: boolean;
   onOpen: (id: string) => void;
 }) {
@@ -642,8 +585,8 @@ function SessionsTable({
     return (
       <EmptyState
         icon={<MessageSquare className="size-5" />}
-        title="No sessions in this window"
-        body="A session is one chat: every trace and call inside it shares the chat id."
+        title="No chats in this window"
+        body="A chat is one conversation: every trace and call inside it shares the chat id."
       />
     );
   }
@@ -684,12 +627,12 @@ function SessionsTable({
   );
 }
 
-export function SessionDetailPage({
-  sessionId,
+export function ChatActivityPage({
+  chatId,
   onNavigate,
   onOpenChat,
 }: {
-  sessionId: string;
+  chatId: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
@@ -702,24 +645,35 @@ export function SessionDetailPage({
     apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
   }, []);
 
+  // Old activity chat links used /sessions/<id>; rewrite them to the
+  // canonical /chats/<id> address without adding a history step.
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/sessions/")) return;
+    window.history.replaceState(
+      null,
+      "",
+      `/chats/${encodeURIComponent(chatId)}${window.location.search}`,
+    );
+  }, [chatId]);
+
   useEffect(() => {
     let live = true;
     setError(null);
     const to = new Date(Date.now() + 86_400_000).toISOString();
     const from = new Date(Date.now() - 90 * 86_400_000).toISOString();
-    void listTraces({ session: sessionId, from, to, limit: 200 })
+    void listTraces({ session: chatId, from, to, limit: 200 })
       .then((res) => {
         if (live) setRows(res.traces);
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setError(err instanceof Error ? err.message : "The session did not load.");
+        setError(err instanceof Error ? err.message : "The chat did not load.");
         setRows(null);
       });
     return () => {
       live = false;
     };
-  }, [sessionId, tick]);
+  }, [chatId, tick]);
 
   const admin = role === "admin";
   const totals = useMemo(() => {
@@ -737,16 +691,16 @@ export function SessionDetailPage({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <PageHeader
-        title="Session"
-        description={sessionId}
+        title="Chat"
+        description={chatId}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "activity" })}>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
               <ArrowLeft />
               Activity
             </Button>
             {onOpenChat !== undefined && (
-              <Button variant="outline" size="sm" onClick={() => onOpenChat(sessionId)}>
+              <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
                 Open chat
               </Button>
@@ -756,7 +710,7 @@ export function SessionDetailPage({
       />
       <PageBody className="max-w-[80rem]">
         {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && rows === null && <InlineLoading label="Loading session" />}
+        {error === null && rows === null && <InlineLoading label="Loading chat" />}
         {rows !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">
@@ -766,7 +720,7 @@ export function SessionDetailPage({
                   <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.traces}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Calls</dt>
+                  <dt className="text-muted-foreground">Model calls</dt>
                   <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.calls}</dd>
                 </div>
                 <div>

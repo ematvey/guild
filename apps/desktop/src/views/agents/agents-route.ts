@@ -11,6 +11,31 @@ export type AgentTab =
   | "activity"
   | "settings";
 
+export type ActivityTab = "traces" | "calls" | "chats";
+export type ActivityPeriod = "24h" | "7d" | "30d";
+
+/** The activity list's filters. They live in the route, never in view
+ *  state, so a filter change is a history entry and reload restores it. */
+export interface ActivityFilters {
+  tab: ActivityTab;
+  period: ActivityPeriod;
+  status: string;
+  trigger: string;
+  q: string;
+  caller: string;
+  model: string;
+}
+
+export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
+  tab: "traces",
+  period: "7d",
+  status: "all",
+  trigger: "all",
+  q: "",
+  caller: "all",
+  model: "",
+};
+
 export type AgentsRoute =
   | { view: "directory" }
   | { view: "new" }
@@ -20,13 +45,49 @@ export type AgentsRoute =
       tab: AgentTab;
       routineId?: string;
       filePath?: string;
+      filters?: ActivityFilters;
     }
-  | { view: "activity" }
+  | { view: "activity"; filters: ActivityFilters }
   | { view: "run"; runId: string }
-  | { view: "session"; sessionId: string };
+  | { view: "trace"; traceId: string }
+  | { view: "chat"; chatId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
-export const AGENTS_ACTIVITY: AgentsRoute = { view: "activity" };
+export const AGENTS_ACTIVITY: AgentsRoute = {
+  view: "activity",
+  filters: DEFAULT_ACTIVITY_FILTERS,
+};
+
+function filtersFrom(search: string): ActivityFilters {
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab");
+  const period = params.get("period");
+  return {
+    tab:
+      tab === "calls" || tab === "chats" || tab === "sessions"
+        ? tab === "sessions"
+          ? "chats"
+          : tab
+        : DEFAULT_ACTIVITY_FILTERS.tab,
+    period: period === "24h" || period === "30d" ? period : DEFAULT_ACTIVITY_FILTERS.period,
+    status: params.get("status") ?? DEFAULT_ACTIVITY_FILTERS.status,
+    trigger: params.get("trigger") ?? DEFAULT_ACTIVITY_FILTERS.trigger,
+    q: params.get("q") ?? DEFAULT_ACTIVITY_FILTERS.q,
+    caller: params.get("caller") ?? DEFAULT_ACTIVITY_FILTERS.caller,
+    model: params.get("model") ?? DEFAULT_ACTIVITY_FILTERS.model,
+  };
+}
+
+function filtersSearch(filters: ActivityFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    const fallback = DEFAULT_ACTIVITY_FILTERS[key as keyof ActivityFilters];
+    if (value === "" || value === "all" || value === fallback) continue;
+    params.set(key, value);
+  }
+  const query = params.toString();
+  return query === "" ? "" : `?${query}`;
+}
 
 export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["overview", "Overview"],
@@ -56,16 +117,23 @@ export function segment(value: string): string {
 
 /** Parses any pathname owned by the agents surface. Null when the pathname
  *  is not an agents route (the chat router then keeps its own route). */
-export function parseAgentsRoute(pathname: string): AgentsRoute | null {
+export function parseAgentsRoute(url: string): AgentsRoute | null {
+  const [pathname, search = ""] = url.split("?");
   const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   const decoded = raw.map(decode);
   if (decoded.some((part) => part === null)) return null;
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
-  if (parts[0] === "activity" && parts.length === 1) return AGENTS_ACTIVITY;
+  if (parts[0] === "activity" && parts.length === 1)
+    return { view: "activity", filters: filtersFrom(search) };
   if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
-  if (parts[0] === "sessions" && parts[1]) return { view: "session", sessionId: parts[1] };
+  // A turn with no agent run has no run id; its trace id owns its own route.
+  if (parts[0] === "traces" && parts[1]) return { view: "trace", traceId: parts[1] };
+  // Old activity chat links used /sessions/<id>; they now resolve to the
+  // canonical /chats/<id> address.
+  if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
+    return { view: "chat", chatId: parts[1] };
   if (parts[0] !== "agents") return null;
   if (parts.length === 1) return AGENTS_DIRECTORY;
   if (parts[1] === "new" && parts.length === 2) return { view: "new" };
@@ -89,7 +157,8 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
       ? { view: "agent", agentId, tab: "files", filePath }
       : { view: "agent", agentId, tab: "files" };
   }
-  if (head === "activity") return { view: "agent", agentId, tab: "activity" };
+  if (head === "activity")
+    return { view: "agent", agentId, tab: "activity", filters: filtersFrom(search) };
   if (head === "settings") return { view: "agent", agentId, tab: "settings" };
   // An unknown tab segment is the agent root, not a dead URL.
   return { view: "agent", agentId, tab: "overview" };
@@ -103,11 +172,13 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "new":
       return "/agents/new";
     case "activity":
-      return "/activity";
+      return `/activity${filtersSearch(route.filters)}`;
     case "run":
       return `/runs/${segment(route.runId)}`;
-    case "session":
-      return `/sessions/${segment(route.sessionId)}`;
+    case "trace":
+      return `/traces/${segment(route.traceId)}`;
+    case "chat":
+      return `/chats/${segment(route.chatId)}`;
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
@@ -119,6 +190,8 @@ export function agentsRoutePath(route: AgentsRoute): string {
           .filter(Boolean)
           .map(segment)
           .join("/")}`;
+      if (route.tab === "activity")
+        return `${base}/activity${filtersSearch(route.filters ?? DEFAULT_ACTIVITY_FILTERS)}`;
       return `${base}/${route.tab}`;
     }
   }
@@ -133,13 +206,16 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 export function agentsRailTab(
   route: AgentsRoute,
 ): "agents" | "activity" {
-  if (route.view === "activity" || route.view === "run" || route.view === "session") return "activity";
+  if (route.view === "activity" || route.view === "run" || route.view === "trace" || route.view === "chat")
+    return "activity";
   return "agents";
 }
 
 /** A route for one agent tab, dropping sub-page ids that do not belong. */
 export function agentTabRoute(agentId: string, tab: AgentTab): AgentsRoute {
-  return { view: "agent", agentId, tab };
+  return tab === "activity"
+    ? { view: "agent", agentId, tab, filters: DEFAULT_ACTIVITY_FILTERS }
+    : { view: "agent", agentId, tab };
 }
 
 /** Breadcrumbs for a workspace path. The root crumb is the workspace. */

@@ -40,8 +40,8 @@ export function useThreadRoute() {
       resolved.agents,
       resolved.usage,
     );
-    if (`${window.location.pathname}${window.location.search}` !== path)
-      window.history.pushState(null, "", path);
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== path) window.history.pushState(null, "", path);
     setRoute(resolved);
   };
 

@@ -147,7 +147,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   }
   // The agents surface owns its whole address space (/agents, /activity,
   // /runs/<id>): parse it before the chat prefixes.
-  const agents = parseAgentsRoute(pathname);
+  const agents = parseAgentsRoute(search === "" ? pathname : `${pathname}?${search}`);
   if (agents !== null) {
     return {
       chatId: null,

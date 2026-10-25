@@ -464,7 +464,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     const a = route.agents;
     if (a === null) return;
     const next: AgentsRoute | null =
-      a.view === "activity" || a.view === "run" || a.view === "session"
+      a.view === "activity" || a.view === "run" || a.view === "trace" || a.view === "chat"
         ? AGENTS_DIRECTORY
         : a.view === "agent" && a.tab === "activity"
           ? { view: "agent", agentId: a.agentId, tab: "overview" }

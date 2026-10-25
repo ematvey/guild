@@ -16,3 +16,9 @@ export function formatBytes(
   }
   return `${(bytes / step ** 3).toFixed(1)} G${unit}`;
 }
+
+/** First two characters of a label, uppercased — the avatar chip fallback
+ *  for an owner or account without a photo. */
+export function avatarChip(label: string): string {
+  return label.slice(0, 2).toUpperCase();
+}

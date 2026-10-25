@@ -19,7 +19,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
-import { apiMe } from "../../lib/api/workspaces";
+import { apiMe } from "../../lib/api/servers";
 import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import {
@@ -31,10 +31,10 @@ import {
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
-import type { AgentsRoute } from "./agents-route";
+import { AGENTS_ACTIVITY, type AgentsRoute } from "./agents-route";
 import { compact, money, ms, spanPreview, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { JsonView } from "./JsonView";
-import { MessagesView, type ChatMessage } from "./MessagesView";
+import { MessagesView, payloadMessages } from "./MessagesView";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 
 type TraceView = "transcript" | "tree" | "timeline";
@@ -58,10 +58,13 @@ function writeTraceView(view: TraceView): void {
 
 export function RunDetailPage({
   runId,
+  traceOnly = false,
   onNavigate,
   onOpenChat,
 }: {
   runId: string;
+  /** The route holds a trace id with no agent run behind it. */
+  traceOnly?: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
@@ -100,17 +103,21 @@ export function RunDetailPage({
         if (!live) return;
         setError(err instanceof Error ? err.message : "The trace did not load.");
       });
-    void getRun(runId)
-      .then((value) => {
-        if (live) setRun(value);
-      })
-      .catch(() => {
-        if (live) setRun(null);
-      });
+    if (traceOnly) {
+      setRun(null);
+    } else {
+      void getRun(runId)
+        .then((value) => {
+          if (live) setRun(value);
+        })
+        .catch(() => {
+          if (live) setRun(null);
+        });
+    }
     return () => {
       live = false;
     };
-  }, [runId, tick]);
+  }, [runId, traceOnly, tick]);
 
   const ordered = useMemo(
     () => [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time)),
@@ -138,7 +145,7 @@ export function RunDetailPage({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <header className="border-b border-border px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => onNavigate({ view: "activity" })}>
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
             <ArrowLeft />
             Activity
           </Button>
@@ -180,12 +187,12 @@ export function RunDetailPage({
             <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />
           </div>
         )}
-        {error === null && trace === null && (
+        {error === null && trace === null && spans.length === 0 && (
           <div className="mx-auto w-full max-w-[90rem] px-4 pt-4 sm:px-6">
             <InlineLoading label="Loading trace" />
           </div>
         )}
-        {trace !== null && (
+        {(trace !== null || spans.length > 0) && (
           <div className="flex min-h-full w-full flex-col gap-4 px-4 pb-16 pt-4 sm:px-6 xl:h-full xl:min-h-0 xl:flex-row xl:pb-4">
             <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card xl:min-h-0 xl:flex-1">
               <div className="shrink-0 border-b border-border px-2">
@@ -213,6 +220,7 @@ export function RunDetailPage({
               </div>
             </div>
 
+            {trace !== null && (
             <aside className="w-full space-y-4 xl:min-h-0 xl:w-[36%] xl:min-w-[24rem] xl:max-w-[40rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
               <SpanDetail span={selected} admin={admin} />
               <div className="border-t border-border pt-3">
@@ -222,11 +230,11 @@ export function RunDetailPage({
                   <Meta label="Agent" value={trace.agent_name || "—"} />
                   {trace.session_id !== null ? (
                     <div>
-                      <dt className="text-muted-foreground">Session</dt>
+                      <dt className="text-muted-foreground">Chat</dt>
                       <dd>
                         <button
                           type="button"
-                          onClick={() => onNavigate({ view: "session", sessionId: trace.session_id! })}
+                          onClick={() => onNavigate({ view: "chat", chatId: trace.session_id! })}
                           className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
                         >
                           {trace.session_id}
@@ -286,6 +294,7 @@ export function RunDetailPage({
                 </section>
               )}
             </aside>
+            )}
           </div>
         )}
       </div>
@@ -791,10 +800,10 @@ function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
   const responseRaw = payloads?.find((row) => row.kind === "response")?.body ?? "";
   const request = parseObject(requestRaw);
   const response = parseObject(responseRaw);
-  const messages = Array.isArray(request?.["messages"]) ? (request["messages"] as ChatMessage[]) : null;
+  const messages = payloadMessages(request?.["messages"]);
   const responseContent = typeof response?.["content"] === "string" ? response["content"] : "";
   const inputText =
-    messages !== null && !rawInput ? JSON.stringify(messages) : span.input || requestRaw;
+    messages !== null && !rawInput ? JSON.stringify(request?.["messages"]) : span.input || requestRaw;
   const outputText = responseContent || span.output || responseRaw;
   const attributesText = JSON.stringify(span.attributes, null, 2);
 

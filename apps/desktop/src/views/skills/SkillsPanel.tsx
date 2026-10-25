@@ -24,6 +24,8 @@ import {
   SelectValue,
 } from "@guild/ui/components/select";
 import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
+import { avatarChip } from "../../lib/format";
+import { compareVersions } from "./version";
 import { count } from "../agents/activity-format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
@@ -93,11 +95,6 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
   };
 }
 
-/** First two characters of the owner label, for the initials avatar. */
-export function ownerInitials(label: string): string {
-  return label.slice(0, 2).toUpperCase();
-}
-
 /** True when the skill is owned by the signed-in user (the server's owner
  *  label is display name falling back to email). */
 export function isMine(item: SkillItem, me: SkillMe): boolean {
@@ -126,12 +123,6 @@ export const skillSortOptions: ReadonlyArray<readonly [SkillSortKey, string]> = 
   ["updated", "Recently updated"],
   ["az", "A → Z"],
 ];
-
-/** Numeric suffix of a "vN" version, 0 for anything else. */
-export function versionRank(version: string): number {
-  const match = /^v(\d+)$/.exec(version);
-  return match === null ? 0 : Number(match[1]);
-}
 
 /** Client-side filter over slug, description and owner label
  * (case-insensitive; the server already applied its own `q` when set). */
@@ -174,7 +165,7 @@ export function sortSkills(items: SkillItem[], key: SkillSortKey): SkillItem[] {
     case "updated":
       // The catalog carries no publish timestamps, so recency is
       // approximated by version order (versions only ever grow).
-      return copy.sort((a, b) => versionRank(b.latest_version ?? "") - versionRank(a.latest_version ?? "") || a.slug.localeCompare(b.slug));
+      return copy.sort((a, b) => compareVersions(b.latest_version ?? "", a.latest_version ?? "") || a.slug.localeCompare(b.slug));
     case "az":
       return copy.sort((a, b) => a.slug.localeCompare(b.slug));
   }
@@ -491,7 +482,7 @@ export function SkillsPanel({
                             <span className="flex min-w-0 items-center gap-1.5">
                               <Avatar
                                 src={row.ownerAvatar}
-                                fallback={ownerInitials(row.ownerLabel)}
+                                fallback={avatarChip(row.ownerLabel)}
                                 className="size-5 border border-border"
                                 fallbackClassName="bg-secondary text-3xs font-semibold"
                               />

@@ -68,7 +68,9 @@ import {
 } from "./agents-api";
 import {
   AGENT_TABS,
+  DEFAULT_ACTIVITY_FILTERS,
   VISIBILITY_LABEL,
+  type ActivityFilters,
   type AgentTab,
   type AgentVisibility,
   type AgentsRoute,
@@ -117,6 +119,7 @@ export function AgentPage({
   threadId,
   routineId,
   filePath,
+  filters,
   viewer,
   onNavigate,
   onOpenChat,
@@ -126,6 +129,7 @@ export function AgentPage({
   threadId?: string;
   routineId?: string;
   filePath?: string;
+  filters?: ActivityFilters;
   viewer: Viewer;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
@@ -154,7 +158,11 @@ export function AgentPage({
   const manage = agent !== null && canManageAgent(agent, viewer);
 
   const setTab = (next: AgentTab) => {
-    onNavigate({ view: "agent", agentId, tab: next });
+    onNavigate(
+      next === "activity"
+        ? { view: "agent", agentId, tab: next, filters: DEFAULT_ACTIVITY_FILTERS }
+        : { view: "agent", agentId, tab: next },
+    );
   };
 
   /** A thread has one canonical address: its chat. */
@@ -321,6 +329,10 @@ export function AgentPage({
             <ActivityPage
               embedded
               agentId={agent.id}
+              filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
+              onFiltersChange={(next) =>
+                onNavigate({ view: "agent", agentId, tab: "activity", filters: next })
+              }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
             />
@@ -702,17 +714,6 @@ function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const download = async () => {
-    setExporting(true);
-    try {
-      await downloadAgentExport(agent);
-    } finally {
-      setExporting(false);
-    }
-  };
 
   useEffect(() => {
     void listModels().then((rows) => setModels(rows ?? []));
@@ -996,57 +997,22 @@ function AgentSettings({
         title="Danger zone"
         description={`Deleting starts a grace period. The default is 30 days; the org can change it.`}
       >
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              if (agent.status === "active") await archiveAgent(agent.id);
-              else await restoreAgent(agent.id);
-              onChanged();
-            }}
-          >
-            {agent.status === "active" ? <Archive /> : <ArchiveRestore />}
-            {agent.status === "active" ? "Archive agent" : "Restore agent"}
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
-            <Trash2 />
-            Delete agent
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <AgentActions
+            agent={agent}
+            manage={manage}
+            onChanged={onChanged}
+            onDeleted={onDeleted}
+          />
+          <span className="text-xs text-muted-foreground">
+            Archive, restore, export or delete this agent.
+          </span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
             Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
-        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The agent stops now and disappears from the directory. Its workspace, threads and
-                runs stay recoverable during the organization&apos;s grace period (30 days by
-                default); after that they are purged. Download an export first if you need the
-                definitions and run history.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button variant="outline" onClick={() => void download()} disabled={exporting}>
-                <Download />
-                {exporting ? "Preparing…" : "Download export"}
-              </Button>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => {
-                  void deleteAgent(agent.id).then(onDeleted);
-                }}
-              >
-                Delete agent
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
         <p className="mt-2 text-xs text-muted-foreground">
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>

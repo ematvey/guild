@@ -1,4 +1,4 @@
-//! The workspace switcher (desktop only): the daemon's live sessions in a
+//! The server switcher (desktop only): the daemon's signed-in servers in a
 //! dropdown anchored at the sidebar top. Switching re-points the engine's
 //! active session, the webview re-mirrors session.info, and the app reloads —
 //! the same restore path a fresh launch takes.
@@ -15,11 +15,11 @@ import { ChevronDown, Plus, X } from "lucide-react";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { IS_TAURI } from "../lib/session";
 import {
-  workspaceList,
-  workspaceSignOut,
-  workspaceSwitch,
-  type WorkspaceList,
-} from "../lib/api/workspaces";
+  serverList,
+  serverSignOut,
+  serverSwitch,
+  type ServerList,
+} from "../lib/api/servers";
 
 /** The origin's display label: scheme stripped, so two servers of one org
  * stay distinguishable without a wall of protocol. */
@@ -29,14 +29,14 @@ function shortOrigin(base: string): string {
 
 /** The daemon's live sessions plus the active pointer (desktop only; a
  * failure resolves to an empty list, the UI still renders). */
-function useWorkspaceList(): WorkspaceList | null {
-  const [list, setList] = useState<WorkspaceList | null>(
+function useServerList(): ServerList | null {
+  const [list, setList] = useState<ServerList | null>(
     IS_TAURI ? null : { active: null, workspaces: [] },
   );
   useEffect(() => {
     if (!IS_TAURI) return;
     let cancelled = false;
-    workspaceList()
+    serverList()
       .then((v) => !cancelled && setList(v))
       .catch(() => !cancelled && setList({ active: null, workspaces: [] }));
     return () => {
@@ -46,31 +46,31 @@ function useWorkspaceList(): WorkspaceList | null {
   return list;
 }
 
-/** The switcher rows: the "Workspaces" header (the "+" rides on it) and one
- * row per live session with the active one highlighted. `list` omitted means
- * self-fetch (standalone use, e.g. the settings window's account menu). */
-export function WorkspaceMenuItems({
+/** The switcher rows: the "Servers" header (the "+" rides on it) and one
+ * row per signed-in server with the active one highlighted. `list` omitted
+ * means self-fetch (standalone use, e.g. the settings window's account menu). */
+export function ServerMenuItems({
   list,
   onAddWorkspace,
   onReload,
 }: {
-  list?: WorkspaceList | null;
+  list?: ServerList | null;
   /** Absent on the web (single server): the whole section hides. The
    * base_url argument is set when a dead-token row asks to sign in again. */
   onAddWorkspace?: (baseUrl?: string) => void;
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
-  const fetched = useWorkspaceList();
+  const fetched = useServerList();
   const effective = list === undefined ? fetched : list;
 
   const switchTo = async (base: string) => {
-    await workspaceSwitch(base);
+    await serverSwitch(base);
     onReload();
   };
 
   const signOutWs = async (base: string) => {
-    await workspaceSignOut(base);
+    await serverSignOut(base);
     onReload();
   };
 
@@ -82,12 +82,12 @@ export function WorkspaceMenuItems({
   return (
     <>
       <div className="flex items-center justify-between px-2 pb-1 pt-1.5">
-        <span className="text-xs font-medium text-muted-foreground">Workspaces</span>
+        <span className="text-xs font-medium text-muted-foreground">Servers</span>
         {onAddWorkspace && (
           <button
             onClick={() => onAddWorkspace()}
-            title="Add workspace"
-            aria-label="Add workspace"
+            title="Add server"
+            aria-label="Add server"
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5" />
@@ -152,10 +152,10 @@ export function WorkspaceMenuItems({
   );
 }
 
-/** Rail trigger: the active workspace's logo as a compact icon button (the
+/** Rail trigger: the active server's logo as a compact icon button (the
  * rail's first button); the dropdown carries the switcher rows. On the web
  * (single server) it renders nothing. */
-export function WorkspaceRailButton({
+export function ServerRailButton({
   onAddWorkspace,
   onReload,
 }: {
@@ -163,7 +163,7 @@ export function WorkspaceRailButton({
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
-  const list = useWorkspaceList();
+  const list = useServerList();
   if (!IS_TAURI) return null;
   const activeRow = (list?.workspaces ?? []).find(
     (w) => w.base_url === (list?.active ?? null),
@@ -173,11 +173,11 @@ export function WorkspaceRailButton({
     : "Guild";
   return (
     <DropdownMenu>
-      <DesktopTooltip label="Switch workspace" side="right">
+      <DesktopTooltip label="Switch server" side="right">
         <DropdownMenuTrigger asChild>
           <button
             className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-            aria-label="Switch workspace"
+            aria-label="Switch server"
           >
             {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
               <img
@@ -194,7 +194,7 @@ export function WorkspaceRailButton({
         </DropdownMenuTrigger>
       </DesktopTooltip>
       <DropdownMenuContent side="bottom" align="start" className="w-60">
-        <WorkspaceMenuItems
+        <ServerMenuItems
           list={list}
           onAddWorkspace={onAddWorkspace}
           onReload={onReload}
@@ -204,9 +204,9 @@ export function WorkspaceRailButton({
   );
 }
 
-/** Sidebar-top trigger: the active workspace's logo and name; clicking opens
+/** Sidebar-top trigger: the active server's logo and name; clicking opens
  * the switcher. On the web (single server) it renders nothing. */
-export function WorkspaceSwitcher({
+export function ServerSwitcher({
   onAddWorkspace,
   onReload,
 }: {
@@ -214,7 +214,7 @@ export function WorkspaceSwitcher({
   /** Runs after a switch or sign-out (the caller reloads the app). */
   onReload: () => void;
 }) {
-  const list = useWorkspaceList();
+  const list = useServerList();
   if (!IS_TAURI) return null;
 
   const rows = list?.workspaces ?? [];
@@ -228,7 +228,7 @@ export function WorkspaceSwitcher({
       <DropdownMenuTrigger asChild>
         <button
           className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors hover:bg-accent"
-          title="Switch workspace"
+          title="Switch server"
         >
           {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
             <img
@@ -246,7 +246,7 @@ export function WorkspaceSwitcher({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="start" className="w-60">
-        <WorkspaceMenuItems
+        <ServerMenuItems
           list={list}
           onAddWorkspace={onAddWorkspace}
           onReload={onReload}
