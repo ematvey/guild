@@ -1,7 +1,7 @@
 // Markup contracts for the extracted transcript blocks.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CompactionCard, HoverStamp, ReasoningFrame, ThreadSkeleton, ThreadTitle } from "./blocks";
+import { CompactionCard, HoverStamp, ReasoningFrame, ThreadSkeleton, ThreadTitle, prettyStamp } from "./blocks";
 
 describe("ReasoningFrame", () => {
   it("labels a live reasoning block as Thinking…", () => {
@@ -58,5 +58,15 @@ describe("ThreadTitle", () => {
     const html = renderToStaticMarkup(<ThreadTitle chatId="c1" title="Deploy notes" loading={false} />);
     expect(html).toContain("Deploy notes");
     expect(html).not.toContain("Loading title");
+  });
+});
+
+describe("prettyStamp", () => {
+  it("formats a timestamp consistently and caches the result", () => {
+    const iso = new Date().toISOString();
+    const first = prettyStamp(iso);
+    expect(first).toBe(prettyStamp(iso));
+    expect(first).toMatch(/\d{1,2}:\d{2}/);
+    expect(prettyStamp("not-a-date")).toBe("");
   });
 });
