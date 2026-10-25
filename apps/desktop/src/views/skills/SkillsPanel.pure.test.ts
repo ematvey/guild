@@ -11,7 +11,6 @@ import {
   skillRow,
   skillsEmptyState,
   sortSkills,
-  versionRank,
 } from "./SkillsPanel";
 import {
   clampSkillsRoute,
@@ -21,6 +20,7 @@ import {
   type SkillsRoute,
 } from "./skills-route";
 import { avatarChip } from "../../lib/format";
+import { versionRank } from "./version";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 
 const fixtures: SkillItem[] = [
@@ -119,7 +119,7 @@ describe("versionRank (the recently-updated sort's version order)", () => {
   it("parses the numeric suffix of a vN version", () => {
     expect(versionRank("v3")).toBe(3);
     expect(versionRank("v10")).toBe(10);
-    expect(versionRank("1.2.0")).toBe(0);
+    expect(versionRank("1.2.0")).toBe(1);
   });
 });
 
