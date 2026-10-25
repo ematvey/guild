@@ -31,7 +31,7 @@ docs/archive        older decision log
 
 `scripts/check.sh` is the one gate. It runs the baseline checks concurrently,
 prints PASS/FAIL and the time for each, then a summary. It exits 1 if any
-check fails.
+check fails. It needs `cargo-nextest` (`cargo install cargo-nextest`).
 
 ```bash
 scripts/check.sh              # the full gate
