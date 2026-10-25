@@ -1,6 +1,5 @@
-// Exec-policy gate (the codex-execpolicy prefix matcher): a matched `allow`
-// rule skips the
-// approval gate entirely; a matched `forbidden` rule is a hard deny whose
+// Exec-policy gate (the prefix matcher): a matched `allow` rule skips the
+// approval gate entirely; a matched `deny` rule is a hard deny whose
 // text is the rule's justification; `prompt` rules and unmatched commands
 // fall through to the chat's approval flow. Rules are static assets — the
 // decision is a pure function of (rules, command).
@@ -14,8 +13,8 @@ export type ExecPolicyDecision =
   | { kind: "deny"; reason: string }
   | { kind: "prompt" };
 
-// Decision ordering (Rust derive(Ord): Allow < Prompt < Forbidden).
-const DECISION_RANK: Record<DecisionKind, number> = { allow: 0, prompt: 1, forbidden: 2 };
+// Decision ordering: allow < prompt < deny.
+const DECISION_RANK: Record<DecisionKind, number> = { allow: 0, prompt: 1, deny: 2 };
 
 interface PrefixRule {
   first: string;
@@ -272,8 +271,8 @@ function evaluateLine(policy: ExecPolicy, line: string): ExecPolicyDecision {
   const segments = splitSegments(split);
   if (segments.length === 0) return { kind: "prompt" };
   const { decision, matched } = policy.checkMultiple(segments);
-  if (decision === "forbidden") {
-    const justification = matched.find((m) => m.decision === "forbidden" && m.justification !== null)?.justification;
+  if (decision === "deny") {
+    const justification = matched.find((m) => m.decision === "deny" && m.justification !== null)?.justification;
     return { kind: "deny", reason: justification ?? "denied by exec policy" };
   }
   // A static Allow is only safe when no segment carries effects and no token

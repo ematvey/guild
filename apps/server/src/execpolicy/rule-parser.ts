@@ -1,4 +1,4 @@
-// Exec-policy rules parser (crates/codex-execpolicy parser.rs subset + the
+// Exec-policy rules parser (the Starlark subset and the
 // build.rs loading shape): the base rules load from the static Rust asset
 // (apps/server/assets/exec_policy_base.rules) and an optional deployment
 // local layer (exec_policy_local.rules next to it) merges after it — a
@@ -10,7 +10,7 @@
 // `host_executable` are accepted for forward compatibility and ignored: the
 // gate evaluates prefix rules only, exactly like the Rust runtime path.
 
-export type DecisionKind = "allow" | "prompt" | "forbidden";
+export type DecisionKind = "allow" | "prompt" | "deny";
 
 export type PatternToken =
   | { single: string }
@@ -203,7 +203,10 @@ function parsePatternList(raw: string, line: number): PatternToken[] {
 function parseDecision(raw: string | undefined, line: number): DecisionKind {
   if (raw === undefined) return "allow"; // Rust: decision defaults to Allow
   const s = unquote(raw, line);
-  if (s === "allow" || s === "prompt" || s === "forbidden") return s;
+  // The rule files spell the hard-deny case `forbidden`; the parsed form
+  // uses the gate's own `deny`.
+  if (s === "allow" || s === "prompt") return s;
+  if (s === "forbidden") return "deny";
   throw new RulesParseError(`invalid decision ${s}`, line);
 }
 
