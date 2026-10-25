@@ -48,6 +48,7 @@ describe("routeMessage", () => {
       onAuthRequired: () => calls.push("auth"),
       onError: (message) => calls.push(`error:${message}`),
       onOrgEvent: () => calls.push("org"),
+      onMachineStatus: (machineId, online) => calls.push(`machine:${machineId}:${online}`),
     };
 
     routeMessage({ type: "hello" }, handlers);
@@ -59,6 +60,7 @@ describe("routeMessage", () => {
     routeMessage({ type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: undefined, event: delta }, handlers);
     routeMessage({ type: "displaced" }, handlers);
     routeMessage({ type: "auth_required" }, handlers);
+    routeMessage({ type: "machine_status", machine_id: "m1", online: false }, handlers);
 
     expect(calls).toEqual([
       "threads:1",
@@ -69,6 +71,7 @@ describe("routeMessage", () => {
       "frame:chat-1:delta",
       "displaced",
       "auth",
+      "machine:m1:false",
     ]);
 
     routeMessage({ type: "error", message: "bad" }, handlers);

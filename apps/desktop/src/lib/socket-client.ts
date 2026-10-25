@@ -29,6 +29,8 @@ export interface SocketHandlers {
   /** The open chat's thread subtree with each node's latest run status. */
   onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
+  /** One machine's socket presence flip (claimed or released). */
+  onMachineStatus?: (machine_id: string, online: boolean) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
   onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
   onSync: (chat_id: string, phase: "begin" | "done") => void;
@@ -70,6 +72,9 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       return;
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);
+      return;
+    case "machine_status":
+      handlers.onMachineStatus?.(message.machine_id, message.online);
       return;
     case "subagent_tree":
       handlers.onSubagentTree?.(message.chat_id, message.nodes as unknown as ChatSubagentNode[]);

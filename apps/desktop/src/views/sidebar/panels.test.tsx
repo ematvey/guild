@@ -54,19 +54,6 @@ describe("ChatListItem", () => {
     expect(unread).toContain("unseen replies");
   });
 
-  it("shows the unseen count when the row carries one", () => {
-    const html = renderToStaticMarkup(
-      <ChatListItem
-        title="t"
-        active={false}
-        status={{ generating: false, unread: true, unreadCount: 3 }}
-        onClick={() => {}}
-      />,
-    );
-    expect(html).toContain("3 unseen replies");
-    expect(html).toContain(">3<");
-  });
-
   it("hides the row menu when no action is available", () => {
     const html = renderToStaticMarkup(<ChatListItem title="t" active={false} status={idle} onClick={() => {}} />);
     expect(html).not.toContain("Row actions");

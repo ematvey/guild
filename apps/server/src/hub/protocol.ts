@@ -67,7 +67,8 @@ export type WsServerMsg =
       type: "subagent_tree";
       chat_id: string;
       nodes: unknown[];
-    };
+    }
+  | { type: "machine_status"; machine_id: string; online: boolean };
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
@@ -290,6 +291,13 @@ export function serializeServerMsg(msg: WsServerMsg): string {
         frame("subagent_tree", [
           ["chat_id", msg.chat_id],
           ["nodes", msg.nodes],
+        ]),
+      );
+    case "machine_status":
+      return JSON.stringify(
+        frame("machine_status", [
+          ["machine_id", msg.machine_id],
+          ["online", msg.online],
         ]),
       );
   }

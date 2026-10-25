@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { machineId, watchMachinePresence } from "../../../lib/machine-rpc";
 import { setMachineIdentity } from "../../../lib/api/folders";
 import { startSocket } from "../../../lib/socket-client";
+import { applyMachineStatus, refreshMachines } from "../../../lib/machines-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
@@ -137,7 +138,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
         );
         setChats((prev) =>
-          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false, unread_count: 0 } : c)) ?? prev,
+          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
         );
       }
     }
@@ -154,7 +155,11 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         reducerRef.current.invalidate();
         resetSubagentTrees();
         markBusy(false);
+        // A presence flip while the socket was down sends no frame: the
+        // registry snapshot is the durable resync.
+        void refreshMachines();
       },
+      onMachineStatus: applyMachineStatus,
       onThreadList: (nextChats) => {
         // The open chat's turns are on screen: the server's read watermark
         // lags the local read POST, so a push landing in between must not
@@ -163,8 +168,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         const rows = open === null
           ? nextChats
           : nextChats.map((c) =>
-              c.id === open && (c.unread || c.unread_count)
-                ? { ...c, unread: false, unread_count: 0 }
+              c.id === open && c.unread
+                ? { ...c, unread: false }
                 : c,
             );
         setChats(rows);

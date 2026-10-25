@@ -109,6 +109,10 @@ export function SidebarRail({
   /** Mobile drawer: the skills page is a desktop-only surface (its main
    *  column does not render on mobile), so its tab is dropped. */
   isMobile?: boolean;
+  /** Unseen chats the Chats panel lists. */
+  unreadChats?: number;
+  /** Unseen chats the Projects panel lists. */
+  unreadProjects?: number;
 }) {
   const tabs = (role === "admin" ? TABS : TABS.filter((tab) => tab.id !== "activity")).filter(
     (tab) => !(isMobile && tab.id === "skills"),
@@ -129,6 +133,7 @@ export function SidebarRail({
             icon={Icon}
             active={activeTab === id}
             onClick={() => onTabChange(id)}
+            badge={id === "chats" ? unreadChats : id === "work" ? unreadProjects : undefined}
           />
         ))}
       </div>

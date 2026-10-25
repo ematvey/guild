@@ -32,6 +32,15 @@ you.
   (regenerate the bindings), a serializer arm in
   `apps/server/src/hub/protocol.ts`, a NOTIFY channel, and a feed handler.
   The client applies the frame; it never re-fetches.
+- **The server pushes all operational, status and chat state; clients never
+  poll for it.** Machine online/offline, run status, unread, approvals,
+  presence, registry lists — any fact the UI shows and that can change
+  while the app is open — must reach the client as a server-initiated
+  `WsServerMsg` frame the moment it changes. An HTTP snapshot may seed the
+  first paint, but it is never the live source: no timers, no interval
+  refetches, no "refresh on focus" for state the socket can carry. A new
+  operational fact is not done until it has a frame, a push site in the
+  server, and a client handler.
 - **All navigation state is URL state.** Every page, tab, panel and
   sub-page the user can reach has its own fixed URL (rail tabs, threads,
   projects, new chats per surface, skills pages, settings sections and

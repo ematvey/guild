@@ -450,6 +450,14 @@ export class FeedForwarder implements GenerationStreamSink {
 
   // -- fan-out ------------------------------------------------------------------
 
+  /** Machine presence flip: the owner's member sockets repaint the online
+   *  dot without polling the registry. */
+  machineStatus(machineId: string, userId: string, online: boolean): void {
+    if (this.stopped) return;
+    const frame: WsServerMsg = { type: "machine_status", machine_id: machineId, online };
+    for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sink.send(frame);
+  }
+
   private sendToUser(userId: string, frame: WsServerMsg): void {
     for (const sink of this.ctx.hub.sinksOfUser(userId)) sink.send(frame);
   }
@@ -495,7 +503,6 @@ export async function threadListSnapshot(chats: ChatsCtx, user: Pick<UserRow, "o
         : {}),
       ...(chat.title !== null ? { title: chat.title } : {}),
       unread: chat.unread,
-      unread_count: chat.unread_count,
       blocked: chat.blocked,
       user_id: chat.user_id,
       working: chat.working,

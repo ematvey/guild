@@ -7,43 +7,24 @@
 //! the last-seen stamp track live socket state.
 
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { Cpu } from "lucide-react";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
-import { listMachines, type MachineInfo } from "../../../lib/api/machines";
+import { refreshMachines, useMachines } from "../../../lib/machines-store";
 import { relativeTime } from "../../../lib/relative-time";
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { PageHeader } from "../components/page-header";
 
-// Last successful machine list; a remount renders it immediately and
-// refreshes in the background instead of blinking the skeleton.
-let lastMachines: MachineInfo[] | null = null;
-// Generation of the in-flight machine refresh; clearMachinesCache bumps it
-// so a response landing after sign-out is dropped instead of repopulating.
-let machinesEpoch = 0;
-
-/** Drops the cached machine list and invalidates the in-flight refresh;
- * sign-out must call this so one user's machine inventory does not leak
- * into the next session. */
-export function clearMachinesCache(): void {
-  machinesEpoch++;
-  lastMachines = null;
-}
-
 export function MachineSection() {
   const [loadError, setLoadError] = useState(false);
-  const [machines, setMachines] = useState<MachineInfo[] | null>(lastMachines);
+  // The registry is shared app state: the member socket patches the
+  // connected flag live, so an open page follows a machine coming up or
+  // going down without a refetch.
+  const machines = useMachines();
   useEffect(() => {
     const epoch = currentCacheEpoch();
-    void listMachines().then((m) => {
+    void refreshMachines().then((ok) => {
       if (cacheEpochChanged(epoch)) return;
-      if (m === null) {
-        setLoadError(true);
-        toast.error("Could not load machines");
-        return; // keep the last good list on screen
-      }
-      lastMachines = m;
-      setMachines(m);
+      if (!ok) setLoadError(true);
     });
   }, []);
 
