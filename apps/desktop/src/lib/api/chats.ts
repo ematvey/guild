@@ -17,8 +17,6 @@ export interface ChatSummary {
   working?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
-  /** Assistant turns newer than the read marker (sidebar badge). */
-  unread_count?: number;
   /** A tool call in this chat waits for the user's approval (red dot,
    *  supersedes unread). */
   blocked?: boolean;

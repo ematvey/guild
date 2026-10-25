@@ -79,7 +79,6 @@ export const WorkPanel = memo(function WorkPanel({
             generating: chats.some((c) => !!c.generating),
             working: chats.some((c) => !!c.generating || !!c.working),
             unread: chats.some((c) => !!c.unread),
-            unreadCount: chats.reduce((sum, c) => sum + (c.unread_count ?? 0), 0),
             blocked: chats.some((c) => !!c.blocked),
           }}
           open={open}
@@ -105,7 +104,7 @@ export const WorkPanel = memo(function WorkPanel({
                 key={c.id}
                 title={c.title}
                 active={c.id === chatId}
-                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, unreadCount: c.unread_count, blocked: !!c.blocked }}
+                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}

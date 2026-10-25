@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { listArchivedChats, listChats, type ChatSubagentNode, type ChatSummary } from "../../../lib/api/chats";
 import { applySubagentTree, clearSubagentTrees } from "../status";
 import { listArchivedProjects, listProjects, type Project } from "../../../lib/api/projects";
-import { listMachines, type MachineInfo } from "../../../lib/api/machines";
+import { refreshMachines, useMachines } from "../../../lib/machines-store";
 
 export type ChatStatus = Record<string, { generating: boolean; working: boolean; unread: boolean }>;
 
@@ -51,7 +51,9 @@ export function useChatData() {
 
   // ---- projects (sidebar grouping + the composer's project binding) ----
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [machines, setMachines] = useState<MachineInfo[] | null>(null);
+  // The machine registry is shared app state (machines-store): the socket's
+  // presence frames patch it, this mount only seeds it.
+  const machines = useMachines();
   const refreshProjects = useCallback(async () => {
     const p = await listProjects();
     if (p === null) return; // silent: the sidebar degrades, chat keeps working
@@ -59,7 +61,7 @@ export function useChatData() {
   }, []);
   useEffect(() => {
     void refreshProjects();
-    void listMachines().then(setMachines).catch(() => {});
+    void refreshMachines();
   }, [refreshProjects]);
 
   // Archived projects: the sidebar's Archived section, collapsed by default.

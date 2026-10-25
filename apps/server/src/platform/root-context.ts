@@ -209,6 +209,9 @@ export class PlatformContext {
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
+    // Presence flips ride the member socket: the sidebar dot and the
+    // machine list move live instead of holding a registry snapshot.
+    this.hub.onMachineStatus = (machineId, userId, online) => this.feed.machineStatus(machineId, userId, online);
     // The dispatch lane's tool-result completion + connect sweep (the
     // ws.ts seams; no-op until a test/lane sets richer behavior).
     this.wsToolResult = async ({ member, frame }) => {

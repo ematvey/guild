@@ -177,6 +177,13 @@ pub enum WsServerMsg {
         chat_id: Uuid,
         nodes: Vec<serde_json::Value>,
     },
+    /// One machine's socket presence flip, pushed to the owner's member
+    /// sockets when its slot is claimed or released. Daemons tag-peek
+    /// frames and ignore unknown types.
+    MachineStatus {
+        machine_id: String,
+        online: bool,
+    },
 }
 
 #[cfg(test)]

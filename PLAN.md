@@ -12,6 +12,17 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Machine presence is pushed, not polled (2026-10-26).** The sidebar's
+  project dot and the settings machine list read `connected` from one HTTP
+  snapshot taken at mount, so they stayed stale until a reload. The hub now
+  fires `onMachineStatus` when a machine slot is claimed, released or
+  displaced; the feed forwards it as a `machine_status` frame to the
+  owner's member sockets. The client keeps the registry in
+  `lib/machines-store.ts` and patches the flag in place; the HTTP list only
+  seeds the store at mount and resyncs it on socket reconnect. Rule recorded
+  in `AGENTS.md`: operational, status and chat state is pushed by the
+  server, never polled by clients.
+
 - **Chat rows carry the unread count (2026-10-25).** The sidebar badge shows
   how many assistant turns are newer than the reader's marker instead of a
   plain dot (`unread_count` on the chat list row, `0` when read). The count

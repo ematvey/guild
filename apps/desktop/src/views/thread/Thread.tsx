@@ -915,6 +915,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     () => archivedChats?.map(enrichChat) ?? null,
     [archivedChats, enrichChat],
   );
+  // Rail badges: unseen chats per panel — folderless chats under Chats, the
+  // project-bound ones under Projects.
+  const unreadChats = grouping.visible.filter((c) => c.unread).length;
+  const unreadProjects = Object.values(grouping.chatsByProject)
+    .reduce((sum, rows) => sum + rows.filter((c) => c.unread).length, 0);
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
   // work, skills and settings. The skills tab is not panel state at all —
@@ -1242,6 +1247,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           onSignOut={signOut}
           onAddWorkspace={onAddWorkspace}
           role={role}
+          unreadChats={unreadChats}
+          unreadProjects={unreadProjects}
         />
       )}
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}

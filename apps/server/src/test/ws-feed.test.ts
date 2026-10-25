@@ -599,6 +599,44 @@ describe("member-socket feed", () => {
     browser.end();
   });
 
+  it("pushes machine_status to the owner's member socket on connect and disconnect", { timeout: TEST_TIMEOUT }, async () => {
+    const machineId = "fix-status-m1";
+    await stack.env.db.query(
+      `INSERT INTO machines (machine_id, org_id, user_id, label)
+       VALUES ($1, $2, $3, 'Desk')`,
+      [machineId, stack.orgId, stack.memberId],
+    );
+
+    const browser = await memberSocket();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    const ticket = (JSON.parse(res.body) as { ticket: string }).ticket;
+    const machine = new ScriptedClient(
+      base,
+      `ticket=${ticket}&client_id=${crypto.randomUUID()}&machine_id=${machineId}&machine_name=Desk&instance_id=${crypto.randomUUID()}&resume=false`,
+    );
+    await machine.open();
+
+    // No poll: the flip itself is a frame, so it lands at once.
+    const online = await waitFrame(
+      browser,
+      (f) => f.type === "machine_status" && f.machine_id === machineId,
+    );
+    expect(online.online).toBe(true);
+
+    machine.end();
+    await machine.closed();
+    const offline = await waitFrame(
+      browser,
+      (f) => f.type === "machine_status" && f.machine_id === machineId && f.online === false,
+    );
+    expect(offline.online).toBe(false);
+    browser.end();
+  });
+
   it("the HTTP thread list agrees with the hub — same truth as the machines list", { timeout: TEST_TIMEOUT }, async () => {
     // Regression: GET /api/v1/chats hardcoded machine_online=false, so the
     // webchat showed the "machine is offline" banner while the sidebar's

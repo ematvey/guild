@@ -12,7 +12,7 @@ import { apiLogin, apiLogout, apiMe } from "./lib/api/workspaces";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { clearApiCache } from "./views/settings/use-cached-api";
-import { clearMachinesCache } from "./views/settings/sections/MachineSection";
+import { clearMachinesCache } from "./lib/machines-store";
 import { clearGatewayCache } from "./views/settings/sections/GatewaySection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
