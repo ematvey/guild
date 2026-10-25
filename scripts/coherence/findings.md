@@ -259,3 +259,48 @@ One word, several meanings:
 model: another session edited `crates/app-server/src/machine_link.rs` in the
 same checkout. `floor.json` was updated once, at merge, and records the tree
 as it is.
+
+---
+
+# Round 1 fixes (2026-10-25, six fixer lanes in worktrees)
+
+Six fixers worked in separate worktrees, each on its own branch from
+`fix/coherence`. They fixed only the findings with one obvious answer and
+left every design choice to a human.
+
+| Lane | Fixed | Skipped |
+| --- | --- | --- |
+| `srv-platform` | 3 | 14 |
+| `srv-domain` | 2 | 9 |
+| `srv-runtime` | 3 | 7 |
+| `ui-thread` | 4 | 12 |
+| `ui-rest` | 2 | 11 |
+| `engine` | 2 | 8 |
+
+Fixed:
+
+- one approval-policy prompt constant, one v2 secret-name rule, one 422 body
+  builder (`srv-platform`);
+- one ThreadState encoder; two uncalled hub methods deleted (`srv-domain`);
+- one BIGINT parser; dead inbox mode test; `models` removed from the codemode
+  lint (`srv-runtime`);
+- dangling comment fragments; approval labels derived from one table; Tauri
+  check imported from `lib/session`; `resolve-project-dir` now sorts by
+  activity as its comment claims (`ui-thread`);
+- one "N things" helper; one agent export body (`ui-rest`);
+- the stdio envelope built from `Request`; three stale `tests/agent_rpc.rs`
+  comments fixed (`engine`).
+
+Left open by the fixers, worth a second look:
+
+- The Tauri check still has three more copies:
+  `views/thread/hooks/{use-composer,use-member-socket,use-outgoing}.ts`.
+- `count` now serves the skills panel from a file named for agents
+  (`views/agents/activity-format.ts`). The home is wrong for the reach.
+- `crates/app-server` has one pre-existing test failure on `develop`:
+  `machine_link::tests::remote_context_and_prefetch_roundtrip_on_mock_hub_socket`.
+  It is not from this round.
+
+Verification on the merged round branch: server tsc, desktop tsc, desktop
+vitest 513 passed, `npm run coherence` clean, `cargo test` 88 passed with the
+one pre-existing failure above.
