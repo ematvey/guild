@@ -12,6 +12,36 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The quality gate is one script, and the slow checks are cheaper
+  (2026-10-26).** `scripts/check.sh` runs the baseline checks concurrently,
+  prints PASS/FAIL with per-check seconds, and exits 1 on any failure; it
+  also orders the bindings check after the Rust tests, which rewrite the
+  generated bindings. `cargo nextest run --workspace` replaces
+  `cargo test --workspace` (13 s vs 39 s, same 241 tests; per-test process
+  isolation also removed the `machine_link` mock-socket failure). The TS
+  server suite drops from 50 s to 20 s by raising vitest to 14 workers (the
+  shared Postgres allows 500 connections) and by removing the ClickHouse
+  auth failure that every test harness logged. Strict clippy now covers
+  `--all-targets` and passes. The one real bug the gate found: the skill
+  home was read by two code paths, so `machine_link` skill sync honoured
+  `GUILD_SKILLS_ROOT` while the remote-context scan read the real home;
+  `fs_bridge::skills_home()` is now the single reader. No test was deleted
+  and no assertion was weakened.
+
+- **A dead workspace mount is repaired, not served (2026-10-26).** A JuiceFS
+  remount leaves every container that bound the volume before it on the dead
+  FUSE session: the sandbox cannot start its agent (`transport endpoint is
+  not connected`), the runner cannot create a workspace dir, and the chat
+  shows `sandbox connection lost; outcome unknown`. The 2026-10-21 fix
+  covered only the full-stack boot, and a sidecar-only restart skips it.
+  Now the runner checks its own two volume roots every 10 s and before each
+  ensure/attach: a dead one exits the process, the restart policy brings it
+  back, boot re-resolves the mount and removes the sandboxes on the dead
+  session. Attach also probes `/workspace` inside the container and removes
+  a sandbox whose mount died. The server retries a 503 (and a refused
+  connection) three times, 2 s apart, so a remount costs a few seconds and
+  no failed tool call. The files never move: they live on the volume.
+
 - **The sidebar lists are pushed, never fetched (2026-10-26).** A new chat's
   title could appear and then vanish: the client still re-read the chat list
   over HTTP after a create, and that snapshot (taken before the title model
@@ -588,10 +618,12 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   sections live inside Settings (`/settings/<section>`); there is no
   separate admin app. Observability is the Activity surface, fed by traces
   and spans from ClickHouse.
-- **Quality baseline:** `cargo test --workspace`, the TS server suite
-  (`npm test --workspace apps/server`), desktop vitest, strict clippy, the
-  Windows compile check (`scripts/check-windows.sh`) and the bindings
-  freshness gate (`scripts/check-bindings.sh`).
+- **Quality baseline:** `scripts/check.sh` runs all of it in one pass:
+  `cargo nextest run --workspace`, the TS server suite
+  (`npm test --workspace apps/server`), desktop vitest, strict clippy
+  (`--all-targets`), the Windows compile check (`scripts/check-windows.sh`),
+  the bindings freshness gate (`scripts/check-bindings.sh`) and
+  `npm run coherence`.
 
 ## Next steps (ordered)
 
@@ -604,18 +636,28 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
    ignores it and uses its own env defaults (2 vCPU / 2 GiB / 512 pids). The
    per-agent 50 GiB JuiceFS quota is the only limit that actually applies.
    Decide: pass `resources` into the sandbox spec, or remove the field.
-3. **Set an org storage budget for shared agent workspaces.** The 50 GiB
+3. **Harden the sandbox volume against a remount.** The runner detects a
+   dead FUSE session by polling its volume roots, and the attach probe is a
+   second guard. Replace both with one rule: every runner interaction with
+   the volume goes through one helper, and `ENOTCONN` from that helper means
+   the volume is gone. The reaction is the same as today (remove the
+   sandboxes, restart the runner), but it fires on the failing call instead
+   of up to 10 s later, and no new interaction can forget the check. Then
+   drop the poll. The real fix stays open: mount the volume where the
+   containers can re-resolve it (the entrypoint TODO), so a remount stops
+   invalidating every container by construction.
+4. **Set an org storage budget for shared agent workspaces.** The 50 GiB
    quota is per agent, and agent count is unbounded, so one org can fill the
    object store. Decide the budget and where it is enforced.
-4. **Decide whether an archived thread can move to another agent.** Today a
+5. **Decide whether an archived thread can move to another agent.** Today a
    live thread moves with its transcript; an archived one has no such path.
-5. **Decide machine identity after an OS reinstall.** A changed hardware
+6. **Decide machine identity after an OS reinstall.** A changed hardware
    fingerprint matches no row, so the machine registers as new and its old
    chats go dark. Candidates: derive the fingerprint from the firmware/board
    UUID, or give the user an explicit takeover on the machines page.
-6. **Measure the rest of the long-thread path.** Composer typing is fixed.
+7. **Measure the rest of the long-thread path.** Composer typing is fixed.
    Initial load and scroll of the 3000-event dev thread were not measured.
-7. **Cover the review gaps in the next loop:** Windows-only engine paths
+8. **Cover the review gaps in the next loop:** Windows-only engine paths
    (compile-checked, never run), the desktop updater flow on a real install,
    and the integration connectors.
 

@@ -130,6 +130,16 @@ async function waitFrame(
   return JSON.parse((found as { data: string }).data) as Record<string, unknown>;
 }
 
+/** Polls an async condition until it holds; throws when the deadline passes. */
+async function eventually(probe: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await probe()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`condition not met within ${timeoutMs}ms`);
+}
+
 /** A second member user + live session token (org-scoped stranger). */
 async function strangerToken(email: string): Promise<string> {
   const token = crypto.randomBytes(24).toString("hex");
@@ -677,6 +687,9 @@ describe("member-socket feed", () => {
 
     machine.end();
     await machine.closed();
+    // The socket reader clears the presence slot asynchronously after the
+    // close, so poll for the HTTP row instead of assuming it is already clear.
+    await eventually(async () => (await onlineOf()) === false);
     expect(await onlineOf()).toBe(false);
   });
 
