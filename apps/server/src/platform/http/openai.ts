@@ -5,7 +5,7 @@
 // (serde_json BTreeMap key order, `data: …\n\n` frames, `[DONE]` end).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
+import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, missingFieldError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
 import {
   accumulate,
@@ -23,7 +23,7 @@ import {
   type GatewayTraceEmission,
 } from "./llm.js";
 import type { GatewayCtx } from "../route-contexts.js";
-import { rustJsonText, serializeRustJson } from "../provider/sse.js";
+import { rustJsonText, serializeRustJson } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
@@ -216,10 +216,7 @@ function toOpenAiToolCalls(calls: ToolCall[]): unknown {
 }
 
 function missingField(field: string, req: FastifyRequest): TextError {
-  return new TextError(
-    422,
-    `${DESERIALIZE_PREFIX}missing field \`${field}\` at line 1 column ${(req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0}`,
-  );
+  return missingFieldError(field, (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
 }
 
 function invalidType(value: unknown, req: FastifyRequest): TextError {

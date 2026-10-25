@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "./desktop-tooltip";
+import { avatarChip } from "../lib/format";
 
 export function UserBadge({
   email,
@@ -25,7 +26,7 @@ export function UserBadge({
   /** Dropdown menu contents (DropdownMenuItem and friends). */
   children?: React.ReactNode;
 }) {
-  const initials = (displayName ?? email).slice(0, 2).toUpperCase();
+  const initials = avatarChip(displayName ?? email);
   const trigger = (
     <button
       className={

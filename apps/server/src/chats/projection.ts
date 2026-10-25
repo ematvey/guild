@@ -1,3 +1,7 @@
+// Transcript cursor: entries feed the transcript. The queue-state cursor
+// (chat_reconciliation_cursors) is separate and lives in recovery.ts.
+// coherence:seam owner=@ematvey until=2027-01-31 reason="durable log and platform tables retire at different times"
+
 import type { Conversation, EntryId, EntryRecord, SubmissionRecord } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { BridgeDeps } from "./bridge.js";

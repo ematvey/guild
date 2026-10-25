@@ -13,7 +13,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
-import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { resolveIntegrations, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { toolCurate } from "../platform/integrations/policy.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { chatSubagentNodes } from "./tree.js";
@@ -61,7 +62,7 @@ async function integrationToolCatalog(
 ): Promise<{ name: string; label: string; group: string; description: string; safe: boolean }[]> {
   let turns;
   try {
-    turns = await resolvePlugins(gateway, orgId, () => {});
+    turns = await resolveIntegrations(gateway, orgId, () => {});
   } catch {
     return [];
   }
@@ -758,20 +759,6 @@ export function registerAgentRoutes(
     const run = await store.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
     return sendJson(reply, { children: await store.childRuns(run.id) });
-  });
-
-  app.get("/api/v1/runs/:id/artifacts", async (req, reply) => {
-    const user = await requireUser(auth, req);
-    const run = await store.getRun(parseUuidParam(req, "id"));
-    await store.requireAccess(user, run.agent_id, "use");
-    const artifacts = await store.listArtifacts(run.id);
-    return sendJson(reply, {
-      run_id: run.id,
-      artifacts,
-      staged: artifacts.filter((artifact) => artifact.status === "staged").length,
-      inboxed: artifacts.filter((artifact) => artifact.status === "inbox").length,
-      released: artifacts.filter((artifact) => artifact.status === "released").length,
-    });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {

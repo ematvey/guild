@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 
 function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));

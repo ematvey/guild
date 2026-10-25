@@ -26,7 +26,7 @@ describe("orgSkillsApi.skillBody pins the version", () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
       urls.push(String(input));
-      return { ok: true, json: async () => ({ skill_md: "BODY" }) };
+      return { ok: true, json: async () => ({ version: "v2", skill_md: "BODY", files: [] }) };
     }));
     setToken("tok");
     return { api: orgSkillsApi(), urls };

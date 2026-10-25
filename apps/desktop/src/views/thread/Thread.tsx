@@ -91,12 +91,12 @@ import {
   SubagentSpawnRecord,
 } from "../agents/subagent-blocks";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
-import { SidebarRail, type SidebarTab } from "../sidebar-rail";
+import { SidebarRail, type RailTab } from "../sidebar-rail";
 import { ThreadSkeleton, ThreadTitle, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
-import { APPROVAL_MODES, APPROVAL_MODE_LABELS } from "./approval";
+import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
 import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, workingForChat } from "./status";
@@ -110,8 +110,6 @@ import { useOutgoing } from "./hooks/use-outgoing";
 import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
 import { useChatActions } from "./hooks/use-chat-actions";
-
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 type ThreadProps = {
   email: string;
@@ -466,7 +464,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     const a = route.agents;
     if (a === null) return;
     const next: AgentsRoute | null =
-      a.view === "activity" || a.view === "run" || a.view === "session"
+      a.view === "activity" || a.view === "run" || a.view === "trace" || a.view === "chat"
         ? AGENTS_DIRECTORY
         : a.view === "agent" && a.tab === "activity"
           ? { view: "agent", agentId: a.agentId, tab: "overview" }
@@ -740,7 +738,13 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     }
     return { entries, finalAgent, lastAgent };
   }, [blocks]);
-  const offlineMachineBanner = offlineMachine(chats, viewChatId, isTauri, isTauri ? machineId() : undefined);
+  const offlineMachineBanner = offlineMachine(
+    chats,
+    machines,
+    viewChatId,
+    IS_TAURI,
+    IS_TAURI ? machineId() : undefined,
+  );
   const streaming = busy || openGenerating;
 
   // Restore the visible chat's saved reading position once per swap. A chat
@@ -924,30 +928,41 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     .reduce((sum, rows) => sum + rows.filter((c) => c.unread).length, 0);
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
-  // work, skills and settings. The skills tab is not panel state at all —
-  // it is the /skills... route (see below), so this state only ever holds
-  // the panel-bearing tabs. Every tab owns a top-level URL (/chats, /work,
-  // /settings): the state starts from the parsed route and follows it on
-  // back/forward, reloads and deep links — the URL is the truth.
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(route.tab);
-  useEffect(() => setSidebarTab(route.tab), [route.tab]);
-  // The rail's active tab: the skills and agents pages raise their own tab
-  // while their URL is live (rail pick, deep link, reload, back/forward).
-  const railTab: SidebarTab =
+  // work, settings and the full-page surfaces. The rail entry is a
+  // projection of the route — the route is the truth, so back/forward,
+  // reloads and deep links restore the tab like any other route state.
+  // The skills and agents pages raise their own rail entry while their URL
+  // is live.
+  const railTab: RailTab =
     route.skills !== null
       ? "skills"
       : route.agents !== null
         ? agentsRailTab(route.agents)
-        : sidebarTab;
+        : route.tab;
+  const paneLayout = tabPaneLayout(route, isMobile);
   // Settings tab: the section rendered inline in the main pane (the rail's
   // Settings tab is a persistent surface, not an overlay launcher). The
   // section and its sub-page live in the route — every pick navigates.
   const settingsSection = route.settingsSection;
-  const switchTab = (tab: SidebarTab) => {
+  const switchTab = (tab: RailTab) => {
     // The skills and agents tabs are URL routes, not persisted panel state:
     // entering them navigates to their root, leaving returns to the chat
     // root — so back/forward crosses surfaces like any other route pair,
     // and a reload lands back on the page.
+    const target = tabPaneLayout(
+      {
+        ...route,
+        tab: tab === "settings" || tab === "work" ? tab : "chats",
+        skills: tab === "skills" ? SKILLS_CATALOG : null,
+        agents:
+          tab === "agents"
+            ? AGENTS_DIRECTORY
+            : tab === "activity"
+              ? AGENTS_ACTIVITY
+              : null,
+      },
+      isMobile,
+    );
     if (tab === "skills") {
       pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
       return;
@@ -979,13 +994,13 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
-    if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
+    if (target.expandsPanel) setCollapsed(false);
   };
   // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
   // route tabs (agents / activity) render in the main column, so the
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
-  const mobileSwitchTab = (tab: SidebarTab) => {
+  const mobileSwitchTab = (tab: RailTab) => {
     if (tab === "agents" || tab === "activity") {
       switchTab(tab);
       setOpen(false);
@@ -1028,7 +1043,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     />
   );
   const sidebar =
-    sidebarTab === "work" ? (
+    route.tab === "work" ? (
       <WorkPanel
         loadingChats={chats === null}
         grouping={grouping}
@@ -1047,7 +1062,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         onArchiveProject={archiveProjectRow}
         onUnarchiveProject={unarchiveProjectRow}
       />
-    ) : sidebarTab === "settings" ? (
+    ) : route.tab === "settings" ? (
       <SettingsPanel
         role={role}
         activeSection={settingsSection}
@@ -1061,25 +1076,25 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
 
   // A /project/<id> route (deep link, reload, or back/forward) parses as
   // the Work tab, so the linked project is visible — no state decision
-  // needed beyond the route-tab sync above.
-  // Chat routes: a stateless chat lands on the Chats tab; a project-bound
-  // chat belongs to its project row — it opens (or stays) on the Work tab
-  // instead of yanking the user out of it. The decision waits for the chats
-  // list; a chat not yet listed (just sent) counts as bound while the
-  // composer still carries a project pick.
+  // needed beyond the route parse.
+  // Chat routes: a project-bound chat owns the project route — its URL is
+  // /project/<id>/thread/<cid>, so the Work tab survives reload and
+  // back/forward. A bare /thread/<id> for a project chat is rewritten once
+  // the chat list names its project; a chat not yet listed (just sent)
+  // counts as bound while the composer still carries a project pick.
   const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!route.chatId) {
+    if (!route.chatId || route.projectId !== null) {
       routeTabDecidedRef.current = null;
       return;
     }
-    if (routeTabDecidedRef.current === route.chatId) return; // already handled
-    if (chats === null) return; // wait for the list before deciding
+    if (routeTabDecidedRef.current === route.chatId) return;
+    if (chats === null) return;
     const row = chats.find((c) => c.id === route.chatId);
-    const projectBound = row ? !!row.project_id : !!currentProjectRef.current?.id;
+    const projectId = row?.project_id ?? currentProjectRef.current?.id ?? null;
     routeTabDecidedRef.current = route.chatId;
-    setSidebarTab(projectBound ? "work" : "chats");
-  }, [route.chatId, chats]);
+    if (projectId) pushRoute({ projectId });
+  }, [route.chatId, route.projectId, chats, pushRoute]);
 
   // Mobile: a route page (agents, skills, settings) replaces the whole main
   // column and has no drawer control of its own, so it gets this bar. The
@@ -1098,13 +1113,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // of the chat thread — on mobile too, so the drawer's Settings tab leads
   // to a page (the drawer closes on the section pick).
   const inlineSettings =
-    sidebarTab === "settings" && settingsSection !== null ? (
+    route.tab === "settings" && settingsSection !== null ? (
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <SettingsSectionPane
           sectionId={settingsSection}
           email={email}
           detail={route.settingsDetail}
           onDetailChange={openSettingsDetail}
+          usage={route.usage}
+          onUsageChange={(usage) => pushRoute({ usage })}
         />
       </div>
     ) : null;
@@ -1114,7 +1131,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // back to the catalog). Every panel state derives from it; user actions
   // navigate through pushRoute, so the URL is always the truth.
   const skillsRoute =
-    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, isTauri) : null;
+    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, IS_TAURI) : null;
   // The Skills route's main pane IS the skills page — the whole column right
   // of the rail, no sidebar panel at all (the inlineSettings pattern). The
   // chat thread only comes back when another route is navigated to.
@@ -1286,7 +1303,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           </SheetContent>
         </Sheet>
-      ) : skillsRoute !== null || agentsRoute !== null ? null : (
+      ) : !paneLayout.aside ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
@@ -1871,21 +1888,19 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   // project's machine, a new chat the picked project's. The
                   // dot renders only for a remote machine (on desktop the
                   // local machine executes its own tools) whose live socket
-                  // state is known — the chat row for existing chats, the
-                  // machines list for new ones (hidden while unknown).
+                  // state is known in the machines store (hidden while
+                  // unknown).
                   const chipMachineId =
                     row?.machine_id && row.project_id
                       ? row.machine_id
                       : projects?.find((p) => p.id === currentProject?.id)?.machine_id;
                   const remoteMachine =
-                    !!chipMachineId && (!isTauri || chipMachineId !== machineId());
+                    !!chipMachineId && (!IS_TAURI || chipMachineId !== machineId());
                   // The chat row may be absent right after a create (route
                   // pushed before the refetched list lands) — the chip then
                   // renders without a live socket state instead of crashing.
                   const machineOnline: boolean | undefined = remoteMachine
-                    ? viewChatId
-                      ? row?.machine_online
-                      : machines?.find((m) => m.machine_id === chipMachineId)?.connected
+                    ? machines?.find((m) => m.machine_id === chipMachineId)?.connected
                     : undefined;
                   const showMachine = remoteMachine && machineOnline !== undefined;
                   const machineLabel =
@@ -1936,7 +1951,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                         return <ActiveIcon className="size-3.5 shrink-0" />;
                       })()}
                       <span className="hidden sm:inline">
-                        {approvalMode === "default" ? accountDefault : APPROVAL_MODE_LABELS[approvalMode]}
+                        {approvalMode === "default" ? accountDefault : APPROVAL_MODES[approvalMode].label}
                       </span>
                     </Button>
                   </DropdownMenuTrigger>

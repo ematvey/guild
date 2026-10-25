@@ -1,15 +1,9 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, trimTrailingSlash, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, githubApiUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- github ----------
 
-const GITHUB_DEFAULT_API = "https://api.github.com";
 const GITHUB_USER_AGENT = "guild-integration-github";
-
-function githubApiUrl(config: Json): string {
-  const v = configString(config, "api_url");
-  return v !== undefined ? trimTrailingSlash(v) : GITHUB_DEFAULT_API;
-}
 
 /** Maps an HTTP failure to the tool-error contract: auth errors, missing
  *  resources, and validation rejections get specific wording; anything

@@ -12,6 +12,7 @@ import { ApiError } from "../platform/errors.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { safeFilename } from "../platform/store/attachments.js";
 import { artifactUuid, ToolArtifactStore, toolArtifactObjectKey, type ToolArtifactRow } from "../platform/store/toolArtifacts.js";
+import { isTextual } from "../platform/domain/mime.js";
 
 /** Serialized model-facing content above this size spills into an artifact
  *  (one shared threshold for every server-side tool). */
@@ -36,31 +37,6 @@ export function shouldSpill(content: string): boolean {
   return Buffer.byteLength(content, "utf8") > SPILL_THRESHOLD_BYTES;
 }
 
-/** Text mimes get a head excerpt; everything else gets path + size + mime. */
-export function isTextMimeType(contentType: string): boolean {
-  const ct = (contentType.split(";")[0] ?? "").trim().toLowerCase();
-  return (
-    ct.startsWith("text/") ||
-    [
-      "application/json",
-      "application/xml",
-      "application/javascript",
-      "application/yaml",
-      "application/x-yaml",
-      "application/x-ndjson",
-      "application/sql",
-      "application/xhtml+xml",
-      "application/rss+xml",
-      "application/atom+xml",
-      "application/toml",
-      "application/csv",
-      "application/x-www-form-urlencoded",
-    ].includes(ct) ||
-    ct.endsWith("+json") ||
-    ct.endsWith("+xml")
-  );
-}
-
 /** KiB rounding for the "(first 2 KiB of N KiB)" marker — a 1-byte spill
  *  reads "of 1 KiB", never "of 0 KiB". */
 export function sizeKiB(sizeBytes: number): number {
@@ -79,7 +55,7 @@ function formatSize(sizeBytes: number): string {
  *  mime only. This exact shape is contract for the model-facing history. */
 export function pointerText(toolName: string, spilled: SpilledArtifact, contentType: string, fullText: string | null): string {
   const head = `Tool "${toolName}" returned a large result saved as ${spilled.filename} (${formatSize(spilled.size_bytes)} — ${spilled.size_bytes} bytes, ${contentType}).`;
-  if (fullText !== null && isTextMimeType(contentType)) {
+  if (fullText !== null && isTextual(contentType)) {
     const excerpt = [...fullText].slice(0, EXCERPT_BYTES).join("");
     return `${head}\nFirst 2 KiB of ${sizeKiB(spilled.size_bytes)} KiB; full result at ${spilled.path}:\n${excerpt}`;
   }

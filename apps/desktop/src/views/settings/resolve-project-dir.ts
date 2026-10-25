@@ -5,14 +5,16 @@
 
 import { listChats } from "../../lib/api/chats";
 import { listProjects } from "../../lib/api/projects";
+import { byRecentActivity } from "../projects/projects";
 
 export async function resolveProjectDir(): Promise<string | null> {
   const projects = await listProjects();
   if (!projects || projects.length === 0) return null;
   const chats = await listChats();
-  const recent = chats?.find(
-    (c) => c.project_id && projects.some((p) => p.id === c.project_id),
-  );
+  const recent = (chats ?? [])
+    .slice()
+    .sort(byRecentActivity)
+    .find((c) => c.project_id && projects.some((p) => p.id === c.project_id));
   const chosen = recent
     ? projects.find((p) => p.id === recent.project_id)!
     : projects[0];

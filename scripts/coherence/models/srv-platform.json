@@ -7,39 +7,65 @@
     {
       "id": "integration-tool",
       "definition": "One tool an integration declares: a raw name, a description, a JSON Schema, and a manifest class.",
-      "canonical": "apps/server/src/platform/integrations/connectors.ts",
+      "canonical": "apps/server/src/platform/integration-catalog.ts",
       "types": [
-        "ConnectorToolSpec",
-        "PluginToolInfo"
+        "IntegrationToolSpec",
+        "IntegrationToolInfo"
       ],
       "aliases": [
         "connector-tool",
         "plugin-tool"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/integrations/connectors.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/integrations/plugins.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/integration-catalog.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/plugins.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/admin.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/admin.ts"
+        }
       ]
     },
     {
       "id": "tool-class",
       "definition": "The risk class of one integration tool (read, write or admin) and the role policy that follows from it.",
-      "canonical": "apps/server/src/platform/integrations/plugins.ts",
+      "canonical": "apps/server/src/platform/domain/tool-class.ts",
       "types": [],
       "aliases": [
         "tool-classification"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/integrations/plugins.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/integrations/connectors.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/domain/tool-class.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/policy.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/admin.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/admin.ts"
+        }
       ]
     },
     {
@@ -60,14 +86,33 @@
         "provider-shape"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/provider/types.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/provider/sse.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/llm.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/openai.ts", "role": "wire" },
-        { "where": "apps/server/src/platform/http/anthropic.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/provider/types.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/provider/sse.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/llm.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/openai.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/http/anthropic.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/openai.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/openai.ts"
+        }
       ]
     },
     {
@@ -82,12 +127,25 @@
         "proxy-credential"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/http/llm.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/openai.ts", "role": "wire" },
-        { "where": "apps/server/src/platform/http/anthropic.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/http/llm.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/openai.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/http/anthropic.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/openai.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/openai.ts"
+        }
       ]
     },
     {
@@ -110,11 +168,21 @@
         "activity-trace"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/trace.ts", "role": "db" },
-        { "where": "apps/server/src/platform/http/activity.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/trace.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/activity.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "db", "to": "wire", "at": "apps/server/src/platform/http/activity.ts" }
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/activity.ts"
+        }
       ]
     },
     {
@@ -129,7 +197,10 @@
         "skill-read-event"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/skillReads.ts", "role": "db" }
+        {
+          "where": "apps/server/src/platform/skillReads.ts",
+          "role": "db"
+        }
       ],
       "translations": []
     },
@@ -143,7 +214,10 @@
         "chat-busy"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/store/work.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/platform/store/work.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -154,18 +228,30 @@
       "types": [
         "OrgKvStore",
         "KvStore",
-        "SIGNING_SEED_KV"
+        "SIGNING_SEED_KV",
+        "ASSISTANT_PROMPT_KEY",
+        "APPROVAL_POLICY_PROMPT_KEY"
       ],
       "aliases": [
         "org-setting-row",
         "server-kv"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/store/org_kv.ts", "role": "db" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/store/org_kv.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "db", "to": "wire", "at": "apps/server/src/platform/http/admin.ts" }
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/admin.ts"
+        }
       ]
     },
     {
@@ -178,17 +264,27 @@
         "approval-policy-prompt"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" },
-        { "where": "apps/server/src/platform/store/org_kv.ts", "role": "db" }
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/store/org_kv.ts",
+          "role": "db"
+        }
       ],
       "translations": [
-        { "from": "db", "to": "wire", "at": "apps/server/src/platform/http/admin.ts" }
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/admin.ts"
+        }
       ]
     },
     {
       "id": "rust-json",
       "definition": "The serde_json-compatible text rendering of a JSON value, with sorted keys and ryu float form.",
-      "canonical": "apps/server/src/platform/provider/sse.ts",
+      "canonical": "apps/server/src/platform/provider/rust-json.ts",
       "types": [
         "RustFloat",
         "SseDecoder"
@@ -197,12 +293,21 @@
         "serde-json-text"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/provider/sse.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/activity.ts", "role": "wire" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/provider/rust-json.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/provider/sse.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/activity.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/activity.ts"
+        }
       ]
     },
     {
@@ -218,8 +323,14 @@
         "mcp-client"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/integrations/mcp.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/integrations/execute.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/platform/integrations/mcp.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/execute.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -237,12 +348,25 @@
         "identity-envelope"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/integrations/plugins.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/integrations/execute.ts", "role": "wire" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/integrations/plugins.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/execute.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/integrations/execute.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/integrations/execute.ts"
+        }
       ]
     },
     {
@@ -254,45 +378,160 @@
         "connector-secret"
       ],
       "representations": [
-        { "where": "apps/server/src/platform/integrations/vendors/shared.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/integrations/plugins.ts", "role": "domain" },
-        { "where": "apps/server/src/platform/http/admin.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/platform/integrations/vendors/shared.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/plugins.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/admin.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
-        { "from": "domain", "to": "wire", "at": "apps/server/src/platform/http/admin.ts" }
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/admin.ts"
+        }
       ]
     }
   ],
   "attaches": [
-    { "where": "apps/server/src/platform/http/admin.ts", "concept": "integration", "role": "wire" },
-    { "where": "apps/server/src/platform/http/thread-stream.ts", "concept": "thread-state", "role": "wire" },
-    { "where": "apps/server/src/platform/http/thread-stream.ts", "concept": "chat", "role": "wire" },
-    { "where": "apps/server/src/platform/integrations/connectors.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/execute.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/plugins.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/atlassian.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/firecrawl.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/github.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/gitlab.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/google-workspace.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/hubspot.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/langfuse.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/searxng.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/shared.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/slack.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/integrations/vendors/superproxy.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/platform/provider/types.ts", "concept": "message", "role": "domain" },
-    { "where": "apps/server/src/platform/http/openai.ts", "concept": "message", "role": "wire" },
-    { "where": "apps/server/src/platform/http/anthropic.ts", "concept": "message", "role": "wire" },
-    { "where": "apps/server/src/platform/http/openai.ts", "concept": "tool-call", "role": "wire" },
-    { "where": "apps/server/src/platform/http/anthropic.ts", "concept": "tool-call", "role": "wire" },
-    { "where": "apps/server/src/platform/http/llm.ts", "concept": "usage-event", "role": "wire" },
-    { "where": "apps/server/src/platform/http/llm.ts", "concept": "gateway-route", "role": "domain" },
-    { "where": "apps/server/src/platform/http/llm.ts", "concept": "api-key", "role": "domain" },
-    { "where": "apps/server/src/platform/skillReads.ts", "concept": "skill", "role": "db" }
+    {
+      "where": "apps/server/src/platform/http/admin.ts",
+      "concept": "integration",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/thread-stream.ts",
+      "concept": "thread-state",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/thread-stream.ts",
+      "concept": "chat",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/plugins.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/atlassian.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/firecrawl.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/github.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/gitlab.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/google-workspace.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/hubspot.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/langfuse.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/searxng.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/shared.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/slack.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/integrations/vendors/superproxy.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/provider/types.ts",
+      "concept": "message",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/http/openai.ts",
+      "concept": "message",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/anthropic.ts",
+      "concept": "message",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/openai.ts",
+      "concept": "tool-call",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/anthropic.ts",
+      "concept": "tool-call",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/llm.ts",
+      "concept": "usage-event",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/platform/http/llm.ts",
+      "concept": "gateway-route",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/http/llm.ts",
+      "concept": "api-key",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/platform/skillReads.ts",
+      "concept": "skill",
+      "role": "db"
+    }
   ],
   "no_concept": [
-    { "where": "apps/server/src/platform/http/register.ts", "reason": "infrastructure" }
+    {
+      "where": "apps/server/src/platform/http/register.ts",
+      "reason": "infrastructure"
+    }
   ],
   "types_no_concept": []
 }

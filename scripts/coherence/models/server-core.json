@@ -717,5 +717,6 @@
   "shared_canonical": [
     "apps/server/src/platform/store/identity.ts",
     "apps/server/src/agents/store.ts"
-  ]
+  ],
+  "attaches": []
 }

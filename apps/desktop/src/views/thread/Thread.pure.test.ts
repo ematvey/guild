@@ -12,10 +12,12 @@ import {
   tabPaneLayout,
 } from "./status";
 import { chatRoutePath, isImeEnter, parseChatRoute } from "./route";
+import { DEFAULT_USAGE } from "../settings/usage-route";
+import { AGENTS_ACTIVITY } from "../agents/agents-route";
 import { mentionCandidates, composerSkills } from "./mentions";
 import { accountDefaultLabel } from "./approval";
 import { parseSearchResults, toolLabel, toolDisplayName } from "./tool-text";
-import { compareVersions } from "../device-setup";
+import { compareVersions } from "../skills/version";
 import { viewEntries, workRunLabel } from "../worked-for-block";
 import {
   artifactCardOf,
@@ -27,7 +29,7 @@ import {
   upsertApproval,
   type Block,
 } from "../../lib/thread-reducer";
-import type { SidebarTab } from "../sidebar-rail";
+import type { ChatRoute } from "./route";
 import type { ApprovalPolicy } from "../../lib/api/approvals";
 import type { ThreadEvent, ThreadEventRow } from "../../lib/thread-events";
 
@@ -134,8 +136,10 @@ describe("parseChatRoute / chatRoutePath", () => {
     ).toBe("/agents/a1/files/notes/today.md");
     expect(parseChatRoute("/inbox").agents).toBeNull();
     expect(parseChatRoute("/inbox").tab).toBe("chats");
-    expect(parseChatRoute("/activity").agents).toEqual({ view: "activity" });
+    expect(parseChatRoute("/activity").agents).toEqual(AGENTS_ACTIVITY);
     expect(parseChatRoute("/runs/r1").agents).toEqual({ view: "run", runId: "r1" });
+    expect(parseChatRoute("/sessions/c1").agents).toEqual({ view: "chat", chatId: "c1" });
+    expect(parseChatRoute("/traces/t1").agents).toEqual({ view: "trace", traceId: "t1" });
     // A chat deep link still parses as a chat, not an agents route.
     expect(parseChatRoute("/thread/c1").agents).toBeNull();
   });
@@ -274,6 +278,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     expect(parseChatRoute("/thread/x/device")).toEqual({
@@ -282,6 +287,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       overlay: { kind: "device" },
       skills: null,
       agents: null,
@@ -299,6 +305,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       overlay: { kind: "onboard" },
       skills: null,
       agents: null,
@@ -311,6 +318,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       overlay: { kind: "onboard" },
       skills: null,
       agents: null,
@@ -329,6 +337,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       agents: null,
       settingsSection: "integrations",
       settingsDetail: "a/b",
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     // trailing slashes and empty segments are ignored
@@ -341,6 +350,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     expect(parseChatRoute("")).toEqual({
@@ -352,6 +362,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     // a detail carrying an encoded slash parses to the full id and the
@@ -381,6 +392,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
@@ -392,6 +404,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
     // a bare /thread/<id> has no project filter (deep link)
@@ -406,6 +419,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      usage: DEFAULT_USAGE,
       newChat: false,
     });
   });
@@ -845,28 +859,32 @@ describe("offlineMachine (offline bound-machine banner)", () => {
   const base = { id: "chat-1", title: "t", created_at: "x" } as any;
   const bound = (
     machine_id: string,
-    machine_online: boolean | undefined,
+    _connected: boolean | undefined,
     machine_label?: string,
     project_id: string | null = "p1",
-  ) => ({ ...base, machine_id, machine_online, machine_label, project_id } as any);
+  ) => ({ ...base, machine_id, machine_label, project_id } as any);
+  const machines = (connected: boolean, name = "WORKSTATION", machine_id = "m1") =>
+    [{ machine_id, name, connected }] as any;
 
   it("shows the label when the open chat's project-bound machine is offline", () => {
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
-    // no label: fall back to the raw machine id
-    expect(offlineMachine([bound("m1", false)], "chat-1", true, "local")).toEqual({ label: "m1" });
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
+    // no label: fall back to the machine name, then the raw machine id
+    expect(offlineMachine([bound("m1", false)], machines(false), "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
+    expect(offlineMachine([bound("m1", false)], [{ machine_id: "m1", name: "", connected: false }] as any, "chat-1", true, "local")).toEqual({ label: "m1" });
   });
 
   it("stays hidden for unbound chats, machine-bound-without-project rows, and online/unknown machines", () => {
-    expect(offlineMachine([base], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", true, "WORKSTATION")], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", undefined, "WORKSTATION")], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, true, "local")).toBeNull();
+    expect(offlineMachine([base], machines(false), "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], machines(false), "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(true), "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], [], "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), null, true, "local")).toBeNull();
   });
 
   it("skips the local machine on desktop, but banners every project binding on web", () => {
-    expect(offlineMachine([bound("local", false, "SELF")], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("local", false, "SELF")], "chat-1", false, undefined)).toEqual({ label: "SELF" });
+    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", false, undefined)).toEqual({ label: "SELF" });
   });
 });
 
@@ -1030,29 +1048,40 @@ describe("composerSkills (local + installed org pool, spec §2.3)", () => {
   });
 });
 
-describe("tabPaneLayout (rail tab → sidebar/pane layout)", () => {
-  it("the skills tab is a full-page main-pane swap with NO sidebar aside", () => {
-    expect(tabPaneLayout("skills", false)).toEqual({
+describe("tabPaneLayout (route → sidebar/pane layout)", () => {
+  const route = (tab: ChatRoute["tab"], skills: ChatRoute["skills"] = null, agents: ChatRoute["agents"] = null) =>
+    ({ tab, skills, agents });
+
+  it("the skills page is a full-page main-pane swap with NO sidebar aside", () => {
+    expect(tabPaneLayout(route("chats", { view: "catalog", slug: null, editor: null }), false)).toEqual({
       aside: false,
       mainPane: "skillsPage",
       expandsPanel: false,
     });
   });
 
+  it("the agents surface is a full-page main-pane swap too", () => {
+    expect(tabPaneLayout(route("chats", null, { view: "directory" }), false)).toEqual({
+      aside: false,
+      mainPane: "agentsPage",
+      expandsPanel: false,
+    });
+  });
+
   it("the other desktop tabs keep the panel sidebar and the chat thread", () => {
-    for (const tab of ["chats", "work", "settings"] as SidebarTab[]) {
-      expect(tabPaneLayout(tab, false)).toEqual({
+    for (const tab of ["chats", "work", "settings"] as ChatRoute["tab"][]) {
+      expect(tabPaneLayout(route(tab), false)).toEqual({
         aside: true,
-        mainPane: "chat",
+        mainPane: tab === "settings" ? "settingsPage" : "chat",
         expandsPanel: true,
       });
     }
   });
 
   it("mobile keeps the chats-only drawer behavior unchanged", () => {
-    for (const tab of ["chats", "work", "skills", "settings"] as SidebarTab[]) {
-      expect(tabPaneLayout(tab, true).mainPane).toBe("chat");
-      expect(tabPaneLayout(tab, true).aside).toBe(false);
+    for (const tab of ["chats", "work", "settings"] as ChatRoute["tab"][]) {
+      expect(tabPaneLayout(route(tab), true).mainPane).toBe("chat");
+      expect(tabPaneLayout(route(tab), true).aside).toBe(false);
     }
   });
 });

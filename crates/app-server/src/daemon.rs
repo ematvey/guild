@@ -12,10 +12,16 @@ use sha2::Digest as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+/// Test-only override for the daemon socket path.
+// coherence:seam owner=@ematvey until=2027-01-31 reason="test hook redirects the daemon socket"
+fn socket_override() -> Option<PathBuf> {
+    std::env::var("GUILD_DAEMON_SOCKET").ok().map(PathBuf::from)
+}
+
 #[cfg(unix)]
 pub fn socket_path() -> anyhow::Result<PathBuf> {
-    if let Ok(p) = std::env::var("GUILD_DAEMON_SOCKET") {
-        return Ok(PathBuf::from(p));
+    if let Some(p) = socket_override() {
+        return Ok(p);
     }
     let dir = match dirs::runtime_dir() {
         Some(d) => d.join("guild"),
@@ -38,8 +44,8 @@ fn user_pipe_suffix(user: &str) -> String {
 
 #[cfg(windows)]
 pub fn socket_path() -> anyhow::Result<PathBuf> {
-    if let Ok(p) = std::env::var("GUILD_DAEMON_SOCKET") {
-        return Ok(PathBuf::from(p));
+    if let Some(p) = socket_override() {
+        return Ok(p);
     }
     let user = std::env::var("USERNAME").unwrap_or_default();
     Ok(PathBuf::from(format!(

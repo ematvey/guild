@@ -4,10 +4,19 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
+import { entityDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
+import {
+  addTeamMember,
+  createTeam,
+  deleteTeam,
+  removeTeamMember,
+  SETTINGS_PATHS,
+  teamMembersPath,
+  updateTeam,
+} from "../../../lib/api/settings";
 import { Plus, Trash2, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -40,7 +49,7 @@ interface UserRow {
 }
 
 export default function TeamsSection({ detail = null, onDetailChange }: SectionDetailProps) {
-  const teamsRes = useCachedGet<{ teams: TeamRow[] }>("/api/v1/admin/teams");
+  const teamsRes = useCachedGet<{ teams: TeamRow[] }>(SETTINGS_PATHS.teams);
   const teams = teamsRes.data?.teams ?? null;
   const error = teamsRes.error;
   const reload = teamsRes.reload;
@@ -70,23 +79,27 @@ export default function TeamsSection({ detail = null, onDetailChange }: SectionD
     [],
   );
 
-  if (detail !== null) {
+  const view = entityDetailCodec.parse(detail);
+  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) =>
+    onDetailChange(entityDetailCodec.format(next));
+
+  if (view.kind !== "list") {
     // Deep-linked team page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-team form.
-    if (detail !== "new" && teams === null) {
+    if (view.kind === "row" && teams === null) {
       if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
       return <SkeletonForm />;
     }
-    const team = detail === "new" ? null : teams?.find((t) => t.id === detail) ?? null;
-    if (detail !== "new" && !team) return <EmptyState title="Team not found" hint="It may have been deleted." icon={UsersRound} />;
+    const team = view.kind === "new" ? null : teams?.find((t) => t.id === view.id) ?? null;
+    if (view.kind === "row" && !team) return <EmptyState title="Team not found" hint="It may have been deleted." icon={UsersRound} />;
     return (
       <TeamDetail
         team={team}
         onChanged={reload}
-        onCreated={(id) => onDetailChange(id)}
+        onCreated={(id) => open({ kind: "row", id })}
         onBack={() => {
           reload();
-          onDetailChange(null);
+          open({ kind: "list" });
         }}
       />
     );
@@ -98,7 +111,7 @@ export default function TeamsSection({ detail = null, onDetailChange }: SectionD
         title="Teams"
         description="Teams group users inside the organization."
         actions={
-          <Button size="sm" onClick={() => onDetailChange("new")}>
+          <Button size="sm" onClick={() => open({ kind: "new" })}>
             <Plus className="size-3.5" /> Add team
           </Button>
         }
@@ -109,14 +122,14 @@ export default function TeamsSection({ detail = null, onDetailChange }: SectionD
         data={teams}
         search={(t) => t.name}
         searchPlaceholder="Search teams…"
-        onRowClick={(t) => onDetailChange(t.id)}
+        onRowClick={(t) => open({ kind: "row", id: t.id })}
         empty={
           <EmptyState
             icon={UsersRound}
             title="No teams yet"
             hint="Create a team to group users for model routes and approvals."
             action={
-              <Button size="sm" onClick={() => onDetailChange("new")}>
+              <Button size="sm" onClick={() => open({ kind: "new" })}>
                 <Plus className="size-3.5" /> Add team
               </Button>
             }
@@ -148,10 +161,10 @@ function TeamDetail({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const membersRes = useCachedGet<{ members: UserRow[] }>(
-    creating ? null : `/api/v1/admin/teams/${team!.id}/members`,
+    creating ? null : teamMembersPath(team!.id),
   );
   const members = creating ? [] : (membersRes.data?.members ?? null);
-  const orgUsers = useCachedGet<{ users: UserRow[] }>("/api/v1/admin/users").data?.users ?? null;
+  const orgUsers = useCachedGet<{ users: UserRow[] }>(SETTINGS_PATHS.users).data?.users ?? null;
 
   const save = async () => {
     if (busy || !name) return;
@@ -159,12 +172,12 @@ function TeamDetail({
     setBusy(true);
     try {
       if (creating) {
-        const created = await api<{ id: string }>("POST", "/api/v1/admin/teams", { name });
+        const created = await createTeam<{ id: string }>({ name });
         toast.success("Team created", { description: name });
         onChanged();
         onCreated(created.id);
       } else {
-        await api("PUT", `/api/v1/admin/teams/${team!.id}`, { name });
+        await updateTeam(team!.id, { name });
         toast.success("Team renamed", { description: name });
         onChanged();
         setMode("view");
@@ -184,7 +197,7 @@ function TeamDetail({
     setBusy(true);
     try {
       const added = addable.find((u) => u.id === addUserId);
-      await api("POST", `/api/v1/admin/teams/${team!.id}/members`, {
+      await addTeamMember(team!.id, {
         user_id: addUserId,
       });
       toast.success("Member added", { description: added?.email });
@@ -205,7 +218,7 @@ function TeamDetail({
     setError(null);
     setBusy(true);
     try {
-      await api("DELETE", `/api/v1/admin/teams/${team!.id}/members/${user.id}`);
+      await removeTeamMember(team!.id, user.id);
       toast.success("Member removed", { description: user.email });
       membersRes.reload();
       onChanged();
@@ -223,7 +236,7 @@ function TeamDetail({
     setBusy(true);
     setError(null);
     try {
-      await api("DELETE", `/api/v1/admin/teams/${team!.id}`);
+      await deleteTeam(team!.id);
       toast.success("Team deleted", { description: team!.name });
       onChanged();
       onBack();

@@ -6,6 +6,7 @@
 //!
 //! No Tauri build, no webview, no display: `cargo test -p guild-app-server`.
 
+use protocol::rpc::Request;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -68,10 +69,7 @@ impl EngineProc {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.next_id += 1;
         let id = self.next_id;
-        let envelope = json!({
-            "jsonrpc": "2.0", "id": id, "protocol": 1,
-            "method": method, "params": params,
-        });
+        let envelope = serde_json::to_string(&Request::new(id, method, params)).unwrap();
         writeln!(self.stdin, "{envelope}").expect("write to engine stdin");
         self.stdin.flush().expect("flush");
 

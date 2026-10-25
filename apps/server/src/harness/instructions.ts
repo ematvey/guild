@@ -46,7 +46,7 @@ export function composeAgentInstructions(
   for (const entry of CONFIG_FILES) {
     const text = config.files.get(entry.name);
     if (text === undefined) {
-      if (entry.required) {
+      if (entry.required && !config.files.has("AGENTS.override.md")) {
         workspace.push(
           `<agent_workspace_file path="${AGENT_WORKSPACE_PATH}/${entry.name}">\n` +
             `(missing: ${entry.name})\n</agent_workspace_file>`,

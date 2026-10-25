@@ -1,3 +1,7 @@
+// Queue-state cursor: submissions feed the queue state. The transcript cursor
+// (chat_projection_cursors) is separate and lives in projection.ts.
+// coherence:seam owner=@ematvey until=2027-01-31 reason="durable log and platform tables retire at different times"
+
 import type { ConversationId, SubmissionRecord } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 

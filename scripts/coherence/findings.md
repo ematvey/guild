@@ -281,3 +281,103 @@ source file appeared (`files` stays 532). The lines are the merged work: the
 ClickHouse credential helpers in the test harness, and the poll helpers that
 replace fixed sleeps in the server tests. `floor.json` was updated once, after
 the merge, and records the tree as it is.
+
+---
+
+# Round 1 fixes (2026-10-25, six fixer lanes in worktrees)
+
+Six fixers worked in separate worktrees, each on its own branch from
+`fix/coherence`. They fixed only the findings with one obvious answer and
+left every design choice to a human.
+
+| Lane | Fixed | Skipped |
+| --- | --- | --- |
+| `srv-platform` | 3 | 14 |
+| `srv-domain` | 2 | 9 |
+| `srv-runtime` | 3 | 7 |
+| `ui-thread` | 4 | 12 |
+| `ui-rest` | 2 | 11 |
+| `engine` | 2 | 8 |
+
+Fixed:
+
+- one approval-policy prompt constant, one v2 secret-name rule, one 422 body
+  builder (`srv-platform`);
+- one ThreadState encoder; two uncalled hub methods deleted (`srv-domain`);
+- one BIGINT parser; dead inbox mode test; `models` removed from the codemode
+  lint (`srv-runtime`);
+- dangling comment fragments; approval labels derived from one table; Tauri
+  check imported from `lib/session`; `resolve-project-dir` now sorts by
+  activity as its comment claims (`ui-thread`);
+- one "N things" helper; one agent export body (`ui-rest`);
+- the stdio envelope built from `Request`; three stale `tests/agent_rpc.rs`
+  comments fixed (`engine`).
+
+Left open by the fixers, worth a second look:
+
+- The Tauri check still has three more copies:
+  `views/thread/hooks/{use-composer,use-member-socket,use-outgoing}.ts`.
+- `count` now serves the skills panel from a file named for agents
+  (`views/agents/activity-format.ts`). The home is wrong for the reach.
+- `crates/app-server` has one pre-existing test failure on `develop`:
+  `machine_link::tests::remote_context_and_prefetch_roundtrip_on_mock_hub_socket`.
+  It is not from this round.
+
+Verification on the merged round branch: server tsc, desktop tsc, desktop
+vitest 513 passed, `npm run coherence` clean, `cargo test` 88 passed with the
+one pre-existing failure above.
+
+## Round 2 — the design findings, decided and applied
+
+Round 1 fixed the mechanical findings and left 61 that needed a choice. Every
+one of them now has a decision in `decisions.md`. Six lanes applied them:
+38 in the backend, 26 in the client.
+
+Policy that shaped the round:
+
+- wire values, route paths, database columns and migrations do not change;
+- dead code goes when the tree has no caller;
+- where both options would cross the wire, the code keeps a dated
+  `coherence:seam` with an owner instead of a rename;
+- one concept, one home — a copy that exists only because a module was split
+  is deleted.
+
+Landed:
+
+- `engine` — the vendored `codex-execpolicy` and `codex-utils-absolute-path`
+  crates are gone (3965 LOC); the TS gate is the one exec-policy engine.
+  `jsonrpc_loop::Session` is `EngineState`, so the three meanings of "session"
+  are three names. Four test-only env vars and three link-test helpers are
+  recorded seams, not copies.
+- `srv-platform` — `integration-catalog.ts` is the one declaration list for
+  integration kinds; `connectors.ts` is gone. `domain/tool-class.ts` owns the
+  risk vocabulary. The vendor base URL and the Google token mint each have one
+  resolver. `rust-json.ts` splits the Rust JSON renderer out of the SSE frame
+  decoder.
+- `srv-domain` — `agentWorkspaceDir` is the one workspace path builder;
+  `platform/domain/mime.ts` the one MIME table. Presence has one source: the
+  machine store, pushed. Delegation artifacts and the presence poll are gone.
+- `srv-runtime` — the worker wire carries `agentsMd`; the coding-tool sentence
+  comes from `CODING_TOOL_NAMES`; `HANDLE_METHODS` is checked against the typed
+  sandbox proxy by a test. `int_` tolerance and the IPC dispatch proxy are
+  seams with dates.
+- `ui-thread` — the rail entry is a projection of `ChatRoute`, not stored
+  state. A project chat opens on its project URL. Settings paths live in
+  `lib/api/settings.ts`; the usage filter is in the route model. Presence reads
+  the machine store. Three Tauri checks became one import.
+- `ui-rest` — `/chats/<id>` replaces `/sessions/<id>` (the old URL rewrites);
+  the workspace switcher is a server switcher. `/runs/<id>` is `run.id` only,
+  trace-only turns get `/traces/<id>`. The activity filters live in
+  `AgentsRoute`. Skill versions have one parser; the folder picker one body.
+- both — the instruction chain is one rule with two readers: AGENTS.md with
+  its override, plus MEMORY.md, 32 KiB, on the client and on the server.
+
+Floor: files 526, loc 119305 (119147 before `develop` merged; the
+gate work in `develop` adds 158 lines of test and skill-home code). The 11 seams are the round's declared
+replacements for renames that would have crossed the wire; each has an owner
+and a date. They are the one counter that rose, and they rose because this
+round chose a dated seam over a break.
+
+Verification: server tsc, desktop tsc, desktop vitest 514 passed, server
+vitest on the touched suites, `cargo test` 88 passed with the one pre-existing
+`machine_link` failure, `check.py` clean.

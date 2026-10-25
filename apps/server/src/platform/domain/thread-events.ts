@@ -14,7 +14,7 @@
 // Events written by the OLD Rust server carry the same shapes; the renderer
 // normalizes both eras to one wire form.
 
-import { rustFloat, rustJsonText } from "../provider/sse.js";
+import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------

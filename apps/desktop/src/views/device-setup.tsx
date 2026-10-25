@@ -15,6 +15,7 @@ import { createPairingToken, pairingCode } from "../lib/api/folders";
 import { downloadRelease, listReleases, type Release } from "../lib/api/releases";
 import { serverUrl } from "../lib/session";
 import { formatBytes } from "../lib/format";
+import { compareVersions } from "./skills/version";
 
 type DesktopOs = "mac" | "windows" | "linux";
 
@@ -27,15 +28,6 @@ function detectOs(): DesktopOs {
 
 const OS_KEY: Record<DesktopOs, string> = { mac: "darwin", windows: "windows", linux: "linux" };
 
-export function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
 const OS_LABEL: Record<DesktopOs, string> = { mac: "macOS", windows: "Windows", linux: "Linux" };
 
 function platformLabel(platform: string): string {

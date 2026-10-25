@@ -28,6 +28,81 @@ export const SCRAPE_EXCERPT_CHARS = 2_000;
 export const MAP_LINK_LIMIT = 500;
 export const FIRECRAWL_DEFAULT_BASE_URL = "http://host.docker.internal:13002";
 
+// ---------- vendor base-URL resolvers (the runtime path) ----------
+
+const GITHUB_DEFAULT_API = "https://api.github.com";
+const GITLAB_DEFAULT_API = "https://gitlab.com/api/v4";
+const GOOGLE_DEFAULT_API_BASE = "https://www.googleapis.com";
+const GOOGLE_DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+export function githubApiUrl(config: Json): string {
+  const v = configString(config, "api_url");
+  return v !== undefined ? trimTrailingSlash(v) : GITHUB_DEFAULT_API;
+}
+
+export function gitlabBaseUrl(config: Json): string {
+  const raw = configString(config, "base_url");
+  const trimmed = raw !== undefined ? raw.trim().replace(/\/+$/, "") : null;
+  if (trimmed === null || trimmed === "") return GITLAB_DEFAULT_API;
+  // has_url_path: a string without `://` always counts as carrying a path;
+  // a URL whose authority is followed by `/…` keeps its path as-is, a bare
+  // host gains the /api/v4 prefix.
+  const schemeSplit = trimmed.split("://");
+  const hasUrlPath = schemeSplit.length === 1 ? true : schemeSplit[1]!.includes("/");
+  return hasUrlPath ? trimmed : `${trimmed}/api/v4`;
+}
+
+export function hubspotBaseUrl(config: Json): string {
+  return trimTrailingSlash(configString(config, "base_url") ?? "https://api.hubapi.com");
+}
+
+export function langfuseBaseUrl(config: Json, secrets: [string, string][]): string {
+  // The config base_url wins; the legacy `host` secret of pre-schema
+  // deployments is the fallback; else the public cloud.
+  const fromConfig = configString(config, "base_url");
+  if (fromConfig !== undefined) return trimTrailingSlash(fromConfig);
+  const host = secretOrNull(secrets, "host");
+  if (host !== null) return trimTrailingSlash(host);
+  return "https://cloud.langfuse.com";
+}
+
+export function slackBaseUrl(config: Json): string {
+  return trimTrailingSlash(configString(config, "base_url") ?? "https://slack.com/api");
+}
+
+export function firecrawlBaseUrl(config: Json): string {
+  const fromConfig = configString(config, "base_url");
+  return trimTrailingSlash(fromConfig !== undefined && fromConfig !== "" ? fromConfig : FIRECRAWL_DEFAULT_BASE_URL);
+}
+
+export function googleApiBase(config: Json): string {
+  const v = configString(config, "api_base");
+  return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_API_BASE;
+}
+
+export function googleTokenUrl(config: Json): string {
+  const v = configString(config, "token_url");
+  return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_TOKEN_URL;
+}
+
+export function searxngBaseUrl(config: Json): string {
+  const base = configString(config, "base_url");
+  if (base === undefined) throw new Error("searxng config requires base_url");
+  return trimTrailingSlash(base);
+}
+
+export function superproxyBaseUrl(config: Json): string {
+  const base = configString(config, "base_url");
+  if (base === undefined) throw new Error("superproxy config requires base_url");
+  return trimTrailingSlash(base);
+}
+
+export function atlassianSite(config: Json, secrets: [string, string][]): string {
+  const site = configString(config, "site") ?? secretOrNull(secrets, "site");
+  if (site === undefined || site === null || site === "") throw new Error("atlassian requires the site setting");
+  return trimTrailingSlash(site);
+}
+
 export function secret(secrets: [string, string][], name: string): string {
   const found = secrets.find(([n]) => n === name);
   if (found === undefined) throw new Error(`secret ${name} is not stored`);
