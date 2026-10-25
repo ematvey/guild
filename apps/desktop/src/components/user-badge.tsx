@@ -8,7 +8,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { DesktopTooltip } from "./desktop-tooltip";
 
 export function UserBadge({
   email,
@@ -56,16 +56,13 @@ export function UserBadge({
   );
   return (
     <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
+      {compact ? (
+        <DesktopTooltip label={displayName ?? email} side="right">
           <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-        </TooltipTrigger>
-        {/* Compact triggers carry no visible label, so the tooltip names the
-            account; the full-width row shows the name already. */}
-        {compact && (
-          <TooltipContent side="right">{displayName ?? email}</TooltipContent>
-        )}
-      </Tooltip>
+        </DesktopTooltip>
+      ) : (
+        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      )}
       <DropdownMenuContent side="top" align="start" className="w-56">
         {children}
       </DropdownMenuContent>

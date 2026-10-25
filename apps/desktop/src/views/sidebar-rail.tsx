@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../lib/session";
@@ -33,10 +33,10 @@ export type SidebarTab =
 const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "agents", label: "Agents", icon: Bot },
   { id: "work", label: "Projects", icon: FolderKanban },
-  { id: "activity", label: "Activity", icon: Activity },
+  { id: "agents", label: "Agents", icon: Bot },
   { id: "skills", label: "Skills", icon: Package },
+  { id: "activity", label: "Activity", icon: Activity },
 ];
 
 /** The bottom rail buttons: Help (a popup, not a panel tab) above Settings
@@ -57,32 +57,29 @@ function RailButton({
   badge?: number;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          aria-current={active}
-          onClick={onClick}
-          className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
-            active
-              ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Icon className="size-5" />
-          {badge !== undefined && badge > 0 && (
-            <span
-              aria-label={`${badge} unread`}
-              className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-3xs font-semibold leading-4 text-black"
-            >
-              {badge > 99 ? "99+" : badge}
-            </span>
-          )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
+    <DesktopTooltip label={label} side="right">
+      <button
+        type="button"
+        aria-label={label}
+        aria-current={active}
+        onClick={onClick}
+        className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
+          active
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Icon className="size-5" />
+        {badge !== undefined && badge > 0 && (
+          <span
+            aria-label={`${badge} unread`}
+            className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-3xs font-semibold leading-4 text-black"
+          >
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
+      </button>
+    </DesktopTooltip>
   );
 }
 
