@@ -7,7 +7,6 @@ import {
   Bot,
   CircleHelp,
   FolderKanban,
-  Inbox,
   MessageSquare,
   Package,
   Settings,
@@ -22,7 +21,6 @@ import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../lib/session";
 
 export type SidebarTab =
-  | "inbox"
   | "chats"
   | "agents"
   | "work"
@@ -31,7 +29,6 @@ export type SidebarTab =
   | "settings";
 
 const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
-  { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
@@ -93,14 +90,11 @@ export function SidebarRail({
   onOpenDevice,
   onSignOut,
   onAddWorkspace,
-  inboxUnread,
   role,
   isMobile,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
-  /** Attention items only — the Inbox badge never counts activity. */
-  inboxUnread?: number;
   /** The big help/learn popup (a route overlay, not a panel tab). */
   onOpenHelp: () => void;
   email: string;
@@ -135,7 +129,6 @@ export function SidebarRail({
             icon={Icon}
             active={activeTab === id}
             onClick={() => onTabChange(id)}
-            badge={id === "inbox" ? inboxUnread : undefined}
           />
         ))}
       </div>

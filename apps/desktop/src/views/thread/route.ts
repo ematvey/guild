@@ -117,8 +117,23 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       settingsDetail: null,
     };
   }
-  // The agents surface owns its whole address space (/agents, /inbox,
-  // /activity, /runs/<id>): parse it before the chat prefixes.
+  // The inbox surface is gone: agent-initiated threads live in the chat
+  // list. Old /inbox links land on Chats.
+  if (parts[0] === "inbox") {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents: null,
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+    };
+  }
+  // The agents surface owns its whole address space (/agents, /activity,
+  // /runs/<id>): parse it before the chat prefixes.
   const agents = parseAgentsRoute(pathname);
   if (agents !== null) {
     return {

@@ -22,13 +22,11 @@ export type AgentsRoute =
       filePath?: string;
     }
   | { view: "activity" }
-  | { view: "inbox" }
   | { view: "run"; runId: string }
   | { view: "session"; sessionId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
 export const AGENTS_ACTIVITY: AgentsRoute = { view: "activity" };
-export const AGENTS_INBOX: AgentsRoute = { view: "inbox" };
 
 export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["overview", "Overview"],
@@ -65,7 +63,6 @@ export function parseAgentsRoute(pathname: string): AgentsRoute | null {
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
-  if (parts[0] === "inbox" && parts.length === 1) return AGENTS_INBOX;
   if (parts[0] === "activity" && parts.length === 1) return AGENTS_ACTIVITY;
   if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
   if (parts[0] === "sessions" && parts[1]) return { view: "session", sessionId: parts[1] };
@@ -107,8 +104,6 @@ export function agentsRoutePath(route: AgentsRoute): string {
       return "/agents/new";
     case "activity":
       return "/activity";
-    case "inbox":
-      return "/inbox";
     case "run":
       return `/runs/${segment(route.runId)}`;
     case "session":
@@ -137,8 +132,7 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 /** The rail tab that owns an agents route. */
 export function agentsRailTab(
   route: AgentsRoute,
-): "inbox" | "agents" | "activity" {
-  if (route.view === "inbox") return "inbox";
+): "agents" | "activity" {
   if (route.view === "activity" || route.view === "run" || route.view === "session") return "activity";
   return "agents";
 }
@@ -284,23 +278,6 @@ export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   private: "Private",
   team: "Team",
   org: "Organization",
-};
-
-export type InboxKind =
-  | "question"
-  | "approval"
-  | "agent_message"
-  | "routine_failed"
-  | "routine_disabled"
-  | "routine_message";
-
-export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
-  question: "Question",
-  approval: "Approval",
-  agent_message: "Message",
-  routine_failed: "Routine failed",
-  routine_disabled: "Routine disabled",
-  routine_message: "Routine message",
 };
 
 /** True when the route addresses the given agent's page. */

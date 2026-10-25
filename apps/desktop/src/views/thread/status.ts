@@ -8,6 +8,7 @@ export function statusFromThreads(chats: ChatSummary[]) {
     generating: !!chat.generating,
     working: !!chat.working,
     unread: !!chat.unread,
+    blocked: !!chat.blocked,
   }]));
 }
 

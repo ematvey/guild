@@ -7,7 +7,6 @@ import { apiUrl, getToken } from "../../lib/session";
 import type {
   AgentStatus,
   AgentVisibility,
-  InboxKind,
   RunStatus,
   RunTrigger,
 } from "./agents-route";
@@ -178,20 +177,6 @@ export interface AgentRoutineOccurrence {
   status: "pending" | "claimed" | "done" | "failed" | "skipped";
   attempts: number;
   last_error?: string | null;
-}
-
-export interface AgentNotice {
-  id: string;
-  org_id: string;
-  agent_id?: string | null;
-  agent_name?: string | null;
-  user_id?: string | null;
-  kind: InboxKind;
-  payload: Record<string, unknown>;
-  read_at?: string | null;
-  created_at: string;
-  thread_id?: string | null;
-  run_id?: string | null;
 }
 
 export interface AgentFileEntry {
@@ -593,20 +578,6 @@ export async function listRoutineRuns(
       `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/runs`,
     ),
     "runs",
-  );
-}
-
-export async function listInbox(): Promise<AgentNotice[]> {
-  return listOf<AgentNotice>(await request<unknown>("/api/v1/inbox"), "items", "notices");
-}
-
-export async function markInboxRead(
-  noticeId: string,
-  read = true,
-): Promise<void> {
-  await request<void>(
-    `/api/v1/inbox/${encodeURIComponent(noticeId)}/${read ? "read" : "unread"}`,
-    { method: "POST" },
   );
 }
 

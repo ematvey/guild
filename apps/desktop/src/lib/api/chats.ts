@@ -17,6 +17,9 @@ export interface ChatSummary {
   working?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
+  /** A tool call in this chat waits for the user's approval (red dot,
+   *  supersedes unread). */
+  blocked?: boolean;
   /** The project (named workspace folder) the chat runs in; absent =
    * folderless. */
   project_id?: string;

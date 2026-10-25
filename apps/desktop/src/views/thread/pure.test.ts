@@ -79,7 +79,7 @@ describe("applyRoutePatch (navigation precedence)", () => {
   });
 
   it("an agents route replaces the chat page and a chat navigation drops it", () => {
-    const agents = applyRoutePatch(route(), { agents: { view: "inbox" } as never });
+    const agents = applyRoutePatch(route(), { agents: { view: "activity" } as never });
     expect(agents.agents).not.toBeNull();
     const next = applyRoutePatch(agents, { chatId: "c1" });
     expect(next.agents).toBeNull();
@@ -93,8 +93,8 @@ describe("statusFromThreads", () => {
       { id: "b", generating: false, working: false, unread: true },
     ] as ChatSummary[];
     expect(statusFromThreads(chats)).toEqual({
-      a: { generating: true, working: true, unread: false },
-      b: { generating: false, working: false, unread: true },
+      a: { generating: true, working: true, unread: false, blocked: false },
+      b: { generating: false, working: false, unread: true, blocked: false },
     });
   });
 });
