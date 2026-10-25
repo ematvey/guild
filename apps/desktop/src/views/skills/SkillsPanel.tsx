@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@guild/ui/components/select";
 import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
+import { avatarChip } from "../../lib/format";
 import { count } from "../agents/activity-format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
@@ -91,11 +92,6 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     pin,
     updateTo,
   };
-}
-
-/** First two characters of the owner label, for the initials avatar. */
-export function ownerInitials(label: string): string {
-  return label.slice(0, 2).toUpperCase();
 }
 
 /** True when the skill is owned by the signed-in user (the server's owner
@@ -491,7 +487,7 @@ export function SkillsPanel({
                             <span className="flex min-w-0 items-center gap-1.5">
                               <Avatar
                                 src={row.ownerAvatar}
-                                fallback={ownerInitials(row.ownerLabel)}
+                                fallback={avatarChip(row.ownerLabel)}
                                 className="size-5 border border-border"
                                 fallbackClassName="bg-secondary text-3xs font-semibold"
                               />

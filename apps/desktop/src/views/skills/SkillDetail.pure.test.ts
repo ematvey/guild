@@ -19,12 +19,12 @@ import {
   readBars,
   readSummary,
   shaPrefix,
-  avatarChip,
   isMarkdownPath,
   skillMdPreviewBody,
   sparkRects,
   updateAvailable,
 } from "./SkillDetail";
+import { avatarChip } from "../../lib/format";
 import type { SkillDetail as SkillDetailData, SkillMe } from "./skills-api";
 
 const base: SkillDetailData = {
