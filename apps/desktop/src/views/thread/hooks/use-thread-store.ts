@@ -17,6 +17,9 @@ import {
  *  A slow tree must not hold the old thread forever; the header fills in
  *  when the fetch settles. */
 const TREE_WAIT_MS = 600;
+/** A first visit that never receives its ThreadState falls back to the old
+ *  view instead of holding navigation forever. */
+const STATE_WAIT_MS = 5_000;
 
 type ScrollMemory = { top: number; atBottom: boolean };
 
@@ -101,12 +104,22 @@ export function useThreadStore(chatId: string | null) {
   const displayedRef = useRef<string | null>(null);
   const pendingRef = useRef<string | null>(null);
   const treeTimer = useRef<number | null>(null);
+  const stateTimer = useRef<number | null>(null);
+  const stateTimerTarget = useRef<string | null>(null);
 
   const clearTreeTimer = () => {
     if (treeTimer.current !== null) {
       window.clearTimeout(treeTimer.current);
       treeTimer.current = null;
     }
+  };
+
+  const clearStateTimer = () => {
+    if (stateTimer.current !== null) {
+      window.clearTimeout(stateTimer.current);
+      stateTimer.current = null;
+    }
+    stateTimerTarget.current = null;
   };
 
   const saveScroll = (cid: string | null) => {
@@ -143,7 +156,11 @@ export function useThreadStore(chatId: string | null) {
       });
   };
 
-  const finishSwap = (target: string | null) => {
+  const finishSwap = (target: string | null, clearBusy = true) => {
+    clearStateTimer();
+    // The target's ThreadState and status own the live turn. A cached swap
+    // happens before its first state, so the old chat's busy must not leak.
+    if (clearBusy) markBusy(false);
     const opened = reducerRef.current.open(target);
     setBlocks(opened.blocks);
     hasMoreRef.current = opened.hasMore;
@@ -172,7 +189,8 @@ export function useThreadStore(chatId: string | null) {
     if (decision.fetchTree) startTreeFetch(decision.fetchTree);
     if (decision.swapTo !== undefined) {
       clearTreeTimer();
-      finishSwap(decision.swapTo);
+      clearStateTimer();
+      finishSwap(decision.swapTo, decision.clearBusy === true);
       return;
     }
     if (decision.state.pendingChatId !== pendingRef.current) {
@@ -187,6 +205,21 @@ export function useThreadStore(chatId: string | null) {
     } else {
       setNavigating(false);
       setThreadLoading(false);
+    }
+    if (decision.state.pendingChatId !== null && !decision.state.stateReady) {
+      const target = decision.state.pendingChatId;
+      if (stateTimer.current === null || stateTimerTarget.current !== target) {
+        clearStateTimer();
+        stateTimerTarget.current = target;
+        stateTimer.current = window.setTimeout(() => {
+          stateTimer.current = null;
+          stateTimerTarget.current = null;
+          toast.error("Thread did not load");
+          dispatchNavRef.current({ type: "cancel" });
+        }, STATE_WAIT_MS);
+      }
+    } else {
+      clearStateTimer();
     }
     if (
       decision.state.pendingChatId !== null &&
@@ -207,6 +240,11 @@ export function useThreadStore(chatId: string | null) {
   const dispatchNavRef = useRef(dispatchNav);
   dispatchNavRef.current = dispatchNav;
 
+  /** Drops the pending target when its sync fails. The displayed chat stays. */
+  const cancelPending = useCallback((cid: string) => {
+    if (pendingRef.current === cid) dispatchNavRef.current({ type: "cancel" });
+  }, []);
+
   /** A ThreadState reached the reducer: the pending target can swap once its
    *  tree is also in. */
   const onThreadStateApplied = useCallback((cid: string) => {
@@ -225,8 +263,8 @@ export function useThreadStore(chatId: string | null) {
   /** Loads the page before the view's oldest loaded event. */
   const earlierController = useRef<AbortController | null>(null);
   const loadEarlier = useCallback(async () => {
-    const cid = openChatIdRef.current;
-    if (!cid || loadingEarlierRef.current || !hasMoreRef.current) return;
+    const cid = displayedRef.current;
+    if (!cid || pendingRef.current !== null || loadingEarlierRef.current || !hasMoreRef.current) return;
     const before = oldestSeqRef.current;
     if (before < 0) return;
     const el = pane.current;
@@ -237,9 +275,10 @@ export function useThreadStore(chatId: string | null) {
     earlierController.current = controller;
     try {
       const page = await fetchThreadEventsPage(cid, before, EARLIER_PAGE_SIZE, controller.signal);
-      if (cid !== openChatIdRef.current || controller.signal.aborted) return;
+      if (cid !== displayedRef.current || pendingRef.current !== null || controller.signal.aborted) return;
       earlierAnchor.current = anchor;
       const applied = reducerRef.current.prependEvents(cid, page.events, page.has_more);
+      if (cid !== displayedRef.current) return;
       hasMoreRef.current = applied.hasMore;
       oldestSeqRef.current = applied.oldestSeq;
       setHasMore(applied.hasMore);
@@ -257,6 +296,7 @@ export function useThreadStore(chatId: string | null) {
   useEffect(() => () => {
     earlierController.current?.abort();
     clearTreeTimer();
+    clearStateTimer();
     for (const controller of treeControllers.current.values()) controller.abort();
   }, []);
 
@@ -328,5 +368,6 @@ export function useThreadStore(chatId: string | null) {
     scrollRestoreRef,
     loadEarlier,
     openForChat,
+    cancelPending,
   };
 }

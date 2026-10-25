@@ -98,6 +98,30 @@ describe("thread navigation transitions", () => {
     expect(late.state.pendingChatId).toBe("child-b");
   });
 
+  it("a cached swap starts clean so running A cannot leak busy onto idle B", () => {
+    const decision = transitionNavigation(
+      { ...initialNavigation(), displayedChatId: "running-a" },
+      { type: "open", chatId: "cached-idle-b", cached: true, treeKnown: true },
+    );
+    expect(decision.swapTo).toBe("cached-idle-b");
+    expect(decision.clearBusy).toBe(true);
+  });
+
+  it("cancels a pending target and keeps the displayed chat", () => {
+    const pending = transitionNavigation(
+      { ...initialNavigation(), displayedChatId: "parent" },
+      { type: "open", chatId: "child", cached: false, treeKnown: false },
+    );
+    const cancelled = transitionNavigation(pending.state, { type: "cancel" });
+    expect(cancelled.abortTree).toBe(true);
+    expect(cancelled.swapTo).toBeUndefined();
+    expect(cancelled.state.phase).toBe("idle");
+    expect(cancelled.state.displayedChatId).toBe("parent");
+    expect(cancelled.state.pendingChatId).toBeNull();
+    expect(cancelled.state.stateReady).toBe(false);
+    expect(cancelled.state.treeReady).toBe(false);
+  });
+
   it("shows a cold deep link as a cold pending view", () => {
     const cold = transitionNavigation(initialNavigation(), {
       type: "open",

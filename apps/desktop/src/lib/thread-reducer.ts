@@ -939,11 +939,16 @@ export function createThreadReducer(): ThreadReducer {
         const kind = (ev as { kind?: string | null }).kind ?? undefined;
         const tb = v.toolsByCall.get(ev.call_id);
         if (tb) {
-          tb.content = ev.content;
-          tb.status = ev.is_error ? "error" : "done";
-          tb.meta = meta;
-          tb.kind = kind;
-          tb.endTs = row.created_at;
+          const next: ToolBlock = {
+            ...tb,
+            content: ev.content,
+            status: ev.is_error ? "error" : "done",
+            meta,
+            kind,
+            endTs: row.created_at,
+          };
+          v.toolsByCall.set(tb.callId, next);
+          v.blocks = v.blocks.map((b) => (b.kind === "tool" && b.tool === tb ? { ...b, tool: next } : b));
         } else {
           const orphan: ToolBlock = {
             callId: ev.call_id,

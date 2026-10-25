@@ -1074,4 +1074,38 @@ describe("live tool frames keep the React state contract", () => {
     expect(completedTool?.status).toBe("done");
     expect(againTool?.status).toBe("running");
   });
+
+  it("a durable tool_result replaces the tool object and the block array", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    const started = r.applyFrame({
+      type: "tool_started",
+      call_id: "call-1",
+      name: "bash",
+      arguments: "{}",
+      executor: "server",
+    });
+    const startedBlock = started.blocks[0];
+    const startedTool = startedBlock.kind === "tool" ? startedBlock.tool! : null;
+    expect(startedTool?.status).toBe("running");
+
+    const applied = r.applyThreadEvents("chat", 12, [
+      row(11, {
+        type: "tool_result",
+        turn: 1,
+        step: 0,
+        call_id: "call-1",
+        name: "bash",
+        content: "ok",
+        is_error: false,
+      }),
+    ]);
+    const resultBlock = applied.blocks[0];
+    const resultTool = resultBlock.kind === "tool" ? resultBlock.tool! : null;
+    expect(applied.blocks).not.toBe(started.blocks);
+    expect(resultBlock).not.toBe(startedBlock);
+    expect(resultTool).not.toBe(startedTool);
+    expect(resultTool?.status).toBe("done");
+    expect(startedTool?.status).toBe("running");
+  });
 });
