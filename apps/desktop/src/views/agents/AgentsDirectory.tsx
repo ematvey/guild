@@ -7,7 +7,7 @@ import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
 import { VISIBILITY_LABEL } from "./agents-route";
 import { listAgents, type Agent } from "./agents-api";
-import { count } from "./activity-format";
+import { count } from "../../lib/format";
 import { ModelName } from "./agent-model";
 import {
   AgentGlyph,

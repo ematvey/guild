@@ -26,7 +26,7 @@ import {
 import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
 import { avatarChip } from "../../lib/format";
 import { compareVersions } from "./version";
-import { count } from "../agents/activity-format";
+import { count } from "../../lib/format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";

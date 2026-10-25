@@ -22,3 +22,7 @@ export function formatBytes(
 export function avatarChip(label: string): string {
   return label.slice(0, 2).toUpperCase();
 }
+
+/** `1 agent`, `3 agents` — the one plural rule in the client. */
+export const count = (n: number, one: string, many = `${one}s`): string =>
+  `${n} ${n === 1 ? one : many}`;
