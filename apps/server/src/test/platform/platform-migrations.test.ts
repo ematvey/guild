@@ -29,7 +29,7 @@ afterAll(async () => {
     await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
   }
   await admin.end();
-});
+}, 60_000);
 
 async function bareDatabase(): Promise<{ name: string; url: string }> {
   const name = `guild_pm_test_${Math.random().toString(36).slice(2, 10)}`;

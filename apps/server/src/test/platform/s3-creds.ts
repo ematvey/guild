@@ -1,19 +1,18 @@
-// S3 credentials for tests that talk to the shared host RustFS (:9950).
-// The secret key is host configuration and must never be committed: it is
-// read from the environment, then from the gitignored
-// deploy/compose/config.env, and the test fails fast if neither is present.
+// Host-service credentials for tests that talk to the shared host services.
+// Secrets are host configuration and must never be committed: they are read
+// from the environment, then from the gitignored deploy/compose/config.env.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
 const CONFIG_ENV_PATH = path.join(REPO_ROOT, "deploy/compose/config.env");
 
-function secretFromConfigEnv(): string | undefined {
+function valueFromConfigEnv(key: string): string | undefined {
   try {
     const line = readFileSync(CONFIG_ENV_PATH, "utf8")
       .split("\n")
-      .find((l) => l.startsWith("GUILD_S3_SECRET_ACCESS_KEY="));
-    const value = line?.slice("GUILD_S3_SECRET_ACCESS_KEY=".length).trim();
+      .find((l) => l.startsWith(`${key}=`));
+    const value = line?.slice(key.length + 1).trim();
     return value || undefined;
   } catch {
     return undefined;
@@ -28,10 +27,21 @@ export function testS3AccessKeyId(envVar: string): string {
 export function testS3SecretAccessKey(envVar: string): string {
   const fromEnv = process.env[envVar];
   if (fromEnv) return fromEnv;
-  const fromConfig = secretFromConfigEnv();
+  const fromConfig = valueFromConfigEnv("GUILD_S3_SECRET_ACCESS_KEY");
   if (fromConfig) return fromConfig;
   throw new Error(
     `${envVar} is not set and ${CONFIG_ENV_PATH} has no GUILD_S3_SECRET_ACCESS_KEY. ` +
       `Set the env var to run against the shared RustFS.`,
   );
+}
+
+/** ClickHouse credentials: the dev server requires the host user, so the
+ *  skills runtime's table ensure succeeds instead of logging an auth error.
+ *  Empty when neither the environment nor config.env provides them. */
+export function testClickhouseUser(): string {
+  return process.env.GUILD_CLICKHOUSE_USER ?? valueFromConfigEnv("GUILD_CLICKHOUSE_USER") ?? "";
+}
+
+export function testClickhousePassword(): string {
+  return process.env.GUILD_CLICKHOUSE_PASSWORD ?? valueFromConfigEnv("GUILD_CLICKHOUSE_PASSWORD") ?? "";
 }
