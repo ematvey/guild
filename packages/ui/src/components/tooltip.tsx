@@ -1,5 +1,5 @@
-//! Tooltip (radix): immediate on hover (delayDuration 0 — the icon rail's
-//! buttons label themselves instantly, not after the browser's title lag).
+//! Tooltip (radix): opens on hover after 250ms — long enough that a pointer
+//! crossing a button does not flash a label, short enough to feel immediate.
 
 import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
@@ -7,7 +7,7 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cn } from "../lib/utils";
 
 function TooltipProvider({
-  delayDuration = 0,
+  delayDuration = 250,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return (

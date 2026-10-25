@@ -12,7 +12,7 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { ChevronDown, Plus, X } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { DesktopTooltip } from "../components/desktop-tooltip";
 import { IS_TAURI } from "../lib/session";
 import {
   workspaceList,
@@ -167,29 +167,26 @@ export function WorkspaceRailButton({
     : "Guild";
   return (
     <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-              aria-label="Switch workspace"
-            >
-              {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
-                <img
-                  src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
-                  alt=""
-                  className="size-6 shrink-0 rounded object-contain"
-                />
-              ) : (
-                <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
-                  {label.slice(0, 1).toUpperCase()}
-                </span>
-              )}
-            </button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">Switch workspace</TooltipContent>
-      </Tooltip>
+      <DesktopTooltip label="Switch workspace" side="right">
+        <DropdownMenuTrigger asChild>
+          <button
+            className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
+            aria-label="Switch workspace"
+          >
+            {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
+              <img
+                src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
+                alt=""
+                className="size-6 shrink-0 rounded object-contain"
+              />
+            ) : (
+              <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
+                {label.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+          </button>
+        </DropdownMenuTrigger>
+      </DesktopTooltip>
       <DropdownMenuContent side="bottom" align="start" className="w-60">
         <WorkspaceMenuItems
           list={list}
