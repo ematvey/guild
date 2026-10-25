@@ -55,16 +55,16 @@ const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
 /** The chat subtree's running set for the whole list: one recursive walk over
  *  agent_threads, then the chats whose subtree holds a queued/running run. */
 const WORKING_CTE = `WITH RECURSIVE subtree AS (
-    SELECT t.id AS root_thread_id, t.id AS thread_id
+    SELECT t.id AS thread_id, t.chat_id AS root_chat
     FROM agent_threads t
     JOIN chats rc ON rc.id = t.chat_id
     WHERE rc.org_id = $1 AND rc.user_id = $2
     UNION ALL
-    SELECT s.root_thread_id, c.id
+    SELECT c.id, s.root_chat
     FROM agent_threads c JOIN subtree s ON c.parent_thread_id = s.thread_id
   ),
   working_chats AS (
-    SELECT DISTINCT s.root_thread_id AS chat_id
+    SELECT DISTINCT s.root_chat AS chat_id
     FROM subtree s
     JOIN agent_runs r ON r.thread_id = s.thread_id
     WHERE r.status IN ('queued', 'running')

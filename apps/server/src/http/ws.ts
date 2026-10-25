@@ -675,13 +675,18 @@ async function runSyncStarted(
 ): Promise<void> {
   sink.send({ type: "sync_begin", chat_id: chatId });
   try {
-    // Both reads start together; the tree is small and goes first so the
-    // running-subagent block does not wait for the full thread capture.
-    const [tree, snapshot] = await Promise.all([
-      chats.wsSubagentTree?.({ chatId, user, sink }),
-      chats.wsSync?.({ chatId, user, sink }),
-    ]);
+    // Both reads start together; the tree is small and is sent as soon as it
+    // lands, so the running-subagent block does not wait for the full thread
+    // capture.
+    const treeRead = chats.wsSubagentTree?.({ chatId, user, sink });
+    const stateRead = chats.wsSync?.({ chatId, user, sink });
+    // The state read may reject while the tree is still awaited: attach a
+    // handler now so that rejection is not unhandled. The await below still
+    // rethrows through this bracket's catch.
+    stateRead?.catch(() => {});
+    const tree = await treeRead;
     if (tree !== undefined && tree !== null) sink.send(tree);
+    const snapshot = await stateRead;
     if (snapshot !== undefined && snapshot !== null) sink.send(snapshot);
     else if (chats.wsSync === undefined) {
       sink.send({ type: "error", message: "sync unavailable" });
