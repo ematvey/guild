@@ -222,11 +222,11 @@ export function RunDetailPage({
                   <Meta label="Agent" value={trace.agent_name || "—"} />
                   {trace.session_id !== null ? (
                     <div>
-                      <dt className="text-muted-foreground">Session</dt>
+                      <dt className="text-muted-foreground">Chat</dt>
                       <dd>
                         <button
                           type="button"
-                          onClick={() => onNavigate({ view: "session", sessionId: trace.session_id! })}
+                          onClick={() => onNavigate({ view: "chat", chatId: trace.session_id! })}
                           className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
                         >
                           {trace.session_id}

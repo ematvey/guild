@@ -1,7 +1,7 @@
 import { AgentsDirectory } from "./AgentsDirectory";
 import { AgentCreate } from "./AgentCreate";
 import { AgentPage, type Viewer } from "./AgentPage";
-import { ActivityPage, RunDetailPage, SessionDetailPage } from "./ActivityPage";
+import { ActivityPage, ChatActivityPage, RunDetailPage } from "./ActivityPage";
 import type { AgentsRoute } from "./agents-route";
 
 /** The agents surface's main-column page. Every visible page derives from
@@ -38,7 +38,7 @@ export function AgentsPanel({
       return <ActivityPage onNavigate={onNavigate} onOpenChat={onOpenChat} />;
     case "run":
       return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
-    case "session":
-      return <SessionDetailPage sessionId={route.sessionId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+    case "chat":
+      return <ChatActivityPage chatId={route.chatId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
   }
 }

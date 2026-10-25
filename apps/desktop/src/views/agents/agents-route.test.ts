@@ -26,7 +26,7 @@ const routes: AgentsRoute[] = [
   { view: "agent", agentId: "a1", tab: "settings" },
   { view: "activity" },
   { view: "run", runId: "run-1" },
-  { view: "session", sessionId: "session-1" },
+  { view: "chat", chatId: "chat-1" },
 ];
 
 describe("agents route contract", () => {
@@ -40,7 +40,7 @@ describe("agents route contract", () => {
   it("maps every route to exactly one rail tab", () => {
     expect(agentsRailTab({ view: "activity" })).toBe("activity");
     expect(agentsRailTab({ view: "run", runId: "r" })).toBe("activity");
-    expect(agentsRailTab({ view: "session", sessionId: "s" })).toBe("activity");
+    expect(agentsRailTab({ view: "chat", chatId: "c" })).toBe("activity");
     expect(agentsRailTab({ view: "directory" })).toBe("agents");
     expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe("agents");
   });
@@ -60,6 +60,7 @@ describe("agents route contract", () => {
 
   it("returns null for paths owned by other surfaces", () => {
     expect(parseAgentsRoute("/chats")).toBeNull();
+    expect(parseAgentsRoute("/sessions/old")).toEqual({ view: "chat", chatId: "old" });
     expect(parseAgentsRoute("/thread/x")).toBeNull();
     expect(parseAgentsRoute("/skills")).toBeNull();
     expect(parseAgentsRoute("/")).toBeNull();

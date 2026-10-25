@@ -1,6 +1,6 @@
 // Activity: one observability surface for agent work. Traces are agent
 // runs (one per turn), spans are the LLM calls and tool calls inside a
-// trace, sessions group traces by chat. The list and the trace detail read
+// trace, chats group traces by conversation. The list and the trace detail read
 // the same ClickHouse model the gateway and the tool hook write, so a run
 // and its calls are one story. Navigation stays in the URL: the tab,
 // period and filters ride the query, the open trace is /runs/<id>.
@@ -34,14 +34,14 @@ import {
 } from "./agents-route";
 import {
   getActivitySummary,
-  listSessions,
+  listChatActivity,
   listSpans,
   listTraces,
   type ActivityPeriod,
   type ActivityQuery,
   type ActivitySummary,
   type ActivityTab,
-  type SessionRow,
+  type ChatActivityRow,
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
@@ -71,7 +71,7 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
   ["traces", "Traces"],
   ["calls", "Calls"],
-  ["sessions", "Sessions"],
+  ["chats", "Chats"],
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
@@ -100,7 +100,7 @@ function readListState(url: URL): ListState {
   const tab = q.get("tab");
   const period = q.get("period");
   return {
-    tab: tab === "calls" || tab === "sessions" ? tab : DEFAULTS.tab,
+    tab: tab === "calls" || tab === "chats" || tab === "sessions" ? (tab === "sessions" ? "chats" : tab) : DEFAULTS.tab,
     period: period === "24h" || period === "30d" ? period : DEFAULTS.period,
     status: q.get("status") ?? DEFAULTS.status,
     trigger: q.get("trigger") ?? DEFAULTS.trigger,
@@ -156,7 +156,7 @@ export function ActivityPage({
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
-  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const [chats, setChats] = useState<ChatActivityRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -209,10 +209,10 @@ export function ActivityPage({
             setSpans(res.spans);
             setTotal(res.total);
           })
-        : state.tab === "sessions"
-          ? listSessions(filters).then((res) => {
+        : state.tab === "chats"
+          ? listChatActivity(filters).then((res) => {
               if (!live) return;
-              setSessions(res.sessions);
+              setChats(res.chats);
               setTotal(res.total);
             })
           : listTraces({
@@ -229,7 +229,7 @@ export function ActivityPage({
       setError(err instanceof Error ? err.message : "The activity API did not answer.");
       setTraces(null);
       setSpans(null);
-      setSessions(null);
+      setChats(null);
     });
     return () => {
       live = false;
@@ -320,7 +320,7 @@ export function ActivityPage({
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, state.tab === "sessions" ? "session" : state.tab === "calls" ? "call" : "trace")}
+            {count(total, state.tab === "chats" ? "chat" : state.tab === "calls" ? "call" : "trace")}
           </span>
           <Button
             variant="ghost"
@@ -356,11 +356,11 @@ export function ActivityPage({
             }}
           />
         )}
-        {error === null && state.tab === "sessions" && (
-          <SessionsTable
-            rows={sessions}
+        {error === null && state.tab === "chats" && (
+          <ChatsTable
+            rows={chats}
             admin={admin}
-            onOpen={(id) => onNavigate({ view: "session", sessionId: id })}
+            onOpen={(id) => onNavigate({ view: "chat", chatId: id })}
           />
         )}
       </div>
@@ -628,12 +628,12 @@ function CallsTable({
   );
 }
 
-function SessionsTable({
+function ChatsTable({
   rows,
   admin,
   onOpen,
 }: {
-  rows: SessionRow[] | null;
+  rows: ChatActivityRow[] | null;
   admin: boolean;
   onOpen: (id: string) => void;
 }) {
@@ -642,8 +642,8 @@ function SessionsTable({
     return (
       <EmptyState
         icon={<MessageSquare className="size-5" />}
-        title="No sessions in this window"
-        body="A session is one chat: every trace and call inside it shares the chat id."
+        title="No chats in this window"
+        body="A chat is one conversation: every trace and call inside it shares the chat id."
       />
     );
   }
@@ -684,12 +684,12 @@ function SessionsTable({
   );
 }
 
-export function SessionDetailPage({
-  sessionId,
+export function ChatActivityPage({
+  chatId,
   onNavigate,
   onOpenChat,
 }: {
-  sessionId: string;
+  chatId: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
@@ -707,19 +707,19 @@ export function SessionDetailPage({
     setError(null);
     const to = new Date(Date.now() + 86_400_000).toISOString();
     const from = new Date(Date.now() - 90 * 86_400_000).toISOString();
-    void listTraces({ session: sessionId, from, to, limit: 200 })
+    void listTraces({ session: chatId, from, to, limit: 200 })
       .then((res) => {
         if (live) setRows(res.traces);
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setError(err instanceof Error ? err.message : "The session did not load.");
+        setError(err instanceof Error ? err.message : "The chat did not load.");
         setRows(null);
       });
     return () => {
       live = false;
     };
-  }, [sessionId, tick]);
+  }, [chatId, tick]);
 
   const admin = role === "admin";
   const totals = useMemo(() => {
@@ -737,8 +737,8 @@ export function SessionDetailPage({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <PageHeader
-        title="Session"
-        description={sessionId}
+        title="Chat"
+        description={chatId}
         actions={
           <>
             <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "activity" })}>
@@ -746,7 +746,7 @@ export function SessionDetailPage({
               Activity
             </Button>
             {onOpenChat !== undefined && (
-              <Button variant="outline" size="sm" onClick={() => onOpenChat(sessionId)}>
+              <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
                 Open chat
               </Button>
@@ -756,7 +756,7 @@ export function SessionDetailPage({
       />
       <PageBody className="max-w-[80rem]">
         {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && rows === null && <InlineLoading label="Loading session" />}
+        {error === null && rows === null && <InlineLoading label="Loading chat" />}
         {rows !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">
