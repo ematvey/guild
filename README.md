@@ -43,10 +43,10 @@ The gate runs, in this order of dependency (the bindings check waits for
 cargo test, because cargo test rewrites the generated bindings):
 
 ```bash
-cargo test --workspace
+cargo nextest run --workspace
 npm test --workspace apps/server        # TS server suite (disposable PG/CH databases)
 cd apps/desktop && npm test             # frontend vitest
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 scripts/check-windows.sh                # SKIP when the Windows target is absent
 scripts/check-bindings.sh               # runs after cargo test
 npm run coherence

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The quality gate: every baseline check, run concurrently, one summary.
 #
-# Ordering: cargo test regenerates crates/protocol/bindings with extensionless
+# Ordering: the Rust test run can regenerate crates/protocol/bindings with extensionless
 # imports, and check-bindings.sh restores the .js suffix. The bindings check
 # therefore starts only after cargo test has finished.
 #
@@ -45,10 +45,10 @@ done
 ALL_CHECKS="cargo-test server-test desktop-test clippy windows bindings coherence"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
-check_cargo_test() { cargo test --workspace; }
+check_cargo_test() { cargo nextest run --workspace; }
 check_server_test() { npm test --workspace apps/server; }
 check_desktop_test() { cd apps/desktop && npm test; }
-check_clippy() { cargo clippy --workspace -- -D warnings; }
+check_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
 check_windows() { ./scripts/check-windows.sh; }
 check_bindings() { ./scripts/check-bindings.sh; }
 check_coherence() { npm run coherence; }
