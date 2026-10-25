@@ -269,5 +269,6 @@
       "where": "apps/desktop/src/lib/chat-width.ts",
       "reason": "infrastructure"
     }
-  ]
+  ],
+  "attaches": []
 }

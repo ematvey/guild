@@ -295,6 +295,11 @@
           "from": "db",
           "to": "domain",
           "at": "apps/server/src/execpolicy/rule-parser.ts"
+        },
+        {
+          "from": "domain",
+          "to": "report",
+          "at": "apps/server/assets/exec_policy_base.rules"
         }
       ]
     }
