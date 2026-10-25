@@ -3,8 +3,13 @@
 // approvals and subagent records all use it, so a record in the thread looks
 // the same whatever it carries.
 
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+
+/// Notified when the user opens or closes a frame. The transcript pane uses
+/// it to stop following the bottom: a frame grows under the reader, so a pin
+/// to the bottom would move the row that was just clicked.
+export const FrameToggleContext = createContext<(() => void) | null>(null);
 
 /// The row that every transcript detail shares: tools, reasoning, subagent
 /// records and the agent-work group itself. One class keeps their vertical
@@ -33,11 +38,15 @@ export function Frame({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const onToggle = useContext(FrameToggleContext);
   const titleNode = typeof title === "function" ? title(open) : title;
   return (
     <div className={`flex w-full flex-col text-sm ${className ?? ""}`}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          onToggle?.();
+          setOpen((o) => !o);
+        }}
         className={FRAME_ROW_CLASS}
       >
         {icon}
