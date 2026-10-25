@@ -372,7 +372,8 @@ Landed:
 - both — the instruction chain is one rule with two readers: AGENTS.md with
   its override, plus MEMORY.md, 32 KiB, on the client and on the server.
 
-Floor: files 526, loc 119147. The 11 seams are the round's declared
+Floor: files 526, loc 119305 (119147 before `develop` merged; the
+gate work in `develop` adds 158 lines of test and skill-home code). The 11 seams are the round's declared
 replacements for renames that would have crossed the wire; each has an owner
 and a date. They are the one counter that rose, and they rose because this
 round chose a dated seam over a break.
