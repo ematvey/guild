@@ -1577,18 +1577,23 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 tail, above the composer so it never covers it. */}
             {!atBottom && (
               <div
-                className="pointer-events-none absolute inset-x-0 z-20 flex justify-center"
+                className="pointer-events-none absolute inset-x-0 z-20 px-3 sm:px-4"
                 style={{ bottom: composerH + 12 }}
               >
-                <button
-                  type="button"
-                  onClick={scrollToBottom}
-                  aria-label="Scroll to the bottom"
-                  title="Scroll to the bottom"
-                  className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:bg-muted hover:text-foreground"
+                <div
+                  className="mx-auto flex w-full justify-end"
+                  style={{ maxWidth: chatWidth }}
                 >
-                  <ArrowDown className="size-4" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={scrollToBottom}
+                    aria-label="Scroll to the bottom"
+                    title="Scroll to the bottom"
+                    className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <ArrowDown className="size-4" />
+                  </button>
+                </div>
               </div>
             )}
           </div>
