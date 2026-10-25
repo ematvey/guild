@@ -21,14 +21,11 @@ import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
 import { apiMe } from "../../lib/api/workspaces";
 import { relativeTime } from "../../lib/relative-time";
-import { formatBytes } from "../../lib/format";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import {
   getRun,
   getSpanPayloads,
   getTrace,
-  listRunArtifacts,
-  type AgentArtifact,
   type AgentRun,
   type AgentRunStep,
   type SpanRow,
@@ -71,7 +68,6 @@ export function RunDetailPage({
   const [trace, setTrace] = useState<TraceRow | null>(null);
   const [spans, setSpans] = useState<SpanRow[]>([]);
   const [children, setChildren] = useState<TraceRow[]>([]);
-  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [selected, setSelected] = useState<SpanRow | null>(null);
   const [run, setRun] = useState<AgentRun | null>(null);
   const [view, setView] = useState<TraceView>(readTraceView);
@@ -111,11 +107,6 @@ export function RunDetailPage({
       .catch(() => {
         if (live) setRun(null);
       });
-    void listRunArtifacts(runId)
-      .then((rows) => {
-        if (live) setArtifacts(rows);
-      })
-      .catch(() => {});
     return () => {
       live = false;
     };
@@ -289,23 +280,6 @@ export function RunDetailPage({
                           </span>
                           <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              {artifacts.length > 0 && (
-                <section className="border-t border-border pt-3">
-                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Artifacts</p>
-                  <ul className="mt-2 space-y-1">
-                    {artifacts.map((artifact) => (
-                      <li key={artifact.id} className="flex items-center gap-2 text-xs">
-                        <FileText className="size-3.5 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 break-all font-mono">{artifact.path}</span>
-                        <span className="shrink-0 text-2xs text-muted-foreground">
-                          {artifact.status} · {formatBytes(artifact.size)}
-                        </span>
                       </li>
                     ))}
                   </ul>

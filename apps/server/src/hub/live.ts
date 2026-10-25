@@ -352,14 +352,6 @@ export class LiveHub {
     return out;
   }
 
-  /** User ids with at least one live socket (browser or machine) — the
-   *  feed's presence poll iterates exactly the feeds Rust would run. */
-  connectedUserIds(): string[] {
-    const ids = new Set<string>(this.members.keys());
-    for (const slot of this.machines.values()) ids.add(slot.holder.user_id);
-    return [...ids];
-  }
-
   /** Returns browser sockets and machine sockets of one organization —
    *  the org-event fan-out (Rust per-user feeds filter the org channel
    *  and every member of the org holds a feed). */

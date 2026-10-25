@@ -6,8 +6,8 @@
 // NotifyHub + in-process fan-out instead of one feed task per user); the
 // observable behavior mirrors the Rust contract: views republish only when
 // the capture changes (seq-zeroed content compare), live frames carry the
-// generation identity the turn ack issues, and presence flips re-send the
-// thread list so the connection dot moves live.
+// generation identity the turn ack issues, and a machine presence flip pushes
+// the thread list so the connection dot moves live.
 
 import type { PlatformContext } from "../platform/root-context.js";
 import type { NotifyHandler } from "../platform/notify.js";
@@ -22,9 +22,7 @@ import {
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
 
-const PRESENCE_POLL_MS = 1_000;
 const VIEW_POLL_MS = 100;
-const BINDINGS_TTL_MS = 4_000;
 
 interface ChatIdentity {
   orgId: string;
@@ -32,17 +30,10 @@ interface ChatIdentity {
   machineId: string | null;
 }
 
-interface UserBindings {
-  fetchedAt: number;
-  orgId: string;
-  chats: { id: string; machineId: string | null }[];
-}
-
 export class FeedForwarder implements GenerationStreamSink {
   private readonly ctx: PlatformContext;
   private unsubscribe: (() => void) | null = null;
   private viewTimer: NodeJS.Timeout | undefined;
-  private presenceTimer: NodeJS.Timeout | undefined;
   private stopped = false;
 
   /** Cached chat identities (org/owner/machine binding); the committed
@@ -71,9 +62,6 @@ export class FeedForwarder implements GenerationStreamSink {
    *  query started before a write can never land after the one that
    *  carries it. */
   private readonly workspaceChains = new Map<string, Promise<void>>();
-  /** Last known machine-online state per (user, chat) binding. */
-  private readonly presence = new Map<string, boolean>();
-  private readonly bindings = new Map<string, UserBindings>();
 
   constructor(ctx: PlatformContext) {
     this.ctx = ctx;
@@ -86,14 +74,11 @@ export class FeedForwarder implements GenerationStreamSink {
     this.unsubscribe = off;
     this.viewTimer = setInterval(() => void this.publishDirtyViews(), VIEW_POLL_MS);
     this.viewTimer.unref?.();
-    this.presenceTimer = setInterval(() => void this.watchPresence(), PRESENCE_POLL_MS);
-    this.presenceTimer.unref?.();
   }
 
   stop(): void {
     this.stopped = true;
     if (this.viewTimer !== undefined) clearInterval(this.viewTimer);
-    if (this.presenceTimer !== undefined) clearInterval(this.presenceTimer);
     this.unsubscribe?.();
     this.unsubscribe = null;
   }
@@ -412,26 +397,6 @@ export class FeedForwarder implements GenerationStreamSink {
     }
   }
 
-  // -- presence (Rust Feed::watch_presence) -----------------------------------
-
-  private async watchPresence(): Promise<void> {
-    for (const userId of this.ctx.hub.connectedUserIds()) {
-      const bindings = await this.bindingsOf(userId);
-      let changed = false;
-      for (const chat of bindings.chats) {
-        if (chat.machineId === null) continue;
-        const online = this.ctx.hub.machineOnline(chat.machineId);
-        const key = `${userId}:${chat.id}`;
-        if (this.presence.get(key) !== online) {
-          this.presence.set(key, online);
-          changed = true;
-        }
-      }
-      if (!changed) continue;
-      void this.pushWorkspace(bindings.orgId, userId).catch(() => {});
-    }
-  }
-
   /** One serialized workspace push per user. Every list-changing write and
    *  presence flip calls this; the chain keeps the wire order equal to the
    *  commit order, so an older snapshot can never overtake a newer one. */
@@ -467,22 +432,6 @@ export class FeedForwarder implements GenerationStreamSink {
       archived_projects: projects.archived_projects,
     });
     this.sendToUser(userId, { type: "machine_list", machines });
-  }
-
-  private async bindingsOf(userId: string): Promise<UserBindings> {
-    const cached = this.bindings.get(userId);
-    if (cached !== undefined && Date.now() - cached.fetchedAt < BINDINGS_TTL_MS) return cached;
-    const res = await this.ctx.pool.query<{ id: string; org_id: string; machine_id: string | null }>(
-      "SELECT id, org_id, machine_id FROM chats WHERE user_id = $1 AND archived_at IS NULL",
-      [userId],
-    );
-    const fresh: UserBindings = {
-      fetchedAt: Date.now(),
-      orgId: res.rows[0]?.org_id ?? "",
-      chats: res.rows.map((row) => ({ id: row.id, machineId: row.machine_id })),
-    };
-    this.bindings.set(userId, fresh);
-    return fresh;
   }
 
   // -- fan-out ------------------------------------------------------------------
