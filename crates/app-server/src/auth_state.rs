@@ -302,7 +302,7 @@ impl AuthState {
         if self
             .active
             .as_ref()
-            .map_or(true, |a| !self.workspaces.contains_key(a))
+            .is_none_or(|a| !self.workspaces.contains_key(a))
         {
             self.active = self.workspaces.keys().next().cloned();
         }
@@ -454,7 +454,7 @@ impl AuthState {
     pub async fn restored_at(token_path: &Path) -> anyhow::Result<Self> {
         let mut state = Self::default();
         let path = token_path;
-        let store = session_store::load_store(&path);
+        let store = session_store::load_store(path);
         for row in &store.workspaces {
             let base = session_store::normalize_base(&row.base_url);
             let auth = if row.token.is_empty() {
@@ -528,7 +528,7 @@ impl AuthState {
         // The validation may have cleared tokens: write the pruned store
         // back so the mirror matches memory.
         if !store.workspaces.is_empty() {
-            state.persist(&path).context("persist restored store")?;
+            state.persist(path).context("persist restored store")?;
         }
         anyhow::Ok(state)
     }

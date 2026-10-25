@@ -209,16 +209,18 @@ async fn reader_stays_live_during_tool_execution_and_ignores_unknown_frames() {
         done_tx,
     ));
 
-    let mut session = Session::default();
-    session.auth = AuthState::from_parts(
-        Some(CloudClient {
-            base_url: format!("http://127.0.0.1:{port}"),
-            token: "tok".into(),
-        }),
-        None,
-        Some("machine-dispatch".into()),
-        None,
-    );
+    let session = Session {
+        auth: AuthState::from_parts(
+            Some(CloudClient {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "tok".into(),
+            }),
+            None,
+            Some("machine-dispatch".into()),
+            None,
+        ),
+        ..Default::default()
+    };
     let shared = Shared::new(session);
     let link_shared = shared.clone();
     let rx = shared
