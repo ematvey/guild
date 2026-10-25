@@ -7,6 +7,8 @@ import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./sessio
 import { clientId } from "./machine-rpc";
 import { StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
 import { ChatSubagentNode, ChatSummary } from "./api/chats";
+import type { Project } from "./api/projects";
+import type { MachineInfo } from "./api/machines";
 
 export interface SocketLike {
   readonly readyState: number;
@@ -29,6 +31,12 @@ export interface SocketHandlers {
   /** The open chat's thread subtree with each node's latest run status. */
   onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
+  /** The archived chats list, sent with every workspace push. */
+  onArchivedThreadList?: (chats: ChatSummary[]) => void;
+  /** Active and archived projects, sent with every workspace push. */
+  onProjectList?: (projects: Project[], archived: Project[]) => void;
+  /** The machine registry rows, sent with every workspace push. */
+  onMachineList?: (machines: MachineInfo[]) => void;
   /** One machine's socket presence flip (claimed or released). */
   onMachineStatus?: (machine_id: string, online: boolean) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
@@ -72,6 +80,18 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       return;
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);
+      return;
+    case "archived_thread_list":
+      handlers.onArchivedThreadList?.(message.chats as unknown as ChatSummary[]);
+      return;
+    case "project_list":
+      handlers.onProjectList?.(
+        message.projects as unknown as Project[],
+        message.archived_projects as unknown as Project[],
+      );
+      return;
+    case "machine_list":
+      handlers.onMachineList?.(message.machines as unknown as MachineInfo[]);
       return;
     case "machine_status":
       handlers.onMachineStatus?.(message.machine_id, message.online);

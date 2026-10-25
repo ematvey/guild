@@ -16,7 +16,6 @@ export function ThreadOverlays({
   onboardOpen,
   createProjectOpen,
   onCloseCreateProject,
-  onProjectCreated,
   onboarded,
   onOnboarded,
   machines,
@@ -27,7 +26,6 @@ export function ThreadOverlays({
   onboardOpen: boolean;
   createProjectOpen: boolean;
   onCloseCreateProject: (open: boolean) => void;
-  onProjectCreated: () => void;
   onboarded: boolean;
   onOnboarded?: () => void;
   machines: MachineInfo[] | null;
@@ -90,7 +88,6 @@ export function ThreadOverlays({
         localMachineId={machineId()}
         isTauri={isTauri}
         projects={projects}
-        onCreated={onProjectCreated}
       />
     </>
   );

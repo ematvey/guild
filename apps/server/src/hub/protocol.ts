@@ -68,7 +68,14 @@ export type WsServerMsg =
       chat_id: string;
       nodes: unknown[];
     }
-  | { type: "machine_status"; machine_id: string; online: boolean };
+  | { type: "machine_status"; machine_id: string; online: boolean }
+  | { type: "archived_thread_list"; chats: unknown[] }
+  | {
+      type: "project_list";
+      projects: unknown[];
+      archived_projects: unknown[];
+    }
+  | { type: "machine_list"; machines: unknown[] };
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
@@ -300,6 +307,17 @@ export function serializeServerMsg(msg: WsServerMsg): string {
           ["online", msg.online],
         ]),
       );
+    case "archived_thread_list":
+      return JSON.stringify(frame("archived_thread_list", [["chats", msg.chats]]));
+    case "project_list":
+      return JSON.stringify(
+        frame("project_list", [
+          ["projects", msg.projects],
+          ["archived_projects", msg.archived_projects],
+        ]),
+      );
+    case "machine_list":
+      return JSON.stringify(frame("machine_list", [["machines", msg.machines]]));
   }
 }
 

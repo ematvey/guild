@@ -57,7 +57,7 @@ export class LiveHub {
   onMachineDisconnected?: (machineId: string, connId: string) => void;
   /** Machine slot presence flips (claimed, released, displaced): the feed
    *  forwards each one to the owner's member sockets. */
-  onMachineStatus?: (machineId: string, userId: string, online: boolean) => void;
+  onMachineStatus?: (machineId: string, userId: string, orgId: string, online: boolean) => void;
 
   /** Registers a browser socket, rejecting a new connection over the limit.
    *  (Rust `Hub::register_member`.) */
@@ -151,7 +151,7 @@ export class LiveHub {
     this.machines.set(machineId, { holder: m, shutdown });
     // Presence flips only on the first claim: a replacement keeps the slot
     // online for the whole swap.
-    if (oldSlot === undefined) this.onMachineStatus?.(machineId, m.user_id, true);
+    if (oldSlot === undefined) this.onMachineStatus?.(machineId, m.user_id, m.org_id, true);
 
     if (oldSlot !== undefined) {
       oldSlot.holder.sink.displace();
@@ -181,7 +181,7 @@ export class LiveHub {
     const isCurrent = holder !== null && holder.conn_id === connId;
     if (isCurrent) {
       this.machines.delete(machineId);
-      this.onMachineStatus?.(machineId, holder.user_id, false);
+      this.onMachineStatus?.(machineId, holder.user_id, holder.org_id, false);
     }
     this.onMachineDisconnected?.(machineId, connId);
   }
@@ -208,7 +208,7 @@ export class LiveHub {
     const slot = this.machines.get(machineId);
     if (!slot) return false;
     this.machines.delete(machineId);
-    this.onMachineStatus?.(machineId, slot.holder.user_id, false);
+    this.onMachineStatus?.(machineId, slot.holder.user_id, slot.holder.org_id, false);
     slot.holder.sink.displace();
     slot.shutdown();
     return true;

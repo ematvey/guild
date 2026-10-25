@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The sidebar lists are pushed, never fetched (2026-10-26).** A new chat's
+  title could appear and then vanish: the client still re-read the chat list
+  over HTTP after a create, and that snapshot (taken before the title model
+  call finished) could land after the `thread_list` frame that carried the
+  title. The sidebar now has one source: the member socket. The connect
+  bootstrap and every list-changing write (title, rename, archive, project
+  create/update/delete, machine registration, presence flip) run one
+  serialized workspace push per user: `thread_list` (kept first for old
+  clients), `archived_thread_list`, `project_list` and `machine_list`. The
+  per-user chain makes a snapshot taken before a commit unable to overtake
+  the one that carries it. The client drops every HTTP list read from the
+  live path; settings keep their HTTP reads. A `guild_workspace` NOTIFY
+  replaces `guild_thread_title` and also fires from the project and machine
+  stores.
+
 - **The read marker follows the route chat and is retried (2026-10-26).**
   Opening an uncached thread never marked it read on the server: the read
   frame was gated on the painted chat, and the first state of an uncached
