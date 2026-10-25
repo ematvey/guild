@@ -4,11 +4,18 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
+import { entityDetailCodec } from "../section-nav";
 import { quantizeIso, useCachedGet } from "../use-cached-api";
+import {
+  createUser,
+  deleteUser,
+  SETTINGS_PATHS,
+  updateUser,
+  userUsageSeriesPath,
+} from "../../../lib/api/settings";
 import { Area, AreaChart } from "recharts";
 import { Ellipsis, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -90,7 +97,7 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 export default function UsersSection({ detail = null, onDetailChange }: SectionDetailProps) {
-  const usersRes = useCachedGet<{ users: UserRow[] }>("/api/v1/admin/users");
+  const usersRes = useCachedGet<{ users: UserRow[] }>(SETTINGS_PATHS.users);
   const users = usersRes.data?.users ?? null;
   const error = usersRes.error;
   const reload = usersRes.reload;
@@ -100,7 +107,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
   const seriesPath = useMemo(() => {
     const from = quantizeIso(600_000, Date.now() - 30 * 24 * 3_600_000);
     const to = quantizeIso(600_000, Date.now() + 600_000);
-    return `/api/v1/usage/series?group_by=user&bucket=day&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    return userUsageSeriesPath(from, to);
   }, []);
   const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(seriesPath);
   const spend = useMemo(() => {
@@ -174,23 +181,27 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
     [spend, onDetailChange, seriesRes.data, seriesRes.error],
   );
 
-  if (detail !== null) {
+  const view = entityDetailCodec.parse(detail);
+  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) =>
+    onDetailChange(entityDetailCodec.format(next));
+
+  if (view.kind !== "list") {
     // Deep-linked user page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-user form.
-    if (detail !== "new" && users === null) {
+    if (view.kind === "row" && users === null) {
       if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
       return <SkeletonForm />;
     }
-    const user = detail === "new" ? null : users?.find((u) => u.id === detail) ?? null;
-    if (detail !== "new" && !user) return <EmptyState title="User not found" hint="It may have been deleted." icon={Users} />;
+    const user = view.kind === "new" ? null : users?.find((u) => u.id === view.id) ?? null;
+    if (view.kind === "row" && !user) return <EmptyState title="User not found" hint="It may have been deleted." icon={Users} />;
     return (
       <UserDetail
         user={user}
         onChanged={reload}
-        onCreated={(id) => onDetailChange(id)}
+        onCreated={(id) => open({ kind: "row", id })}
         onBack={() => {
           reload();
-          onDetailChange(null);
+          open({ kind: "list" });
         }}
       />
     );
@@ -202,7 +213,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
         title="Users"
         description="Everyone who signs in to this organization."
         actions={
-          <Button size="sm" onClick={() => onDetailChange("new")}>
+          <Button size="sm" onClick={() => open({ kind: "new" })}>
             <UserPlus className="size-3.5" /> Add user
           </Button>
         }
@@ -213,14 +224,14 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
         data={users}
         search={(u) => `${u.email} ${u.role}`}
         searchPlaceholder="Search users…"
-        onRowClick={(u) => onDetailChange(u.id)}
+        onRowClick={(u) => open({ kind: "row", id: u.id })}
         empty={
           <EmptyState
             icon={Users}
             title="No users yet"
             hint="Add the first member of the organization."
             action={
-              <Button size="sm" onClick={() => onDetailChange("new")}>
+              <Button size="sm" onClick={() => open({ kind: "new" })}>
                 <UserPlus className="size-3.5" /> Add user
               </Button>
             }
@@ -259,7 +270,7 @@ function UserDetail({
     setError(null);
     try {
       if (creating) {
-        const created = await api<{ id: string }>("POST", "/api/v1/admin/users", {
+        const created = await createUser<{ id: string }>({
           email,
           password,
           role,
@@ -270,7 +281,7 @@ function UserDetail({
       } else {
         const body: Record<string, string> = { role };
         if (password) body.password = password;
-        await api("PUT", `/api/v1/admin/users/${user!.id}`, body);
+        await updateUser(user!.id, body);
         toast.success("User updated", { description: user!.email });
         onChanged();
         setMode("view");
@@ -288,7 +299,7 @@ function UserDetail({
     setBusy(true);
     setError(null);
     try {
-      await api("DELETE", `/api/v1/admin/users/${user!.id}`);
+      await deleteUser(user!.id);
       toast.success("User deleted", { description: user!.email });
       onChanged();
       onBack();

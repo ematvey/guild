@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
+import { deleteOidc, putOidc, SETTINGS_PATHS } from "../../../lib/api/settings";
 import { peekCached, useCachedGet } from "../use-cached-api";
 import { Button } from "@guild/ui/components/button";
 import {
@@ -34,14 +34,14 @@ interface OidcConfig {
 }
 
 export default function SsoSection() {
-  const cfgRes = useCachedGet<OidcConfig>("/api/v1/admin/oidc");
+  const cfgRes = useCachedGet<OidcConfig>(SETTINGS_PATHS.oidc);
   // A failed refresh with nothing cached falls back to the unconfigured flow.
   const cfg = cfgRes.data ?? (cfgRes.error ? { configured: false } : null);
   const [localError, setLocalError] = useState<string | null>(null);
   const error = localError ?? cfgRes.error;
   const reload = cfgRes.reload;
   const [mode, setMode] = useState<"view" | "edit" | "new" | "remove">(() => {
-    const c = peekCached<OidcConfig>("/api/v1/admin/oidc");
+    const c = peekCached<OidcConfig>(SETTINGS_PATHS.oidc);
     return c ? (c.configured ? "view" : "new") : "view";
   });
   // The fresh fetch landing aligns the mode with the saved config; while the
@@ -53,7 +53,7 @@ export default function SsoSection() {
   const remove = async () => {
     setLocalError(null);
     try {
-      await api("DELETE", "/api/v1/admin/oidc");
+      await deleteOidc();
       toast.success("SSO removed", {
         description: "The sign-in page no longer offers “Continue with SSO”.",
       });
@@ -174,7 +174,7 @@ function SsoForm({
     try {
       const body: Record<string, string> = { issuer, client_id: clientId };
       if (clientSecret) body.client_secret = clientSecret;
-      await api("PUT", "/api/v1/admin/oidc", body);
+      await putOidc(body);
       toast.success("SSO configuration saved");
       onSaved();
     } catch (e) {

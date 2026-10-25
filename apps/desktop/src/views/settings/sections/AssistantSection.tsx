@@ -19,9 +19,6 @@ import { getApprovalPolicyPrompt, getAssistantPrompt, setApprovalPolicyPrompt, s
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 
-const DEFAULT_SYSTEM_PROMPT =
-  "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
-
 type Loaded = { custom: string | null; fallback: string };
 
 export function AssistantSection() {
@@ -33,7 +30,10 @@ export function AssistantSection() {
       />
       <PromptField
         label="System prompt"
-        load={async () => ({ custom: await getAssistantPrompt(), fallback: DEFAULT_SYSTEM_PROMPT })}
+        load={async () => {
+          const v = await getAssistantPrompt();
+          return { custom: v?.prompt ?? null, fallback: v?.default ?? "" };
+        }}
         save={setAssistantPrompt}
         fallbackNote="Currently using the default prompt."
         rows={8}

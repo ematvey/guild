@@ -127,17 +127,21 @@ export async function setApproval(policy: ApprovalPolicy | null): Promise<void> 
   }
 }
 
-/// Reads the org's admin-configured assistant system prompt; null = using the
-/// built-in default ("You are a helpful assistant." + server-owned tool
-/// instructions). Admin API.
-export async function getAssistantPrompt(): Promise<string | null> {
+/// Reads the org's admin-configured assistant system prompt and the
+/// effective default the server uses when no override is stored. Admin API.
+export interface AssistantPrompt {
+  prompt: string | null;
+  default: string;
+}
+
+export async function getAssistantPrompt(): Promise<AssistantPrompt | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`assistant prompt rejected (${res.status})`);
   const v = await res.json();
-  return (v?.prompt ?? null) as string | null;
+  return { prompt: (v?.prompt ?? null) as string | null, default: (v?.default ?? "") as string };
 }
 
 /// Saves the org's assistant system prompt (empty string resets to the

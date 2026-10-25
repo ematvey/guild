@@ -1,6 +1,7 @@
 // Pure derivations of the thread view's live status: what the sidebar shows,
 // whether the open thread is writable, and which state the send button has.
-import type { SidebarTab } from "../sidebar-rail";
+import type { ChatRoute } from "./route";
+import type { MachineInfo } from "../../lib/api/machines";
 import type { ChatSubagentNode, ChatSummary } from "../../lib/api/chats";
 
 export function statusFromThreads(chats: ChatSummary[]) {
@@ -52,9 +53,11 @@ export function clearSubagentTrees(): Record<string, ChatSubagentNode[]> {
 /** The open chat's remote bound machine when its socket is down — the
  * offline warning banner's subject. Machine binding is project-derived, so
  * only project-bound chats can have one. Null when unbound, bound to this
- * machine (desktop executes its own tools), online, or presence unknown. */
+ * machine (desktop executes its own tools), online, or presence unknown.
+ * Presence comes from the machines store, the only live source. */
 export function offlineMachine(
   chats: ChatSummary[] | null,
+  machines: MachineInfo[] | null,
   chatId: string | null,
   isTauri: boolean,
   localMachineId: string | undefined,
@@ -62,8 +65,9 @@ export function offlineMachine(
   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
   if (!row?.machine_id || !row.project_id) return null;
   if (isTauri && row.machine_id === localMachineId) return null;
-  if (row.machine_online !== false) return null;
-  return { label: row.machine_label ?? row.machine_id };
+  const machine = machines?.find((m) => m.machine_id === row.machine_id);
+  if (machine?.connected !== false) return null;
+  return { label: row.machine_label ?? (machine.name || row.machine_id) };
 }
 
 /** What the composer may do for the visible thread. Active membership wins
@@ -165,18 +169,24 @@ export function pruneStopping(
   return changed ? next : null;
 }
 
-/** Layout mode for one sidebar tab (desktop rail). The skills tab is a
- *  full main-column page swap: NO sidebar aside at all — the skills page
- *  replaces the chat thread — so picking it must not touch the persisted
- *  sidebar collapsed state either (leaving the tab restores the sidebar
- *  exactly as it was). Every other tab keeps the resizable panel next to
- *  the chat, and a tab pick re-expands a collapsed panel. Mobile has no
- *  rail aside at all (chats-only drawer) and always shows the chat. */
+/** Layout mode for one route (desktop rail). The skills and agents pages
+ *  are full main-column swaps: NO sidebar aside at all — the page replaces
+ *  the chat thread — so picking one must not touch the persisted sidebar
+ *  collapsed state either (leaving restores the sidebar exactly as it was).
+ *  Every other tab keeps the resizable panel next to the chat, and a tab
+ *  pick re-expands a collapsed panel. Mobile has no rail aside at all
+ *  (chats-only drawer) and always shows the chat. */
+export type TabPane = "chat" | "skillsPage" | "agentsPage" | "settingsPage";
 export function tabPaneLayout(
-  tab: SidebarTab,
+  route: Pick<ChatRoute, "tab" | "skills" | "agents">,
   isMobile: boolean,
-): { aside: boolean; mainPane: "chat" | "skillsPage"; expandsPanel: boolean } {
+): { aside: boolean; mainPane: TabPane; expandsPanel: boolean } {
   if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
-  if (tab === "skills") return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  if (route.skills !== null)
+    return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  if (route.agents !== null)
+    return { aside: false, mainPane: "agentsPage", expandsPanel: false };
+  if (route.tab === "settings")
+    return { aside: true, mainPane: "settingsPage", expandsPanel: true };
   return { aside: true, mainPane: "chat", expandsPanel: true };
 }

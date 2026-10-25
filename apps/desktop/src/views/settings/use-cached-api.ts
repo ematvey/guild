@@ -9,6 +9,9 @@ import { api } from "./admin-api";
 
 const cache = new Map<string, unknown>();
 
+/** Section caches that clear with the settings cache (sign-out). */
+const cacheClearers = new Set<() => void>();
+
 // Session generation for every module cache: each clear bumps it, and async
 // writers verify the generation they started under — a response landing
 // after a sign-out clear belongs to the signed-out account and must not
@@ -26,12 +29,19 @@ export function cacheEpochChanged(epoch: number): boolean {
   return epoch !== cacheEpoch;
 }
 
-/** Drops the module cache and invalidates in-flight writers. Sign-out must
- * call this: the cache otherwise leaks one user's settings data into the
- * next session on the same browser profile. */
-export function clearApiCache(): void {
+/** Drops the module cache, invalidates in-flight writers, and runs every
+ *  registered section cache clear. Sign-out must call this: the caches
+ *  otherwise leak one user's settings data into the next session on the
+ *  same browser profile. */
+export function clearSettingsCaches(): void {
   cacheEpoch++;
   cache.clear();
+  for (const clear of cacheClearers) clear();
+}
+
+/** Registers one section cache's clear function with the settings clear. */
+export function registerCacheClear(clear: () => void): void {
+  cacheClearers.add(clear);
 }
 
 /** Last successful response for a GET path, if one is cached. Lets a section
