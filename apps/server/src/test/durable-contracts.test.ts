@@ -91,7 +91,7 @@ describe("durable integration contracts", () => {
     const id = await chat();
     const runtime = stack.env.app.platform.runtime;
     const conversations = await Promise.all(
-      Array.from({ length: 8 }, () => runtime.conversationForChat(id, stack.orgId)),
+      Array.from({ length: 8 }, () => runtime.conversationForChat(id)),
     );
     expect(new Set(conversations.map((c) => c.id)).size).toBe(1);
     expect(
@@ -387,7 +387,7 @@ describe("durable integration contracts", () => {
   it("resolves script-only MCP tools, retains history tools, and clears stored choices after an empty preparation", async () => {
     const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     const id = await chat();
-    const c = await runtime.conversationForChat(id, stack.orgId);
+    const c = await runtime.conversationForChat(id);
     const user = (runtime as unknown as { userMcpRuntime: UserMcpRuntime }).userMcpRuntime;
     const original = (user as unknown as { resolveSnapshot: unknown }).resolveSnapshot;
     const base = {

@@ -37,6 +37,9 @@ export interface SubmitTurnWireInput {
   model: string | null;
   sendMode?: "steer" | "queue";
   skillsIndex?: string;
+  /** The desktop's project instruction chain; the worker applies it to the
+   *  conversation's project instructions at admission. */
+  agentsMd?: string;
 }
 
 export type WorkerRequest =
