@@ -123,8 +123,22 @@ describe("workingForChat", () => {
     expect(workingForChat({ generating: false, working: false }, [node("succeeded"), node("cancelled")])).toBe(false);
   });
 
-  it("falls back to the list row's working flag", () => {
+  it("falls back to the list row's working flag before a tree arrives", () => {
     expect(workingForChat({ generating: false, working: true }, undefined)).toBe(true);
+  });
+
+  it("ignores a stale list working flag once the live tree is done", () => {
+    expect(workingForChat(
+      { generating: false, working: true },
+      [node("succeeded"), node("cancelled")],
+    )).toBe(false);
+  });
+
+  it("still reports working from the live tree while the list row is stale", () => {
+    expect(workingForChat(
+      { generating: false, working: false },
+      [node("running")],
+    )).toBe(true);
   });
 });
 

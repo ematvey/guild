@@ -24,6 +24,8 @@ export function useThreadStore(chatId: string | null) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [threadLoading, setThreadLoading] = useState(() => chatId !== null); // cold deep link: skeleton with nothing to show
   const [displayedChatId, setDisplayedChatId] = useState<string | null>(null);
+  const [displayedSynced, setDisplayedSynced] = useState(false);
+  const displayedSyncedRef = useRef(false);
   const [pendingChatId, setPendingChatId] = useState<string | null>(null);
   const [navigating, setNavigating] = useState(false);
   // Manual /compact in flight: the optimistic "Compacting thread…" line at
@@ -149,6 +151,8 @@ export function useThreadStore(chatId: string | null) {
     setHasMore(opened.hasMore);
     displayedRef.current = target;
     setDisplayedChatId(target);
+    displayedSyncedRef.current = opened.synced;
+    setDisplayedSynced(opened.synced);
     pendingRef.current = null;
     setPendingChatId(null);
     setNavigating(false);
@@ -182,6 +186,7 @@ export function useThreadStore(chatId: string | null) {
       setThreadLoading(decision.state.phase === "cold");
     } else {
       setNavigating(false);
+      setThreadLoading(false);
     }
     if (
       decision.state.pendingChatId !== null &&
@@ -205,6 +210,10 @@ export function useThreadStore(chatId: string | null) {
   /** A ThreadState reached the reducer: the pending target can swap once its
    *  tree is also in. */
   const onThreadStateApplied = useCallback((cid: string) => {
+    if (cid === displayedRef.current) {
+      displayedSyncedRef.current = true;
+      setDisplayedSynced(true);
+    }
     dispatchNavRef.current({ type: "state", chatId: cid });
   }, []);
 
@@ -273,6 +282,10 @@ export function useThreadStore(chatId: string | null) {
   };
 
   const childTree = displayedChatId !== null ? childTrees[displayedChatId] ?? null : null;
+  const childTreeFailed =
+    displayedChatId !== null &&
+    Object.prototype.hasOwnProperty.call(childTrees, displayedChatId) &&
+    childTrees[displayedChatId] === null;
 
   return {
     blocks,
@@ -280,6 +293,9 @@ export function useThreadStore(chatId: string | null) {
     threadLoading,
     setThreadLoading,
     displayedChatId,
+    displayedSynced,
+    displayedSyncedRef,
+    childTreeFailed,
     pendingChatId,
     navigating,
     compacting,
