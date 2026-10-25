@@ -23,14 +23,14 @@ first. Code comments describe only the present.
   in `AGENTS.md`: operational, status and chat state is pushed by the
   server, never polled by clients.
 
-- **Chat rows carry the unread count (2026-10-25).** The sidebar badge shows
-  how many assistant turns are newer than the reader's marker instead of a
-  plain dot (`unread_count` on the chat list row, `0` when read). The count
-  comes from the same `chat_reads` watermark as the `unread` flag, and the
-  feed re-pushes `thread_list` when an assistant turn commits, so the number
-  moves live in background chats. A project row sums its chats' counts. The
-  client zeroes the open chat's count, because the server watermark lags the
-  local read POST.
+- **The rail carries the unread count (2026-10-25).** The Chats and Projects
+  rail buttons show how many chats in their panel have an unseen assistant
+  turn: folderless chats count under Chats, project-bound ones under
+  Projects. Chat and project rows keep the plain amber dot. The feed now
+  re-pushes `thread_list` when an assistant turn commits, so the badges move
+  live in background chats instead of waiting for a title or approval push.
+  A `thread_list` push never marks the open chat unread: the server read
+  watermark lags the local read POST.
 
 - **The inbox is gone; the chat list carries the attention state (2026-10-25).**
   Agent-initiated threads (routine messages, `send_message`) already land in
