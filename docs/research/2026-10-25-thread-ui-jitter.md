@@ -6,6 +6,37 @@ sidebar, composer.
 Evidence: two screen recordings (new chat, subagent navigation), the dev
 database, and the code paths below.
 
+## Resolution
+
+Shipped in 0.6.7. The four reported issues are fixed and verified.
+
+- **Status:** a new derived `working` flag covers a chat or any descendant
+  run. The server computes it in the list query. The sidebar, project
+  header, Work panel, and thread header use it. `generating` still owns
+  Stop and queue. The subagent tree is cached per chat and cleared on
+  reconnect.
+- **Tree delivery:** the sync bracket sends `SubagentTree` before
+  `ThreadState`. A tree read failure no longer blocks the state. The
+  `SocketGate` defers live trees during the bracket.
+- **Stable geometry:** the sidebar row and the header title keep a fixed
+  height before the title arrives. The skeleton padding matches the thread
+  column.
+- **Atomic navigation:** the old thread stays visible until the target's
+  state and child tree are in. Cached threads swap at once. A cold deep
+  link shows a skeleton, but the composer never flips. Per-chat scroll
+  memory replaces forced-bottom. A state timeout cancels a stuck swap.
+- **Scroll pin:** a `ResizeObserver` on the pane and the content column
+  re-pins while the reader is at the bottom. `overflow-anchor` is off.
+- **Performance:** stamp cache, reasoning preview memo, draft-GC
+  signature, memoized sidebar, reducer identity, and settled text memo.
+
+Verification: desktop 506 tests, server 690 tests, typecheck, bindings
+fresh, three independent review rounds (round 3 PASS). Reports:
+`docs/reviews/2026-10-25-thread-ui-jitter-*.md`.
+
+Deferred: font preload, full work-run memoization, and browser frame
+profiling.
+
 ## Bottom line
 
 The four reported defects are real. They are not the only ones.
