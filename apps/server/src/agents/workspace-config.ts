@@ -1,6 +1,6 @@
-// The agent workspace config files: seeding from the templates and reading
-// them back for the system prompt. The server owns the volume path, so no
-// sandbox round trip is needed; a read is one small file open.
+// promptFiles: the agent config files (AGENTS.md, MEMORY.md) that seed the
+// workspace and ride the system prompt. The server owns the volume path, so
+// no sandbox round trip is needed; a read is one small file open.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
