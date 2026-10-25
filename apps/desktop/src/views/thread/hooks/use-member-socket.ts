@@ -28,6 +28,7 @@ export interface MemberSocketDeps {
   sendingRef: RefObject<boolean>;
   openChatIdRef: RefObject<string | null>;
   displayedChatIdRef: RefObject<string | null>;
+  displayedSyncedRef: RefObject<boolean>;
   onThreadStateApplied: (cid: string) => void;
   updateContextRevision: (cid: string, events: ThreadState["events"]) => void;
   hasMoreRef: RefObject<boolean>;
@@ -45,8 +46,8 @@ export interface MemberSocketDeps {
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
-    busyRef, sendingRef, openChatIdRef, displayedChatIdRef, onThreadStateApplied,
-    updateContextRevision, hasMoreRef, oldestSeqRef,
+    busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
+    onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
     setHasMore, setThreadLoading, setCompacting, setSubagentTree, outgoingRef,
     observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
@@ -86,7 +87,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     }
     setChatStatus(prev => ({ ...prev, [cid]: {
       generating: state.generating,
-      working: state.generating || (prev[cid]?.working ?? false),
+      // Own turn only: descendants come from the live tree, so a finished
+      // run clears the spinner instead of latching the last true value.
+      working: state.generating,
       unread: cid === openChatIdRef.current ? false :
         (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
     } }));
@@ -214,7 +217,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // set threadLoading before its first sync.
         if (cid !== displayedChatIdRef.current) return;
         if (phase === "begin") {
-          setThreadLoading(true);
+          // A synced view already has content (even an empty synced thread):
+          // a reconnect sync must not raise the cold skeleton over it.
+          if (!displayedSyncedRef.current) setThreadLoading(true);
         } else if (!syncingChatsRef.current.has(cid)) {
           setThreadLoading(false);
         }

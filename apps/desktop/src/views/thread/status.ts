@@ -23,7 +23,13 @@ export function workingForChat(
   chat: Pick<ChatSummary, "generating" | "working"> | undefined,
   nodes: readonly ChatSubagentNode[] | undefined,
 ): boolean {
-  return !!chat?.generating || !!chat?.working || hasRunningSubagent(nodes);
+  // The list row's working flag is a first-paint fallback. Once the live
+  // tree exists it is authoritative for descendants: a finished run must
+  // clear the spinner even while the list row is stale.
+  const descendantWorking = nodes === undefined
+    ? !!chat?.working
+    : hasRunningSubagent(nodes);
+  return !!chat?.generating || descendantWorking;
 }
 
 /** Stores one chat's whole subtree, whether or not that chat is open. */
@@ -63,12 +69,25 @@ export function threadAccess(input: {
   chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
   archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
   childTree: { parent: unknown } | null;
+  /** The child-tree request settled without a tree (cached as null). */
+  treeFailed?: boolean;
+  /** An authoritative ThreadState has built the visible view. */
+  synced?: boolean;
+  /** The chat was just created and its sidebar row may still be in flight. */
+  justCreated?: boolean;
 }): ThreadAccess {
-  const { chatId, chats, archivedChats, childTree } = input;
+  const { chatId, chats, archivedChats, childTree, treeFailed, synced, justCreated } = input;
   if (chatId === null) return "writable";
   if (childTree !== null && childTree.parent !== null) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";
   if (archivedChats?.some((c) => c.id === chatId)) return "readonly";
+  // A just-created chat keeps its editable composer while its row is still
+  // in flight.
+  if (justCreated) return "writable";
+  // A child thread is absent from both lists and its tree request can fail.
+  // Once the view is synced, absence plus a failed tree is a child, not an
+  // unknown thread.
+  if (treeFailed && synced) return "readonly";
   return "unknown";
 }
 

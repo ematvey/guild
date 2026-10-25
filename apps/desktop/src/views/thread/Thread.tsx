@@ -47,6 +47,7 @@ import { toast } from "sonner";
 import { WorkingIndicator } from "@guild/ui/components/working-indicator";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
+import { Skeleton } from "@guild/ui/components/skeleton";
 
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { WorkedForBlock, viewEntries } from "../worked-for-block";
@@ -198,7 +199,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     contextRevision, updateContextRevision, onThreadStateApplied,
     childTree, stopping, setStopping, busy, busyRef, markBusy, sendingRef,
     loadStateRef, pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
-    scrollRestoreRef, displayedChatId, navigating, loadEarlier, openForChat,
+    scrollRestoreRef, displayedChatId, displayedSynced, displayedSyncedRef,
+    childTreeFailed, navigating, loadEarlier, openForChat,
   } = thread;
   // What the screen shows: the old thread while a swap is pending, the cold
   // deep-link target while its skeleton is up, and the route chat otherwise.
@@ -279,8 +281,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef, machineTakenOver } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks,
-    markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, onThreadStateApplied,
-    updateContextRevision, hasMoreRef,
+    markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
+    onThreadStateApplied, updateContextRevision, hasMoreRef,
     oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
@@ -573,12 +575,18 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   useEffect(() => {
     restoreForChat(chatId);
     const skipBusyReset = chatId !== null && justCreatedBusyRef.current === chatId;
-    if (skipBusyReset) justCreatedBusyRef.current = null;
     openForChat(chatId, skipBusyReset);
     socketRef.current?.resync();
     // One load per chat id; the helpers are recreated per render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
+
+  // A just-created chat keeps its editable composer until its sidebar row
+  // lands; the marker then clears so a later visit is not treated as new.
+  useEffect(() => {
+    const cid = justCreatedBusyRef.current;
+    if (cid !== null && chats?.some((c) => c.id === cid)) justCreatedBusyRef.current = null;
+  }, [chats]);
 
   const openChat = useCallback((id: string) => {
     // Navigation only: the chatId effect performs the actual load, so back/
@@ -674,7 +682,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // sync's begin/done bracket must never flash a composer into a child
   // thread. An unknown thread hides the composer instead of showing an
   // editable one that would flip a moment later.
-  const access = threadAccess({ chatId: viewChatId, chats, archivedChats, childTree });
+  const justCreatedChat = viewChatId !== null && justCreatedBusyRef.current === viewChatId;
+  const access = threadAccess({
+    chatId: viewChatId,
+    chats,
+    archivedChats,
+    childTree,
+    treeFailed: childTreeFailed,
+    synced: displayedSynced,
+    justCreated: justCreatedChat,
+  });
   const readOnlyThread = access === "readonly";
   const composerUnknown = access === "unknown";
   const activeTitle = readOnlyThread
@@ -1604,10 +1621,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           ) : composerUnknown ? (
             <div
               aria-label="Loading thread composer"
-              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
+              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm"
               style={{ maxWidth: chatWidth }}
             >
-              Loading thread…
+              <div className="px-2 py-1.5">
+                <Skeleton className="h-5 w-2/5" />
+              </div>
+              <div className="flex items-center justify-between px-1 pt-1">
+                <Skeleton className="h-7 w-24 rounded-full" />
+                <Skeleton className="size-7 rounded-full" />
+              </div>
             </div>
           ) : (
           <div

@@ -118,6 +118,27 @@ describe("thread navigation transitions", () => {
     expect(ready.displayedChatId).toBe("deep");
   });
 
+  it("cancels a cold pending target when the route returns to the displayed chat", () => {
+    const cold = transitionNavigation(initialNavigation(), {
+      type: "open",
+      chatId: "deep",
+      cached: false,
+      treeKnown: false,
+    });
+    expect(cold.state.phase).toBe("cold");
+    const back = transitionNavigation(cold.state, {
+      type: "open",
+      chatId: null,
+      cached: false,
+      treeKnown: true,
+    });
+    expect(back.abortTree).toBe(true);
+    expect(back.swapTo).toBeUndefined();
+    expect(back.state.phase).toBe("idle");
+    expect(back.state.pendingChatId).toBeNull();
+    expect(back.state.displayedChatId).toBeNull();
+  });
+
   it("does nothing when the route opens the chat already on screen", () => {
     const state = { ...initialNavigation(), displayedChatId: "open" };
     const decision = transitionNavigation(state, {
