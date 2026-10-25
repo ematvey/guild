@@ -25,7 +25,7 @@ import { threadEventRowWire, threadEventWire, type MessageAttachment, type Threa
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
 import type { ChatRow } from "../store/chats.js";
-import { modalityOf } from "../../chats/turn-text.js";
+import { modalityOf } from "../domain/mime.js";
 import { ThreadAgentLocked } from "../../harness/runtime.js";
 
 // ---------------------------------------------------------------------------

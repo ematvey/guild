@@ -17,31 +17,9 @@ import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
 import type { Agent, AgentRun } from "./types.js";
 import { resolveAgentReadPath } from "./files.js";
+import { contentTypeOf } from "../platform/domain/mime.js";
 
 const MAX_SEND_BYTES = 64 * 1024 * 1024;
-
-const CONTENT_TYPES: Record<string, string> = {
-  csv: "text/csv",
-  gif: "image/gif",
-  htm: "text/html",
-  html: "text/html",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  json: "application/json",
-  md: "text/markdown",
-  pdf: "application/pdf",
-  png: "image/png",
-  svg: "image/svg+xml",
-  txt: "text/plain",
-  webp: "image/webp",
-  xml: "application/xml",
-  zip: "application/zip",
-};
-
-function contentTypeOf(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  return CONTENT_TYPES[ext] ?? "application/octet-stream";
-}
 
 export interface SendFileContext {
   attachments: Pick<AttachmentStore, "createAgentFile">;
