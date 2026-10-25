@@ -259,3 +259,16 @@ One word, several meanings:
 model: another session edited `crates/app-server/src/machine_link.rs` in the
 same checkout. `floor.json` was updated once, at merge, and records the tree
 as it is.
+
+## Workspace snapshot (2026-10-25, commit 0539451f)
+
+`apps/server/src/hub/workspace.ts` held the sidebar push snapshot and had no
+model entry. It is now `workspace-snapshot` in `srv-domain.json`: canonical
+`workspace.ts`, role `wire`, aliases `sidebar-snapshot` and `workspace-push`.
+The concept is one user's whole sidebar state (active chats, archived chats,
+projects, machine registry) built for the member socket.
+
+`unmapped_files` returned to 0. `files` rose 531 -> 532 and `loc` 122428 ->
+122682. The file counter is this one file. The line counter is the net of the
+whole commit across 29 files; every other file in it was already modelled.
+The floor records the tree as it is, and no counter is excused.
