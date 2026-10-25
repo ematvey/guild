@@ -6,13 +6,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  displayVersion,
   myTeams,
   skillsGate,
   skillsInstall,
   skillsSave,
   skillsUninstall,
 } from "./skills-api";
+import { formatVersion } from "./version";
 
 const token = "test-token-123";
 
@@ -134,14 +134,14 @@ describe("myTeams (the owner selector's team list)", () => {
   });
 });
 
-describe("displayVersion", () => {
+describe("formatVersion", () => {
   it("renders exactly one v prefix for server-computed versions", () => {
-    expect(displayVersion("v1")).toBe("v1");
-    expect(displayVersion("v12")).toBe("v12");
+    expect(formatVersion("v1")).toBe("v1");
+    expect(formatVersion("v12")).toBe("v12");
   });
 
   it("prefixes bare user-published versions", () => {
-    expect(displayVersion("0.1.0")).toBe("v0.1.0");
-    expect(displayVersion("2")).toBe("v2");
+    expect(formatVersion("0.1.0")).toBe("v0.1.0");
+    expect(formatVersion("2")).toBe("v2");
   });
 });

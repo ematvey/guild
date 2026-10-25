@@ -16,7 +16,7 @@ import { AGENTS_ACTIVITY } from "../agents/agents-route";
 import { mentionCandidates, composerSkills } from "./mentions";
 import { accountDefaultLabel } from "./approval";
 import { parseSearchResults, toolLabel, toolDisplayName } from "./tool-text";
-import { compareVersions } from "../device-setup";
+import { compareVersions } from "../skills/version";
 import { viewEntries, workRunLabel } from "../worked-for-block";
 import {
   artifactCardOf,
