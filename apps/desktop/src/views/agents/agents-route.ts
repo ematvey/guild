@@ -289,13 +289,17 @@ export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
 export type InboxKind =
   | "question"
   | "approval"
+  | "agent_message"
   | "routine_failed"
+  | "routine_disabled"
   | "routine_message";
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
   question: "Question",
   approval: "Approval",
+  agent_message: "Message",
   routine_failed: "Routine failed",
+  routine_disabled: "Routine disabled",
   routine_message: "Routine message",
 };
 
