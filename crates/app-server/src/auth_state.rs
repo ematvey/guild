@@ -38,7 +38,7 @@ pub struct WorkspaceInfo {
     pub logo_url: Option<String>,
 }
 
-/// The `Session`'s auth fields. The struct is public, its fields are
+/// The `EngineState`'s auth fields. The struct is public, its fields are
 /// private: reads go through the accessors, every mutation through
 /// [`AuthState::transition`].
 #[derive(Clone, Default)]

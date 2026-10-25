@@ -6,7 +6,7 @@
 use guild_app_server::daemon::{
     run_daemon_shared, run_daemon_shared_reclaiming, try_connect_at, Pair,
 };
-use guild_app_server::jsonrpc_loop::{Session, Shared};
+use guild_app_server::jsonrpc_loop::{EngineState, Shared};
 use protocol::rpc::Request;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -76,7 +76,7 @@ fn attach_uses_the_app_hosted_socket() {
         .build()
         .unwrap();
     let dpath = path.clone();
-    rt.spawn(async move { run_daemon_shared(dpath, Shared::new(Session::default())).await });
+    rt.spawn(async move { run_daemon_shared(dpath, Shared::new(EngineState::default())).await });
     for _ in 0..100 {
         if try_connect_at(&path).is_ok() {
             break;
@@ -162,7 +162,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     let dpath = path.clone();
     let daemon =
         tokio::spawn(
-            async move { run_daemon_shared(dpath, Shared::new(Session::default())).await },
+            async move { run_daemon_shared(dpath, Shared::new(EngineState::default())).await },
         );
 
     // wait for the endpoint to accept
@@ -196,7 +196,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     assert!(got.get("error").is_none());
 
     // 4. a second bind on the same endpoint exits quietly (single instance)
-    let r = run_daemon_shared(path.clone(), Shared::new(Session::default())).await;
+    let r = run_daemon_shared(path.clone(), Shared::new(EngineState::default())).await;
     assert!(r.is_ok(), "second daemon must exit Ok, not bind");
 
     // 5. shutdown: client-issued, daemon task ends
@@ -228,7 +228,7 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     let dpath = path.clone();
     let first =
         tokio::spawn(
-            async move { run_daemon_shared(dpath, Shared::new(Session::default())).await },
+            async move { run_daemon_shared(dpath, Shared::new(EngineState::default())).await },
         );
     let mut a = None;
     for _ in 0..100 {
@@ -245,7 +245,7 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     // serving.
     let dpath2 = path.clone();
     let second = tokio::spawn(async move {
-        run_daemon_shared_reclaiming(dpath2, Shared::new(Session::default())).await
+        run_daemon_shared_reclaiming(dpath2, Shared::new(EngineState::default())).await
     });
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(
