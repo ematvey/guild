@@ -13,8 +13,6 @@ members = [
     "apps/desktop/src-tauri",
     "crates/guild-core",
     "crates/app-server",
-    "crates/codex-execpolicy",
-    "crates/codex-utils-absolute-path",
 ]
 
 [workspace.package]
