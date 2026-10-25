@@ -7,7 +7,6 @@ import Thread from "./views/thread/Thread";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
-import { Bot } from "lucide-react";
 import { IS_TAURI, clearToken, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/workspaces";
 import { machineId, rpcCall } from "./lib/machine-rpc";
@@ -380,7 +379,7 @@ function DesktopApp() {
     window.location.reload();
   };
 
-  if (user === undefined) return <Splash />;
+  if (user === undefined) return <BootBackground />;
   if (user && !addWorkspace) {
     // Unified shell: the desktop webview runs the same chat UI as the
     // browser, talking HTTP to the same server; only machine-tool execution
@@ -485,17 +484,10 @@ function DesktopApp() {
   );
 }
 
-/// Branded full-screen loading state — shown while auth/session resolves.
-/// Just the logo, pulsing; no default (logged-out) UI may render before the
-/// session state is actually known.
-export function Splash() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-      <div className="flex size-14 animate-pulse items-center justify-center rounded-2xl border border-border bg-card">
-        <Bot className="size-7 text-muted-foreground" />
-      </div>
-    </div>
-  );
+/// Plain full-screen background for the interval before auth/session state is
+/// known: no indicator and no default (logged-out) UI may render first.
+function BootBackground() {
+  return <div className="min-h-screen bg-background" />;
 }
 
 function AppInner() {
@@ -540,7 +532,7 @@ function AppInner() {
   }, []);
 
   if (!ready)
-    return <Splash />;
+    return <BootBackground />;
 
   if (!IS_TAURI) {
     const signOut = async () => {
