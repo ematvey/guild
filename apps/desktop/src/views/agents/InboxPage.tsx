@@ -25,6 +25,18 @@ export function noticeText(notice: AgentNotice): string {
   return INBOX_KIND_LABEL[notice.kind];
 }
 
+/** The chat a notice points at. Notices carry either an explicit chat_id
+ *  or the canonical `/thread/<chat>` URL; both name the same chat. */
+export function noticeChatId(notice: AgentNotice): string | null {
+  const payload = notice.payload ?? {};
+  if (typeof payload.chat_id === "string" && payload.chat_id !== "") return payload.chat_id;
+  if (typeof payload.url === "string") {
+    const match = /^\/thread\/([^/?#]+)/.exec(payload.url);
+    if (match !== null) return match[1]!;
+  }
+  return null;
+}
+
 export function inboxTone(kind: InboxKind): "danger" | "warning" | "info" | "neutral" {
   switch (kind) {
     case "approval":
@@ -103,8 +115,9 @@ export function InboxPage({
       onNavigate({ view: "run", runId });
       return;
     }
-    if (typeof notice.payload?.chat_id === "string" && onOpenChat) {
-      onOpenChat(notice.payload.chat_id);
+    const chatId = noticeChatId(notice);
+    if (chatId !== null && onOpenChat) {
+      onOpenChat(chatId);
       return;
     }
     if (notice.agent_id && threadId) {
