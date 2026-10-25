@@ -91,6 +91,7 @@ function autoToolNames(turn: PluginTurn): [string, string] {
 
 /** Recognizes an auto-tool call: `<slug>_list_tools` / `<slug>_guide`
  *  (legacy `int_<slug>_…` names tolerated). */
+// coherence:seam owner=@ematvey until=2027-01-31 reason="shipped clients may still send the int_ prefix"
 function parseAutoTool(turns: PluginTurn[], name: string): { index: number; kind: "list_tools" | "guide" } | undefined {
   const stripped = name.startsWith("int_") ? name.slice(4) : name;
   for (const [index, turn] of turns.entries()) {
@@ -104,6 +105,7 @@ function parseAutoTool(turns: PluginTurn[], name: string): { index: number; kind
 /** The plugin turn + tool a wire tool name resolves against — the
  *  execution gate and the audit share this matcher (legacy-prefixed names
  *  tolerated). */
+// coherence:seam owner=@ematvey until=2027-01-31 reason="shipped clients may still send the int_ prefix"
 function pluginTarget(turns: PluginTurn[], callName: string): { turn: PluginTurn; info: PluginToolInfo } | undefined {
   for (const turn of turns) {
     const info = turn.tools.find((t) => toolMatches(turn.slug, t.spec.name, callName));
@@ -114,6 +116,7 @@ function pluginTarget(turns: PluginTurn[], callName: string): { turn: PluginTurn
 
 /** Whether a plugin tool spec answers a wire tool name — either exactly, or
  *  via the slug namespace (both sides stripped, legacy shape tolerated). */
+// coherence:seam owner=@ematvey until=2027-01-31 reason="shipped clients may still send the int_ prefix"
 function toolMatches(slug: string, specName: string, callName: string): boolean {
   if (specName === callName) return true;
   const s = unnamespacedTool(slug, specName);
@@ -411,6 +414,7 @@ export class IntegrationsRuntime {
   async gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification> {
     // Cheap path: a name this runtime never registered and no auto-tool
     // shape cannot be an integration tool — coding tools pay no resolve.
+    // coherence:seam owner=@ematvey until=2027-01-31 reason="shipped clients may still send the int_ prefix"
     if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
       return undefined;
     }
