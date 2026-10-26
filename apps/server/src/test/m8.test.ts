@@ -526,7 +526,7 @@ describe("MCP tools/call (stub peer)", () => {
       executor: "mcp",
       slug: "test-mcp",
       description: "test",
-      tools: [{ spec, class: "read" }],
+      tools: [{ spec, class: "read", raw: "echo" }],
       rowConfig: { mcp: { url: mcpUrl } },
       secretNames: ["api_key"],
       identityKey: "test-mcp",

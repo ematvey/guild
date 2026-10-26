@@ -1,7 +1,7 @@
 {
   "name": "@guild/server",
   "private": true,
-  "version": "0.6.22",
+  "version": "0.6.31",
   "type": "module",
   "description": "Guild cloud server (TypeScript, on pi-durable).",
   "main": "dist/index.js",
@@ -10,8 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "bun src/index.ts",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "import-threads": "tsx src/importer/cli.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

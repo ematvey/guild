@@ -79,7 +79,7 @@ export async function sendAgentMessage(
     };
   }
   const origin = deps.chatId === undefined ? null : await deps.store.threadByChatId(deps.chatId);
-  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title, "thread", {
+  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title, "user", {
     ...(origin === null ? {} : { originThreadId: origin.id }),
   });
   await deps.threads.appendEvent(
@@ -181,6 +181,26 @@ const routineListOutput = Type.Object({
   routines: Type.Array(routineOutput),
 });
 
+const MAX_THREAD_LIST = 100;
+
+const listedThreadOutput = Type.Object({
+  thread_id: Type.String(),
+  chat_id: Type.String(),
+  title: Type.String(),
+  type: Type.String(),
+  is_default: Type.Boolean(),
+  parent_thread_id: Type.Union([Type.String(), Type.Null()]),
+  archived: Type.Boolean(),
+  deleted: Type.Boolean(),
+  created_at: Type.String(),
+  last_activity_at: Type.String(),
+});
+
+const threadListOutput = Type.Object({
+  threads: Type.Array(listedThreadOutput),
+  next_cursor: Type.Union([Type.String(), Type.Null()]),
+});
+
 const readOutput = Type.Object({
   thread_id: Type.String(),
   thread_title: Type.String(),
@@ -273,6 +293,83 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           if (query === "") return textErr("query must not be empty");
           const hits = await searchAgentConversations(deps.store, deps.agent.id, query, args.limit);
           return { structuredOutput: { hits } as unknown as JsonValue };
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("conversations_list")) {
+    tools.push(
+      defineTool({
+        name: "conversations_list",
+        description:
+          "List this agent's own conversation threads, one page at a time. Filter by type (user, subagent, " +
+          "routine), by archived or deleted state, or by parent thread. Sort by activity or creation time. " +
+          "Pass next_cursor back to read the next page.",
+        parameters: Type.Object({
+          type: Type.Optional(
+            Type.Union([Type.Literal("user"), Type.Literal("subagent"), Type.Literal("routine")], {
+              description: "Thread type; omit for user threads only",
+            }),
+          ),
+          archived: Type.Optional(
+            Type.Boolean({ description: "true = archived only; omit or false = active only" }),
+          ),
+          deleted: Type.Optional(
+            Type.Boolean({ description: "true = deleted only; omit or false hides deleted threads" }),
+          ),
+          parent_thread_id: Type.Optional(
+            Type.String({ description: "Only the children of this thread id" }),
+          ),
+          sort: Type.Optional(
+            Type.Union(
+              [
+                Type.Literal("activity_desc"),
+                Type.Literal("activity_asc"),
+                Type.Literal("created_desc"),
+                Type.Literal("created_asc"),
+              ],
+              { description: "Sort order; default activity_desc" },
+            ),
+          ),
+          limit: Type.Optional(Type.Number({ description: `Max threads, 1–${MAX_THREAD_LIST}` })),
+          cursor: Type.Optional(Type.String({ description: "next_cursor from the previous page" })),
+        }),
+        structuredOutputSchema: threadListOutput,
+        replay: "safe",
+        callers: ["tools"],
+        outputLimits: { maxBytes: 64 * 1024 },
+        execute: async (args) => {
+          try {
+            const page = await deps.store.listThreads(deps.agent.id, deps.userId, {
+              types: [args.type ?? "user"],
+              archived: args.archived === true,
+              deleted: args.deleted === true,
+              ...(args.parent_thread_id === undefined ? {} : { parentThreadId: args.parent_thread_id }),
+              ...(args.sort === undefined ? {} : { sort: args.sort }),
+              ...(args.limit === undefined ? {} : { limit: args.limit }),
+              ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
+            });
+            return {
+              structuredOutput: {
+                threads: page.threads.map((thread) => ({
+                  thread_id: thread.id,
+                  chat_id: thread.chat_id,
+                  title: thread.title,
+                  type: thread.type,
+                  is_default: thread.is_default,
+                  parent_thread_id: thread.parent_thread_id,
+                  archived: thread.archived,
+                  deleted: thread.deleted,
+                  created_at: thread.created_at,
+                  last_activity_at: thread.last_activity_at,
+                })),
+                next_cursor: page.next_cursor,
+              } as unknown as JsonValue,
+            };
+          } catch (error) {
+            return textErr(error instanceof Error ? error.message : String(error));
+          }
         },
       }),
     );

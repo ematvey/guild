@@ -9,7 +9,7 @@
 // plus the breadcrumb in the top bar.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, File, Folder, Info, Lock } from "lucide-react";
+import { ChevronRight, Info, Lock } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -33,6 +33,8 @@ import {
   type SkillSourceFile,
 } from "./skills-api";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { FileTree } from "./FileTree";
+import { buildFileTree, bundleFilePaths, isMarkdownPath } from "./skill-files";
 import { avatarChip } from "../../lib/format";
 
 /** SKILL.md body without the leading YAML frontmatter block: the detail
@@ -115,64 +117,6 @@ export function actionVariant(label: string): "default" | "outline" | "ghost" {
  *  "—" when the version carries no sha. */
 export function shaPrefix(sha: string | null): string {
   return sha === null || sha === "" ? "—" : sha.slice(0, 12);
-}
-
-/** True when a bundle file renders as markdown rather than raw text. */
-export function isMarkdownPath(path: string): boolean {
-  return /\.(md|markdown)$/i.test(path);
-}
-
-/** The file list the detail page renders from the source manifest: SKILL.md
- *  first (its body ships inline), then the bundle's extra files in path
- *  order. manifest.json is bundle metadata — never listed. */
-export function bundleFilePaths(source: {
-  skill_md: string;
-  files: Array<{ path: string; size?: number; sha256?: string }>;
-}): string[] {
-  return [
-    "SKILL.md",
-    ...source.files
-      .map((f) => f.path)
-      .filter((p) => p !== "SKILL.md" && p !== "manifest.json")
-      .sort(),
-  ];
-}
-
-/** One node of the file tree the Files section renders. */
-export interface FileTreeNode {
-  name: string;
-  /** File path, or the directory's path prefix (files under it). */
-  path: string;
-  kind: "dir" | "file";
-  children: FileTreeNode[];
-}
-
-/** Nested file tree from flat bundle paths: directories before files,
- *  alphabetical within each group. */
-export function buildFileTree(paths: string[]): FileTreeNode[] {
-  const root: FileTreeNode = { name: "", path: "", kind: "dir", children: [] };
-  for (const path of [...paths].sort()) {
-    const parts = path.split("/");
-    let node = root;
-    parts.forEach((part, i) => {
-      const kind = i === parts.length - 1 ? "file" : "dir";
-      const nodePath = parts.slice(0, i + 1).join("/");
-      let child = node.children.find((c) => c.name === part && c.kind === kind);
-      if (child === undefined) {
-        child = { name: part, path: nodePath, kind, children: [] };
-        node.children.push(child);
-      }
-      node = child;
-    });
-  }
-  const sortNode = (n: FileTreeNode): void => {
-    n.children.sort((a, b) =>
-      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
-    );
-    n.children.forEach(sortNode);
-  };
-  sortNode(root);
-  return root.children;
 }
 
 /** "Oct 13, 2026" + a "3d ago"-style relative label for a version's publish
@@ -303,7 +247,6 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   } | null>(null);
   const [sourceLoading, setSourceLoading] = useState(true);
   const [selectedFile, setSelectedFile] = useState("SKILL.md");
-  const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   const [rawSkillMd, setRawSkillMd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
@@ -394,50 +337,6 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   const currentPath = files !== null && files.includes(selectedFile) ? selectedFile : "SKILL.md";
   const tree = files === null ? [] : buildFileTree(files);
   const fileCount = files?.length;
-
-  const renderTree = (nodes: FileTreeNode[], depth: number): ReactNode =>
-    nodes.map((node) =>
-      node.kind === "dir" ? (
-        <div key={node.path}>
-          <button
-            type="button"
-            aria-expanded={!collapsedDirs.has(node.path)}
-            onClick={() =>
-              setCollapsedDirs((prev) => {
-                const next = new Set(prev);
-                if (next.has(node.path)) next.delete(node.path);
-                else next.add(node.path);
-                return next;
-              })
-            }
-            className="flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm text-muted-foreground outline-none hover:bg-accent"
-            style={{ paddingLeft: `${8 + depth * 14}px` }}
-          >
-            {collapsedDirs.has(node.path) ? (
-              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-            )}
-            <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate">{node.name}/</span>
-          </button>
-          {collapsedDirs.has(node.path) ? null : renderTree(node.children, depth + 1)}
-        </div>
-      ) : (
-        <button
-          key={node.path}
-          aria-current={currentPath === node.path ? "true" : undefined}
-          onClick={() => setSelectedFile(node.path)}
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
-          className={`flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm outline-none hover:bg-accent ${
-            currentPath === node.path ? "bg-secondary" : ""
-          }`}
-        >
-          <File className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{node.name}</span>
-        </button>
-      ),
-    );
 
   const selectedSourceFile = source?.files.find((f) => f.path === currentPath);
   const viewerMeta =
@@ -661,7 +560,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           {files !== null && files.length > 1 ? (
             <div className="flex items-start gap-3.5">
               <div className="max-h-[55vh] w-[230px] shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-1.5">
-                {renderTree(tree, 0)}
+                <FileTree nodes={tree} selected={currentPath} onSelect={setSelectedFile} />
               </div>
               {viewer}
             </div>

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
+import { ThreadStore } from "../../platform/store/thread.js";
 import {
   AgentScheduler,
   MAX_CONSECUTIVE_FAILURES,
@@ -40,6 +41,7 @@ dbDescribe("agent scheduler", () => {
     return new AgentScheduler({
       pool: env!.db,
       store,
+      threads: new ThreadStore(env!.db),
       runtime,
       log: pino({ level: "silent" }),
       enabled: false,
@@ -138,11 +140,16 @@ dbDescribe("agent scheduler", () => {
     const runs = await store.listRoutineRuns(agent.id, routine.id);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.trigger).toBe("routine");
-    const threads = await env!.db.query<{ kind: string }>("SELECT kind FROM agent_threads WHERE id = $1", [
+    const threads = await env!.db.query<{ type: string }>("SELECT type FROM agent_threads WHERE id = $1", [
       runs[0]!.thread_id,
     ]);
-    expect(threads.rows[0]!.kind).toBe("routine_run");
-    expect((await store.listThreads(agent.id, owner.id)).some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    expect(threads.rows[0]!.type).toBe("routine");
+    expect((await store.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    const first = await env!.db.query<{ type: string; content: string }>(
+      "SELECT type, payload->>'content' AS content FROM thread_events WHERE chat_id = (SELECT chat_id FROM agent_threads WHERE id = $1) ORDER BY seq LIMIT 1",
+      [runs[0]!.thread_id],
+    );
+    expect(first.rows[0]).toEqual({ type: "user_message", content: "Coalesced run." });
   });
 
   it("retries an occurrence three times and then fails it with a notice", async () => {
@@ -207,7 +214,7 @@ dbDescribe("agent scheduler", () => {
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       prompt: "Manual run.",
     });
-    const run = await runRoutineNow({ pool: env!.db, store, runtime }, agent, routine);
+    const run = await runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, agent, routine);
     expect(run.trigger).toBe("manual");
     expect(calls).toHaveLength(1);
     const occurrence = (await store.listOccurrences(routine.id))[0]!;
@@ -224,7 +231,7 @@ dbDescribe("agent scheduler", () => {
     });
     await store.archive(owner, archived.id);
     await expect(
-      runRoutineNow({ pool: env!.db, store, runtime }, { ...archived, status: "archived" }, archivedRoutine),
+      runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, { ...archived, status: "archived" }, archivedRoutine),
     ).rejects.toThrow(/not active/);
   });
 });

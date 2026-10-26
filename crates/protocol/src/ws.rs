@@ -200,6 +200,15 @@ pub enum WsServerMsg {
     MachineList {
         machines: Vec<serde_json::Value>,
     },
+    /// The workspace's display identity: the name and logo the app shell
+    /// shows in its title. Sent with every workspace push and to every
+    /// member socket when an admin renames the workspace. Daemons tag-peek
+    /// and ignore it.
+    WorkspaceIdentity {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        logo_url: Option<String>,
+    },
 }
 
 #[cfg(test)]

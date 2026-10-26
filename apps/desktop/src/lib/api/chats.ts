@@ -29,12 +29,24 @@ export interface ChatSummary {
    *  the sidebar's recent-activity sort key. List rows carry it; the live
    *  thread-event fan-out moves it forward as turns land. */
   last_activity_at?: string;
+  /** What the chat's thread is. A chat with no thread row is a user chat. */
+  type?: ThreadType;
+  /** The user hid the chat from the sidebar; it still resolves. */
+  archived?: boolean;
+  /** The user removed the chat; it drops out of every list. */
+  deleted?: boolean;
 }
 
-/** One node of the thread tree: the open chat, its kind, status and parent. */
+/** The three kinds of thread. Archiving and deletion are flags, not types. */
+export type ThreadType = "user" | "subagent" | "routine";
+
+/** One node of the thread tree: the open chat, its type, flags, status and
+ *  parent. */
 export interface ChatTree {
   chat_id: string;
-  kind: string;
+  type: ThreadType;
+  archived: boolean;
+  deleted: boolean;
   title: string;
   agent_id: string | null;
   agent_name: string | null;
@@ -113,6 +125,19 @@ export async function updateChat(
     method: "PATCH",
     headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
     body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+}
+
+/** Soft-deletes a chat. The thread leaves every list; its transcript stays.
+ *  Deletion is separate from archiving and cannot be undone in the app. */
+export async function deleteChat(id: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/v1/threads/${id}`), {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) {
     const v = await res.json().catch(() => ({}));

@@ -48,6 +48,7 @@ describe("routeMessage", () => {
       onAuthRequired: () => calls.push("auth"),
       onError: (message) => calls.push(`error:${message}`),
       onOrgEvent: () => calls.push("org"),
+      onWorkspaceIdentity: (identity) => calls.push(`info:${identity.name}`),
       onMachineStatus: (machineId, online) => calls.push(`machine:${machineId}:${online}`),
     };
 
@@ -77,6 +78,9 @@ describe("routeMessage", () => {
     routeMessage({ type: "error", message: "bad" }, handlers);
     routeMessage({ type: "org_event", event: {} }, handlers);
     expect(calls.slice(-2)).toEqual(["error:bad", "org"]);
+
+    routeMessage({ type: "workspace_identity", name: "Acme" }, handlers);
+    expect(calls.at(-1)).toBe("info:Acme");
   });
 
   it("routes incremental thread_events frames to their handler", () => {

@@ -201,6 +201,7 @@ export class PlatformContext {
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot),
+      threads: this.threads,
       runtime: this.runtime,
       log,
       enabled: config.agentsScheduler,

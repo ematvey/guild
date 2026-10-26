@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import GeneralSection from "./GeneralSection";
-import { ApprovalsSection } from "./ApprovalsSection";
 import { AssistantSection } from "./AssistantSection";
 import { AboutSection } from "./AboutSection";
 
@@ -33,13 +32,6 @@ describe("first paint before settings requests resolve", () => {
     expect(html).not.toContain("no logo");
     expect(html).not.toContain('id="workspace-name"');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>/);
-  });
-
-  it("does not select a default approval policy before reading the user's policy", () => {
-    const html = renderToStaticMarkup(<ApprovalsSection />);
-    expect(html).toContain("Loading content");
-    expect(html).not.toContain("Server default</span>");
-    expect(html).not.toContain("<textarea");
   });
 
   it("does not describe unread prompts as defaults", () => {

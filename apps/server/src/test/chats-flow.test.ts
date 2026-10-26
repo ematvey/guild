@@ -116,6 +116,46 @@ describe("chats CRUD wire", () => {
     expect((JSON.parse(activeList.body) as { chats: { id: string }[] }).chats.some((c) => c.id === chat.id)).toBe(false);
   });
 
+  it("deletes a chat out of every list, independently of archiving", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: { title: "Delete me" },
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+
+    // Archived and deleted are separate flags: archiving first must not be
+    // required, and deletion must not read as "archived".
+    await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/chats/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { archived: true },
+    });
+    const deleted = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(JSON.parse(deleted.body)).toMatchObject({ id: chat.id, archived: true, deleted: true });
+
+    for (const url of ["/api/v1/chats", "/api/v1/chats?archived=true"]) {
+      const list = await stack.env.app.inject({ method: "GET", url, headers: auth(stack.memberToken) });
+      expect((JSON.parse(list.body) as { chats: { id: string }[] }).chats.some((c) => c.id === chat.id)).toBe(false);
+    }
+
+    // A direct link still resolves, and its tree reports the flags.
+    const tree = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${chat.id}/tree`,
+      headers: auth(stack.memberToken),
+    });
+    expect(tree.statusCode).toBe(200);
+    expect(JSON.parse(tree.body)).toMatchObject({ type: "user", archived: true, deleted: true });
+  });
+
   it("orders the sidebar list by recent activity, not creation", async () => {
     const app = stack.env.app.inject;
     const created = async (title: string) =>

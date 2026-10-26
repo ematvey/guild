@@ -1,4 +1,4 @@
-// GET /api/v1/chats/:id/tree: the chat header's node facts — kind, title,
+// GET /api/v1/chats/:id/tree: the chat header's node facts — type, title,
 // depth, latest run status and the parent chat of a delegated child.
 
 import { randomUUID } from "node:crypto";
@@ -42,15 +42,15 @@ describe("chat tree", () => {
     const parentChat = await insertChat("Parent chat");
     const parentThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Parent session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Parent session', 'user')`,
       [parentThread, agentId, stack.memberId, parentChat],
     );
     const childChat = await insertChat("Child chat");
     const childThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat, parentThread],
     );
     await stack.env.db.query(
@@ -67,7 +67,7 @@ describe("chat tree", () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
       chat_id: childChat,
-      kind: "delegated",
+      type: "subagent",
       title: "Child session",
       agent_id: agentId,
       agent_name: "Tree agent",
@@ -75,6 +75,8 @@ describe("chat tree", () => {
       depth: 1,
       parent: { chat_id: parentChat, title: "Parent session" },
       origin: null,
+      archived: false,
+      deleted: false,
     });
 
     const alias = await stack.env.app.inject({
@@ -96,22 +98,22 @@ describe("chat tree", () => {
     const rootChat = await insertChat("Root chat");
     const rootThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Root session', 'user')`,
       [rootThread, agentId, stack.memberId, rootChat],
     );
     const childChat = await insertChat("Child chat");
     const childThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat, rootThread],
     );
     const grandchildChat = await insertChat("Grandchild chat");
     const grandchildThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Grandchild session', 'delegated', $5, 2)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Grandchild session', 'subagent', $5, 2)`,
       [grandchildThread, agentId, stack.memberId, grandchildChat, childThread],
     );
     await stack.env.db.query(
@@ -150,7 +152,7 @@ describe("chat tree", () => {
     expect(JSON.parse(plain.body).nodes).toEqual([]);
   });
 
-  it("returns a plain chat with parent null and its thread kind", async () => {
+  it("returns a plain chat with parent null and its thread type", async () => {
     const plainChat = await insertChat("Plain chat");
     const plain = await stack.env.app.inject({
       method: "GET",
@@ -160,7 +162,7 @@ describe("chat tree", () => {
     expect(plain.statusCode).toBe(200);
     expect(JSON.parse(plain.body)).toEqual({
       chat_id: plainChat,
-      kind: "chat",
+      type: "user",
       title: "Plain chat",
       agent_id: null,
       agent_name: null,
@@ -168,6 +170,8 @@ describe("chat tree", () => {
       depth: 0,
       parent: null,
       origin: null,
+      archived: false,
+      deleted: false,
     });
 
     const agentId = randomUUID();
@@ -178,8 +182,8 @@ describe("chat tree", () => {
     );
     const threadChat = await insertChat("Thread chat");
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Thread session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Thread session', 'user')`,
       [randomUUID(), agentId, stack.memberId, threadChat],
     );
     const threaded = await stack.env.app.inject({
@@ -190,7 +194,7 @@ describe("chat tree", () => {
     expect(threaded.statusCode).toBe(200);
     expect(JSON.parse(threaded.body)).toEqual({
       chat_id: threadChat,
-      kind: "thread",
+      type: "user",
       title: "Thread session",
       agent_id: agentId,
       agent_name: "Plain agent",
@@ -198,6 +202,8 @@ describe("chat tree", () => {
       depth: 0,
       parent: null,
       origin: null,
+      archived: false,
+      deleted: false,
     });
   });
 });
@@ -213,15 +219,15 @@ describe("thread stop actions", () => {
     const parentChat = await insertChat("Stop parent");
     const parentThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Stop parent session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Stop parent session', 'user')`,
       [parentThread, agentId, stack.memberId, parentChat],
     );
     const childChat = await insertChat("Stop child");
     const childThread = randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Stop child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Stop child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat, parentThread],
     );
     const runId = randomUUID();

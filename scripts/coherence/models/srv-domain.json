@@ -5,13 +5,15 @@
   "concepts": [
     {
       "id": "agent-thread",
-      "definition": "One node of an agent's conversation tree; it holds the transcript in its own chat journal row and names its parent node.",
+      "definition": "One node of an agent's conversation tree; it holds the transcript in its own chat journal row and names its parent node. Its type (user, subagent, routine) is separate from the chat's archived and deleted flags.",
       "canonical": "apps/server/src/agents/types.ts",
       "types": [
         "AgentThread",
-        "AgentThreadKind",
+        "AgentThreadType",
         "AgentThreadRef",
-        "SubagentNode"
+        "SubagentNode",
+        "ListedThread",
+        "ThreadPage"
       ],
       "aliases": [
         "agent_thread"

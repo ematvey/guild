@@ -51,20 +51,68 @@ function stringField(body: Record<string, unknown>, name: string): string {
   return value;
 }
 
+/** Why an extra bundle file path is not publishable, or null when it is.
+ *  Paths are relative and slash separated; SKILL.md and manifest.json are
+ *  written by the server. */
+function extraFilePathError(path: string): string | null {
+  if (path === "") return "file path is required";
+  if (path === "SKILL.md" || path === "manifest.json") {
+    return `${path} is written by the server`;
+  }
+  if (path.startsWith("/")) return "file path must be relative";
+  if (path.includes("\\")) return "file path must use forward slashes";
+  if (path.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
+    return `invalid file path: ${path}`;
+  }
+  if (path.length > 200) return `file path is too long: ${path}`;
+  return null;
+}
+
+/** The editor's extra bundle files (`files: [{path, content}]`), keyed by
+ *  path. Absent means SKILL.md alone; a duplicate or bad path refuses the
+ *  publish. */
+function extraFiles(body: Record<string, unknown>): Record<string, string> {
+  const value = body["files"];
+  if (value === undefined) return {};
+  if (!Array.isArray(value)) throw ApiError.badRequest("files must be an array");
+  const out: Record<string, string> = {};
+  for (const raw of value) {
+    const entry = (raw ?? {}) as Record<string, unknown>;
+    const path = typeof entry["path"] === "string" ? entry["path"] : "";
+    const content = typeof entry["content"] === "string" ? entry["content"] : null;
+    if (content === null) throw ApiError.badRequest(`missing content for ${path || "a file"}`);
+    const problem = extraFilePathError(path);
+    if (problem !== null) throw ApiError.badRequest(problem);
+    if (out[path] !== undefined) throw ApiError.badRequest(`duplicate file path: ${path}`);
+    out[path] = content;
+  }
+  return out;
+}
+
 /** Assembles the server-side bundle for editor saves (spec §1.1): the
- *  manifest the registry already validates + SKILL.md; content-addressed
- *  like any other publish. */
-function buildSkillBundle(slug: string, version: string, description: string, bodyText: string): Buffer {
+ *  manifest the registry already validates + SKILL.md + the editor's extra
+ *  files; content-addressed like any other publish. */
+function buildSkillBundle(
+  slug: string,
+  version: string,
+  description: string,
+  bodyText: string,
+  files: Record<string, string>,
+): Buffer {
   const manifest: Manifest = { kind: "skill", slug, version, description };
   try {
     validateManifest(manifest);
   } catch (error) {
     throw ApiError.badRequest((error as Error).message);
   }
-  return packBundle({
+  const entries: Record<string, Buffer> = {
     "manifest.json": Buffer.from(JSON.stringify(manifest)),
     "SKILL.md": Buffer.from(bodyText, "utf8"),
-  });
+  };
+  for (const [path, content] of Object.entries(files)) {
+    entries[path] = Buffer.from(content, "utf8");
+  }
+  return packBundle(entries);
 }
 
 /** Owner-or-admin (spec §1.2): the owner user, a member of the owner team,
@@ -272,6 +320,7 @@ export function registerSkillRoutes(
       await gateway.registry.clearTombstone(user.org_id, "skill", slug);
     }
     const bodyText = stringField(body, "body");
+    const files = extraFiles(body);
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
     // Max-suffix arithmetic (never count-based): a legacy raw-route gap
     // (v1,v3) must yield v4, not a silent overwrite of v3.
@@ -279,7 +328,7 @@ export function registerSkillRoutes(
     await publishBundleBytes(
       gateway, auth, objects, user, "skill", slug, version, description,
       { kind: "skill", slug, version, description },
-      buildSkillBundle(slug, version, description, bodyText),
+      buildSkillBundle(slug, version, description, bodyText, files),
     );
     await applyOwnerTeam(gateway, auth, user, slug, ownerTeamId);
     await autoInstall(skills, auth, onInstallChange, user.org_id, user.id, slug, version);
@@ -293,6 +342,7 @@ export function registerSkillRoutes(
     const body = jsonBody(req);
     const description = singleLineDescription(stringField(body, "description"));
     const bodyText = stringField(body, "body");
+    const files = extraFiles(body);
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
@@ -300,7 +350,7 @@ export function registerSkillRoutes(
     await publishBundleBytes(
       gateway, auth, objects, user, "skill", slug, version, description,
       { kind: "skill", slug, version, description },
-      buildSkillBundle(slug, version, description, bodyText),
+      buildSkillBundle(slug, version, description, bodyText, files),
     );
     await autoInstall(skills, auth, onInstallChange, user.org_id, user.id, slug, version);
     sendJson(reply, { slug, version });

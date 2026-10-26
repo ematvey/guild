@@ -1,9 +1,9 @@
-// Sidebar row actions: rename and archive for chats and projects. Each one
-// writes through the transport; the server pushes the updated workspace
-// lists, so no list is re-read here.
+// Sidebar row actions: rename, archive and delete for chats and projects.
+// Each one writes through the transport; the server pushes the updated
+// workspace lists, so no list is re-read here.
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { updateChat } from "../../../lib/api/chats";
+import { deleteChat as deleteChatRequest, updateChat } from "../../../lib/api/chats";
 import { updateProject } from "../../../lib/api/projects";
 
 export function useChatActions() {
@@ -28,6 +28,13 @@ export function useChatActions() {
       toast.error("Could not unarchive the chat");
     }
   }, []);
+  const deleteChat = useCallback(async (id: string) => {
+    try {
+      await deleteChatRequest(id);
+    } catch {
+      toast.error("Could not delete the chat");
+    }
+  }, []);
   const renameProject = useCallback(async (id: string, name: string) => {
     try {
       await updateProject(id, { name });
@@ -50,5 +57,5 @@ export function useChatActions() {
     }
   }, []);
 
-  return { renameChat, archiveChat, unarchiveChat, renameProject, archiveProject, unarchiveProject };
+  return { renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject };
 }
