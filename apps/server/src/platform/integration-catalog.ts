@@ -977,4 +977,3 @@ export function integrationByName(name: string): BuiltinIntegration | undefined 
   return INTEGRATIONS.find((c) => c.name === name);
 }
 
-export const INTEGRATION_NAMES: string[] = INTEGRATIONS.map((c) => c.name);

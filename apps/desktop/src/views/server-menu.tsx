@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
-import { ChevronDown, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { IS_TAURI } from "../lib/session";
 import {
@@ -204,54 +204,3 @@ export function ServerRailButton({
   );
 }
 
-/** Sidebar-top trigger: the active server's logo and name; clicking opens
- * the switcher. On the web (single server) it renders nothing. */
-export function ServerSwitcher({
-  onAddWorkspace,
-  onReload,
-}: {
-  onAddWorkspace?: (baseUrl?: string) => void;
-  /** Runs after a switch or sign-out (the caller reloads the app). */
-  onReload: () => void;
-}) {
-  const list = useServerList();
-  if (!IS_TAURI) return null;
-
-  const rows = list?.workspaces ?? [];
-  const activeRow = rows.find((w) => w.base_url === (list?.active ?? null));
-  const label = activeRow
-    ? activeRow.name || shortOrigin(activeRow.base_url)
-    : "Guild";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors hover:bg-accent"
-          title="Switch server"
-        >
-          {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
-            <img
-              src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
-              alt=""
-              className="size-5 shrink-0 rounded object-contain"
-            />
-          ) : activeRow ? (
-            <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
-              {label.slice(0, 1).toUpperCase()}
-            </span>
-          ) : null}
-          {list === null ? <Skeleton className="h-3.5 w-24" /> : <span className="min-w-0 truncate font-semibold">{label}</span>}
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="start" className="w-60">
-        <ServerMenuItems
-          list={list}
-          onAddWorkspace={onAddWorkspace}
-          onReload={onReload}
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}

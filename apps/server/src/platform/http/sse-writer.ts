@@ -56,10 +56,6 @@ export function sseReply(reply: FastifyReply, frames: AsyncIterable<string>): vo
   }
 }
 
-/** A named SSE frame (Anthropic events carry an `event:` line). */
-export function sseEventFrame(event: string, data: string): string {
-  return `event: ${event}\ndata: ${data}\n\n`;
-}
 
 /** A data-only SSE frame (OpenAI chunks). */
 export function sseDataFrame(data: string): string {

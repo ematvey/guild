@@ -8,11 +8,6 @@ import { mcpConnect, type McpPeer } from "./mcp.js";
 import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
 import { callSignals, type Json, type ToolOutcome } from "./vendors/shared.js";
 import { integrationByName } from "../integration-catalog.js";
-import {
-  API_TIMEOUT_MS,
-  CALL_TIMEOUT_MS,
-  LIST_TIMEOUT_MS,
-} from "./vendors/shared.js";
 
 // ---------- the plugin dispatcher (call_plugin) ----------
 
@@ -90,5 +85,4 @@ export async function callPlugin(
   return { content: result.content };
 }
 
-export const EXECUTE_TIMEOUTS = { CALL_TIMEOUT_MS, LIST_TIMEOUT_MS, API_TIMEOUT_MS };
 

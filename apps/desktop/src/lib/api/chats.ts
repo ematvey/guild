@@ -349,25 +349,7 @@ export interface ChatSnapshot {
   frames: StreamFrame[];
 }
 
-export async function chatSnapshot(chatId: string): Promise<ChatSnapshot> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke("chat_snapshot", { chatId });
-}
 
-/// Chat project binding (replaces the removed per-chat folder): null
-/// clears the chat's project.
-export async function setChatProject(
-  chatId: string,
-  projectId: string | null,
-): Promise<ChatSummary | null> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/project`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify({ project_id: projectId }),
-  });
-  if (!res.ok) return null;
-  return res.json().catch(() => null);
-}
 
 /** The agent bound to a chat (the composer's agent picker). */
 export async function chatAgent(chatId: string): Promise<unknown | null> {
