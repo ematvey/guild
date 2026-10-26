@@ -1,0 +1,197 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "durable-store",
+      "definition": "The Postgres implementation of the pi-durable Storage contract: records, revisions, tasks, submissions and one shared id space.",
+      "canonical": "apps/server/src/storage/postgres/storage.ts",
+      "types": [
+        "PostgresDurableStorage",
+        "ScopedDurableStorage",
+        "PgPoolDatabase",
+        "SharedPoolDatabase",
+        "PostgresDatabase",
+        "PostgresExecutor",
+        "PostgresRow",
+        "PostgresValue",
+        "DURABLE_POSTGRES_MIGRATIONS"
+      ],
+      "aliases": [
+        "journal-store",
+        "durable-storage"
+      ],
+      "representations": [
+        { "where": "apps/server/src/storage/postgres/storage.ts", "role": "db" },
+        { "where": "apps/server/src/storage/postgres/migrations.ts", "role": "db" },
+        { "where": "apps/server/src/storage/postgres/pg.ts", "role": "db" },
+        { "where": "apps/server/src/storage/postgres/scoped.ts", "role": "db" },
+        { "where": "apps/server/src/storage/postgres/live-projection.ts", "role": "db" },
+        { "where": "apps/server/src/importer/durable.ts", "role": "db" },
+        { "where": "apps/server/src/storage/postgres/executor.ts", "role": "domain" }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/storage/postgres/pg.ts"
+        }
+      ]
+    },
+    {
+      "id": "conversation-mapping",
+      "definition": "The chat-to-durable-conversation mapping, created once per chat and serialized across processes.",
+      "canonical": "apps/server/src/harness/conversation-directory.ts",
+      "types": [
+        "ConversationDirectory"
+      ],
+      "aliases": [
+        "chat-conversation",
+        "chat-conversations-table"
+      ],
+      "representations": [
+        { "where": "apps/server/src/harness/conversation-directory.ts", "role": "db" },
+        { "where": "apps/server/src/importer/durable.ts", "role": "db" },
+        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/harness/runtime.ts"
+        }
+      ]
+    },
+    {
+      "id": "harness-lifetime",
+      "definition": "One open scheduler lifetime of a conversation: its harness, storage and event watches, replaced as a unit on reopen.",
+      "canonical": "apps/server/src/harness/conversation-host.ts",
+      "types": [
+        "ConversationHost",
+        "ConversationLifetime"
+      ],
+      "aliases": [
+        "conversation-host",
+        "scheduler-lifetime"
+      ],
+      "representations": [
+        { "where": "apps/server/src/harness/conversation-host.ts", "role": "domain" },
+        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+      ],
+      "translations": []
+    },
+    {
+      "id": "admission",
+      "definition": "The serialized acceptance of one turn into a chat, with a cancellation signal for a stop.",
+      "canonical": "apps/server/src/harness/operations.ts",
+      "types": [
+        "AdmissionCancelled",
+        "SingleFlight",
+        "ConversationAdmissions"
+      ],
+      "aliases": [
+        "turn-admission"
+      ],
+      "representations": [
+        { "where": "apps/server/src/harness/operations.ts", "role": "domain" },
+        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+      ],
+      "translations": []
+    },
+    {
+      "id": "inbox",
+      "definition": "The queued user inputs of a conversation, placed as write, steer or follow-up at a turn boundary.",
+      "canonical": "apps/server/src/harness/queue-recovery.ts",
+      "types": [],
+      "aliases": [
+        "inbox-doc",
+        "queued-input"
+      ],
+      "representations": [
+        { "where": "apps/server/src/harness/queue-recovery.ts", "role": "domain" },
+        { "where": "apps/server/src/harness/inbox-merge.ts", "role": "domain" },
+        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+      ],
+      "translations": []
+    },
+    {
+      "id": "worker",
+      "definition": "The forked process that owns one chat's conversation end to end and serves admission, control and live frames over IPC.",
+      "canonical": "apps/server/src/worker/supervisor.ts",
+      "types": [
+        "ForkSupervisor",
+        "WorkerRequest",
+        "WorkerResponse",
+        "WorkerMessage",
+        "WorkerEvent",
+        "WorkerStreamEvent",
+        "SubmitTurnWireInput",
+        "MachineDispatchCall",
+        "BufferUpdate",
+        "IpcMachineDispatch",
+        "WithoutRef"
+      ],
+      "aliases": [
+        "forked-worker",
+        "worker-process"
+      ],
+      "representations": [
+        { "where": "apps/server/src/worker/supervisor.ts", "role": "domain" },
+        { "where": "apps/server/src/worker/main.ts", "role": "domain" },
+        { "where": "apps/server/src/worker/dispatch-proxy.ts", "role": "domain" },
+        { "where": "apps/server/src/worker/protocol.ts", "role": "wire" }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/worker/supervisor.ts"
+        }
+      ]
+    },
+    {
+      "id": "thread-importer",
+      "definition": "The offline rebuild of the durable store from the thread-event log, one conversation per chat.",
+      "canonical": "apps/server/src/importer/importer.ts",
+      "types": [
+        "ImportCounts",
+        "ImporterLogger",
+        "ImporterOptions"
+      ],
+      "aliases": [
+        "import-threads"
+      ],
+      "representations": [
+        { "where": "apps/server/src/importer/importer.ts", "role": "domain" }
+      ],
+      "translations": []
+    }
+  ],
+  "attaches": [
+    { "where": "apps/server/src/harness/agent-tools.ts", "concept": "tool", "role": "domain" },
+    { "where": "apps/server/src/harness/codemode-lint.ts", "concept": "tool", "role": "domain" },
+    { "where": "apps/server/src/harness/extension.ts", "concept": "tool", "role": "domain" },
+    { "where": "apps/server/src/harness/tool-schema.ts", "concept": "tool", "role": "domain" },
+    { "where": "apps/server/src/harness/guide-text.ts", "concept": "skill", "role": "domain" },
+    { "where": "apps/server/src/harness/instructions.ts", "concept": "agent", "role": "domain" },
+    { "where": "apps/server/src/harness/integrations.ts", "concept": "integration", "role": "domain" },
+    { "where": "apps/server/src/harness/models.ts", "concept": "gateway-route", "role": "wire" },
+    { "where": "apps/server/src/harness/thread-history.ts", "concept": "thread-event", "role": "domain" },
+    { "where": "apps/server/src/harness/title.ts", "concept": "chat", "role": "domain" },
+    { "where": "apps/server/src/harness/runtime.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/harness/runtime.ts", "concept": "agent", "role": "domain" },
+    { "where": "apps/server/src/sandbox/agent.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/sandbox/env.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/sandbox/protocol.ts", "concept": "sandbox", "role": "wire" },
+    { "where": "apps/server/src/sandbox/serve.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/sandbox/runner/main.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/sandbox/runner/spec.ts", "concept": "sandbox", "role": "domain" },
+    { "where": "apps/server/src/sandbox/runner/docker.ts", "concept": "sandbox", "role": "db" }
+  ],
+  "no_concept": [
+    { "where": "apps/server/src/importer/cli.ts", "reason": "infrastructure" },
+    { "where": "apps/server/src/storage/postgres/benchmark.ts", "reason": "infrastructure" },
+    { "where": "apps/server/src/storage/postgres/test-support.ts", "reason": "infrastructure" },
+    { "where": "apps/server/vitest.config.ts", "reason": "infrastructure" }
+  ],
+  "types_no_concept": []
+}

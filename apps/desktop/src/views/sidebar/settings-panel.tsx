@@ -51,8 +51,8 @@ export function SettingsPanel({
                     onClick={() => onSelectSection(s.id)}
                     className={`relative flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
                       activeSection === s.id
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        ? "bg-sidebar-accent text-sidebar-foreground"
+                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     }`}
                   >
                     {activeSection === s.id && (

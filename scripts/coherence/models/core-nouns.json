@@ -1,0 +1,422 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "machine",
+      "definition": "One paired host the client can run tools on.",
+      "canonical": "apps/server/src/platform/store/machines.ts",
+      "types": [
+        "MachineInfo",
+        "MachineRow",
+        "UpsertOutcome"
+      ],
+      "aliases": [
+        "host",
+        "executor-host"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/machines.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/machines-store.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/GeneralSection.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/store/machines.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/http/machines.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/lib/machines-store.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/http/machines.ts"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/api/machines.ts"
+        }
+      ]
+    },
+    {
+      "id": "approval",
+      "definition": "A tool call waiting for the user's answer in this client.",
+      "canonical": "apps/server/src/harness/approvals.ts",
+      "types": [
+        "ApprovalPolicy",
+        "ChatApprovalMode",
+        "ApprovalDecision"
+      ],
+      "aliases": [
+        "approval-mode",
+        "approval-decision",
+        "approval-policy",
+        "approval-request"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/approvals.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-approval-mode.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/approval-card.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "crates/guild-core/src/agent/mod.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/guild-core/src/agent/policy.rs",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/harness/approvals.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/chats.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/views/thread/hooks/use-approval-mode.ts"
+        },
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/harness/approvals.ts"
+        },
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/chats.ts"
+        }
+      ]
+    },
+    {
+      "id": "skill",
+      "definition": "A published instruction bundle shown in the skills surfaces.",
+      "canonical": "apps/server/src/harness/skills.ts",
+      "types": [],
+      "aliases": [
+        "skill-bundle"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/skills.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/skills/skills-route.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/skills/SkillDetail.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/server/src/harness/skills.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/store/skills.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/skills.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/lib/skills.ts"
+        },
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/platform/skillReads.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/skills.ts"
+        }
+      ]
+    },
+    {
+      "id": "agent",
+      "definition": "A named persistent assistant shown in the agents surfaces.",
+      "canonical": "apps/server/src/agents/store.ts",
+      "types": [],
+      "aliases": [
+        "persistent-agent"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/agents/agents-api.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/agents-route.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/AgentPage.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/server/src/agents/store.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/routes.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/views/agents/agents-route.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/agents/routes.ts"
+        }
+      ]
+    },
+    {
+      "id": "project",
+      "definition": "A named folder on a machine that a chat binds to.",
+      "canonical": "apps/server/src/platform/store/projects.ts",
+      "types": [
+        "DirEntry",
+        "Distro",
+        "Project",
+        "CreateProjectRequest",
+        "UpdateProjectRequest",
+        "ProjectRow"
+      ],
+      "aliases": [
+        "folder"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/api/projects.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/projects/projects.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/projects/RemotePathSpecifier.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/store/projects.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/projects.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/views/projects/projects.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/projects.ts"
+        }
+      ]
+    },
+    {
+      "id": "engine-session",
+      "definition": "The cloud login token the local engine holds on the user's behalf.",
+      "canonical": "crates/app-server/src/session_store.rs",
+      "types": [
+        "EngineState",
+        "StoredSession",
+        "AuthState",
+        "AuthChange"
+      ],
+      "aliases": [
+        "login-token"
+      ],
+      "representations": [
+        {
+          "where": "crates/app-server/src/session_store.rs",
+          "role": "domain"
+        },
+        {
+          "where": "crates/app-server/src/auth_state.rs",
+          "role": "db"
+        },
+        {
+          "where": "apps/desktop/src/lib/session.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": []
+    },
+    {
+      "id": "login-session",
+      "definition": "One logged-in browser or desktop client, addressed by an opaque hashed token.",
+      "canonical": "apps/server/src/platform/store/identity.ts",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/identity.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/auth.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/auth.ts"
+        }
+      ]
+    },
+    {
+      "id": "thread-event",
+      "definition": "One row of a thread's append-only history log, rendered by clients and read for unread state.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "ThreadEvent",
+        "Block",
+        "MessageAttachment",
+        "UsagePayload",
+        "JudgeVerdict",
+        "ThreadEventRow"
+      ],
+      "aliases": [
+        "thread_event",
+        "event",
+        "thread-event-row"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/domain/thread-events.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/desktop/src/lib/thread-events.ts",
+          "role": "ui"
+        },
+        {
+          "where": "apps/server/src/platform/store/thread.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/domain/thread-events.ts"
+        },
+        {
+          "from": "wire",
+          "to": "db",
+          "at": "apps/server/src/platform/domain/thread-events.ts"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/thread-reducer.ts"
+        }
+      ]
+    },
+    {
+      "id": "chat",
+      "definition": "One conversation the user sees in the sidebar, addressed as a thread.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "Chat",
+        "CreateChatRequest",
+        "UpdateChatRequest",
+        "ChatRow",
+        "ChatListRow",
+        "CompactionStatus"
+      ],
+      "aliases": [
+        "thread"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/store/chats.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/desktop/src/lib/api/chats.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/http/chats.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/chats.ts"
+        }
+      ]
+    }
+  ],
+  "attaches": []
+}

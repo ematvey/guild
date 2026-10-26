@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { lookup } from "node:dns/promises";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import { userMcpToolName } from "../domain/mcp.js";

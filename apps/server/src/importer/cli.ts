@@ -3,9 +3,8 @@
 //
 // Reads GUILD_DATABASE_URL (or --database) and GUILD_S3_* from the
 // environment, truncates + rebuilds the durable_* tables and the
-// chat_conversations mapping from `thread_events`. Run the cutover runbook
-// (apps/server/M3-REPORT.md §Cutover runbook) — in particular: stop the TS
-// server while the importer owns the store.
+// chat_conversations mapping from `thread_events`. Stop the TS server while
+// the importer owns the store.
 
 import pg from "pg";
 import { loadConfig } from "../config.js";
@@ -24,18 +23,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
   process.exit(1);
 }
 
-const pool = new pg.Pool({
-  connectionString: databaseUrl,
-  max: 4,
-  types: {
-    // BIGINT seq counters parse as numbers (ids/sequences are far below
-    // 2^53).
-    getTypeParser: (oid, format) =>
-      oid === 20 && format === "text"
-        ? (value: string) => Number(value)
-        : pg.types.getTypeParser(oid, format),
-  },
-} as pg.PoolConfig);
+const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
 
 const objects =
   config.s3Url !== "" && config.s3AccessKeyId !== "" && config.s3SecretAccessKey !== ""

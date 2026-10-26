@@ -24,8 +24,8 @@ import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
 import type { Project } from "../../../lib/api/projects";
 import type { RoutePatch } from "../route";
+import { IS_TAURI } from "../../../lib/session";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface OutgoingDeps {
   chatId: string | null;
@@ -61,7 +61,6 @@ export interface OutgoingDeps {
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
   sendingRef: RefObject<boolean>;
-  refreshChats: () => Promise<void>;
   projects: Project[] | null;
   openRow: { machine_id?: string | null } | undefined;
   currentProject: PickedProject | null;
@@ -81,7 +80,7 @@ export function useOutgoing(deps: OutgoingDeps) {
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
     deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef, setBlocks,
-    markBusy, openChatIdRef, loadSeq, sendingRef, refreshChats, projects, openRow,
+    markBusy, openChatIdRef, loadSeq, sendingRef, projects, openRow,
     currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping, setStopping,
     justCreatedApprovalRef, justCreatedBusyRef, pushRoute,
   } = deps;
@@ -218,8 +217,7 @@ export function useOutgoing(deps: OutgoingDeps) {
               attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
             justCreatedBusyRef.current = cid;
             markBusy(true);
-            pushRoute({ chatId: cid, overlay: null });
-            void refreshChats();
+            pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
           }
         },
         upload: (cid, attachment) => {
@@ -302,7 +300,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       createProjectId: pickedProjectRef.current?.id ?? null,
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
-      prepareLocally: prepareOnSendingMachine(isTauri, !!currentProject, executor ?? undefined, isTauri ? machineId() : ""),
+      prepareLocally: prepareOnSendingMachine(IS_TAURI, !!currentProject, executor ?? undefined, IS_TAURI ? machineId() : ""),
       sendMode: generating ? (mode === "steer" ? "steer" : "queue") : undefined,
       attachments: pendingRef.current,
     });

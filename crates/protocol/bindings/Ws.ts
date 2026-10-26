@@ -42,4 +42,4 @@ project_id?: string, project_name?: string, project_machine_label?: string,
  * on scroll-up via `GET /api/v1/chats/{id}/thread?before_seq=`.
  * Absent/false = the payload is the whole log.
  */
-has_more_events: boolean, } | { "type": "sync_done", chat_id: string, } | { "type": "pong", } | { "type": "live_frame", chat_id: string, generation_id: string, seq: number, machine_id?: string, event: StreamEvent, } | { "type": "org_event", event: JsonValue, } | { "type": "subagent_tree", chat_id: string, nodes: Array<JsonValue>, };
+has_more_events: boolean, } | { "type": "sync_done", chat_id: string, } | { "type": "pong", } | { "type": "live_frame", chat_id: string, generation_id: string, seq: number, machine_id?: string, event: StreamEvent, } | { "type": "org_event", event: JsonValue, } | { "type": "subagent_tree", chat_id: string, nodes: Array<JsonValue>, } | { "type": "machine_status", machine_id: string, online: boolean, } | { "type": "archived_thread_list", chats: Array<JsonValue>, } | { "type": "project_list", projects: Array<JsonValue>, archived_projects: Array<JsonValue>, } | { "type": "machine_list", machines: Array<JsonValue>, };

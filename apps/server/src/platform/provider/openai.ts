@@ -11,7 +11,8 @@ import {
   type ToolCall,
 } from "./types.js";
 import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
-import { rustJsonText, sseDataStreams } from "./sse.js";
+import { rustJsonText } from "./rust-json.js";
+import { sseDataStreams } from "./sse.js";
 
 /** The output-token-limit dialect for a model name: OpenAI reasoning
  *  families (`o1*`, `o3*`, `o4*`, `gpt-5*` — matched on the final path

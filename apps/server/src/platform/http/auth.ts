@@ -10,7 +10,7 @@ import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import type { UserRow } from "../store/identity.js";
 
 /** UserInfo in protocol::api field order (direct struct serialization). */

@@ -106,7 +106,7 @@ function RowActions({
   );
 }
 
-type RowState = { generating: boolean; working?: boolean; unread: boolean; unreadCount?: number; blocked?: boolean };
+type RowState = { generating: boolean; working?: boolean; unread: boolean; blocked?: boolean };
 
 /** The row's one indicator, by priority: a blocked tool call (red) beats
  *  the working spinner, which beats the unread dot. */
@@ -133,25 +133,13 @@ function RowStatus({ status }: { status: RowState }) {
           aria-label={status.generating ? "Generating" : "Working"}
         />
       );
-    case "unread": {
-      const count = status.unreadCount ?? 0;
-      if (count < 1) {
-        return (
-          <span
-            className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
-            title="unseen replies"
-          />
-        );
-      }
+    case "unread":
       return (
         <span
-          className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-400 px-1 text-3xs font-semibold leading-none text-black/80"
-          title={`${count} unseen ${count === 1 ? "reply" : "replies"}`}
-        >
-          {count > 99 ? "99+" : count}
-        </span>
+          className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
+          title="unseen replies"
+        />
       );
-    }
     default:
       return null;
   }
@@ -200,8 +188,8 @@ export function ChatListItem({
     <div
       className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
-          ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          ? "bg-sidebar-accent text-sidebar-foreground"
+          : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
       }`}
     >
       <button
@@ -284,7 +272,7 @@ export function ProjectHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-accent hover:text-accent-foreground"
+      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-sidebar-accent hover:text-sidebar-foreground"
       title={folder}
     >
       <ChevronRight

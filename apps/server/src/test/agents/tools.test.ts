@@ -76,6 +76,17 @@ dbDescribe("agent conversation tools", () => {
     });
   });
 
+  it("send_message records the calling thread as the delivered thread's origin", async () => {
+    const run = await store.createThread(agent.id, owner.id, "Morning email digest — run", "routine_run");
+    const result = await sendAgentMessage(
+      { pool: env!.db, store, threads, agent, userId: owner.id, chatId: run.chat_id },
+      { text: "The digest is ready.", title: "Morning digest" },
+    );
+    const delivered = await store.getThread(agent.id, owner.id, result.thread_id);
+    expect(delivered.origin_thread_id).toBe(run.id);
+    expect(delivered.kind).toBe("thread");
+  });
+
   it("registers the routine management tools", () => {
     const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
     const names = tools.map((tool) => tool.name);

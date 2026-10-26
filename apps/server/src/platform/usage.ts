@@ -26,6 +26,23 @@ export function usageCostUsd(tokensIn: number, tokensOut: number, priceIn: numbe
   return (tokensIn / 1_000_000) * priceIn + (tokensOut / 1_000_000) * priceOut;
 }
 
+
+/** The user's earliest-created team in the org (membership has no primary
+ *  flag), or null without a pool. */
+export async function primaryTeamId(
+  pool: PlatformPool | null,
+  userId: string,
+  orgId: string,
+): Promise<string | null> {
+  if (pool === null) return null;
+  const res = await pool.query<{ id: string }>(
+    "SELECT t.id FROM teams t JOIN team_members m ON m.team_id = t.id " +
+      "WHERE m.user_id = $1 AND t.org_id = $2 ORDER BY t.created_at, t.id LIMIT 1",
+    [userId, orgId],
+  );
+  return res.rows[0]?.id ?? null;
+}
+
 export class UsageSink {
   private pool: PlatformPool | null = null;
   private ready: Promise<void> | null = null;
@@ -51,15 +68,7 @@ export class UsageSink {
   async record(event: UsageEvent): Promise<void> {
     try {
       let teamId = event.team_id;
-      if (teamId === null && this.pool !== null) {
-        // Membership has no primary flag; the earliest-created team is primary.
-        const res = await this.pool.query<{ id: string }>(
-          "SELECT t.id FROM teams t JOIN team_members m ON m.team_id = t.id " +
-            "WHERE m.user_id = $1 AND t.org_id = $2 ORDER BY t.created_at, t.id LIMIT 1",
-          [event.user_id, event.org_id],
-        );
-        teamId = res.rows[0]?.id ?? null;
-      }
+      if (teamId === null) teamId = await primaryTeamId(this.pool, event.user_id, event.org_id);
       await this.client.insert("usage_events", [
         {
           ts: clickhouseDateTime(event.ts),

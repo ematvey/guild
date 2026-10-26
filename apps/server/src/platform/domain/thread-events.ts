@@ -14,7 +14,7 @@
 // Events written by the OLD Rust server carry the same shapes; the renderer
 // normalizes both eras to one wire form.
 
-import { rustFloat, rustJsonText } from "../provider/sse.js";
+import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------
@@ -396,26 +396,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
   }
 }
 
-/** Guild's turn derivation (restate.rs next_turn): max turn across
- *  assistant/tool-result events + 1. */
-export function nextTurn(events: ThreadEventRow[]): number {
-  return events.reduce((max, row) => {
-    const ev = row.event;
-    if (ev.type === "assistant_message" || ev.type === "tool_result") return Math.max(max, ev.turn);
-    return max;
-  }, 0) + 1;
-}
 
-/** Max step of one turn across the events (for steered continuations). */
-export function maxStepOfTurn(events: ThreadEventRow[], turn: number): number {
-  return events.reduce((max, row) => {
-    const ev = row.event;
-    if ((ev.type === "assistant_message" || ev.type === "tool_result") && ev.turn === turn) {
-      return Math.max(max, ev.step);
-    }
-    return max;
-  }, 0);
-}
 
 /** Renders the model-facing summary text of a pi-durable CompactionEntry as
  *  the Guild Compaction event's `summary` (strips pi-durable's wrapper when

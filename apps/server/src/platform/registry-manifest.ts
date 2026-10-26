@@ -148,15 +148,3 @@ export function validateV2(m: Manifest): void {
   }
 }
 
-/** Effective manifest class for one tool: write, admin, or read (default
- *  for undeclared tools). */
-export function toolClass(m: Manifest, tool: string): string {
-  const classes = m.tools?.classes;
-  if (classes !== null && classes !== undefined && typeof classes === "object") {
-    const c = (classes as Record<string, unknown>)[tool];
-    if (typeof c === "string") {
-      return c === "write" ? "write" : c === "admin" ? "admin" : "read";
-    }
-  }
-  return "read";
-}

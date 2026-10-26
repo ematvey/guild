@@ -33,6 +33,7 @@ import {
   type SkillSourceFile,
 } from "./skills-api";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { avatarChip } from "../../lib/format";
 
 /** SKILL.md body without the leading YAML frontmatter block: the detail
  * page header already shows name/description, so the preview starts at
@@ -227,12 +228,6 @@ export function sparkRects(
  *  series' peak, bottoming out at the 2px minimum. */
 export function readBars(series: Array<{ day: string; reads: number }>): number[] {
   return sparkRects(series).map((r) => r.h);
-}
-
-/** First two characters of a label, uppercased — the initials avatar chip
- *  (the detail page's owner line and versions table). */
-export function initialsOf(label: string): string {
-  return label.slice(0, 2).toUpperCase();
 }
 
 /** The POST /api/v1/skills body that forks this skill: from the viewer's
@@ -640,7 +635,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
               <Avatar
                 src={detail.owner.avatar_url}
                 alt={detail.owner.label}
-                fallback={initialsOf(detail.owner.label)}
+                fallback={avatarChip(detail.owner.label)}
                 className="size-5 border border-border"
                 fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
               />
@@ -706,7 +701,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                         {v.publisher !== null && v.publisher !== "" ? (
                           <span className="flex items-center gap-1.5">
                             <Avatar
-                              fallback={initialsOf(v.publisher)}
+                              fallback={avatarChip(v.publisher)}
                               className="size-5 border border-border"
                               fallbackClassName="bg-secondary text-3xs font-semibold text-foreground"
                             />

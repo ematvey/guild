@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cacheEpochChanged,
-  clearApiCache,
+  clearSettingsCaches,
   currentCacheEpoch,
   peekCached,
 } from "../views/settings/use-cached-api";
@@ -15,7 +15,7 @@ describe("cache epoch guard", () => {
     expect(cacheEpochChanged(epoch)).toBe(false);
 
     // Account A's GET is in flight when the user signs out.
-    clearApiCache();
+    clearSettingsCaches();
     expect(cacheEpochChanged(epoch)).toBe(true);
 
     // A lands after the clear: dropped, cache stays empty for account B.
@@ -25,7 +25,7 @@ describe("cache epoch guard", () => {
     // Account B's own requests capture the new epoch and write normally.
     const epochB = currentCacheEpoch();
     expect(cacheEpochChanged(epochB)).toBe(false);
-    clearApiCache();
+    clearSettingsCaches();
     expect(cacheEpochChanged(epochB)).toBe(true);
   });
 });

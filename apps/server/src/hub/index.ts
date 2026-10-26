@@ -1,11 +1,8 @@
 // Hub seam — the in-process machine/member socket registry and dispatch API.
+// The WS-backed implementation is `LiveHub` with `SocketSink`; the harness
+// and dispatch code depend on the interface, not the transport.
 //
-// This module mirrors the public surface of the Rust hub
-//. The M5 hub lane replaced InMemoryHub with
-// the real WS-backed implementation (`LiveHub` + `SocketSink`); the M3
-// harness lane only imports the types and injects fakes in tests.
-//
-// Ownership note (design decision 9): one Node process owns the hub.
+// One Node process owns the hub.
 
 export interface Member {
   userId: string;
@@ -20,8 +17,8 @@ export interface MachineRequestError {
 
 /**
  * Dispatch one request to a connected machine and await its response.
- * Mirrors Rust `Hub::machine_request`: the holder must still hold the
- * machine slot and belong to `orgId`, else `offline`.
+ * The holder must still hold the machine slot and belong to `orgId`,
+ * else the call resolves `offline`.
  */
 export type MachineRequestFn = (
   machineId: string,
@@ -47,44 +44,6 @@ export interface Hub {
   machineRequest: MachineRequestFn;
   machineOnline(machineId: string): boolean;
   machineLabel(machineId: string): string | undefined;
-}
-
-/** Test/dev placeholder: no transport, every request resolves `offline`.
- *  Kept for the M3 harness lane's fakes; production uses `LiveHub`. */
-export class InMemoryHub implements Hub {
-  private members = new Map<string, Member>();
-  private machines = new Map<string, { orgId: string; userId: string; connId: string; label?: string }>();
-
-  registerMember(member: Member) {
-    this.members.set(`${member.userId}:${member.connId}`, member);
-    return { ok: true } as const;
-  }
-  unregisterMember(userId: string, connId: string) {
-    this.members.delete(`${userId}:${connId}`);
-  }
-  async registerMachine(
-    machineId: string,
-    orgId: string,
-    userId: string,
-    connId: string,
-    meta: { label?: string; appVersion?: string },
-  ) {
-    this.machines.set(machineId, { orgId, userId, connId, label: meta.label });
-    return { ok: true } as const;
-  }
-  unregisterMachine(machineId: string, connId: string) {
-    const m = this.machines.get(machineId);
-    if (m && m.connId === connId) this.machines.delete(machineId);
-  }
-  async machineRequest() {
-    return { ok: false, error: { kind: "offline" } } as const;
-  }
-  machineOnline(machineId: string) {
-    return this.machines.has(machineId);
-  }
-  machineLabel(machineId: string) {
-    return this.machines.get(machineId)?.label;
-  }
 }
 
 export { LiveHub } from "./live.js";

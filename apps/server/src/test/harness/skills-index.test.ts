@@ -337,13 +337,7 @@ describe("submitTurn skills_index plumbing", () => {
       },
     });
     expect(res.statusCode).toBe(200);
-    const chat = await stack.env.app.inject({
-      method: "GET",
-      url: `/api/v1/chats/${chatId}`,
-      headers: auth(memberToken),
-    });
-    const orgId = (JSON.parse(chat.body) as { org_id: string }).org_id;
-    const conversation = await runtime.conversationForChat(chatId, orgId);
+    const conversation = await runtime.conversationForChat(chatId);
     const instructions = (await conversation.agent(BACKGROUND_CONTEXT)).instructions ?? "";
     expect(instructions).toContain("<project_context>");
     expect(instructions).toContain("Use pnpm, never npm.");

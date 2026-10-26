@@ -6,21 +6,25 @@ import { toast } from "sonner";
 import { machineId, watchMachinePresence } from "../../../lib/machine-rpc";
 import { setMachineIdentity } from "../../../lib/api/folders";
 import { startSocket } from "../../../lib/socket-client";
+import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
+import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { busyAfterThreadPush, statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
+import { IS_TAURI } from "../../../lib/session";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface MemberSocketDeps {
   signOut: () => void;
   chatsRef: RefObject<ChatSummary[] | null>;
   setChats: (update: ChatSummary[] | ((prev: ChatSummary[] | null) => ChatSummary[] | null)) => void;
   setChatStatus: (update: (prev: ChatStatus) => ChatStatus) => void;
-  refreshChats: () => Promise<void>;
+  setArchivedChats: (chats: ChatSummary[]) => void;
+  setProjects: (projects: Project[]) => void;
+  setArchivedProjects: (projects: Project[]) => void;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: Block[]) => void;
   markBusy: (v: boolean) => void;
@@ -47,7 +51,8 @@ export interface MemberSocketDeps {
 
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
-    signOut, chatsRef, setChats, setChatStatus, refreshChats, reducerRef, setBlocks, markBusy,
+    signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
+    setArchivedProjects, reducerRef, setBlocks, markBusy,
     busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
     setHasMore, setThreadLoading, setCompacting, setSubagentTree, resetSubagentTrees,
@@ -55,7 +60,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
   useEffect(() => {
-    if (!isTauri) return;
+    if (!IS_TAURI) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void watchMachinePresence(presence => {
@@ -74,6 +79,32 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // marker only needs to move when the view carries events it hasn't
   // covered yet.
   const lastReadMarkRef = useRef(new Map<string, string>());
+  // Chats whose read frame reached the socket in this connection: a push
+  // may only hide an open chat's dot once its read was actually sent.
+  const readSentRef = useRef(new Set<string>());
+  // Chats whose sync bracket applied a state. A sync that failed carries
+  // no view to read, so its done phase must not move the marker.
+  const syncedAppliedRef = useRef(new Set<string>());
+  // Chats whose read already went out inside the current sync bracket, so
+  // the done phase does not send it a second time.
+  const syncedReadRef = useRef(new Set<string>());
+
+  const isVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
+
+  /** Sends one read mark and hides the chat's dot only when the frame left
+   *  the socket. A dropped frame keeps the dot and the guard, so the next
+   *  state or sync retries instead of losing the mark until a reload. */
+  const sendRead = (cid: string): boolean => {
+    if (socketRef.current?.markRead(cid) !== true) return false;
+    readSentRef.current.add(cid);
+    setChatStatus((prev) =>
+      prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
+    );
+    setChats((prev) =>
+      prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
+    );
+    return true;
+  };
 
   const applyHistory = (state: ThreadState) => {
     const cid = state.chat_id;
@@ -92,7 +123,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       // Own turn only: descendants come from the live tree, so a finished
       // run clears the spinner instead of latching the last true value.
       working: state.generating,
-      unread: cid === openChatIdRef.current ? false :
+      unread: cid === openChatIdRef.current && isVisible() ? false :
         (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
     } }));
     // ThreadState carries the chat's project fields: a live re-bind from
@@ -114,11 +145,25 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           : c,
       ) ?? prev,
     );
-    if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
+    if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
     // The route chat's live turn is the target's status even while the old
     // thread is still displayed (the composer is disabled during the swap).
     markBusy(state.generating);
+    // The read mark follows the route chat, not the painted one: the first
+    // state of an uncached open is what triggers the swap, and the paint ref
+    // still names the old chat at this point.
+    if (isVisible()) {
+      const lastEventId = state.events[state.events.length - 1]?.id;
+      if (
+        lastEventId !== undefined &&
+        lastReadMarkRef.current.get(cid) !== lastEventId &&
+        sendRead(cid)
+      ) {
+        lastReadMarkRef.current.set(cid, lastEventId);
+        syncedReadRef.current.add(cid);
+      }
+    }
     // A pending target's state stays in the reducer until the display swap;
     // the visible thread must not receive another chat's blocks.
     if (cid !== displayedChatIdRef.current) return;
@@ -128,46 +173,51 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     oldestSeqRef.current = applied.oldestSeq;
     setHasMore(applied.hasMore);
     setCompacting(applied.compacting);
-    if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      const lastEventId = state.events[state.events.length - 1]?.id;
-      if (lastEventId !== undefined && lastReadMarkRef.current.get(cid) !== lastEventId) {
-        lastReadMarkRef.current.set(cid, lastEventId);
-        socketRef.current?.markRead(cid);
-        setChatStatus((prev) =>
-          prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
-        );
-        setChats((prev) =>
-          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false, unread_count: 0 } : c)) ?? prev,
-        );
-      }
-    }
   };
 
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
-    if (isTauri) void setMachineIdentity(machineId()).catch(() => {});
+    if (IS_TAURI) void setMachineIdentity(machineId()).catch(() => {});
     const connection = startSocket({
       onConnect: () => {
         syncingChatsRef.current.clear();
+        // A read frame sent just before the old socket died may never have
+        // been processed: forget the guard so the reconnect sync re-sends it.
+        lastReadMarkRef.current.clear();
+        readSentRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
         resetSubagentTrees();
         markBusy(false);
+      },
+      onMachineStatus: applyMachineStatus,
+      onMachineList: applyMachineList,
+      onArchivedThreadList: (next) => setArchivedChats(next),
+      onProjectList: (next, archived) => {
+        setProjects(next);
+        setArchivedProjects(archived);
       },
       onThreadList: (nextChats) => {
         // The open chat's turns are on screen: the server's read watermark
         // lags the local read POST, so a push landing in between must not
         // raise its unread badge.
         const open = openChatIdRef.current;
-        const rows = open === null
+        const rows = open === null || !readSentRef.current.has(open)
           ? nextChats
           : nextChats.map((c) =>
-              c.id === open && (c.unread || c.unread_count)
-                ? { ...c, unread: false, unread_count: 0 }
+              c.id === open && c.unread
+                ? { ...c, unread: false }
                 : c,
             );
-        setChats(rows);
+        // A title is write-once after it is set: a snapshot without one is
+        // older than the row we already hold. Keep the known title.
+        const known = new Map((chatsRef.current ?? []).map((c) => [c.id, c.title]));
+        const titled = rows.map((c) => {
+          const prior = known.get(c.id);
+          return prior && !c.title ? { ...c, title: prior } : c;
+        });
+        setChats(titled);
         // Merge, not replace: a child thread is never in the list, so its
         // live status must survive every sidebar push.
         setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));
@@ -220,10 +270,18 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onSync: (cid, phase) => {
         if (phase === "begin") {
           syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);
+          syncedAppliedRef.current.delete(cid);
+          syncedReadRef.current.delete(cid);
         } else {
           const depth = (syncingChatsRef.current.get(cid) ?? 1) - 1;
           if (depth > 0) syncingChatsRef.current.set(cid, depth);
           else syncingChatsRef.current.delete(cid);
+          // Every open and reconnect re-asserts the marker: the event-id
+          // guard only throttles live frames, so a mark the server lost (or
+          // a reopen with no new events) still gets written.
+          const applied = syncedAppliedRef.current.delete(cid);
+          const alreadyRead = syncedReadRef.current.delete(cid);
+          if (applied && !alreadyRead && cid === openChatIdRef.current && isVisible()) sendRead(cid);
         }
         if (cid !== openChatIdRef.current) return;
         // Only the visible thread owns the skeleton flag. A pending target

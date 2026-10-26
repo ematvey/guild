@@ -30,7 +30,7 @@ import {
 } from "@guild/ui/components/alert-dialog";
 import { serverUrl } from "../../../lib/session";
 import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../lib/api/models";
-import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
+import { cacheEpochChanged, currentCacheEpoch, registerCacheClear } from "../use-cached-api";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../components/page-header";
 
@@ -39,13 +39,13 @@ let lastKeys: ApiKeyInfo[] | null = null;
 // response landing after sign-out is dropped instead of repopulating.
 let keysEpoch = 0;
 
-/** Drops the cached key list and invalidates the in-flight refresh;
- * sign-out must call this so one user's key inventory does not leak into
- * the next session. */
-export function clearGatewayCache(): void {
+/** Drops the cached key list and invalidates the in-flight refresh. */
+function clearGatewayKeys(): void {
   keysEpoch++;
   lastKeys = null;
 }
+
+registerCacheClear(clearGatewayKeys);
 
 function Snippet({ label, code }: { label: string; code: string }) {
   return (

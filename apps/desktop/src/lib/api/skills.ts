@@ -1,43 +1,26 @@
 // The org-skills HTTP surface the client-side context assembly consumes
 // (spec §2.3), and the turn preparation built on it.
 
-import { IS_TAURI, apiUrl, getToken } from "../session";
+import { IS_TAURI } from "../session";
 import { rpcCall } from "../machine-rpc";
 import { browserFs, daemonFs } from "../fs-bridge";
 import type { OrgSkillsApi } from "../skills";
 import { prepareTurn as assembleTurn } from "../turn-context";
+import { fetchInstalls, skillsSource } from "../../views/skills/skills-api";
 
 function orgSkillsApi(): OrgSkillsApi {
-  const get = async (path: string): Promise<unknown | null> => {
-    const token = getToken();
-    if (token === null) return null; // not signed in — no org installs
-    try {
-      const res = await fetch(apiUrl(path), {
-        headers: { authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) return null;
-      return await res.json().catch(() => null);
-    } catch {
-      return null;
-    }
-  };
   return {
     installs: async () => {
-      const v = (await get("/api/v1/skills/installs")) as { installs?: unknown } | null;
-      const rows = Array.isArray(v?.installs) ? v!.installs : [];
-      return rows.filter(
-        (r): r is { slug: string; pinned_version: string | null } =>
-          typeof (r as any)?.slug === "string" &&
-          ((r as any)?.pinned_version == null || typeof (r as any)?.pinned_version === "string"),
-      );
+      const rows = await fetchInstalls();
+      if (rows === null) return null;
+      return rows.map((row) => ({
+        slug: row.slug,
+        pinned_version: row.pinned_version,
+      }));
     },
     skillBody: async (slug, version) => {
-      const q = typeof version === "string" && version !== "" ? `?version=${encodeURIComponent(version)}` : "";
-      const v = (await get(`/api/v1/skills/${encodeURIComponent(slug)}/source${q}`)) as
-        | { skill_md?: unknown }
-        | null;
-      return typeof v?.skill_md === "string" ? v.skill_md : null;
+      const source = await skillsSource(slug, version);
+      return source?.skill_md ?? null;
     },
   };
 }
@@ -52,7 +35,7 @@ export async function prepareTurn(
   prompt: string,
   projectDir?: string,
 ): Promise<{ prompt: string; index: string; instructions?: string }> {
-  // Context assembly moved to the client (lib/context.ts) over the fs
+  // Context assembly lives in the client (lib/turn-context.ts) over the fs
   // bridge; browser mode has no local files and passes through untouched.
   const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;
   const scopes = await fs.scopes();

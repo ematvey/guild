@@ -79,8 +79,9 @@ export function VisibilityBadge({
   );
 }
 
-/** Two-letter initials for an owner without an avatar. */
-export function initials(label: string | null | undefined): string {
+/** Initials from the first letters of the first two words — the agent
+ *  glyph, distinct from the avatar chip's first two characters. */
+export function nameInitials(label: string | null | undefined): string {
   const text = (label ?? "").trim();
   if (text === "") return "?";
   const parts = text.split(/\s+/);
@@ -100,7 +101,7 @@ export function AgentGlyph({
       aria-hidden="true"
       className={`flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-xs font-semibold text-secondary-foreground ${className}`}
     >
-      {initials(name)}
+      {nameInitials(name)}
     </span>
   );
 }

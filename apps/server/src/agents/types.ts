@@ -116,6 +116,10 @@ export interface AgentThread {
   kind: AgentThreadKind;
   /** The spawning thread, or null for a root thread. */
   parent_thread_id: string | null;
+  /** The thread this one was opened from, or null when the user opened it.
+   *  A message an agent delivers into a new thread carries the run thread
+   *  here, so the agent can read that run and the client can link to it. */
+  origin_thread_id: string | null;
   /** Real tree depth: a root is 0, its child is 1. */
   depth: number;
   /** Set when the node (or an ancestor) was closed; deliveries stop. */
@@ -231,21 +235,3 @@ export interface AgentActivityEntry extends AgentRun {
   agent_name: string;
 }
 
-/** One file a delegated child run declared for transfer into the parent. */
-export type AgentArtifactStatus = "inbox" | "staged" | "released";
-
-export interface AgentDelegationArtifact {
-  id: string;
-  run_id: string;
-  parent_run_id: string;
-  agent_id: string;
-  /** Path relative to the child agent workspace. */
-  path: string;
-  size: number;
-  status: AgentArtifactStatus;
-  /** Path relative to the parent agent workspace when copied into its inbox. */
-  inbox_path: string | null;
-  /** Absolute staging path when the file is too large for the inbox copy. */
-  staging_path: string | null;
-  created_at: string;
-}

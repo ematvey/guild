@@ -1,0 +1,271 @@
+{
+  "model_roots": [
+    "crates/protocol/src"
+  ],
+  "concepts": [
+    {
+      "id": "ws-frame",
+      "definition": "One message on the member or machine WebSocket, tagged by type.",
+      "canonical": "crates/protocol/src/ws.rs",
+      "types": [
+        "WsClientMsg",
+        "WsServerMsg",
+        "MachineContext"
+      ],
+      "aliases": [
+        "ws_message",
+        "frame"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/ws.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/hub/protocol.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/lib/socket-client.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/hub/protocol.ts"
+        },
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/hub/protocol.ts"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/socket-client.ts"
+        }
+      ]
+    },
+    {
+      "id": "rpc-envelope",
+      "definition": "A JSON-RPC request, response or event on the engine's stdio and local daemon socket.",
+      "canonical": "crates/protocol/src/rpc.rs",
+      "types": [
+        "Request",
+        "Response",
+        "Event",
+        "RpcError",
+        "Connection"
+      ],
+      "aliases": [
+        "jsonrpc",
+        "rpc"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/rpc.rs",
+          "role": "wire"
+        },
+        {
+          "where": "crates/app-server/src/jsonrpc_loop.rs",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/lib/machine-rpc.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "crates/app-server/src/jsonrpc_loop.rs"
+        }
+      ]
+    },
+    {
+      "id": "tool-call",
+      "definition": "One model-requested tool invocation and its result.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "ToolCall",
+        "ToolSpec",
+        "ToolKind",
+        "ToolExecutor"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "crates/guild-core/src/tools/mod.rs",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/machines/dispatch.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "crates/guild-core/src/tools/mod.rs"
+        },
+        {
+          "from": "wire",
+          "to": "db",
+          "at": "apps/server/src/machines/dispatch.ts"
+        }
+      ]
+    },
+    {
+      "id": "registry-bundle",
+      "definition": "A signed archive of skills or integrations published to the org registry.",
+      "canonical": "crates/protocol/src/registry.rs",
+      "types": [
+        "BundleManifest",
+        "McpManifest",
+        "SettingsManifest",
+        "AuthManifest",
+        "ToolsManifest",
+        "TriggerSpec",
+        "FieldSpec"
+      ],
+      "aliases": [
+        "bundle",
+        "manifest"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/registry.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/bundle.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/registry-manifest.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/platform/bundle.ts"
+        }
+      ]
+    },
+    {
+      "id": "message",
+      "definition": "One chat message in the legacy completions shape, with role and content.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "Message",
+        "MessageAudio"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/provider/openai.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/platform/provider/openai.ts"
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "definition": "Token counts and cost for one model request.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "UsagePayload"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/usage.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/desktop/src/lib/thread-events.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "db",
+          "at": "apps/server/src/platform/usage.ts"
+        }
+      ]
+    },
+    {
+      "id": "model-request",
+      "definition": "One request to a model through the org gateway, and its streamed answer.",
+      "canonical": "crates/protocol/src/api.rs",
+      "types": [
+        "ChatCompletionRequest",
+        "StreamEvent"
+      ],
+      "aliases": [
+        "completion-request"
+      ],
+      "representations": [
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/provider/openai.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/provider/anthropic.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/platform/provider/openai.ts"
+        },
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/platform/provider/anthropic.ts"
+        }
+      ]
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "crates/protocol/src/lib.rs",
+      "reason": "barrel"
+    }
+  ],
+  "shared_canonical": [
+    "crates/protocol/src/api.rs"
+  ],
+  "attaches": []
+}

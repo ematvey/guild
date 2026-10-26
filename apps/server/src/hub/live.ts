@@ -55,6 +55,9 @@ export class LiveHub {
   /** The dispatch lane's disconnect hook (M4: pending machine tools settle
    *  as unknown-outcome when their connection dies). */
   onMachineDisconnected?: (machineId: string, connId: string) => void;
+  /** Machine slot presence flips (claimed, released, displaced): the feed
+   *  forwards each one to the owner's member sockets. */
+  onMachineStatus?: (machineId: string, userId: string, orgId: string, online: boolean) => void;
 
   /** Registers a browser socket, rejecting a new connection over the limit.
    *  (Rust `Hub::register_member`.) */
@@ -76,20 +79,6 @@ export class LiveHub {
       if (slot.holder.user_id === userId) machines += 1;
     }
     return members + machines;
-  }
-
-  /** Registers the only socket allowed for a machine. A newer connection
-   *  replaces the old holder and tells it to close before its sink drops —
-   *  but never a holder of a different user: a machine slot is owned, so a
-   *  foreign claim is refused instead of displacing the real executor.
-   *  (Rust `Hub::register_machine` — newest-wins form kept for callers that
-   *  predate instance tracking.) */
-  async registerMachine(m: LiveMember, machineId: string): Promise<MachineRegistration> {
-    const result = await this.registerMachineInstance(m, machineId, uuidv7(), false);
-    if (typeof result === "object" && "kind" in result) {
-      throw new Error("machine rejected");
-    }
-    return result;
   }
 
   /** Registers a machine socket with instance tracking. The 0.5.25 live-slot
@@ -146,6 +135,9 @@ export class LiveHub {
     const oldSlot = this.machines.get(machineId);
     this.owners.set(machineId, instance);
     this.machines.set(machineId, { holder: m, shutdown });
+    // Presence flips only on the first claim: a replacement keeps the slot
+    // online for the whole swap.
+    if (oldSlot === undefined) this.onMachineStatus?.(machineId, m.user_id, m.org_id, true);
 
     if (oldSlot !== undefined) {
       oldSlot.holder.sink.displace();
@@ -171,8 +163,12 @@ export class LiveHub {
         pending.settle({ settled: "dropped" });
       }
     }
-    const isCurrent = this.machines.get(machineId)?.holder.conn_id === connId;
-    if (isCurrent) this.machines.delete(machineId);
+    const holder = this.machines.get(machineId)?.holder ?? null;
+    const isCurrent = holder !== null && holder.conn_id === connId;
+    if (isCurrent) {
+      this.machines.delete(machineId);
+      this.onMachineStatus?.(machineId, holder.user_id, holder.org_id, false);
+    }
     this.onMachineDisconnected?.(machineId, connId);
   }
 
@@ -198,6 +194,7 @@ export class LiveHub {
     const slot = this.machines.get(machineId);
     if (!slot) return false;
     this.machines.delete(machineId);
+    this.onMachineStatus?.(machineId, slot.holder.user_id, slot.holder.org_id, false);
     slot.holder.sink.displace();
     slot.shutdown();
     return true;
@@ -325,10 +322,6 @@ export class LiveHub {
     );
   }
 
-  machineConnection(machineId: string): string | null {
-    return this.machines.get(machineId)?.holder.conn_id ?? null;
-  }
-
   machineOnline(machineId: string): boolean {
     return this.machines.has(machineId);
   }
@@ -359,14 +352,6 @@ export class LiveHub {
     return out;
   }
 
-  /** User ids with at least one live socket (browser or machine) — the
-   *  feed's presence poll iterates exactly the feeds Rust would run. */
-  connectedUserIds(): string[] {
-    const ids = new Set<string>(this.members.keys());
-    for (const slot of this.machines.values()) ids.add(slot.holder.user_id);
-    return [...ids];
-  }
-
   /** Returns browser sockets and machine sockets of one organization —
    *  the org-event fan-out (Rust per-user feeds filter the org channel
    *  and every member of the org holds a feed). */
@@ -380,6 +365,15 @@ export class LiveHub {
     for (const slot of this.machines.values()) {
       if (slot.holder.org_id === orgId) sinks.push(slot.holder.sink);
     }
+    return sinks;
+  }
+
+  /** Returns browser sockets of one user (no machine sockets: presence
+   *  frames are for the UI, not the executor). */
+  memberSinksOfUser(userId: string): SocketSink[] {
+    const sinks: SocketSink[] = [];
+    const perUser = this.members.get(userId);
+    if (perUser) for (const member of perUser.values()) sinks.push(member.sink);
     return sinks;
   }
 

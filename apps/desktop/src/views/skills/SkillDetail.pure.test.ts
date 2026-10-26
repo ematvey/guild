@@ -19,12 +19,12 @@ import {
   readBars,
   readSummary,
   shaPrefix,
-  initialsOf,
   isMarkdownPath,
   skillMdPreviewBody,
   sparkRects,
   updateAvailable,
 } from "./SkillDetail";
+import { avatarChip } from "../../lib/format";
 import type { SkillDetail as SkillDetailData, SkillMe } from "./skills-api";
 
 const base: SkillDetailData = {
@@ -312,9 +312,9 @@ describe("publishedLabel (the versions table's Published cell)", () => {
   });
 });
 
-describe("initialsOf (the avatar chips)", () => {
+describe("avatarChip (the avatar chips)", () => {
   it("takes the first two characters, uppercased", () => {
-    expect(initialsOf("Ada")).toBe("AD");
+    expect(avatarChip("Ada")).toBe("AD");
   });
 });
 

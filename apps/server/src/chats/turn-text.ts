@@ -6,6 +6,7 @@
 import { attachmentObjectKey, type AttachmentRow } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
+import { isTextual, modalityOf } from "../platform/domain/mime.js";
 
 /** Loaded attachment bytes for the current turn, wire-ready: base64 plus
  *  the content type (data URIs are derived at use time, gated by the
@@ -17,83 +18,10 @@ export interface MediaRef {
 
 export type MediaMap = Map<string, MediaRef>;
 
-export function modalityOf(contentType: string): string {
-  const ct = contentType.toLowerCase();
-  if (ct.startsWith("image/")) return "image";
-  if (ct.startsWith("audio/")) return "audio";
-  if (ct.startsWith("video/")) return "video";
-  return "document";
-}
-
-/** OpenAI `input_audio` accepts wav/mp3 only. */
-function audioFormat(mime: string): string | undefined {
-  switch (mime) {
-    case "audio/wav":
-    case "audio/x-wav":
-    case "audio/wave":
-      return "wav";
-    case "audio/mpeg":
-    case "audio/mp3":
-      return "mp3";
-    default:
-      return undefined;
-  }
-}
-
-/** Model-facing image/audio data URIs for a turn's attachments, gated by
- *  the route's native modalities. Unsupported media stays in the log and in
- *  object storage, never silently deleted — it just does not reach this
- *  model. */
-export function mediaParts(
-  media: MediaMap,
-  atts: readonly MessageAttachment[],
-  modalities: readonly string[],
-): { images: string[]; audio: { data: string; format: string }[] } {
-  const images: string[] = [];
-  const audio: { data: string; format: string }[] = [];
-  for (const a of atts) {
-    const m = media.get(a.id);
-    if (!m) continue;
-    const supported = modalities.includes(a.modality);
-    if (a.modality === "image" && supported) {
-      images.push(`data:${m.mime};base64,${m.b64}`);
-    } else if (a.modality === "audio" && supported) {
-      const f = audioFormat(m.mime);
-      if (f) audio.push({ data: m.b64, format: f });
-    }
-  }
-  return { images, audio };
-}
 
 /** Inline cap for one document attachment's textual content (chars) — a
  *  single huge file must not blow the context window by itself. */
 const ATTACHMENT_INLINE_LIMIT = 80_000;
-
-function attachmentIsTextual(contentType: string, filename: string): boolean {
-  const ct = contentType.toLowerCase();
-  if (ct.startsWith("text/")) return true;
-  if (
-    [
-      "application/json",
-      "application/xml",
-      "application/yaml",
-      "application/x-yaml",
-      "application/javascript",
-      "application/toml",
-      "application/sql",
-      "application/x-sh",
-    ].includes(ct)
-  ) {
-    return true;
-  }
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  return [
-    "md", "txt", "json", "rs", "py", "js", "ts", "tsx", "jsx", "toml", "yaml", "yml",
-    "csv", "tsv", "log", "sh", "bash", "sql", "html", "htm", "css", "xml", "ini",
-    "conf", "env", "c", "h", "cpp", "hpp", "go", "java", "rb", "php", "swift", "kt",
-    "proto", "gradle", "lock", "gitignore", "dockerfile", "makefile", "patch", "diff",
-  ].includes(ext);
-}
 
 /** Builds the arrival-turn user event from the requested attachment ids (in
  *  the chat's attachment order): chip metadata plus the text appended to the
@@ -123,7 +51,7 @@ export function buildTurnText(
       if (text.length > ATTACHMENT_INLINE_LIMIT) {
         text = Array.from(text).slice(0, ATTACHMENT_INLINE_LIMIT).join("") + "\n…[truncated]";
       }
-      if (attachmentIsTextual(row.content_type, row.filename) && text.length > 0) {
+      if (isTextual(row.content_type, row.filename) && text.length > 0) {
         blocks.push(`[Attachment: ${row.filename} (${row.content_type}, ${row.size_bytes} bytes)]\n${text}`);
       } else {
         blocks.push(`[Attachment: ${row.filename} (${row.content_type}, ${row.size_bytes} bytes) — content not inlined]`);

@@ -188,13 +188,18 @@ describe("supervisor reopen (M0)", () => {
     });
     expect(sent3.statusCode).toBe(200);
     await waitFor(async () => (await assistantText(chat.id)).includes("keep-alive"));
-    const chatList = await stack.env.app.inject({
-      method: "GET",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-    });
-    const listed = (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats
-      .find((c) => c.id === chat.id);
-    expect(listed!.generating).toBe(false);
+    const listedOf = async () => {
+      const chatList = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+      });
+      return (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats
+        .find((c) => c.id === chat.id);
+    };
+    // The answer is committed before the run lifecycle clears `generating`,
+    // so poll for the settled row rather than reading once.
+    await waitFor(async () => (await listedOf())?.generating === false);
+    expect((await listedOf())!.generating).toBe(false);
   }, 120_000);
 });

@@ -97,7 +97,7 @@ describe("pending steer content merge", () => {
     const firstRequest = await send("first steer", true);
     const secondRequest = await send("second steer", true);
     const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
-    const conversation = await runtime.conversationForChat(chatId, stack.orgId);
+    const conversation = await runtime.conversationForChat(chatId);
     const pending = () =>
       conversation.commit(async (tx) => {
         const items = (await tx.doc(InboxDoc, conversation.id)).items;

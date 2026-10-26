@@ -5,11 +5,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import type { SectionDetailProps } from "../section-nav";
+import type { DetailCodec, SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
+import {
+  createProvider,
+  deleteGatewayRoute,
+  deleteProvider,
+  putGatewayRoute,
+  SETTINGS_PATHS,
+  updateProvider,
+} from "../../../lib/api/settings";
 import { Blocks, Plus, Trash2, Waypoints } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -69,14 +76,35 @@ type View =
   | { kind: "provider"; slug: string };
 
 function parseView(detail: string | null | undefined): View {
-  if (detail == null) return { kind: "list" };
-  if (detail === "add") return { kind: "route-add" };
-  if (detail.startsWith("provider/")) {
-    const slug = detail.slice("provider/".length);
-    return slug === "new" ? { kind: "provider-add" } : { kind: "provider", slug };
-  }
-  return { kind: "route", model: detail };
+  return viewCodec.parse(detail ?? null);
 }
+
+/** The section's sub-page grammar: the wire stays an opaque string. */
+const viewCodec: DetailCodec<View> = {
+  parse(detail) {
+    if (detail == null) return { kind: "list" };
+    if (detail === "add") return { kind: "route-add" };
+    if (detail.startsWith("provider/")) {
+      const slug = detail.slice("provider/".length);
+      return slug === "new" ? { kind: "provider-add" } : { kind: "provider", slug };
+    }
+    return { kind: "route", model: detail };
+  },
+  format(view) {
+    switch (view.kind) {
+      case "list":
+        return null;
+      case "route-add":
+        return "add";
+      case "route":
+        return view.model;
+      case "provider-add":
+        return "provider/new";
+      case "provider":
+        return `provider/${view.slug}`;
+    }
+  },
+};
 
 const fmtUsd = (n: number) => `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}/Mtok`;
 
@@ -102,9 +130,9 @@ export default function ModelsSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const routesRes = useCachedGet<{ routes: RouteRow[] }>("/api/v1/admin/gateway/routes");
+  const routesRes = useCachedGet<{ routes: RouteRow[] }>(SETTINGS_PATHS.gatewayRoutes);
   const providersRes = useCachedGet<{ providers: ProviderRow[] }>(
-    "/api/v1/admin/gateway/providers",
+    SETTINGS_PATHS.gatewayProviders,
   );
   const routes = routesRes.data?.routes ?? null;
   const providers = providersRes.data?.providers ?? null;
@@ -119,6 +147,7 @@ export default function ModelsSection({
   // URL-driven view: the list, the route add flow, a route detail (model id),
   // or a provider page ("provider/new" | "provider/<slug>").
   const view = parseView(detail);
+  const open = (next: View) => onDetailChange(viewCodec.format(next));
 
   const providerName = (slug: string) =>
     providers?.find((p) => p.provider === slug)?.name ?? slug;
@@ -222,10 +251,10 @@ export default function ModelsSection({
         model={view.model}
         providers={providers}
         onChanged={() => reload()}
-        onRenamed={(model) => onDetailChange(model)}
+        onRenamed={(model) => open({ kind: "route", model })}
         onBack={() => {
           reload();
-          onDetailChange(null);
+          open({ kind: "list" });
         }}
       />
     );
@@ -236,9 +265,9 @@ export default function ModelsSection({
         providers={providers}
         onAdded={(model) => {
           reload();
-          onDetailChange(model);
+          open({ kind: "route", model });
         }}
-        onBack={() => onDetailChange(null)}
+        onBack={() => open({ kind: "list" })}
       />
     );
   }
@@ -249,7 +278,7 @@ export default function ModelsSection({
         onChanged={() => reload()}
         onBack={() => {
           reload();
-          onDetailChange(null);
+          open({ kind: "list" });
         }}
       />
     );
@@ -259,9 +288,9 @@ export default function ModelsSection({
       <ProviderAdd
         onCreated={(slug) => {
           reload();
-          onDetailChange(`provider/${slug}`);
+          open({ kind: "provider", slug });
         }}
-        onBack={() => onDetailChange(null)}
+        onBack={() => open({ kind: "list" })}
       />
     );
   }
@@ -279,7 +308,7 @@ export default function ModelsSection({
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Providers</h3>
-            <Button size="sm" className="h-8" onClick={() => onDetailChange("provider/new")}>
+            <Button size="sm" className="h-8" onClick={() => open({ kind: "provider-add" })}>
               <Plus className="size-3.5" /> Add provider
             </Button>
           </div>
@@ -288,14 +317,14 @@ export default function ModelsSection({
             data={providers}
             search={(p) => `${p.name} ${p.provider} ${p.base_url}`}
             searchPlaceholder="Search providers…"
-            onRowClick={(p) => onDetailChange(`provider/${p.provider}`)}
+            onRowClick={(p) => open({ kind: "provider", slug: p.provider })}
             empty={
               <EmptyState
                 icon={Blocks}
                 title="No providers"
                 hint="A provider pairs a name with a wire protocol, base URL and API key."
                 action={
-                  <Button size="sm" onClick={() => onDetailChange("provider/new")}>
+                  <Button size="sm" onClick={() => open({ kind: "provider-add" })}>
                     <Plus className="size-3.5" /> Add provider
                   </Button>
                 }
@@ -308,7 +337,7 @@ export default function ModelsSection({
         <section className="mt-6 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Model routes</h3>
-            <Button size="sm" className="h-8" onClick={() => onDetailChange("add")}>
+            <Button size="sm" className="h-8" onClick={() => open({ kind: "route-add" })}>
               <Plus className="size-3.5" /> Add model
             </Button>
           </div>
@@ -317,14 +346,14 @@ export default function ModelsSection({
             data={routes}
             search={(r) => `${r.alias} ${r.model} ${providerName(r.provider)}`}
             searchPlaceholder="Search models…"
-            onRowClick={(r) => onDetailChange(r.model)}
+            onRowClick={(r) => open({ kind: "route", model: r.model })}
             empty={
               <EmptyState
                 icon={Waypoints}
                 title="No model routes"
                 hint="Add a route to make a model selectable in chats."
                 action={
-                  <Button size="sm" onClick={() => onDetailChange("add")}>
+                  <Button size="sm" onClick={() => open({ kind: "route-add" })}>
                     <Plus className="size-3.5" /> Add model
                   </Button>
                 }
@@ -338,7 +367,7 @@ export default function ModelsSection({
 }
 
 function useProviders(): { providers: ProviderRow[] | null; settled: boolean; error: string | null } {
-  const res = useCachedGet<{ providers: ProviderRow[] }>("/api/v1/admin/gateway/providers");
+  const res = useCachedGet<{ providers: ProviderRow[] }>(SETTINGS_PATHS.gatewayProviders);
   return { providers: res.data?.providers ?? null, settled: res.settled, error: res.error };
 }
 
@@ -407,7 +436,7 @@ function ProviderAdd({
     setBusy(true);
     setError(null);
     try {
-      const res = await api<{ provider: string }>("POST", "/api/v1/admin/gateway/providers", {
+      const res = await createProvider<{ provider: string }>({
         name: name.trim(),
         protocol,
         base_url: baseUrl.trim(),
@@ -513,7 +542,7 @@ function ProviderDetail({
     setBusy(true);
     setError(null);
     try {
-      await api("PUT", `/api/v1/admin/gateway/providers/${encodeURIComponent(slug)}`, {
+      await updateProvider(slug, {
         name: draft.name.trim(),
         protocol: draft.protocol,
         base_url: draft.baseUrl.trim(),
@@ -535,7 +564,7 @@ function ProviderDetail({
   const remove = async () => {
     setBusy(true);
     try {
-      await api("DELETE", `/api/v1/admin/gateway/providers/${encodeURIComponent(slug)}`);
+      await deleteProvider(slug);
       toast.success("Provider deleted", { description: p.name });
       onBack();
     } catch (e) {
@@ -650,7 +679,7 @@ function ProviderDetail({
 }
 
 function useRouteField(model: string) {
-  const res = useCachedGet<{ routes: RouteRow[] }>("/api/v1/admin/gateway/routes");
+  const res = useCachedGet<{ routes: RouteRow[] }>(SETTINGS_PATHS.gatewayRoutes);
   return { route: res.data?.routes.find((x) => x.model === model) ?? null, settled: res.settled, error: res.error };
 }
 
@@ -747,7 +776,7 @@ function RouteDetail({
         setBusy(false);
         return;
       }
-      await api("PUT", "/api/v1/admin/gateway/routes", {
+      await putGatewayRoute({
         original_model: model,
         model: draft.model.trim(),
         alias: draft.alias.trim(),
@@ -781,7 +810,7 @@ function RouteDetail({
   const remove = async () => {
     setBusy(true);
     try {
-      await api("DELETE", `/api/v1/admin/gateway/routes/${encodeURIComponent(model)}`);
+      await deleteGatewayRoute(model);
       toast.success("Route deleted", { description: r.alias || r.model });
       onBack();
     } catch (e) {
@@ -1077,7 +1106,7 @@ function RouteAdd({
               setBusy(true);
               setError(null);
               try {
-                await api("PUT", "/api/v1/admin/gateway/routes", {
+                await putGatewayRoute({
                   model: model.trim(),
                   alias: alias.trim(),
                   provider,

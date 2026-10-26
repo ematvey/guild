@@ -4,13 +4,29 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { pino } from "pino";
 import { containerName, containerSpec, loadRunnerConfig, validKey, validSubpath } from "../../sandbox/runner/spec.js";
 import { SandboxManager } from "../../sandbox/runner/manager.js";
-import type { DockerClient } from "../../sandbox/runner/docker.js";
+import { DockerError, type DockerClient } from "../../sandbox/runner/docker.js";
 import { decodeValue, encodeValue, LineSplitter } from "../../sandbox/protocol.js";
 import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
+
+// A dead JuiceFS mount answers ENOTCONN from any fs call on the volume, and
+// only a fresh runner container re-resolves the mount. Every other path in
+// this file keeps the real implementation.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...real,
+    mkdir: async (p: Parameters<typeof real.mkdir>[0], o?: Parameters<typeof real.mkdir>[1]) => {
+      if (String(p).endsWith("/deadmount")) {
+        throw Object.assign(new Error(`ENOTCONN: socket is not connected, mkdir '${String(p)}'`), { code: "ENOTCONN" });
+      }
+      return real.mkdir(p, o);
+    },
+  };
+});
 
 const ORG = "0194a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const AGENT = "0194a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
@@ -175,6 +191,51 @@ describe("always-on agent sandboxes", () => {
     expect(calls.some((c) => c.includes("aaaaaaaaaaaaaaaaaaaa"))).toBe(false);
     expect(calls.some((c) => c.includes("bbbbbbbbbbbbbbbbbbbb"))).toBe(false);
     expect(calls.some((c) => c.includes("cccccccccccccccccccc") && c.includes("/stop"))).toBe(true);
+  });
+
+  it("attach removes a sandbox whose workspace mount died", async () => {
+    const name = "guild-sbx-compose-dddddddddddddddddddd";
+    const calls: string[] = [];
+    const docker = {
+      request: async (method: string, path: string) => {
+        calls.push(`${method} ${path}`);
+        if (path === `/containers/${name}/json`) {
+          return { Id: "1", Name: name, State: { Running: true, Status: "running" }, Config: { Labels: { "guild.sandbox.project": "compose" } } };
+        }
+        if (path === `/containers/${name}/exec`) return { Id: "exec-1" };
+        if (path === "/exec/exec-1/json") return { Running: false, ExitCode: 1 };
+        return {};
+      },
+    } as unknown as DockerClient;
+    const manager = new SandboxManager(config, docker, log);
+    await expect(manager.attach(name)).rejects.toThrow(/mount is dead/);
+    expect(calls).toContain("POST /exec/exec-1/start");
+    expect(calls).toContain(`DELETE /containers/${name}?force=true`);
+  });
+});
+
+describe("ensure on a dead volume", () => {
+  it("rejects with a retryable 503 and restarts the runner", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "guild-runner-volume-"));
+    const boot = loadRunnerConfig(
+      { ...env, GUILD_SANDBOX_DATA_DIR: root, GUILD_SANDBOX_AGENT_DIR: path.join(root, "agents") },
+      { project: "compose" },
+    );
+    const docker = {
+      request: async (_method: string, p: string) => {
+        if (p.startsWith("/containers/") && p.endsWith("/json")) throw new DockerError(404, "no such container");
+        return {};
+      },
+    } as unknown as DockerClient;
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const manager = new SandboxManager(boot, docker, pino({ level: "silent" }));
+    const error = await manager.ensure(`chat:${ORG}:dead`, `chats/${ORG}/deadmount`).catch((e: unknown) => e);
+    expect((error as { status?: number }).status).toBe(503);
+    expect((error as Error).message).toMatch(/volume is stale/);
+    // The exit is deferred 100ms so the 503 reaches the client first.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(exit).toHaveBeenCalledWith(1);
+    exit.mockRestore();
   });
 });
 

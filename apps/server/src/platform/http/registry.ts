@@ -4,13 +4,13 @@
 // disabled MCP-plugin integration row (routines are dropped — 2026-10-04
 // decision: the feature is out of scope, automation bundles are rejected).
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
@@ -35,9 +35,6 @@ export function sha256Hex(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-export function newHookToken(): string {
-  return `hook_${randomBytes(24).toString("hex")}`;
-}
 
 function queryOne(req: FastifyRequest, name: string): string | undefined {
   const url = new URL(req.url, "http://local");

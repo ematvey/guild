@@ -359,7 +359,7 @@ async fn two_workspaces_stay_independent() {
     state
         .transition(
             AuthChange::Switch {
-                base_url: a.uri().into(),
+                base_url: a.uri(),
             },
             Some(&store),
             &links,
@@ -400,7 +400,7 @@ async fn two_workspaces_stay_independent() {
     state
         .transition(
             AuthChange::SignOutWorkspace {
-                base_url: b.uri().into(),
+                base_url: b.uri(),
             },
             Some(&store),
             &links,
@@ -582,9 +582,11 @@ async fn login_refreshes_org_identity_into_the_store() {
             &links,
         )
         .unwrap();
-    state
-        .refresh_org_identity(server.uri().as_str(), Some(&store))
-        .await;
+    // The fetch runs outside the state (and its lock); the state only
+    // stores the result.
+    let cloud = state.cloud_of(&server.uri()).unwrap().clone();
+    let (name, logo) = cloud.org_settings().await.unwrap();
+    assert!(state.apply_org_identity(&server.uri(), name, logo, Some(&store)));
 
     let (_, rows) = state.workspaces();
     assert_eq!(rows[0].name.as_deref(), Some("Acme Rockets"));

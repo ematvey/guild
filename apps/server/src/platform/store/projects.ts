@@ -71,6 +71,14 @@ export class ProjectStore {
    *  the unique index is the guard (it covers a cross-device race and a
    *  second user of a shared machine); a violation is a 409. Archived
    *  projects step aside and free the folder. */
+  /** Tells the feed that this user's workspace lists moved. Runs inside the
+   *  writing transaction, so the notify lands with the commit. */
+  private async notifyWorkspace(client: PoolClient, orgId: string, userId: string): Promise<void> {
+    await client.query("SELECT pg_notify('guild_workspace', $1)", [
+      JSON.stringify({ org_id: orgId, user_id: userId }),
+    ]);
+  }
+
   async create(orgId: string, userId: string, name: string, folder: string, machineId: string): Promise<ProjectRow> {
     const id = uuidv7();
     const client = await this.pool.connect();
@@ -92,6 +100,7 @@ export class ProjectStore {
         throw error;
       }
       await client.query("COMMIT");
+      await this.notifyWorkspace(client, orgId, userId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -184,6 +193,7 @@ export class ProjectStore {
         [updated],
       );
       await client.query("COMMIT");
+      await this.notifyWorkspace(client, orgId, userId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -210,6 +220,7 @@ export class ProjectStore {
         [projectId],
       );
       await client.query("COMMIT");
+      await this.notifyWorkspace(client, orgId, userId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

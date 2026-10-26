@@ -34,6 +34,7 @@ use uuid::Uuid;
 /// session sat "connected" forever while the server had long freed the
 /// slot (machine offline until the daemon restarted). Env-overridable for
 /// tests.
+// coherence:seam owner=@ematvey until=2027-01-31 reason="test hook shortens the heartbeat"
 fn heartbeat_secs() -> u64 {
     std::env::var("GUILD_LINK_HEARTBEAT_SECS")
         .ok()
@@ -41,6 +42,7 @@ fn heartbeat_secs() -> u64 {
         .unwrap_or(15)
 }
 
+// coherence:seam owner=@ematvey until=2027-01-31 reason="test hook shortens the idle verdict"
 fn idle_secs() -> u64 {
     std::env::var("GUILD_LINK_IDLE_SECS")
         .ok()
@@ -106,9 +108,7 @@ struct ToolExecutions(std::collections::HashMap<String, tokio::task::JoinHandle<
 impl ToolExecutions {
     fn spawn(&mut self, id: String, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.0.retain(|_, task| !task.is_finished());
-        if !self.0.contains_key(&id) {
-            self.0.insert(id, tokio::spawn(work));
-        }
+        self.0.entry(id).or_insert_with(|| tokio::spawn(work));
     }
 
     fn cancel(&mut self, id: &str) {
@@ -344,15 +344,6 @@ const FS_LIST_MAX_ENTRIES: usize = 1000;
 /// must not ride the executor socket as one frame.
 const FS_READ_MAX_BYTES: usize = 1024 * 1024;
 
-/// The skill scope `skills.sync_v1` converges: the machine user's home
-/// (`~/.agents/skills` — the same root the remote-context skill scan
-/// reads). Env-overridable for tests.
-fn skills_root() -> PathBuf {
-    std::env::var("GUILD_SKILLS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::fs_bridge::home_dir())
-}
-
 /// Fills each sync entry's bundle URL when the server omitted it: the
 /// machine's own authenticated registry bundle endpoint — the same one
 /// install_skill uses.
@@ -391,7 +382,7 @@ async fn sync_skills(
             let cloud = cloud.clone();
             async move { crate::skill_sync::fetch_bundle(&cloud, &url).await }
         },
-        &skills_root(),
+        &crate::fs_bridge::skills_home(),
     )
     .await
 }
@@ -406,7 +397,7 @@ async fn sync_skills(
 /// golden replay pins the machine-connect frame stream byte-exactly —
 /// hence this pull.
 async fn pull_skills(cloud: &CloudClient) -> Result<serde_json::Value, String> {
-    pull_skills_at(cloud, &skills_root()).await
+    pull_skills_at(cloud, &crate::fs_bridge::skills_home()).await
 }
 
 /// `pull_skills` with an explicit root — the test seam (the env-var root
@@ -847,26 +838,67 @@ impl LinkRegistry {
     }
 }
 
+/// How often the supervisor checks that every key still has a running
+/// link task. A task that ends for any reason (a wedged runtime, a panic,
+/// a dropped socket) leaves the machine offline; without this tick nothing
+/// would ever restart it, because the registry only wakes on a config
+/// change.
+const LINK_WATCHDOG: Duration = Duration::from_secs(30);
+
 /// The link supervisor: spawns one [`run`] task per registry entry and
 /// follows the registry's spawn feed. Lives exactly one host cycle (the
 /// caller aborts its handle at teardown — the JoinSet aborts every child
-/// link task with it). The spawn feed may repeat a key; the supervisor
-/// spawns only the first request per key (the channel dedups configs).
+/// link task with it). The spawn feed may repeat a key: a key whose task
+/// is still running is skipped, a key whose task ended is respawned, so a
+/// dead link heals on the next publish and on the watchdog tick.
 pub async fn run_link_supervisor(
     shared: Shared,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) {
-    let mut spawned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut live: std::collections::HashMap<String, tokio::task::AbortHandle> =
+        std::collections::HashMap::new();
     let mut set = tokio::task::JoinSet::new();
-    while let Some(base) = rx.recv().await {
-        if spawned.contains(&base) {
-            continue;
+    let mut watchdog = tokio::time::interval(LINK_WATCHDOG);
+    watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            request = rx.recv() => {
+                let Some(base) = request else { return }; // spawn feed closed
+                spawn_if_dead(&shared, &mut set, &mut live, &base);
+            }
+            _ = watchdog.tick() => {
+                // Reap finished tasks so the JoinSet does not grow, then
+                // restart every key that has a config but no running link.
+                while set.try_join_next().is_some() {}
+                let dead: Vec<String> = live
+                    .iter()
+                    .filter(|(_, handle)| handle.is_finished())
+                    .map(|(base, _)| base.clone())
+                    .collect();
+                for base in dead {
+                    spawn_if_dead(&shared, &mut set, &mut live, &base);
+                }
+            }
         }
-        if let Some(cfg_rx) = shared.links.subscribe(&base) {
-            let handle = set.spawn(run(shared.clone(), cfg_rx));
-            spawned.insert(base);
-            let _ = handle; // the JoinSet aborts children on drop
-        }
+    }
+}
+
+/// Spawns one link task for `base` unless its previous task is still
+/// running. A key with no published config is left alone: the task would
+/// park on the channel until a config arrives.
+fn spawn_if_dead(
+    shared: &Shared,
+    set: &mut tokio::task::JoinSet<()>,
+    live: &mut std::collections::HashMap<String, tokio::task::AbortHandle>,
+    base: &str,
+) {
+    if live.get(base).is_some_and(|handle| !handle.is_finished()) {
+        return;
+    }
+    if let Some(cfg_rx) = shared.links.subscribe(base) {
+        // The JoinSet aborts children on drop, so a host cycle tears the
+        // links down with the supervisor.
+        live.insert(base.to_string(), set.spawn(run(shared.clone(), cfg_rx)));
     }
 }
 
@@ -936,7 +968,7 @@ fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 /// shutdown.
 pub async fn watch_token_store(
     path: PathBuf,
-    session: Arc<std::sync::Mutex<crate::jsonrpc_loop::Session>>,
+    session: Arc<std::sync::Mutex<crate::jsonrpc_loop::EngineState>>,
     links: LinkRegistry,
     mut shutdown_rx: watch::Receiver<bool>,
     poll: Duration,
@@ -958,7 +990,7 @@ pub async fn watch_token_store(
         let cfg = config_from_store(&path);
         {
             // The in-memory session follows the store too: the daemon built
-            // Session.auth at boot, and the unit's CLI / agent.start /
+            // its engine state's auth at boot, and the unit's CLI / agent.start /
             // registry.* read it — a re-pair must not leave stale auth.
             // Memory-only: no persist, and the link send below keeps its
             // dedup.
@@ -1213,7 +1245,7 @@ mod tests {
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),
@@ -1603,7 +1635,7 @@ mod tests {
         let (_shutdown, mut stop) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),
@@ -1982,7 +2014,7 @@ mod tests {
         let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let session = Arc::new(std::sync::Mutex::new(
-            crate::jsonrpc_loop::Session::default(),
+            crate::jsonrpc_loop::EngineState::default(),
         ));
         let watched = session.clone();
         tokio::spawn(watch_token_store(
@@ -2020,7 +2052,7 @@ mod tests {
         assert_eq!(
             session.lock().unwrap().auth.cloud().unwrap().token,
             "t2",
-            "Session.auth follows the reloaded store"
+            "EngineState.auth follows the reloaded store"
         );
         // A store change that resolves to the config already held dedups:
         // no publish, the channel stays quiet (mtime re-save of the same
@@ -2057,7 +2089,7 @@ mod tests {
             org_logo_url: None,
         };
         session_store::save(&path, &store("ta", "a@b")).unwrap();
-        let mut initial = crate::jsonrpc_loop::Session::default();
+        let mut initial = crate::jsonrpc_loop::EngineState::default();
         initial.auth.adopt_stored(&store("ta", "a@b"));
         initial.chat_id = Some(uuid::Uuid::now_v7());
         initial.model = "m".into();
@@ -2186,7 +2218,7 @@ mod error_frame_tests {
         let (_shutdown, mut stop) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(
-                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &Shared::new(crate::jsonrpc_loop::EngineState::default()),
                 &config,
                 &MachineMeta::default(),
                 Uuid::now_v7(),

@@ -67,13 +67,25 @@ function firstTextOf(payload: Record<string, unknown>): string {
 /** The terminal assistant message of a turn: the one with no tool call. Only
  *  that message is the run's answer; earlier assistant rows are narration
  *  around tool calls. */
-function terminalAssistantEvent(events: readonly TurnEvent[]): TurnEvent | null {
+function terminalAssistantEvent(
+  events: readonly { type: string; payload: Record<string, unknown> }[],
+): { type: string; payload: Record<string, unknown> } | null {
   const assistant = events.filter((event) => event.type === "assistant_message");
   for (let i = assistant.length - 1; i >= 0; i--) {
     const event = assistant[i]!;
     if (!blocksOf(event.payload).some((block) => block.type === "tool_call")) return event;
   }
   return null;
+}
+
+/** The terminal assistant text of a turn: the last assistant message with no
+ *  tool call, its text blocks joined and trimmed. Only that message is the
+ *  run's answer; earlier assistant rows are narration around tool calls. */
+export function terminalAssistantText(
+  events: readonly { type: string; payload: Record<string, unknown> }[],
+): string {
+  const terminal = terminalAssistantEvent(events);
+  return terminal === null ? "" : textOf(terminal.payload).trim();
 }
 
 function clip(text: string, max: number): string {
@@ -133,10 +145,7 @@ export class AgentRunLifecycle {
         payload: row.payload,
         created_at: row.created_at,
       }));
-      const finalText = (() => {
-        const terminal = terminalAssistantEvent(turnEvents);
-        return terminal === null ? "" : textOf(terminal.payload).trim();
-      })();
+      const finalText = terminalAssistantText(turnEvents);
       const tokens = turnEvents.reduce((sum, event) => {
         if (event.type !== "assistant_message") return sum;
         const usage = event.payload.usage as { tokens_in?: number; tokens_out?: number } | undefined;

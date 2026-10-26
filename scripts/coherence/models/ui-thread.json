@@ -1,0 +1,394 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "settings-section",
+      "definition": "One addressable pane of the settings surface, with its group and admin flag.",
+      "canonical": "apps/desktop/src/views/settings/settings-sections.tsx",
+      "types": [
+        "SectionDef",
+        "SectionId"
+      ],
+      "aliases": [
+        "settings-pane"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/settings/settings-sections.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/sidebar/settings-panel.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/Thread.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": []
+    },
+    {
+      "id": "sidebar-tab",
+      "definition": "The rail entry the user is on. It is a projection of ChatRoute.tab, skills and agents, not stored state.",
+      "canonical": "apps/desktop/src/views/sidebar-rail.tsx",
+      "types": [
+        "SidebarTab"
+      ],
+      "aliases": [
+        "rail-tab"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/sidebar-rail.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/status.ts",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/Thread.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": []
+    },
+    {
+      "id": "outgoing-command",
+      "definition": "A send the composer accepted, with its delivery state, uploads and recovery draft.",
+      "canonical": "apps/desktop/src/lib/outgoing-command.ts",
+      "types": [
+        "OutgoingCommand",
+        "DraftAttachment"
+      ],
+      "aliases": [
+        "send-command"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/outgoing-command.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-outgoing.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/Thread.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/Thread.tsx"
+        }
+      ]
+    },
+    {
+      "id": "thread-navigation",
+      "definition": "The thread URL: a chat inside a project carries the project, and a bare chat URL is rewritten to it once the chat list names the project.",
+      "canonical": "apps/desktop/src/views/thread/navigation.ts",
+      "types": [
+        "NavigationState",
+        "NavigationPhase",
+        "NavigationEvent",
+        "NavigationDecision"
+      ],
+      "aliases": [
+        "navigation"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/thread/navigation.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-thread-store.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-thread-store.ts"
+        }
+      ]
+    },
+    {
+      "id": "telemetry",
+      "definition": "The opt-in switch and sender for anonymous app diagnostics.",
+      "canonical": "apps/desktop/src/lib/telemetry.ts",
+      "types": [],
+      "aliases": [
+        "diagnostics"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/telemetry.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/AboutSection.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/telemetry.ts"
+        }
+      ]
+    }
+  ],
+  "attaches": [
+    {
+      "where": "apps/desktop/src/views/projects/CreateProjectDialog.tsx",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/projects/PathSpecifier.tsx",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/resolve-project-dir.ts",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/ThreadOverlays.tsx",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/hooks/use-chat-actions.ts",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "project",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/ApprovalsSection.tsx",
+      "concept": "approval",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/AssistantSection.tsx",
+      "concept": "approval",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/AssistantSection.tsx",
+      "concept": "admin-prompt",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/lib/api/approvals.ts",
+      "concept": "admin-prompt",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/approval.ts",
+      "concept": "approval",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "approval",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
+      "concept": "api-key",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
+      "concept": "gateway-route",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/ModelsSection.tsx",
+      "concept": "gateway-route",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/MachineSection.tsx",
+      "concept": "machine",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "machine",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/ThreadOverlays.tsx",
+      "concept": "machine",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
+      "concept": "machine",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/McpSection.tsx",
+      "concept": "user-mcp-server",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/RegistrySection.tsx",
+      "concept": "registry-item",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/SsoSection.tsx",
+      "concept": "oidc-config",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/TeamsSection.tsx",
+      "concept": "team",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/UsageSection.tsx",
+      "concept": "usage-event",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/UsersSection.tsx",
+      "concept": "user",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/AboutSection.tsx",
+      "concept": "release",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/AboutSection.tsx",
+      "concept": "daemon",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/sidebar/chats-panel.tsx",
+      "concept": "chat-list",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
+      "concept": "chat-list",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/hooks/use-chat-actions.ts",
+      "concept": "chat-list",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/status.ts",
+      "concept": "chat-list",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "chat-list",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/attachments.tsx",
+      "concept": "attachment",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/blocks.tsx",
+      "concept": "thread-state",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "thread-state",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/ThreadOverlays.tsx",
+      "concept": "chat-route",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "chat-route",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/Thread.tsx",
+      "concept": "agent",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/mentions.ts",
+      "concept": "skill",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/tool-blocks.tsx",
+      "concept": "tool-call",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/tool-text.ts",
+      "concept": "tool-call",
+      "role": "ui"
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "apps/desktop/src/views/settings/components/empty-state.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/components/fact-card.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/components/field.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/components/page-header.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/section-nav.ts",
+      "reason": "types-only"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/use-cached-api.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/views/sidebar/chrome.tsx",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/use-visual-viewport-pin.ts",
+      "reason": "infrastructure"
+    }
+  ]
+}

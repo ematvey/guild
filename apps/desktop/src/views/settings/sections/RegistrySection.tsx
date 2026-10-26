@@ -5,12 +5,17 @@
 
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import type { SectionDetailProps } from "../section-nav";
+import type { DetailCodec, SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
+import {
+  registryItemPath,
+  registryItemsPath,
+  reviewRegistryItem,
+  SETTINGS_PATHS,
+} from "../../../lib/api/settings";
 import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
-import { displayVersion } from "../../skills/skills-api";
+import { formatVersion } from "../../skills/version";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
@@ -34,6 +39,26 @@ interface VersionRow {
 
 const KINDS = ["mcp", "integration"] as const;
 type Kind = (typeof KINDS)[number];
+
+type RegistryDetail = { kind: "list" } | { kind: "item"; itemKind: Kind; slug: string };
+
+/** The section's sub-page grammar: "<kind>/<slug>" or the list. */
+const registryDetailCodec: DetailCodec<RegistryDetail> = {
+  parse(detail) {
+    const [itemKind, slug] = (detail ?? "").split("/");
+    if (
+      detail &&
+      (KINDS as readonly string[]).includes(itemKind) &&
+      slug
+    ) {
+      return { kind: "item", itemKind: itemKind as Kind, slug };
+    }
+    return { kind: "list" };
+  },
+  format(view) {
+    return view.kind === "list" ? null : `${view.itemKind}/${view.slug}`;
+  },
+};
 
 const KIND_LABELS: Record<Kind, string> = {
   mcp: "MCP server",
@@ -59,23 +84,29 @@ export default function RegistrySection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const [kind, slug] = (detail ?? "").split("/");
-  if (detail && (KINDS as readonly string[]).includes(kind) && slug) {
+  const view = registryDetailCodec.parse(detail);
+  if (view.kind === "item") {
     return (
       <ItemDetail
-        kind={kind as Kind}
-        slug={slug}
+        kind={view.itemKind}
+        slug={view.slug}
         onBack={() => onDetailChange(null)}
       />
     );
   }
-  return <RegistryList onOpen={(k, s) => onDetailChange(`${k}/${s}`)} />;
+  return (
+    <RegistryList
+      onOpen={(itemKind, slug) =>
+        onDetailChange(registryDetailCodec.format({ kind: "item", itemKind, slug }))
+      }
+    />
+  );
 }
 
 function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {
-  const mcp = useCachedGet<{ items: ItemRow[] }>("/api/v1/registry/mcp");
+  const mcp = useCachedGet<{ items: ItemRow[] }>(SETTINGS_PATHS.registryMcp);
   const integration = useCachedGet<{ items: ItemRow[] }>(
-    "/api/v1/registry/integration",
+    SETTINGS_PATHS.registryIntegration,
   );
   const items: Record<Kind, ItemRow[] | null> = {
     mcp: mcp.data?.items ?? null,
@@ -117,7 +148,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
         header: "Version",
         cell: ({ row }) => (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {row.original.latest_version ? displayVersion(row.original.latest_version) : "—"}
+            {row.original.latest_version ? formatVersion(row.original.latest_version) : "—"}
           </span>
         ),
       },
@@ -167,9 +198,9 @@ function ItemDetail({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const itemsRes = useCachedGet<{ items: ItemRow[] }>(`/api/v1/registry/${kind}`);
+  const itemsRes = useCachedGet<{ items: ItemRow[] }>(registryItemsPath(kind));
   const versionsRes = useCachedGet<{ versions: VersionRow[] }>(
-    `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`,
+    registryItemPath(kind, slug),
   );
   const item = itemsRes.data?.items.find((x) => x.slug === slug) ?? null;
   const versions = versionsRes.data?.versions ?? null;
@@ -199,7 +230,7 @@ function ItemDetail({
     setBusy(true);
     setError(null);
     try {
-      await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, body);
+      await reviewRegistryItem(kind, slug, body);
       toast.success(status === "approved" ? "Approved" : "Reverted to draft", {
         description: slug,
       });
@@ -254,7 +285,7 @@ function ItemDetail({
         </FactCard>
         <FactCard label="Latest version">
           <span className="font-mono">
-            {item?.latest_version ? displayVersion(item.latest_version) : "—"}
+            {item?.latest_version ? formatVersion(item.latest_version) : "—"}
           </span>
         </FactCard>
       </FactGrid>

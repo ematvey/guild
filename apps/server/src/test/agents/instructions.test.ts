@@ -66,11 +66,11 @@ describe("composeAgentInstructions", () => {
   it("truncates a long file with a marker that points at the file", () => {
     const text = composeAgentInstructions(
       { name: "Scout", is_personal: false },
-      config({ ...FULL, "AGENTS.md": `# AGENTS.md\n\n${"x".repeat(9 * 1024)}` }),
+      config({ ...FULL, "AGENTS.md": `# AGENTS.md\n\n${"x".repeat(40 * 1024)}` }),
     );
     expect(text).toContain("(truncated at");
     expect(text).toContain("read the file for the rest");
-    expect(text.length).toBeLessThan(30 * 1024);
+    expect(text.length).toBeLessThan(36 * 1024);
   });
 
   it("appends the desktop project chain after the workspace files", () => {
@@ -153,5 +153,45 @@ describe("composeAgentInstructions", () => {
   it("omits the delegation block when the agent cannot spawn", () => {
     const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
     expect(text).not.toContain("<delegation>");
+  });
+
+  it("tells a routine run to deliver with send_message", () => {
+    const text = composeAgentInstructions(
+      { name: "Assistant", is_personal: true },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      false,
+      { kind: "routine_run", routineName: "Morning email digest", origin: null },
+    );
+    expect(text).toContain('<routine_run name="Morning email digest">');
+    expect(text).toContain("Reach the user with send_message");
+    expect(text).toContain("When the run found nothing worth reporting, send nothing");
+    expect(text).toContain("Nobody reads this thread");
+  });
+
+  it("names the run thread a delivered thread was opened from", () => {
+    const text = composeAgentInstructions(
+      { name: "Assistant", is_personal: true },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      false,
+      {
+        kind: "thread",
+        routineName: "Morning email digest",
+        origin: { thread_id: "thread-1", title: "Morning email digest — 2026-10-26" },
+      },
+    );
+    expect(text).toContain('<opened_by_agent thread="thread-1"');
+    expect(text).toContain("conversation_read on thread thread-1");
+  });
+
+  it("adds no thread block for a plain thread", () => {
+    const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
+    expect(text).not.toContain("<routine_run");
+    expect(text).not.toContain("<opened_by_agent");
   });
 });

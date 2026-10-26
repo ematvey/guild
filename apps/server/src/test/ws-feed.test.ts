@@ -130,6 +130,16 @@ async function waitFrame(
   return JSON.parse((found as { data: string }).data) as Record<string, unknown>;
 }
 
+/** Polls an async condition until it holds; throws when the deadline passes. */
+async function eventually(probe: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await probe()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`condition not met within ${timeoutMs}ms`);
+}
+
 /** A second member user + live session token (org-scoped stranger). */
 async function strangerToken(email: string): Promise<string> {
   const token = crypto.randomBytes(24).toString("hex");
@@ -599,6 +609,44 @@ describe("member-socket feed", () => {
     browser.end();
   });
 
+  it("pushes machine_status to the owner's member socket on connect and disconnect", { timeout: TEST_TIMEOUT }, async () => {
+    const machineId = "fix-status-m1";
+    await stack.env.db.query(
+      `INSERT INTO machines (machine_id, org_id, user_id, label)
+       VALUES ($1, $2, $3, 'Desk')`,
+      [machineId, stack.orgId, stack.memberId],
+    );
+
+    const browser = await memberSocket();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    const ticket = (JSON.parse(res.body) as { ticket: string }).ticket;
+    const machine = new ScriptedClient(
+      base,
+      `ticket=${ticket}&client_id=${crypto.randomUUID()}&machine_id=${machineId}&machine_name=Desk&instance_id=${crypto.randomUUID()}&resume=false`,
+    );
+    await machine.open();
+
+    // No poll: the flip itself is a frame, so it lands at once.
+    const online = await waitFrame(
+      browser,
+      (f) => f.type === "machine_status" && f.machine_id === machineId,
+    );
+    expect(online.online).toBe(true);
+
+    machine.end();
+    await machine.closed();
+    const offline = await waitFrame(
+      browser,
+      (f) => f.type === "machine_status" && f.machine_id === machineId && f.online === false,
+    );
+    expect(offline.online).toBe(false);
+    browser.end();
+  });
+
   it("the HTTP thread list agrees with the hub — same truth as the machines list", { timeout: TEST_TIMEOUT }, async () => {
     // Regression: GET /api/v1/chats hardcoded machine_online=false, so the
     // webchat showed the "machine is offline" banner while the sidebar's
@@ -639,6 +687,9 @@ describe("member-socket feed", () => {
 
     machine.end();
     await machine.closed();
+    // The socket reader clears the presence slot asynchronously after the
+    // close, so poll for the HTTP row instead of assuming it is already clear.
+    await eventually(async () => (await onlineOf()) === false);
     expect(await onlineOf()).toBe(false);
   });
 
@@ -784,6 +835,76 @@ describe("member-socket feed", () => {
     const doneRow = (JSON.parse(doneList.body) as { chats: { id: string; working: boolean }[] })
       .chats.find((row) => row.id === chat.id);
     expect(doneRow?.working).toBe(false);
+    ws.end();
+  });
+  it("pushes every workspace list on connect", { timeout: TEST_TIMEOUT }, async () => {
+    const ws = await memberSocket();
+    // The legacy chat list is first (old clients wait for it); the rest of
+    // the sidebar state follows on the same bootstrap.
+    await waitFrame(ws, (f) => f.type === "archived_thread_list");
+    await waitFrame(ws, (f) => f.type === "project_list");
+    await waitFrame(ws, (f) => f.type === "machine_list");
+    ws.end();
+  });
+
+  it("pushes the updated workspace on a chat rename and archive", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("rename me");
+    const ws = await memberSocket();
+
+    const renamed = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { title: "Renamed chat" },
+    });
+    expect(renamed.statusCode).toBe(200);
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "thread_list" &&
+        (f.chats as { id: string; title?: string }[]).some(
+          (c) => c.id === chat.id && c.title === "Renamed chat",
+        ),
+    );
+
+    const archived = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { archived: true },
+    });
+    expect(archived.statusCode).toBe(200);
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "archived_thread_list" &&
+        (f.chats as { id: string }[]).some((c) => c.id === chat.id),
+    );
+    ws.end();
+  });
+
+  it("pushes project_list when a project is created", { timeout: TEST_TIMEOUT }, async () => {
+    const machineId = "fix-workspace-project-m1";
+    await stack.env.db.query(
+      `INSERT INTO machines (machine_id, org_id, user_id, label)
+       VALUES ($1, $2, $3, 'Desk') ON CONFLICT DO NOTHING`,
+      [machineId, stack.orgId, stack.memberId],
+    );
+    const ws = await memberSocket();
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      headers: auth(stack.memberToken),
+      payload: { folder: "/tmp/fix-workspace-project", machine_id: machineId },
+    });
+    expect(res.statusCode).toBe(200);
+    const project = JSON.parse(res.body) as { id: string };
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "project_list" &&
+        (f.projects as { id: string }[]).some((p) => p.id === project.id),
+    );
     ws.end();
   });
 });

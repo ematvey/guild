@@ -1,7 +1,7 @@
 //! The file bridge: primitive, allowlisted filesystem operations the
 //! webview calls over the RPC channel (unification spec §3 item 2). The
 //! discovery *logic* (skills index, AGENTS.md chain, `/name` expansion)
-//! lives in TS (`apps/desktop/src/lib/context.ts`); Rust only touches
+//! lives in TS (`apps/desktop/src/lib/turn-context.ts`); Rust only touches
 //! bytes — reads/writes/existence/listing inside the allowlist.
 //!
 //! Read roots: the bound project folder, its ancestor chain up to and
@@ -40,6 +40,15 @@ pub fn guild_config_dir() -> PathBuf {
 /// The platform home (user skill scope `~/.agents` lives here).
 pub fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// The user skill scope root: `~/.agents` lives under it. `GUILD_SKILLS_ROOT`
+/// overrides it for tests. `skills.sync_v1` writes here and the
+/// remote-context skill scan reads here, so both see one root.
+pub fn skills_home() -> PathBuf {
+    std::env::var("GUILD_SKILLS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir())
 }
 
 impl Allowlist {
@@ -583,7 +592,7 @@ mod tests {
             assert!(read_text_with(&allow, &via_link).is_err());
             // A dangling link whose target is outside the roots must not
             // become a write path either.
-            std::os::unix::fs::symlink(&tmp.join("no-such-dir"), project.join("dangling")).unwrap();
+            std::os::unix::fs::symlink(tmp.join("no-such-dir"), project.join("dangling")).unwrap();
             assert!(write_text_with(
                 &allow,
                 &format!("{}/dangling/x.txt", project.display()),

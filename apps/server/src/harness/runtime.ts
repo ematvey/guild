@@ -99,7 +99,7 @@ import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
-import { composeAgentInstructions } from "./instructions.js";
+import { composeAgentInstructions, type ThreadInstructionContext } from "./instructions.js";
 import { TITLE_SYSTEM, cleanGeneratedTitle } from "./title.js";
 import { SharedPoolDatabase, applyChatMappingMigration } from "../importer/durable.js";
 
@@ -161,7 +161,12 @@ export class GuildRuntime {
   /** Short-lived chat → running run id cache: one lookup per model call is
    *  too much, and a run id only matters while the turn is live. */
   private readonly runIdCache = new Map<string, { id: string | null; at: number }>();
+  /** The chat ↔ conversation mapping, both directions. Writes go through
+   *  `mapConversation`/`unmapConversation`; `conversationForChat` is the only
+   *  accessor that may create, and the reverse map makes
+   *  `chatOfConversation` a constant-time read. */
   private readonly chatToConversation = new Map<string, number>();
+  private readonly conversationToChat = new Map<number, string>();
   private get harness() {
     return this.host.value?.harness;
   }
@@ -483,10 +488,7 @@ export class GuildRuntime {
   /** The conversation's chat id (the reverse of the chat→conversation
    *  mapping; unmapped conversations — e.g. the root — have none). */
   async chatOfConversation(conversationId: number): Promise<string | null> {
-    for (const [chatId, id] of this.chatToConversation) {
-      if (id === conversationId) return chatId;
-    }
-    return null;
+    return this.conversationToChat.get(conversationId) ?? null;
   }
 
   /** Agent workspace resolution lands with the agents runtime. Plain chats
@@ -752,7 +754,19 @@ export class GuildRuntime {
         await bootstrap.close(BACKGROUND_CONTEXT);
       }
     });
-    this.chatToConversation.set(chatId, id);
+    this.mapConversation(chatId, id);
+  }
+
+  private mapConversation(chatId: string, conversationId: number): void {
+    this.chatToConversation.set(chatId, conversationId);
+    this.conversationToChat.set(conversationId, chatId);
+  }
+
+  private unmapConversation(chatId: string): void {
+    const conversationId = this.chatToConversation.get(chatId);
+    if (conversationId === undefined) return;
+    this.chatToConversation.delete(chatId);
+    if (this.conversationToChat.get(conversationId) === chatId) this.conversationToChat.delete(conversationId);
   }
 
   /** Server-side boot scan: chats whose conversation has live tasks or
@@ -994,7 +1008,7 @@ export class GuildRuntime {
     const res = await this.pool.query<{ chat_id: string; conversation_id: string }>(
       "SELECT chat_id, conversation_id FROM chat_conversations",
     );
-    for (const row of res.rows) this.chatToConversation.set(row.chat_id, Number(row.conversation_id));
+    for (const row of res.rows) this.mapConversation(row.chat_id, Number(row.conversation_id));
   }
 
   /** Attaches the bridge's event stream to one conversation (dedup: the
@@ -1109,14 +1123,16 @@ export class GuildRuntime {
     return res.rows[0]!.org_id;
   }
 
-  /** Resolves (or creates) the durable conversation for a chat. */
-  async conversationForChat(chatId: string, orgId: string): Promise<Conversation> {
+  /** Resolves (or creates) the durable conversation for a chat. This is the
+   *  only accessor that may create. The durable conversation is ownerless:
+   *  the chat row owns the tenant, and callers resolve org from it. */
+  async conversationForChat(chatId: string): Promise<Conversation> {
     await this.start();
     const known = this.chatToConversation.get(chatId);
     if (known !== undefined) {
       const conversation = await this.harness!.conversation(known as ConversationId, BACKGROUND_CONTEXT);
       if (conversation) return conversation;
-      this.chatToConversation.delete(chatId);
+      this.unmapConversation(chatId);
       await this.pool.query("DELETE FROM chat_conversations WHERE chat_id = $1", [chatId]);
       // Missing durable state cannot be reconstructed from a possibly
       // incomplete visible journal. A replacement starts with empty context.
@@ -1128,11 +1144,10 @@ export class GuildRuntime {
     const id = await this.directory.ensure(chatId, async () =>
       Number((await this.harness!.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT)).id),
     );
-    this.chatToConversation.set(chatId, id);
+    this.mapConversation(chatId, id);
     if (!this.watches.has(chatId)) await this.attachWatch(chatId, id);
     const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) throw new Error("mapped conversation does not exist");
-    void orgId;
     return conversation;
   }
 
@@ -1161,6 +1176,8 @@ export class GuildRuntime {
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name) };
     }
     const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
+    const thread =
+      chatId === undefined ? undefined : ((await this.threadContextFor(chatId)) ?? undefined);
     const canDelegate =
       spawnedBy === undefined
         ? agent.tools_mode === "all" || agent.tools.includes("subagents")
@@ -1172,7 +1189,36 @@ export class GuildRuntime {
       machineBound,
       spawnedBy,
       canDelegate,
+      thread,
     );
+  }
+
+  /** The thread's own context: an isolated routine run, or a thread the agent
+   *  opened from one of its runs. Null for a plain thread. */
+  private async threadContextFor(chatId: string): Promise<ThreadInstructionContext | null> {
+    const res = await this.pool.query<{
+      kind: string;
+      origin_thread_id: string | null;
+      origin_title: string | null;
+      routine_name: string | null;
+    }>(
+      `SELECT t.kind, t.origin_thread_id,
+              (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
+              (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
+               WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
+               ORDER BY rn.created_at DESC LIMIT 1) AS routine_name
+       FROM agent_threads t
+       WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    const origin =
+      row.origin_thread_id === null
+        ? null
+        : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
+    if (row.kind !== "routine_run" && origin === null) return null;
+    return { kind: row.kind, routineName: row.routine_name, origin };
   }
 
   /** The tree context of a spawned child thread, or undefined for a root. */
@@ -1413,7 +1459,7 @@ export class GuildRuntime {
       return;
     }
     await this.start();
-    const conversation = await this.conversationForChat(chatId, orgId);
+    const conversation = await this.conversationForChat(chatId);
     const pending = await conversation.commit(async (tx) => {
       const inbox = await tx.doc(InboxDoc, conversation.id);
       const item = inbox.items.find((candidate) => candidate.mode === "steer");
@@ -1557,6 +1603,7 @@ export class GuildRuntime {
       threads: this.threads,
       agent,
       userId: ref.user_id,
+      chatId,
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });
@@ -1605,7 +1652,7 @@ export class GuildRuntime {
       return this.supervisor.submit(chatId, input);
     }
     await this.sweepExpiredCommands();
-    const conversation = await this.conversationForChat(chatId, orgId);
+    const conversation = await this.conversationForChat(chatId);
     await this.refreshOrgModels(orgId);
     const owner = await this.chats.ownerOf(chatId);
     // Integrations (M8) + user MCP: the shared per-turn provisioning (the
@@ -1885,6 +1932,7 @@ export class GuildRuntime {
       this.skillsRuntime.forget(id);
     }
     this.chatToConversation.clear();
+    this.conversationToChat.clear();
     this.providerChats.clear();
     await this.codemodeSandbox.close().catch(() => {});
     await this.sandboxes?.close().catch(() => {});

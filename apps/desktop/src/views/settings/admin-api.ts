@@ -2,21 +2,9 @@
 // Paths resolve through apiUrl: same-origin on the web, the paired server
 // URL inside the Tauri webview (whose origin is tauri://localhost).
 
-import { apiUrl } from "../../lib/session";
+import { apiUrl, clearToken, getToken, setToken } from "../../lib/session";
 
-const TOKEN_KEY = "guild_token";
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(t: string) {
-  localStorage.setItem(TOKEN_KEY, t);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
+export { clearToken, getToken, setToken };
 
 export class ApiError extends Error {
   constructor(

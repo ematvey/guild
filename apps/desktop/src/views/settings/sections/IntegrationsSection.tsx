@@ -10,10 +10,19 @@
 import { useMemo, useState, useEffect } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
+import { rowDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
+import {
+  createIntegration,
+  deleteIntegration,
+  integrationSecretsPath,
+  integrationToolsPath,
+  putIntegrationTool,
+  SETTINGS_PATHS,
+  updateIntegration,
+} from "../../../lib/api/settings";
 import { Plug, Plus, Trash2, Webhook } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -168,7 +177,7 @@ export default function IntegrationsSection({
   const list = useCachedGet<{
     integrations: IntegrationRow[];
     available: AvailableEntry[];
-  }>("/api/v1/admin/integrations");
+  }>(SETTINGS_PATHS.integrations);
   const rows = list.data?.integrations ?? null;
   const available = list.data?.available ?? null;
   const error = list.error;
@@ -214,20 +223,16 @@ export default function IntegrationsSection({
   /// the row starts disabled and the navigation lands on its id.
   const openIntegration = async (entry: (typeof tableRows)[number]) => {
     if (entry.row) {
-      onDetailChange(entry.row.id);
+      onDetailChange(rowDetailCodec.format(entry.row.id));
       return;
     }
     try {
-      const created = await api<{ id: string }>(
-        "POST",
-        "/api/v1/admin/integrations",
-        {
-          name: entry.name,
-        },
-      );
+      const created = await createIntegration<{ id: string }>({
+        name: entry.name,
+      });
       toast.success("Integration added", { description: entry.name });
       reload();
-      onDetailChange(created.id);
+      onDetailChange(rowDetailCodec.format(created.id));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error("Could not add integration", { description: msg });
@@ -279,7 +284,10 @@ export default function IntegrationsSection({
 
   const [addOpen, setAddOpen] = useState(false);
 
-  if (detail !== null) {
+  const view = rowDetailCodec.parse(detail);
+  const open = (id: string | null) => onDetailChange(rowDetailCodec.format(id));
+
+  if (view !== null) {
     // Deep-linked detail: wait for the list before resolving the id —
     // otherwise a not-yet-loaded row would render as not-found.
     if (rows === null || available === null) {
@@ -290,7 +298,7 @@ export default function IntegrationsSection({
         </div>
       );
     }
-    const configured = rows.find((r) => r.id === detail);
+    const configured = rows.find((r) => r.id === view);
     if (!configured) {
       return (
         <div>
@@ -298,7 +306,7 @@ export default function IntegrationsSection({
             title="Integrations"
             back={{
               label: "Integrations",
-              onClick: () => onDetailChange(null),
+              onClick: () => open(null),
             }}
           />
           <p className="text-sm text-muted-foreground">
@@ -320,7 +328,7 @@ export default function IntegrationsSection({
         onChanged={reload}
         onBack={() => {
           reload();
-          onDetailChange(null);
+          open(null);
         }}
       />
     );
@@ -530,7 +538,7 @@ function IntegrationDetail({
   // New credential values keyed by field name; empty/absent = unchanged.
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
 
-  const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
+  const secretsPath = integrationSecretsPath(id);
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
   const secrets = secretsRes.data?.secrets ?? null;
 
@@ -644,7 +652,7 @@ function IntegrationDetail({
       const secretsPayload = Object.fromEntries(
         Object.entries(secretDraft).filter(([, v]) => v !== ""),
       );
-      await api("PUT", `/api/v1/admin/integrations/${id}`, {
+      await updateIntegration(id, {
         config: cfg,
         enabled,
         secrets: secretsPayload,
@@ -667,7 +675,7 @@ function IntegrationDetail({
   const remove = async () => {
     setBusy(true);
     try {
-      await api("DELETE", `/api/v1/admin/integrations/${id}`);
+      await deleteIntegration(id);
       toast.success("Integration removed", { description: name });
       onBack();
     } catch (e) {
@@ -940,7 +948,7 @@ function ToolCuration({
   isMcp: boolean;
 }) {
   const res = useCachedGet<ToolsResponse>(
-    `/api/v1/admin/integrations/${id}/tools`,
+    integrationToolsPath(id),
   );
   const data = res.data ?? null;
   const [busyTool, setBusyTool] = useState<string | null>(null);
@@ -948,7 +956,7 @@ function ToolCuration({
   const update = async (tool: CuratedTool, patch: Partial<CuratedTool>) => {
     setBusyTool(tool.name);
     try {
-      await api("PUT", `/api/v1/admin/integrations/${id}/tools/${tool.name}`, {
+      await putIntegrationTool(id, tool.name, {
         enabled: patch.enabled ?? tool.enabled,
         approval: patch.approval ?? tool.approval,
       });

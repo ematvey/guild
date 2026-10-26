@@ -16,7 +16,7 @@ describe("ChatListItem", () => {
       <ChatListItem title="Deploy notes" active status={idle} onClick={() => {}} onRename={() => {}} onArchive={() => {}} />,
     );
     expect(html).toContain("Deploy notes");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-sidebar-accent");
     expect(html).toContain("Row actions");
   });
 
@@ -52,19 +52,6 @@ describe("ChatListItem", () => {
       <ChatListItem title="t" active={false} status={{ generating: false, unread: true }} onClick={() => {}} />,
     );
     expect(unread).toContain("unseen replies");
-  });
-
-  it("shows the unseen count when the row carries one", () => {
-    const html = renderToStaticMarkup(
-      <ChatListItem
-        title="t"
-        active={false}
-        status={{ generating: false, unread: true, unreadCount: 3 }}
-        onClick={() => {}}
-      />,
-    );
-    expect(html).toContain("3 unseen replies");
-    expect(html).toContain(">3<");
   });
 
   it("hides the row menu when no action is available", () => {
@@ -148,6 +135,6 @@ describe("panels", () => {
       <SettingsPanel role="admin" activeSection="general" onSelectSection={() => {}} />,
     );
     expect(html).toContain("Workspace");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-sidebar-accent");
   });
 });
