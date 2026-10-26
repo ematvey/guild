@@ -41,6 +41,8 @@ export interface ChatTree {
   status: string | null;
   depth: number;
   parent: { chat_id: string; title: string } | null;
+  /** The run thread this one was opened from, when an agent delivered it. */
+  origin: { chat_id: string; title: string } | null;
 }
 
 /** The open chat's position in the thread tree, for the child thread header. */

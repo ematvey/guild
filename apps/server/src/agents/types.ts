@@ -116,6 +116,10 @@ export interface AgentThread {
   kind: AgentThreadKind;
   /** The spawning thread, or null for a root thread. */
   parent_thread_id: string | null;
+  /** The thread this one was opened from, or null when the user opened it.
+   *  A message an agent delivers into a new thread carries the run thread
+   *  here, so the agent can read that run and the client can link to it. */
+  origin_thread_id: string | null;
   /** Real tree depth: a root is 0, its child is 1. */
   depth: number;
   /** Set when the node (or an ancestor) was closed; deliveries stop. */

@@ -142,7 +142,7 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
 const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.kind,
-  t.parent_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
+  t.parent_thread_id, t.origin_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
   ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
 
 const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
@@ -211,6 +211,7 @@ function toThread(row: Record<string, unknown>): AgentThread {
     title_locked: Boolean(row.title_locked),
     kind: row.kind as AgentThreadKind,
     parent_thread_id: (row.parent_thread_id as string | null) ?? null,
+    origin_thread_id: (row.origin_thread_id as string | null) ?? null,
     depth: Number(row.depth ?? 0),
     closed_at: row.closed_at === null || row.closed_at === undefined ? null : pgTimestampToRfc3339(row.closed_at as string),
     created_at: pgTimestampToRfc3339(row.created_at as string),
@@ -723,6 +724,7 @@ export class AgentStore {
     userId: string,
     title: string,
     kind: AgentThreadKind = "thread",
+    options: { originThreadId?: string } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
@@ -737,9 +739,10 @@ export class AgentStore {
         null,
       );
       await client.query(
-        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, $4, $5, false, $6)`,
-        [id, agentId, userId, chat.id, title, kind],
+        `INSERT INTO agent_threads
+           (id, agent_id, user_id, chat_id, title, title_locked, kind, origin_thread_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7)`,
+        [id, agentId, userId, chat.id, title, kind, options.originThreadId ?? null],
       );
       await client.query("COMMIT");
     } catch (error) {

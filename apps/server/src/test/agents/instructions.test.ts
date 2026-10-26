@@ -154,4 +154,43 @@ describe("composeAgentInstructions", () => {
     const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
     expect(text).not.toContain("<delegation>");
   });
+
+  it("tells a routine run to deliver with send_message", () => {
+    const text = composeAgentInstructions(
+      { name: "Assistant", is_personal: true },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      false,
+      { kind: "routine_run", routineName: "Morning email digest", origin: null },
+    );
+    expect(text).toContain('<routine_run name="Morning email digest">');
+    expect(text).toContain("calling send_message with the full text");
+    expect(text).toContain("Nobody reads this thread");
+  });
+
+  it("names the run thread a delivered thread was opened from", () => {
+    const text = composeAgentInstructions(
+      { name: "Assistant", is_personal: true },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      false,
+      {
+        kind: "thread",
+        routineName: "Morning email digest",
+        origin: { thread_id: "thread-1", title: "Morning email digest — 2026-10-26" },
+      },
+    );
+    expect(text).toContain('<opened_by_agent thread="thread-1"');
+    expect(text).toContain("conversation_read on thread thread-1");
+  });
+
+  it("adds no thread block for a plain thread", () => {
+    const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
+    expect(text).not.toContain("<routine_run");
+    expect(text).not.toContain("<opened_by_agent");
+  });
 });

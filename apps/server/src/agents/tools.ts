@@ -36,6 +36,9 @@ export interface AgentToolDeps {
   /** The user whose private thread this run serves: a thread this tool
    *  creates belongs to them. */
   userId: string;
+  /** The chat this turn runs in. A thread the agent opens records it as its
+   *  origin, so the agent can read the run behind a delivered message. */
+  chatId?: string;
   /** Present only when this chat has a running run and the subagent tree is
    *  addressable. */
   subagents?: SubagentsToolContext;
@@ -55,7 +58,7 @@ export interface AgentMessageResult {
  *  thread activity marker and writes the inbox notice. The chat's unread
  *  projection follows from the new assistant event. */
 export async function sendAgentMessage(
-  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent" | "userId">,
+  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent" | "userId" | "chatId">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
@@ -75,7 +78,10 @@ export async function sendAgentMessage(
       url: `/thread/${existing.rows[0].chat_id}`,
     };
   }
-  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title);
+  const origin = deps.chatId === undefined ? null : await deps.store.threadByChatId(deps.chatId);
+  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title, "thread", {
+    ...(origin === null ? {} : { originThreadId: origin.id }),
+  });
   await deps.threads.appendEvent(
     thread.chat_id,
     assistantMessageEvent(
