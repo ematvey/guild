@@ -5,7 +5,9 @@ import { ChildThreadHeader } from "./ChildThreadHeader";
 
 const childTree: ChatTree = {
   chat_id: "child-chat",
-  kind: "child",
+  type: "subagent",
+  archived: false,
+  deleted: false,
   title: "market scan",
   agent_id: "a1",
   agent_name: "Echo",
@@ -33,7 +35,7 @@ describe("ChildThreadHeader", () => {
   it("renders nothing for a plain chat", () => {
     const plain: ChatTree = {
       ...childTree,
-      kind: "chat",
+      type: "user",
       depth: 0,
       parent: null,
     };

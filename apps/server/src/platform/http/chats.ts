@@ -60,6 +60,10 @@ export function chatWire(row: {
    *  to created_at — the sidebar's recent-activity sort key. Single-chat
    *  responses omit it (their key order is wire-pinned). */
   last_activity_at?: string;
+  /** List rows only: what the chat's thread is. */
+  type?: string;
+  archived?: boolean;
+  deleted?: boolean;
   /** Hub-computed liveness of the bound machine; callers must pass it —
    *  a hardcoded false desyncs this surface from the ws push and the
    *  machines list (the "offline" banner vs green pin mismatch). */
@@ -79,6 +83,9 @@ export function chatWire(row: {
   out.unread = row.unread ?? false;
   if (row.blocked !== undefined) out.blocked = row.blocked;
   if (row.last_activity_at !== undefined) out.last_activity_at = row.last_activity_at;
+  if (row.type !== undefined) out.type = row.type;
+  if (row.archived !== undefined) out.archived = row.archived;
+  if (row.deleted !== undefined) out.deleted = row.deleted;
   if (row.project_id !== null) out.project_id = row.project_id;
   if (row.project_name) out.project_name = row.project_name;
   if (row.project_machine_label) out.project_machine_label = row.project_machine_label;
@@ -107,9 +114,31 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
       project_name: row.project_name,
       project_machine_label: row.project_machine_label,
       last_activity_at: row.last_activity_at,
+      type: row.type,
+      archived: row.archived,
+      deleted: row.deleted,
       machine_online: machineOnlineOf(chats, row),
     }),
   );
+}
+
+/** A single-chat response keeps the pinned Chat wire: type, archive and
+ *  deletion are thread facts that the tree endpoint and the list rows carry,
+ *  not fields of this object. */
+function plainChatWire(chats: ChatsCtx, row: ChatRow): Record<string, unknown> {
+  return chatWire({
+    id: row.id,
+    org_id: row.org_id,
+    user_id: row.user_id,
+    title: row.title,
+    created_at: row.created_at,
+    machine_id: row.machine_id,
+    machine_label: row.machine_label,
+    generating: row.generating,
+    unread: false,
+    project_id: row.project_id,
+    machine_online: machineOnlineOf(chats, row),
+  });
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -170,7 +199,7 @@ export function registerChatsRoutes(
     const chat = projectId
       ? await chats.chats.createChatForProject(user.org_id, user.id, title, projectId)
       : await chats.chats.createChat(user.org_id, user.id, title, null);
-    return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
+    return reply.status(200).send(plainChatWire(chats, chat));
   };
   // Deprecated alias (the desktop transport lags releases): POST /api/v1/chats.
   app.post("/api/v1/chats", createThread);
@@ -287,7 +316,7 @@ export function registerChatsRoutes(
     const raw = body["project_id"];
     const projectId = typeof raw === "string" && raw !== "" ? validateUuid(raw) : null;
     const chat = await chats.chats.setProject(user.org_id, chatId, user, projectId);
-    return reply.status(200).send(chatWire({ ...chat, machine_online: machineOnlineOf(chats, chat) }));
+    return reply.status(200).send(plainChatWire(chats, chat));
   };
   // Deprecated alias: POST /api/v1/chats/:id/project.
   app.post("/api/v1/chats/:id/project", setThreadProject);
@@ -359,11 +388,40 @@ export function registerChatsRoutes(
       await chats.runtime.stopChat(chatId).catch(() => {});
       await chats.turnCommands.cancelAllWaiting(chatId);
     }
-    return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
+    return reply.status(200).send(plainChatWire(chats, chat));
   };
   // Deprecated alias: PATCH /api/v1/chats/:id (rename/archive).
   app.patch("/api/v1/chats/:id", patchThread);
   app.patch("/api/v1/threads/:id", patchThread);
+
+  // Deletion is separate from archiving: a deleted chat leaves every list,
+  // its subtree stops, and the row stays for the transcript.
+  const deleteThread = async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    const chat = await chats.chats.deleteChat(user.org_id, chatId, user);
+    await chats.runtime.closeChatSubtree(chatId).catch(() => {});
+    await chats.runtime.stopChat(chatId).catch(() => {});
+    return reply.status(200).send(
+      chatWire({
+        id: chat.id,
+        org_id: chat.org_id,
+        user_id: chat.user_id,
+        title: chat.title,
+        created_at: chat.created_at,
+        machine_id: chat.machine_id,
+        machine_label: chat.machine_label,
+        generating: chat.generating,
+        unread: false,
+        project_id: chat.project_id,
+        archived: chat.archived,
+        deleted: chat.deleted,
+        machine_online: machineOnlineOf(chats, chat),
+      }),
+    );
+  };
+  app.delete("/api/v1/chats/:id", deleteThread);
+  app.delete("/api/v1/threads/:id", deleteThread);
 
   // --- Gateway chat commands (the M3 flip of gateway.rs's chat half) ---
 

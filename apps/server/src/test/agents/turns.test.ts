@@ -88,7 +88,7 @@ describe("agent turns", () => {
 
     // The default thread keeps its name; a turn into it never renames it.
     const thread = await stack.env.db.query<{ id: string; title: string; chat_id: string }>(
-      "SELECT id, title, chat_id FROM agent_threads WHERE agent_id = $1 AND kind = 'default'",
+      "SELECT id, title, chat_id FROM agent_threads WHERE agent_id = $1 AND is_default",
       [agent.id],
     );
     expect(thread.rows[0]!.title).toBe("Main thread");
@@ -214,7 +214,7 @@ describe("agent picker", () => {
     const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
 
     const thread = await stack.env.db.query<{ chat_id: string }>(
-      "SELECT chat_id FROM agent_threads WHERE agent_id = $1 AND kind = 'default'",
+      "SELECT chat_id FROM agent_threads WHERE agent_id = $1 AND is_default",
       [agent.id],
     );
     const chatId = thread.rows[0]!.chat_id;

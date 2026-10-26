@@ -6,6 +6,16 @@ import type { ChatSummary } from "../../lib/api/chats";
 import { sidebarGrouping } from "../projects/projects";
 import { ChatListItem } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
 
 export const ChatsPanel = memo(function ChatsPanel({
   grouping,
@@ -19,6 +29,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   onRenameChat,
   onArchiveChat,
   onUnarchiveChat,
+  onDeleteChat,
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
   /** True while the chat list is still loading (skeleton rows). */
@@ -36,8 +47,10 @@ export const ChatsPanel = memo(function ChatsPanel({
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
   onUnarchiveChat?: (id: string) => void;
+  onDeleteChat?: (id: string) => void;
 }) {
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -80,6 +93,9 @@ export const ChatsPanel = memo(function ChatsPanel({
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}
+                onDelete={
+                  onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title }) : undefined
+                }
               />
             ))}
           {!loadingChats && grouping.visible.length === 0 && (
@@ -113,6 +129,9 @@ export const ChatsPanel = memo(function ChatsPanel({
                     onClick={() => onOpenChat(c.id)}
                     archiveLabel="Unarchive"
                     onArchive={onUnarchiveChat ? () => onUnarchiveChat(c.id) : undefined}
+                    onDelete={
+                      onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title }) : undefined
+                    }
                   />
                 ))}
               </div>
@@ -120,6 +139,30 @@ export const ChatsPanel = memo(function ChatsPanel({
           </div>
         )}
       </div>
+      <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleteTarget?.title || "this thread"}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The thread leaves your lists and its runs stop. Its transcript is kept.
+              This cannot be undone in the app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white"
+              onClick={() => {
+                const target = deleteTarget;
+                setDeleteTarget(null);
+                if (target) onDeleteChat?.(target.id);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 });

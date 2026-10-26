@@ -163,7 +163,7 @@ describe("composeAgentInstructions", () => {
       false,
       undefined,
       false,
-      { kind: "routine_run", routineName: "Morning email digest", origin: null },
+      { type: "routine", routineName: "Morning email digest", origin: null },
     );
     expect(text).toContain('<routine_run name="Morning email digest">');
     expect(text).toContain("Reach the user with send_message");
@@ -180,7 +180,7 @@ describe("composeAgentInstructions", () => {
       undefined,
       false,
       {
-        kind: "thread",
+        type: "user",
         routineName: "Morning email digest",
         origin: { thread_id: "thread-1", title: "Morning email digest — 2026-10-26" },
       },

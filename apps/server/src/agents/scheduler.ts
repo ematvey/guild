@@ -326,7 +326,7 @@ export class AgentScheduler {
     try {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
       const userId = row.created_by_user_id ?? row.owner_user_id;
-      const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine_run");
+      const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine");
       const run = await this.deps.store.createRun({
         agent_id: row.agent_id,
         user_id: userId,
@@ -446,7 +446,7 @@ export async function runRoutineNow(
   );
   const title = `${routine.name} — ${now.toISOString()}`;
   const userId = routine.created_by_user_id ?? agent.owner_user_id;
-  const thread = await deps.store.createThread(agent.id, userId, title, "routine_run");
+  const thread = await deps.store.createThread(agent.id, userId, title, "routine");
   const run = await deps.store.createRun({
     agent_id: agent.id,
     user_id: userId,

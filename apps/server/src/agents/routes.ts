@@ -40,6 +40,7 @@ const AGENT_TOOL_CATALOG = [
   { name: "edit", label: "Edit file", group: "Workspace", description: "Apply a targeted edit to a workspace file.", safe: true },
   { name: "bash", label: "Shell / list files", group: "Workspace", description: "Run shell commands in the workspace (includes listing files).", safe: true },
   { name: "conversations_search", label: "Search conversations", group: "Memory", description: "Search this agent's own thread history.", safe: true },
+  { name: "conversations_list", label: "List conversations", group: "Memory", description: "List this agent's own threads with type and archive filters, sorted and paginated.", safe: true },
   { name: "conversation_read", label: "Read conversation", group: "Memory", description: "Read a bounded excerpt from one of the agent's threads.", safe: true },
   { name: "send_message", label: "Send message", group: "Messaging", description: "Open a new thread with a message to the user.", safe: true },
   { name: "schedule_reminder", label: "Schedule reminder", group: "Routines", description: "Schedule a one-shot reminder for this agent.", safe: true },
@@ -444,7 +445,8 @@ export function registerAgentRoutes(
     // The caller's default thread exists from their first visit, so the
     // pinned row is always there and a turn never has to create it first.
     await store.ensureDefaultThread(agentId, user.id);
-    return sendJson(reply, { threads: await store.listThreads(agentId, user.id) });
+    const page = await store.listThreads(agentId, user.id);
+    return sendJson(reply, { threads: page.threads });
   });
 
   app.post("/api/v1/agents/:id/threads", async (req, reply) => {
@@ -497,13 +499,20 @@ export function registerAgentRoutes(
   });
 
   /** The chat header's tree facts: the chat's thread node, its latest run
-   *  status and its parent chat. A chat with no thread row is a plain chat. */
+   *  status, its parent chat, and the three independent thread facts — what
+   *  it is (type), and whether the user archived or deleted it. A chat with
+   *  no thread row is a plain user chat. */
   const chatTree = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const chat = await chats.chats.getChat(user.org_id, chatId, user);
+    const flags = await infra.pool.query<{ archived: boolean; deleted: boolean }>(
+      `SELECT archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted
+       FROM chats WHERE id = $1`,
+      [chatId],
+    );
     const res = await infra.pool.query<{
-      kind: string;
+      type: string;
       title: string;
       depth: number;
       agent_id: string;
@@ -514,7 +523,7 @@ export function registerAgentRoutes(
       origin_chat_id: string | null;
       origin_title: string | null;
     }>(
-      `SELECT t.kind, t.title, t.depth, t.agent_id, a.name AS agent_name,
+      `SELECT t.type, t.title, t.depth, t.agent_id, a.name AS agent_name,
               (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
                ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
               p.chat_id AS parent_chat_id, p.title AS parent_title,
@@ -527,10 +536,14 @@ export function registerAgentRoutes(
       [chatId],
     );
     const row = res.rows[0];
+    const state = {
+      archived: flags.rows[0]?.archived ?? false,
+      deleted: flags.rows[0]?.deleted ?? false,
+    };
     if (row === undefined) {
       return sendJson(reply, {
         chat_id: chatId,
-        kind: "chat",
+        type: "user",
         title: chat.title ?? "",
         agent_id: null,
         agent_name: null,
@@ -538,11 +551,12 @@ export function registerAgentRoutes(
         depth: 0,
         parent: null,
         origin: null,
+        ...state,
       });
     }
     return sendJson(reply, {
       chat_id: chatId,
-      kind: row.kind,
+      type: row.type,
       title: row.title,
       agent_id: row.agent_id,
       agent_name: row.agent_name,
@@ -556,6 +570,7 @@ export function registerAgentRoutes(
         row.origin_chat_id === null
           ? null
           : { chat_id: row.origin_chat_id, title: row.origin_title ?? "" },
+      ...state,
     });
   };
   app.get("/api/v1/chats/:id/tree", chatTree);

@@ -11,7 +11,7 @@ import {
 
 /** The thread's own context: an isolated routine run, or a delivered thread. */
 export interface ThreadInstructionContext {
-  kind: string;
+  type: string;
   routineName: string | null;
   origin: { thread_id: string; title: string } | null;
 }
@@ -70,7 +70,7 @@ export function composeAgentInstructions(
   parts.push(
     `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
-  if (thread?.kind === "routine_run") {
+  if (thread?.type === "routine") {
     const name = (thread.routineName ?? "a routine").replace(/"/g, "&quot;");
     parts.push(
       [

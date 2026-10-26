@@ -4,7 +4,10 @@
 export type AgentVisibility = "private" | "team" | "org";
 export type AgentRole = "owner" | "editor" | "user" | "viewer";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
-export type AgentThreadKind = "default" | "thread" | "routine_run" | "delegated";
+/** What a thread is. The user's own conversations are `user` threads; a
+ *  spawned node is `subagent`; a scheduled run's transcript is `routine`.
+ *  The default thread is a user thread with `is_default` set. */
+export type AgentThreadType = "user" | "subagent" | "routine";
 export type AgentRunStatus =
   | "queued"
   | "running"
@@ -35,6 +38,7 @@ export type AgentToolName =
   | "search_skills"
   | "read_skill"
   | "conversations_search"
+  | "conversations_list"
   | "conversation_read"
   | "send_message"
   | "schedule_reminder"
@@ -58,6 +62,7 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "search_skills",
   "read_skill",
   "conversations_search",
+  "conversations_list",
   "conversation_read",
   "send_message",
   "schedule_reminder",
@@ -113,7 +118,9 @@ export interface AgentThread {
   chat_id: string;
   title: string;
   title_locked: boolean;
-  kind: AgentThreadKind;
+  type: AgentThreadType;
+  /** The user's Main thread with this agent; one per (agent, user). */
+  is_default: boolean;
   /** The spawning thread, or null for a root thread. */
   parent_thread_id: string | null;
   /** The thread this one was opened from, or null when the user opened it.
@@ -221,6 +228,7 @@ export const DEFAULT_AGENT_TOOLS: AgentToolName[] = [
   "write",
   "list",
   "conversations_search",
+  "conversations_list",
   "conversation_read",
   "send_message",
   "schedule_reminder",

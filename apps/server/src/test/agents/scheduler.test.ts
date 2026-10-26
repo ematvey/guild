@@ -140,11 +140,11 @@ dbDescribe("agent scheduler", () => {
     const runs = await store.listRoutineRuns(agent.id, routine.id);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.trigger).toBe("routine");
-    const threads = await env!.db.query<{ kind: string }>("SELECT kind FROM agent_threads WHERE id = $1", [
+    const threads = await env!.db.query<{ type: string }>("SELECT type FROM agent_threads WHERE id = $1", [
       runs[0]!.thread_id,
     ]);
-    expect(threads.rows[0]!.kind).toBe("routine_run");
-    expect((await store.listThreads(agent.id, owner.id)).some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    expect(threads.rows[0]!.type).toBe("routine");
+    expect((await store.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
     const first = await env!.db.query<{ type: string; content: string }>(
       "SELECT type, payload->>'content' AS content FROM thread_events WHERE chat_id = (SELECT chat_id FROM agent_threads WHERE id = $1) ORDER BY seq LIMIT 1",
       [runs[0]!.thread_id],
