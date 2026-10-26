@@ -285,15 +285,16 @@ export default function IntegrationsSection({
                   <p className="truncate text-sm font-medium">{item.title}</p>
                   <p className="truncate text-xs text-muted-foreground">{item.publisher}</p>
                 </div>
-                <StateBadge item={item} />
               </div>
               <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                 {item.summary}
               </p>
               <div className="mt-auto flex items-center justify-between gap-2">
                 <CategoryBadges categories={item.categories} />
-                {!item.configured && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                {item.configured ? (
+                  <StateBadge item={item} />
+                ) : (
+                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                     <Plus className="size-3.5" /> Add
                   </span>
                 )}
