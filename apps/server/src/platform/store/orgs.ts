@@ -25,9 +25,19 @@ export class OrgStore {
 
   async setName(orgId: string, name: string): Promise<void> {
     await this.pool.query("UPDATE orgs SET name = $2 WHERE id = $1", [orgId, name]);
+    await this.notifyOrg(orgId);
   }
 
   async setLogoUrl(orgId: string, url: string | null): Promise<void> {
     await this.pool.query("UPDATE orgs SET logo_url = $2 WHERE id = $1", [orgId, url]);
+    await this.notifyOrg(orgId);
+  }
+
+  /** Tells the feed that the workspace identity moved. Every member socket
+   *  repaints its title from the new row. */
+  private async notifyOrg(orgId: string): Promise<void> {
+    await this.pool.query("SELECT pg_notify('guild_org', $1)", [
+      JSON.stringify({ org_id: orgId }),
+    ]);
   }
 }

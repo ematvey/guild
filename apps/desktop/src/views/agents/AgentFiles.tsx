@@ -342,7 +342,7 @@ export function AgentFiles({
     setEditBusy(true);
     try {
       const threads = await listAgentThreads(agentId);
-      const thread = threads.find((t) => t.kind === "default") ?? threads[0]
+      const thread = threads.find((t) => t.is_default) ?? threads[0]
         ?? (await createAgentThread(agentId, "Files"));
       await sendAgentTurn(agentId, {
         thread_id: thread.id,
@@ -357,7 +357,7 @@ export function AgentFiles({
   };
 
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:grid-rows-1">
+    <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_1fr] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:grid-rows-1">
       {/* listing column */}
       <div className="flex min-h-0 flex-col border-b border-border lg:border-b-0 lg:border-r">
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">

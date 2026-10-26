@@ -1,16 +1,14 @@
-//! IntegrationsSection — available and configured integrations in one data
-//! table with first-class add (header button + catalog rows). Removal is a
-//! detail-page action only — the list stays read-only. The detail page (addressed by the row's
-//! id, /settings/integrations/<id>) renders its settings form dynamically
-//! from the integration's manifest field schema — no hardcoded per-connector
-//! UI — plus a secrets editor (masked previews, write-only values),
-//! per-tool curation (enable/disable + approval policy per declared tool),
-//! and, for MCP plugins, the mcp url and a per-role tool-policy editor.
+//! IntegrationsSection — the integration shop. The list is a card grid of
+//! every integration the server ships or the registry approved: logo, title,
+//! one-line summary, categories, and install state. Opening a card is the
+//! install and configure flow: the detail page shows the long description,
+//! adds the integration when the admin asks for it, and then renders the
+//! settings form from the manifest field schema (no per-connector UI), the
+//! secrets editor (masked previews, write-only values), and per-tool
+//! curation (enable/disable + approval policy per declared tool).
 
 import { useMemo, useState, useEffect } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
-import { rowDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
 import {
   createIntegration,
@@ -21,7 +19,7 @@ import {
   SETTINGS_PATHS,
   updateIntegration,
 } from "../../../lib/api/settings";
-import { Plug, Plus, Trash2, Webhook } from "lucide-react";
+import { Check, ExternalLink, Plug, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import {
@@ -34,14 +32,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
-import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
@@ -51,10 +41,10 @@ import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
 
 /** One manifest-declared settings field — the detail form is generated
- * from these; the manifest is the schema. */
+ *  from these; the manifest is the schema. */
 interface FieldSpec {
   name: string;
-  kind: string; // string | text | number | boolean
+  kind: string; // string | text | number | boolean | secret
   label?: string | null;
   required?: boolean;
   default?: unknown;
@@ -62,22 +52,26 @@ interface FieldSpec {
   placeholder?: string | null;
 }
 
-interface IntegrationRow {
-  id: string;
-  org_id: string;
+/** One shop entry: the plugin's storefront metadata plus this org's install
+ *  state. */
+interface ShopItem {
   name: string;
+  title: string;
+  version: string;
+  publisher: string;
+  summary: string;
+  description: string;
+  docs_url: string | null;
+  logo: string;
+  categories: string[];
+  traits: Record<string, string>;
+  secret_names: string[];
+  settings: { fields?: FieldSpec[] } | null;
+  configured: boolean;
+  id: string | null;
+  org_id: string | null;
   config: Record<string, unknown>;
   enabled: boolean;
-  categories?: string[];
-  secret_names?: string[];
-  settings?: { fields?: FieldSpec[] } | null;
-}
-
-interface AvailableEntry {
-  name: string;
-  categories?: string[];
-  secret_names?: string[];
-  settings?: { fields?: FieldSpec[] } | null;
 }
 
 interface SecretEntry {
@@ -92,17 +86,64 @@ type ToolRole = "member" | "admin";
 type ToolPolicy = Partial<Record<ToolRole, ToolClass[]>>;
 
 const CATEGORY_LABELS: Record<string, string> = {
-  fetch: "Fetch provider",
-  search: "Search provider",
+  search: "Search",
+  fetch: "Fetch",
+  observability: "Observability",
+  crm: "CRM",
+  messaging: "Messaging",
+  docs: "Docs",
+  code: "Code",
   other: "Other",
   mcp: "MCP plugin",
 };
 
-const categoryLabel = (c?: string) =>
-  CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
+const categoryLabel = (c?: string) => CATEGORY_LABELS[c ?? "other"] ?? c ?? "Other";
 
-/** One badge per declared category — a multi-capability integration (e.g.
- * firecrawl) shows all of them. */
+const TRAIT_LABELS: Record<string, string> = {
+  web_search: "Web search",
+  web_fetch: "Web fetch",
+};
+
+/** The brand mark, rendered inline so it follows the theme (a logo drawn in
+ *  currentColor stays visible on both surfaces). */
+function Logo({ svg, size = "size-10" }: { svg: string; size?: string }) {
+  if (svg === "") {
+    return (
+      <div className={`${size} flex items-center justify-center rounded-lg bg-muted text-muted-foreground`}>
+        <Plug className="size-5" />
+      </div>
+    );
+  }
+  return (
+    <div
+      className={`${size} flex shrink-0 items-center justify-center text-foreground [&_svg]:h-full [&_svg]:w-full`}
+      // The manifest's logo is server-approved content (shipped with the
+      // plugin or reviewed with the registry bundle), never user markdown.
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
+function StateBadge({ item }: { item: ShopItem }) {
+  if (!item.configured) {
+    return (
+      <Badge variant="outline" className="border-transparent bg-accent text-muted-foreground">
+        Not installed
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="border-transparent bg-accent text-muted-foreground">
+      <span
+        className={`mr-1.5 inline-block size-1.5 rounded-full ${
+          item.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
+        }`}
+      />
+      {item.enabled ? "Enabled" : "Disabled"}
+    </Badge>
+  );
+}
+
 function CategoryBadges({ categories }: { categories?: string[] }) {
   const list = categories?.length ? categories : ["other"];
   return (
@@ -118,8 +159,6 @@ function CategoryBadges({ categories }: { categories?: string[] }) {
 
 const ROLES: ToolRole[] = ["member", "admin"];
 
-/** Reads config.tool_policy into the checkbox-editor shape, ignoring
- * anything the editor cannot represent. */
 function readPolicy(config: Record<string, unknown> | null): ToolPolicy {
   const raw = config?.["tool_policy"] as Record<string, unknown> | undefined;
   const out: ToolPolicy = {};
@@ -135,7 +174,6 @@ function readPolicy(config: Record<string, unknown> | null): ToolPolicy {
   return out;
 }
 
-/** Drops empty role lists so the saved config stays minimal. */
 function cleanPolicy(policy: ToolPolicy): ToolPolicy {
   const out: ToolPolicy = {};
   for (const role of ROLES) {
@@ -144,153 +182,35 @@ function cleanPolicy(policy: ToolPolicy): ToolPolicy {
   return out;
 }
 
-const toggleClass = (
-  policy: ToolPolicy,
-  role: ToolRole,
-  cls: ToolClass,
-): ToolPolicy => {
+const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPolicy => {
   const cur = policy[role] ?? [];
   const next = cur.includes(cls) ? cur.filter((c) => c !== cls) : [...cur, cls];
   return { ...policy, [role]: next };
 };
 
-function StatusBadge({ enabled }: { enabled: boolean }) {
-  return (
-    <Badge
-      variant="outline"
-      className="border-transparent bg-accent text-muted-foreground"
-    >
-      <span
-        className={`mr-1.5 inline-block size-1.5 rounded-full ${
-          enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
-        }`}
-      />
-      {enabled ? "enabled" : "disabled"}
-    </Badge>
-  );
-}
-
 export default function IntegrationsSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const list = useCachedGet<{
-    integrations: IntegrationRow[];
-    available: AvailableEntry[];
-  }>(SETTINGS_PATHS.integrations);
-  const rows = list.data?.integrations ?? null;
-  const available = list.data?.available ?? null;
+  const list = useCachedGet<{ items: ShopItem[] }>(SETTINGS_PATHS.integrations);
+  const items = list.data?.items ?? null;
   const error = list.error;
   const reload = list.reload;
+  const [query, setQuery] = useState("");
 
-  // A unified table row: configured integrations plus not-yet-configured
-  // catalog entries (status "not configured"; clicking one creates the row).
-  const tableRows = useMemo<
-    {
-      key: string;
-      name: string;
-      categories?: string[];
-      secretNames: string[];
-      fields: FieldSpec[];
-      row?: IntegrationRow;
-    }[]
-  >(() => {
-    if (rows === null || available === null) return [];
-    const configuredNames = new Set(rows.map((r) => r.name));
-    return [
-      ...rows.map((r) => ({
-        key: r.id,
-        name: r.name,
-        categories: r.categories,
-        secretNames: r.secret_names ?? [],
-        fields: r.settings?.fields ?? [],
-        row: r,
-      })),
-      ...available
-        .filter((a) => !configuredNames.has(a.name))
-        .map((a) => ({
-          key: `available-${a.name}`,
-          name: a.name,
-          categories: a.categories,
-          secretNames: a.secret_names ?? [],
-          fields: a.settings?.fields ?? [],
-        })),
-    ];
-  }, [rows, available]);
+  const open = (slug: string | null) => onDetailChange(slug);
 
-  /// Opens a detail page by id. A not-yet-configured connector has no row
-  /// (and no id) yet: creating its configuration is the first click's job —
-  /// the row starts disabled and the navigation lands on its id.
-  const openIntegration = async (entry: (typeof tableRows)[number]) => {
-    if (entry.row) {
-      onDetailChange(rowDetailCodec.format(entry.row.id));
-      return;
-    }
-    try {
-      const created = await createIntegration<{ id: string }>({
-        name: entry.name,
-      });
-      toast.success("Integration added", { description: entry.name });
-      reload();
-      onDetailChange(rowDetailCodec.format(created.id));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error("Could not add integration", { description: msg });
-    }
-  };
+  const shown = useMemo(() => {
+    if (items === null) return null;
+    const q = query.trim().toLowerCase();
+    if (q === "") return items;
+    return items.filter((i) =>
+      `${i.name} ${i.title} ${i.summary} ${i.categories.join(" ")}`.toLowerCase().includes(q),
+    );
+  }, [items, query]);
 
-  const columns = useMemo<ColumnDef<(typeof tableRows)[number], any>[]>(
-    () => [
-      {
-        accessorKey: "name",
-        header: "Integration",
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-3">
-            <Webhook className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate font-medium">{row.original.name}</span>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "categories",
-        header: "Type",
-        cell: ({ row }) => <CategoryBadges categories={row.original.categories} />,
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: ({ row }) =>
-          row.original.row ? (
-            <StatusBadge enabled={row.original.row.enabled} />
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              not configured
-            </span>
-          ),
-      },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) =>
-          row.original.row ? null : (
-            <div className="flex justify-end">
-              <Plus className="size-4 text-muted-foreground/60" />
-            </div>
-          ),
-      },
-    ],
-    [],
-  );
-
-  const [addOpen, setAddOpen] = useState(false);
-
-  const view = rowDetailCodec.parse(detail);
-  const open = (id: string | null) => onDetailChange(rowDetailCodec.format(id));
-
-  if (view !== null) {
-    // Deep-linked detail: wait for the list before resolving the id —
-    // otherwise a not-yet-loaded row would render as not-found.
-    if (rows === null || available === null) {
+  if (detail !== null) {
+    if (items === null) {
       if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
       return (
         <div className="space-y-2">
@@ -298,33 +218,19 @@ export default function IntegrationsSection({
         </div>
       );
     }
-    const configured = rows.find((r) => r.id === view);
-    if (!configured) {
+    const item = items.find((i) => i.name === detail) ?? null;
+    if (item === null) {
       return (
         <div>
-          <PageHeader
-            title="Integrations"
-            back={{
-              label: "Integrations",
-              onClick: () => open(null),
-            }}
-          />
-          <p className="text-sm text-muted-foreground">
-            This integration no longer exists.
-          </p>
+          <PageHeader title="Integrations" back={{ label: "Integrations", onClick: () => open(null) }} />
+          <p className="text-sm text-muted-foreground">This integration is not available on this server.</p>
         </div>
       );
     }
     return (
       <IntegrationDetail
-        key={configured.id}
-        id={configured.id}
-        name={configured.name}
-        categories={configured.categories}
-        secretNames={configured.secret_names ?? []}
-        fields={configured.settings?.fields ?? []}
-        initialConfig={configured.config}
-        initialEnabled={configured.enabled}
+        key={item.name}
+        item={item}
         onChanged={reload}
         onBack={() => {
           reload();
@@ -338,87 +244,65 @@ export default function IntegrationsSection({
     <div>
       <PageHeader
         title="Integrations"
-        description="Connectors and MCP plugins that contribute tools to chats."
-        actions={
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus className="size-4" /> Add integration
-          </Button>
-        }
+        description="Connect the tools your chats use. Each integration brings its own tools, its own settings, and its own credentials."
       />
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
-      <DataTable
-        columns={columns}
-        data={rows !== null && available !== null ? tableRows : null}
-        search={
-          (r) =>
-            `${r.name} ${(r.categories ?? ["other"])
-              .map(categoryLabel)
-              .join(" ")}`
-        }
-        searchPlaceholder="Search integrations…"
-        onRowClick={openIntegration}
-        empty={
-          <EmptyState
-            icon={Plug}
-            title="No integrations available"
-            hint="This build ships no connectors or registry plugins."
-          />
-        }
-      />
-
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Add integration</DialogTitle>
-            <DialogDescription>
-              Pick a connector or plugin to add to this workspace. It starts
-              disabled until its settings and secrets are in.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-80 overflow-y-auto">
-            {available === null ? (
-              <SkeletonRows rows={1} />
-            ) : available.length === 0 ? (
-              <p className="py-3 text-sm text-muted-foreground">
-                Everything available is already added.
+      <div className="mb-4 max-w-sm">
+        <Input
+          type="search"
+          placeholder="Search integrations…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+      {shown === null ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <SkeletonRows rows={3} />
+          <SkeletonRows rows={3} />
+          <SkeletonRows rows={3} />
+        </div>
+      ) : shown.length === 0 ? (
+        <EmptyState
+          icon={Plug}
+          title={query === "" ? "No integrations available" : "No matches"}
+          hint={
+            query === ""
+              ? "This build ships no integrations and the registry has no approved plugins."
+              : "Try another word."
+          }
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {shown.map((item) => (
+            <button
+              key={item.name}
+              onClick={() => open(item.name)}
+              className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-accent/60"
+            >
+              <div className="flex items-start gap-3">
+                <Logo svg={item.logo} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">{item.publisher}</p>
+                </div>
+              </div>
+              <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                {item.summary}
               </p>
-            ) : (
-              <ul className="divide-y divide-border/60">
-                {available.map((a) => (
-                  <li key={a.name}>
-                    <button
-                      className="flex w-full items-center gap-3 py-2.5 text-left transition-colors hover:bg-accent"
-                      onClick={() => {
-                        setAddOpen(false);
-                        void openIntegration({
-                          key: `available-${a.name}`,
-                          name: a.name,
-                          categories: a.categories,
-                          secretNames: a.secret_names ?? [],
-                          fields: a.settings?.fields ?? [],
-                        });
-                      }}
-                    >
-                      <Webhook className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="font-medium">{a.name}</span>
-                      <span className="ml-auto">
-                        <CategoryBadges categories={a.categories} />
-                      </span>
-                      {(a.secret_names?.length ?? 0) > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          {a.secret_names!.length} secret
-                          {a.secret_names!.length === 1 ? "" : "s"}
-                        </span>
-                      )}
-                      <Plus className="size-4 text-muted-foreground/60" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+              <div className="mt-auto flex items-center justify-between gap-2">
+                <CategoryBadges categories={item.categories} />
+                {item.configured ? (
+                  <StateBadge item={item} />
+                ) : (
+                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                    <Plus className="size-3.5" /> Add
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -465,8 +349,8 @@ const secretWidget = (name: string) =>
   };
 
 /** The initial editable state, derived from the stored row. The page is
- * the form — one surface, no separate edit mode; dirty state drives
- * Save. */
+ *  the form — one surface, no separate edit mode; dirty state drives
+ *  Save. */
 function initialState(
   fields: FieldSpec[],
   initialConfig: Record<string, unknown>,
@@ -497,33 +381,110 @@ function initialState(
   };
 }
 
+/** The storefront: what the integration is, what it needs, and — until it
+ *  is installed — the one action the page offers. */
+function Storefront({ item, onAdded }: { item: ShopItem; onAdded: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    setBusy(true);
+    try {
+      await createIntegration({ name: item.name });
+      toast.success("Integration added", { description: item.title });
+      onAdded();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("Could not add integration", { description: msg });
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex flex-wrap items-start gap-4">
+          <Logo svg={item.logo} size="size-12" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold">{item.title}</h3>
+              <span className="text-xs text-muted-foreground">v{item.version}</span>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">{item.summary}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <CategoryBadges categories={item.categories} />
+              {Object.keys(item.traits).length > 0 && (
+                <Badge variant="outline">
+                  Provides {Object.keys(item.traits).map((t) => TRAIT_LABELS[t] ?? t).join(", ")}
+                </Badge>
+              )}
+            </div>
+          </div>
+          <Button onClick={add} disabled={busy}>
+            <Plus className="size-4" /> {busy ? "Adding…" : "Add integration"}
+          </Button>
+        </div>
+        <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+          {item.description}
+        </p>
+        {item.docs_url !== null && (
+          <a
+            href={item.docs_url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink className="size-3.5" /> Documentation
+          </a>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Adding it creates a disabled configuration. Fill the settings and credentials, then enable it.
+      </p>
+    </div>
+  );
+}
+
 function IntegrationDetail({
-  id,
-  name,
-  categories,
-  secretNames,
-  fields,
-  initialConfig,
-  initialEnabled,
+  item,
   onChanged,
   onBack,
 }: {
-  id: string;
-  name: string;
-  categories?: string[];
-  secretNames: string[];
-  fields: FieldSpec[];
-  initialConfig: Record<string, unknown>;
-  initialEnabled: boolean;
+  item: ShopItem;
   onChanged: () => void;
   onBack: () => void;
 }) {
+  if (!item.configured) {
+    return (
+      <div>
+        <PageHeader
+          title={item.title}
+          description={item.summary}
+          back={{ label: "Integrations", onClick: onBack }}
+        />
+        <Storefront item={item} onAdded={onChanged} />
+      </div>
+    );
+  }
+  return <ConfiguredIntegration item={item} onChanged={onChanged} onBack={onBack} />;
+}
+
+function ConfiguredIntegration({
+  item,
+  onChanged,
+  onBack,
+}: {
+  item: ShopItem;
+  onChanged: () => void;
+  onBack: () => void;
+}) {
+  const id = item.id!;
+  const name = item.title;
+  const initialConfig = item.config;
+  const fields = item.settings?.fields ?? [];
   const isMcp =
-    typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
+    typeof item.config?.mcp === "object" && item.config.mcp !== null;
   const initial = useMemo(
-    () => initialState(fields, initialConfig, initialEnabled, isMcp),
+    () => initialState(fields, initialConfig, item.enabled, isMcp),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [initialConfig, fields, initialEnabled],
+    [initialConfig, item.enabled, isMcp],
   );
   const [state, setState] = useState(initial);
   // A save triggers a list reload; the new row identity resets the form.
@@ -535,11 +496,9 @@ function IntegrationDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // New credential values keyed by field name; empty/absent = unchanged.
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
 
-  const secretsPath = integrationSecretsPath(id);
-  const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
+  const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(integrationSecretsPath(id));
   const secrets = secretsRes.data?.secrets ?? null;
 
   const dirty =
@@ -550,9 +509,6 @@ function IntegrationDetail({
     (isMcp && JSON.stringify(policy) !== JSON.stringify(initial.policy)) ||
     Object.values(secretDraft).some((v) => v !== "");
 
-  // Credential fields render inline in the same form, masked and
-  // grayed-out until explicitly unlocked. Legacy manifests declare them
-  // only in auth.secret_names — map those into the same widget shape.
   const settingFields = fields.filter((f) => f.kind !== "secret");
   const secretFields: {
     name: string;
@@ -573,7 +529,7 @@ function IntegrationDetail({
         required: f.required ?? false,
         help: f.help,
       })),
-    ...secretNames
+    ...item.secret_names
       .filter((n) => !fields.some((f) => f.name === n))
       .map((n) => ({
         name: n,
@@ -595,10 +551,7 @@ function IntegrationDetail({
   const buildConfig = (): Record<string, unknown> => {
     let cfg: Record<string, unknown>;
     if (isMcp) {
-      const advanced = JSON.parse(advancedText || "{}") as Record<
-        string,
-        unknown
-      >;
+      const advanced = JSON.parse(advancedText || "{}") as Record<string, unknown>;
       cfg = {
         ...advanced,
         mcp: {
@@ -609,8 +562,6 @@ function IntegrationDetail({
     } else {
       cfg = { ...initialConfig };
     }
-    // Schema-field edits persist for MCP rows too — a save that ignored
-    // the draft reported success with nothing changed.
     for (const f of fields) {
       if (f.kind === "secret") {
         delete cfg[f.name];
@@ -687,12 +638,8 @@ function IntegrationDetail({
   return (
     <div className="space-y-5">
       <PageHeader
-        title={name}
-        description={
-          enabled
-            ? "Enabled — tools join the chat loop."
-            : "Disabled; the configuration is kept, no tools are contributed."
-        }
+        title={item.title}
+        description={enabled ? "Enabled — tools join the chat loop." : "Disabled; the configuration is kept, no tools are contributed."}
         back={{ label: "Integrations", onClick: onBack }}
         actions={
           <>
@@ -715,13 +662,17 @@ function IntegrationDetail({
         }
       />
 
-      {/* Type + enable toggle: one compact row, the page itself is the form. */}
-      <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+      {/* Identity + enable toggle: one compact row, the page itself is the form. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Type
-          </span>
-          <CategoryBadges categories={categories} />
+          <Logo svg={item.logo} size="size-8" />
+          <div>
+            <p className="text-sm font-medium">{item.title}</p>
+            <p className="text-xs text-muted-foreground">
+              {item.publisher} · v{item.version}
+            </p>
+          </div>
+          <CategoryBadges categories={item.categories} />
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -734,7 +685,6 @@ function IntegrationDetail({
         </label>
       </div>
 
-      {/* Settings: the manifest-declared fields, edited in place. */}
       {settingFields.map((f) => (
         <Field
           key={f.name}
@@ -747,9 +697,7 @@ function IntegrationDetail({
                 type="checkbox"
                 className="size-4 accent-foreground"
                 checked={draft[f.name] === true}
-                onChange={(e) =>
-                  patch({ draft: { ...draft, [f.name]: e.target.checked } })
-                }
+                onChange={(e) => patch({ draft: { ...draft, [f.name]: e.target.checked } })}
               />
               <span className="text-muted-foreground">Enabled</span>
             </label>
@@ -759,9 +707,7 @@ function IntegrationDetail({
               spellCheck={false}
               placeholder={f.placeholder ?? undefined}
               value={String(draft[f.name] ?? "")}
-              onChange={(e) =>
-                patch({ draft: { ...draft, [f.name]: e.target.value } })
-              }
+              onChange={(e) => patch({ draft: { ...draft, [f.name]: e.target.value } })}
             />
           ) : (
             <Input
@@ -770,14 +716,10 @@ function IntegrationDetail({
               spellCheck={false}
               placeholder={
                 f.placeholder ??
-                (f.default !== undefined && f.default !== null
-                  ? String(f.default)
-                  : undefined)
+                (f.default !== undefined && f.default !== null ? String(f.default) : undefined)
               }
               value={String(draft[f.name] ?? "")}
-              onChange={(e) =>
-                patch({ draft: { ...draft, [f.name]: e.target.value } })
-              }
+              onChange={(e) => patch({ draft: { ...draft, [f.name]: e.target.value } })}
             />
           )}
         </Field>
@@ -790,19 +732,15 @@ function IntegrationDetail({
           <Field
             key={sf.name}
             label={`${sf.label}${sf.required ? " *" : ""}`}
-            hint={
-              stored ? "Leave blank to keep the current one." : "Not stored yet"
-            }
+            hint={stored ? "Leave blank to keep the current one." : "Not stored yet"}
           >
             {sf.widget.kind === "textarea" ? (
               <Textarea
                 className="min-h-20 max-w-xl font-mono text-xs"
                 spellCheck={false}
-                placeholder={stored ? (stored.masked || "••••••••") : sf.widget.placeholder}
+                placeholder={stored ? stored.masked || "••••••••" : sf.widget.placeholder}
                 value={value}
-                onChange={(e) =>
-                  setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
-                }
+                onChange={(e) => setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))}
               />
             ) : (
               <Input
@@ -811,13 +749,11 @@ function IntegrationDetail({
                 spellCheck={false}
                 placeholder={
                   stored
-                    ? (stored.masked || "••••••••")
+                    ? stored.masked || "••••••••"
                     : (sf.widget.placeholder ?? "required")
                 }
                 value={value}
-                onChange={(e) =>
-                  setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
-                }
+                onChange={(e) => setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))}
               />
             )}
           </Field>
@@ -842,28 +778,18 @@ function IntegrationDetail({
           >
             <div className="grid grid-cols-2 gap-3">
               {ROLES.map((role) => (
-                <div
-                  key={role}
-                  className="rounded-lg border border-border px-3 py-2.5"
-                >
+                <div key={role} className="rounded-lg border border-border px-3 py-2.5">
                   <p className="text-sm font-medium capitalize">{role}</p>
                   <div className="mt-1.5 space-y-1.5">
                     {TOOL_CLASSES.map((cls) => (
-                      <label
-                        key={cls}
-                        className="flex items-center gap-2 text-sm"
-                      >
+                      <label key={cls} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           className="size-4 accent-foreground"
                           checked={policy[role]?.includes(cls) ?? false}
-                          onChange={() =>
-                            patch({ policy: toggleClass(policy, role, cls) })
-                          }
+                          onChange={() => patch({ policy: toggleClass(policy, role, cls) })}
                         />
-                        <span className="capitalize text-muted-foreground">
-                          {cls}
-                        </span>
+                        <span className="capitalize text-muted-foreground">{cls}</span>
                       </label>
                     ))}
                   </div>
@@ -871,10 +797,7 @@ function IntegrationDetail({
               ))}
             </div>
           </Field>
-          <Field
-            label="Advanced config (JSON)"
-            hint="Everything beyond the server URL and tool policy."
-          >
+          <Field label="Advanced config (JSON)" hint="Everything beyond the server URL and tool policy.">
             <Textarea
               className="min-h-24 font-mono text-xs"
               spellCheck={false}
@@ -887,6 +810,19 @@ function IntegrationDetail({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
+      {Object.keys(item.traits).length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          This integration provides the{" "}
+          {Object.keys(item.traits).map((t) => TRAIT_LABELS[t] ?? t).join(" and ")}{" "}
+          {Object.keys(item.traits).length === 1 ? "tool" : "tools"} under the shared name
+          {Object.keys(item.traits).length === 1 ? "" : "s"}{" "}
+          {Object.keys(item.traits)
+            .map((t) => `“${t}”`)
+            .join(", ")}
+          . Only one enabled integration provides a given trait.
+        </p>
+      )}
+
       <ToolCuration id={id} isMcp={isMcp} />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -894,8 +830,8 @@ function IntegrationDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The configuration and stored secrets are deleted; tools disappear
-              from chats. This cannot be undone.
+              The configuration and stored secrets are deleted; tools disappear from chats.
+              This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -937,19 +873,11 @@ interface ToolsResponse {
 }
 
 /** The per-tool curation table: every tool the integration declares or
- * serves, each with its enable toggle and approval policy (adapters spec
- * §5/§6). Built-in rows read compiled-in declarations; MCP rows connect
- * live — drift lands as disabled rows the admin flips on. */
-function ToolCuration({
-  id,
-  isMcp,
-}: {
-  id: string;
-  isMcp: boolean;
-}) {
-  const res = useCachedGet<ToolsResponse>(
-    integrationToolsPath(id),
-  );
+ *  serves, each with its enable toggle and approval policy (adapters spec
+ *  §5/§6). Built-in rows read compiled-in declarations; MCP rows connect
+ *  live — drift lands as disabled rows the admin flips on. */
+function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
+  const res = useCachedGet<ToolsResponse>(integrationToolsPath(id));
   const data = res.data ?? null;
   const [busyTool, setBusyTool] = useState<string | null>(null);
 
@@ -977,7 +905,7 @@ function ToolCuration({
           <p className="text-xs text-muted-foreground">
             {isMcp
               ? "Discovered live from the MCP server; unconfigured tools stay disabled."
-              : "Declared by the connector; all are enabled unless you turn one off."}
+              : "Declared by the integration; all are enabled unless you turn one off."}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => res.reload()}>
@@ -987,12 +915,7 @@ function ToolCuration({
       {res.error ? (
         <div className="px-4 py-3">
           <p className="text-sm text-destructive">{res.error}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            onClick={() => res.reload()}
-          >
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => res.reload()}>
             Retry
           </Button>
         </div>
@@ -1003,31 +926,28 @@ function ToolCuration({
         </div>
       ) : !data.resolved ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
-          {data.reason ??
-            "Tools are not resolved — enable the integration and save its settings first."}
+          {data.reason ?? "Tools are not resolved — enable the integration and save its settings first."}
         </p>
       ) : data.tools.length === 0 ? (
-        <p className="px-4 py-3 text-sm text-muted-foreground">
-          The server exposes no tools.
-        </p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">The server exposes no tools.</p>
       ) : (
         <ul className="divide-y divide-border/60">
           {data.tools.map((t) => (
-            <li
-              key={t.name}
-              className="flex items-center gap-3 px-4 py-2.5"
-            >
+            <li key={t.name} className="flex items-center gap-3 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-mono text-xs">{t.name}</span>
                   <Badge variant="secondary" className="capitalize">
                     {t.class}
                   </Badge>
+                  {TRAIT_LABELS[t.name] !== undefined && (
+                    <Badge variant="outline" className="gap-1">
+                      <Check className="size-3" /> Guild-provided
+                    </Badge>
+                  )}
                 </div>
                 {t.description && (
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {t.description}
-                  </p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.description}</p>
                 )}
               </div>
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -1045,9 +965,7 @@ function ToolCuration({
                 disabled={busyTool === t.name}
                 value={t.approval}
                 onChange={(e) =>
-                  update(t, {
-                    approval: e.target.value as CuratedTool["approval"],
-                  })
+                  update(t, { approval: e.target.value as CuratedTool["approval"] })
                 }
               >
                 <option value="default">Follow user policy</option>

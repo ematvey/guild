@@ -7,11 +7,13 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { FadeTitle } from "./chrome";
@@ -64,13 +66,15 @@ function RenameInput({
 function RowActions({
   onRename,
   onArchive,
+  onDelete,
   archiveLabel,
 }: {
   onRename?: () => void;
   onArchive?: () => void;
+  onDelete?: () => void;
   archiveLabel?: string;
 }) {
-  if (!onRename && !onArchive) return null;
+  if (!onRename && !onArchive && !onDelete) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -100,6 +104,18 @@ function RowActions({
             )}
             {archiveLabel ?? "Archive"}
           </DropdownMenuItem>
+        )}
+        {onDelete && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={() => onDelete()}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -152,6 +168,7 @@ export function ChatListItem({
   onClick,
   onRename,
   onArchive,
+  onDelete,
   archiveLabel,
 }: {
   title: string;
@@ -160,6 +177,7 @@ export function ChatListItem({
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
+  onDelete?: () => void;
   /** Row-menu label for the archive action ("Unarchive" in the Archived
    * section); defaults to "Archive". */
   archiveLabel?: string;
@@ -213,6 +231,7 @@ export function ChatListItem({
       <RowActions
         onRename={onRename ? () => setEditing(true) : undefined}
         onArchive={onArchive}
+        onDelete={onDelete}
         archiveLabel={archiveLabel}
       />
     </div>

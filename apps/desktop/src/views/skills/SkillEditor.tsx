@@ -1,14 +1,15 @@
 // Skill editor (Skills tab → "New skill" or detail → Edit): slug (create
 // only), owner selector (me or one of my teams), description, and the
-// SKILL.md body with a Write/Preview toggle. Publishing is guarded: the
-// save action opens a review step showing the new slug/description and a
-// per-file line diff against the latest published version, and only the
-// explicit "Approve & publish" action calls the skills API (POST create /
-// PUT next version). Errors surface as sonner toasts and success hands
-// the slug back for navigation to the detail page.
+// bundle's files — a file tree over SKILL.md and the extra files, with a
+// Write/Preview toggle for markdown. Publishing is guarded: the save action
+// opens a review step showing the new slug/description and a per-file line
+// diff against the latest published version, and only the explicit
+// "Approve & publish" action calls the skills API (POST create / PUT next
+// version). Errors surface as sonner toasts and success hands the slug back
+// for navigation to the detail page.
 
-import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -28,6 +29,8 @@ import { SkeletonForm, SkeletonText } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 import { MD_CLASS, mdComponents } from "../markdown";
 import { diffLines, type DiffLine } from "./skill-diff";
+import { FileTree } from "./FileTree";
+import { buildFileTree, filePathError, isMarkdownPath } from "./skill-files";
 import {
   myTeams,
   skillsDetail,
@@ -40,12 +43,20 @@ import {
  *  fixed slug. */
 export type EditorMode = "create" | "edit";
 
+/** One extra bundle file in the draft (SKILL.md is `form.body`). */
+export interface EditorFile {
+  path: string;
+  content: string;
+}
+
 export interface EditorForm {
   slug: string;
   description: string;
   body: string;
   /** Null = owned by the creating user ("Me"). */
   ownerTeamId: string | null;
+  /** The bundle's extra files, SKILL.md excluded. */
+  files: EditorFile[];
 }
 
 /** Slug validation mirroring the server's manifest rules (empty, ≤64
@@ -64,20 +75,36 @@ export function createPayload(form: EditorForm): {
   slug: string;
   description: string;
   body: string;
+  files: EditorFile[];
   owner_team_id?: string;
 } {
   return form.ownerTeamId === null
-    ? { slug: form.slug, description: form.description, body: form.body }
-    : { slug: form.slug, description: form.description, body: form.body, owner_team_id: form.ownerTeamId };
+    ? {
+        slug: form.slug,
+        description: form.description,
+        body: form.body,
+        files: form.files,
+      }
+    : {
+        slug: form.slug,
+        description: form.description,
+        body: form.body,
+        files: form.files,
+        owner_team_id: form.ownerTeamId,
+      };
 }
 
 /** PUT /api/v1/skills/:slug body. */
-export function editPayload(form: EditorForm): { description: string; body: string } {
-  return { description: form.description, body: form.body };
+export function editPayload(form: EditorForm): {
+  description: string;
+  body: string;
+  files: EditorFile[];
+} {
+  return { description: form.description, body: form.body, files: form.files };
 }
 
 /** The request each mode saves with: create POSTs the full payload,
- *  edit PUTs description + body at the fixed slug. */
+ *  edit PUTs description + body + files at the fixed slug. */
 export function saveRequest(mode: EditorMode, form: EditorForm): {
   method: "POST" | "PUT";
   path: string;
@@ -105,18 +132,18 @@ export function canSave(form: EditorForm, mode: EditorMode): boolean {
 }
 
 /** The published content the edit-mode diff runs against (the manifest
- *  description plus the latest version's SKILL.md body). */
+ *  description plus the latest version's files). */
 export interface ReviewBase {
   description: string;
   skill_md: string;
+  /** The published bundle's extra files, SKILL.md excluded. */
+  files: EditorFile[];
 }
 
-/** One changed file in the review step: the editor publishes a single
- *  SKILL.md, so path is always SKILL.md — added in create mode (full
- *  content diff), modified in edit mode. */
+/** One changed file in the review step. */
 export interface ReviewChange {
   path: string;
-  status: "added" | "modified";
+  status: "added" | "modified" | "deleted";
   diff: DiffLine[];
 }
 
@@ -129,9 +156,19 @@ export interface ReviewSummary {
   hasChanges: boolean;
 }
 
-/** The publish guard's diff: create mode treats everything as added
- *  (full content diff); edit mode diffs the body against the latest
- *  published version and flags a description-only change. */
+/** The draft's files as a path → content map, SKILL.md included. */
+function draftFiles(form: EditorForm): Map<string, string> {
+  return new Map([["SKILL.md", form.body], ...form.files.map((f) => [f.path, f.content] as const)]);
+}
+
+/** The published files as a path → content map, SKILL.md included. */
+function baseFiles(base: ReviewBase): Map<string, string> {
+  return new Map([["SKILL.md", base.skill_md], ...base.files.map((f) => [f.path, f.content] as const)]);
+}
+
+/** The publish guard's diff: create mode treats everything as added (full
+ *  content diff); edit mode diffs each file against the latest published
+ *  version, flagging deletions and a description-only change. */
 export function reviewChanges(
   mode: EditorMode,
   form: EditorForm,
@@ -139,19 +176,38 @@ export function reviewChanges(
 ): ReviewSummary {
   if (mode === "create" || base === null) {
     return {
-      changes: [{ path: "SKILL.md", status: "added", diff: diffLines("", form.body) }],
+      changes: [...draftFiles(form)].map(([path, content]) => ({
+        path,
+        status: "added" as const,
+        diff: diffLines("", content),
+      })),
       descriptionChanged: true,
       hasChanges: true,
     };
   }
-  const bodyChanged = form.body !== base.skill_md;
+  const published = baseFiles(base);
+  const draft = draftFiles(form);
+  const paths = [...new Set([...published.keys(), ...draft.keys()])].sort();
+  const changes: ReviewChange[] = [];
+  for (const path of paths) {
+    const before = published.get(path);
+    const after = draft.get(path);
+    if (before === after) continue;
+    if (after === undefined) {
+      changes.push({ path, status: "deleted", diff: diffLines(before ?? "", "") });
+    } else {
+      changes.push({
+        path,
+        status: before === undefined ? "added" : "modified",
+        diff: diffLines(before ?? "", after),
+      });
+    }
+  }
   const descriptionChanged = form.description !== base.description;
   return {
-    changes: bodyChanged
-      ? [{ path: "SKILL.md", status: "modified", diff: diffLines(base.skill_md, form.body) }]
-      : [],
+    changes,
     descriptionChanged,
-    hasChanges: bodyChanged || descriptionChanged,
+    hasChanges: changes.length > 0 || descriptionChanged,
   };
 }
 
@@ -174,9 +230,13 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
     description: "",
     body: "",
     ownerTeamId: null,
+    files: [],
   });
   const [teams, setTeams] = useState<EditorTeam[] | null>(null);
   const [pane, setPane] = useState<EditorPane>("write");
+  const [selectedPath, setSelectedPath] = useState("SKILL.md");
+  const [newPath, setNewPath] = useState("");
+  const [addingFile, setAddingFile] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   // Edit mode: the published content the review diff runs against; null
@@ -185,6 +245,10 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   // Edit mode: null until the detail + source load, false when the skill
   // is gone (404 or network error).
   const [loadFailed, setLoadFailed] = useState<boolean | null>(mode === "create" ? false : null);
+  // Published files the source endpoint returns without a text body
+  // (binary, or over the inline cap): they cannot round-trip through this
+  // editor, so a save is refused while they are present.
+  const [unreadable, setUnreadable] = useState<string[]>([]);
 
   useEffect(() => {
     let live = true;
@@ -198,7 +262,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
     }
     void (async () => {
       const detail = await skillsDetail(slug ?? "");
-      // The source request pins the version explicitly so the seeded body
+      // The source request pins the version explicitly so the seeded files
       // and the review diff both run against the latest published content
       // (a pinned install must not silently select an older version).
       const source =
@@ -208,19 +272,69 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
         setLoadFailed(true);
         return;
       }
+      const files = source.files
+        .filter((f) => f.path !== "SKILL.md" && f.path !== "manifest.json" && f.content !== null)
+        .map((f) => ({ path: f.path, content: f.content as string }));
       setForm({
         slug: detail.slug,
         description: detail.description,
         body: source.skill_md,
         ownerTeamId: null,
+        files,
       });
-      setBase({ description: detail.description, skill_md: source.skill_md });
+      setUnreadable(
+        source.files
+          .filter((f) => f.path !== "SKILL.md" && f.path !== "manifest.json" && f.content === null)
+          .map((f) => f.path),
+      );
+      setBase({ description: detail.description, skill_md: source.skill_md, files });
       setLoadFailed(false);
     })();
     return () => {
       live = false;
     };
   }, [mode, slug]);
+
+  const paths = useMemo(
+    () => ["SKILL.md", ...form.files.map((f) => f.path)],
+    [form.files],
+  );
+  const tree = useMemo(() => buildFileTree(paths), [paths]);
+  const currentPath = paths.includes(selectedPath) ? selectedPath : "SKILL.md";
+  const currentFile = form.files.find((f) => f.path === currentPath);
+  const currentContent = currentPath === "SKILL.md" ? form.body : (currentFile?.content ?? "");
+  const markdown = isMarkdownPath(currentPath);
+
+  const setContent = (value: string) =>
+    setForm((f) =>
+      currentPath === "SKILL.md"
+        ? { ...f, body: value }
+        : { ...f, files: f.files.map((file) => (file.path === currentPath ? { ...file, content: value } : file)) },
+    );
+
+  const addFile = () => {
+    const path = newPath.trim();
+    const problem = filePathError(path);
+    if (problem !== null) {
+      toast.error("Cannot add file", { description: problem });
+      return;
+    }
+    if (paths.includes(path)) {
+      toast.error("Cannot add file", { description: `${path} is already in the bundle.` });
+      return;
+    }
+    setForm((f) => ({ ...f, files: [...f.files, { path, content: "" }] }));
+    setSelectedPath(path);
+    setNewPath("");
+    setAddingFile(false);
+    setPane("write");
+  };
+
+  const deleteFile = () => {
+    if (currentPath === "SKILL.md") return;
+    setForm((f) => ({ ...f, files: f.files.filter((file) => file.path !== currentPath) }));
+    setSelectedPath("SKILL.md");
+  };
 
   if (loadFailed === null) {
     return (
@@ -266,6 +380,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   const showSlugError = mode === "create" && form.slug !== "" && slugErr !== null;
 
   const review = reviewChanges(mode, form, base);
+  const blocked = unreadable.length > 0;
 
   // The API write lives here and nowhere else: the save button only opens
   // the review dialog, and the dialog's approve action calls this.
@@ -339,55 +454,141 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
         </label>
-        <div className="flex items-center gap-1">
-          {(
-            [
-              ["write", "Write"],
-              ["preview", "Preview"],
-            ] as const
-          ).map(([value, label]) => (
-            <Button
-              key={value}
-              variant={pane === value ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={pane === value}
-              aria-label={`${label} pane`}
-              disabled={busy}
-              onClick={() => setPane(value)}
+        <div className="flex min-h-0 flex-1 items-start gap-3">
+          <aside className="flex w-56 shrink-0 flex-col gap-1.5">
+            <div
+              className="max-h-[55vh] overflow-y-auto rounded-lg border border-border bg-card p-1.5"
+              aria-label="Bundle files"
             >
-              {label}
-            </Button>
-          ))}
-          <span className="flex-1" />
-          <Button
-            size="sm"
-            disabled={busy || !canSave(form, mode)}
-            title={slugErr ?? undefined}
-            onClick={() => setReviewOpen(true)}
-          >
-            Review & publish
-          </Button>
-        </div>
-        {pane === "write" ? (
-          <Textarea
-            value={form.body}
-            placeholder={"# Skill name\n\nMarkdown instructions for the agent."}
-            aria-label="SKILL.md body"
-            className="min-h-64 flex-1 font-mono text-sm"
-            disabled={busy}
-            onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
-          />
-        ) : (
-          <div className={`min-h-64 flex-1 rounded-md border border-border p-3 text-sm ${MD_CLASS}`}>
-            {form.body.trim() === "" ? (
-              <p className="text-muted-foreground">Nothing to preview yet.</p>
+              <FileTree nodes={tree} selected={currentPath} onSelect={setSelectedPath} />
+            </div>
+            {addingFile ? (
+              <div className="flex flex-col gap-1">
+                <Input
+                  value={newPath}
+                  placeholder="references/notes.md"
+                  aria-label="New file path"
+                  autoFocus
+                  disabled={busy}
+                  onChange={(e) => setNewPath(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addFile();
+                    if (e.key === "Escape") {
+                      setAddingFile(false);
+                      setNewPath("");
+                    }
+                  }}
+                />
+                <div className="flex gap-1">
+                  <Button size="sm" disabled={busy} onClick={addFile}>
+                    Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => {
+                      setAddingFile(false);
+                      setNewPath("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
             ) : (
-              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {form.body}
-              </Markdown>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => setAddingFile(true)}
+              >
+                <Plus className="size-3.5" />
+                New file
+              </Button>
+            )}
+            {currentPath !== "SKILL.md" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-start text-destructive"
+                aria-label={`Delete ${currentPath}`}
+                disabled={busy}
+                onClick={deleteFile}
+              >
+                <Trash2 className="size-3.5" />
+                Delete file
+              </Button>
+            )}
+          </aside>
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <div className="flex items-center gap-1">
+              <span className="truncate font-mono text-xs text-muted-foreground">{currentPath}</span>
+              <span className="flex-1" />
+              {markdown && (
+                <>
+                  {(
+                    [
+                      ["write", "Write"],
+                      ["preview", "Preview"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <Button
+                      key={value}
+                      variant={pane === value ? "secondary" : "ghost"}
+                      size="sm"
+                      aria-pressed={pane === value}
+                      aria-label={`${label} pane`}
+                      disabled={busy}
+                      onClick={() => setPane(value)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </>
+              )}
+              <Button
+                size="sm"
+                disabled={busy || blocked || !canSave(form, mode)}
+                title={slugErr ?? (blocked ? "This skill has files the editor cannot read as text." : undefined)}
+                onClick={() => setReviewOpen(true)}
+              >
+                Review & publish
+              </Button>
+            </div>
+            {blocked && (
+              <p className="rounded-md border border-border bg-secondary px-2.5 py-2 text-sm text-secondary-foreground">
+                This skill has files the editor cannot read as text (binary, or over 256 KiB):{" "}
+                <span className="font-mono">{unreadable.join(", ")}</span>. Publishing here would drop
+                them, so the save is blocked.
+              </p>
+            )}
+            {markdown && pane === "preview" ? (
+              <div className={`min-h-64 flex-1 overflow-y-auto rounded-md border border-border p-3 text-sm ${MD_CLASS}`}>
+                {currentContent.trim() === "" ? (
+                  <p className="text-muted-foreground">Nothing to preview yet.</p>
+                ) : (
+                  <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {currentContent}
+                  </Markdown>
+                )}
+              </div>
+            ) : (
+              <Textarea
+                value={currentContent}
+                placeholder={
+                  currentPath === "SKILL.md"
+                    ? "# Skill name\n\nMarkdown instructions for the agent."
+                    : "File contents"
+                }
+                aria-label={`${currentPath} contents`}
+                className="min-h-64 flex-1 font-mono text-sm"
+                disabled={busy}
+                onChange={(e) => setContent(e.target.value)}
+              />
             )}
           </div>
-        )}
+        </div>
       </div>
       <ReviewDialog
         open={reviewOpen}
@@ -422,6 +623,8 @@ function diffLineClass(type: DiffLine["type"]): string {
  *  scrollable line diff (mono is file content, not UI text). */
 function FileDiff({ change }: { change: ReviewChange }) {
   const shown = change.diff.slice(0, MAX_DIFF_LINES);
+  const statusLabel =
+    change.status === "added" ? "new file" : change.status === "deleted" ? "deleted" : "modified";
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
@@ -430,7 +633,7 @@ function FileDiff({ change }: { change: ReviewChange }) {
           variant={change.status === "added" ? "secondary" : "outline"}
           className={change.status === "added" ? "" : "text-muted-foreground"}
         >
-          {change.status === "added" ? "new file" : "modified"}
+          {statusLabel}
         </Badge>
       </div>
       <div className="max-h-72 overflow-y-auto py-1 font-mono text-xs leading-relaxed" data-scrollable>
@@ -509,7 +712,7 @@ function ReviewDialog({
           )}
           {review.hasChanges && review.changes.length === 0 && review.descriptionChanged && (
             <p className="text-sm text-muted-foreground">
-              Only the description changes; the SKILL.md body is unchanged.
+              Only the description changes; no bundle file changes.
             </p>
           )}
         </div>

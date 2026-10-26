@@ -73,6 +73,18 @@ export async function projectListSnapshot(
   return { projects, archived_projects: archived };
 }
 
+/** The workspace's display identity: the name and logo the app shell shows
+ *  in its title. */
+export async function workspaceIdentitySnapshot(
+  ctx: PlatformContext,
+  orgId: string,
+): Promise<{ name: string; logo_url?: string }> {
+  const org = await ctx.orgs.get(orgId);
+  return org.logo_url === null
+    ? { name: org.name }
+    : { name: org.name, logo_url: org.logo_url };
+}
+
 /** MachineInfo wire shape. Alphabetical key order, same reason as the chat
  *  rows. */
 export function machineInfo(row: MachineRow, connected: boolean): Record<string, unknown> {

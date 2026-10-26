@@ -75,7 +75,8 @@ export type WsServerMsg =
       projects: unknown[];
       archived_projects: unknown[];
     }
-  | { type: "machine_list"; machines: unknown[] };
+  | { type: "machine_list"; machines: unknown[] }
+  | { type: "workspace_identity"; name: string; logo_url?: string };
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
@@ -318,6 +319,13 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       );
     case "machine_list":
       return JSON.stringify(frame("machine_list", [["machines", msg.machines]]));
+    case "workspace_identity":
+      return JSON.stringify(
+        frame("workspace_identity", [
+          ["name", msg.name],
+          ["logo_url", msg.logo_url],
+        ]),
+      );
   }
 }
 

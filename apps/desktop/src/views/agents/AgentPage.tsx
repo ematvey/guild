@@ -496,7 +496,7 @@ function AgentOverview({
     .slice(0, 4);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <div className="space-y-4">
         {agent.description ? (
           <Section title="About">
@@ -543,7 +543,7 @@ function AgentOverview({
                   >
                     <MessageSquare className="size-3.5 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-                    {thread.kind === "default" && <ToneBadge tone="info">Default</ToneBadge>}
+                    {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
                     <span className="text-xs text-muted-foreground">
                       {relativeTime(thread.last_activity_at)}
                     </span>
@@ -761,7 +761,7 @@ function AgentSettings({
   return (
     <div className="space-y-4">
       <Section title="Agent configuration">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="space-y-1.5">
             <span className="text-xs font-medium">Name</span>
             <Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
@@ -800,7 +800,7 @@ function AgentSettings({
         </div>
         <div className="mt-3 space-y-1.5">
           <span className="text-xs font-medium">Visibility</span>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {(["private", "team", "org"] as AgentVisibility[]).map((value) => (
               <button
                 key={value}
@@ -831,7 +831,7 @@ function AgentSettings({
                   You are not a member of any team yet.
                 </p>
               ) : (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {teams.map((team) => {
                     const checked = teamIds.includes(team.id);
                     return (
@@ -927,7 +927,7 @@ function AgentSettings({
                 <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {group.group}
                 </p>
-                <div className="grid gap-1.5 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {group.tools.map((tool) => {
                     const checked = tools.includes(tool.name);
                     return (

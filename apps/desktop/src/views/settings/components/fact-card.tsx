@@ -29,5 +29,5 @@ export function FactGrid({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn("grid gap-3 sm:grid-cols-2", className)}>{children}</div>;
+  return <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", className)}>{children}</div>;
 }

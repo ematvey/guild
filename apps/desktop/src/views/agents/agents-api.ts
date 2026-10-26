@@ -111,7 +111,9 @@ export interface AgentThread {
   chat_id: string;
   title: string;
   title_locked: boolean;
-  kind: "default" | "thread" | "routine_run" | "delegated";
+  type: "user" | "subagent" | "routine";
+  /** The user's Main thread with this agent. */
+  is_default: boolean;
   /** The run thread this one was opened from, when an agent delivered it. */
   origin_thread_id?: string | null;
   created_at: string;
@@ -340,19 +342,6 @@ export async function getAgentThread(
   );
 }
 
-export async function renameAgentThread(
-  id: string,
-  threadId: string,
-  title: string,
-): Promise<AgentThread> {
-  return oneOf<AgentThread>(
-    await request<unknown>(`${agentBase(id)}/threads/${encodeURIComponent(threadId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title }),
-    }),
-    "thread",
-  );
-}
 
 export type ChildThreadAction = "cancel" | "close";
 
@@ -361,31 +350,6 @@ export type ChildThreadActionResult =
   | { ok: false; unavailable: true }
   | { ok: false; unavailable: false; error: string };
 
-/** Cancel or close a child thread. The server endpoints are not built yet
- *  (WP3): a 404/501 means "not available yet", not a failed request. */
-export async function childThreadAction(
-  chatId: string,
-  action: ChildThreadAction,
-): Promise<ChildThreadActionResult> {
-  try {
-    // An empty JSON body: the server parses every POST body as JSON and
-    // rejects a bodyless request before the route runs.
-    await request<void>(
-      `/api/v1/threads/${encodeURIComponent(chatId)}/${action}`,
-      { method: "POST", body: "{}" },
-    );
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof AgentsApiError && (error.status === 404 || error.status === 501)) {
-      return { ok: false, unavailable: true };
-    }
-    return {
-      ok: false,
-      unavailable: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
 
 export async function createAgentThread(
   id: string,
@@ -646,6 +610,13 @@ export const SAFE_BASELINE_TOOLS: AgentToolInfo[] = [
     label: "Search conversations",
     group: "Memory",
     description: "Search this agent's own thread history.",
+    safe: true,
+  },
+  {
+    name: "conversations_list",
+    label: "List conversations",
+    group: "Memory",
+    description: "List this agent's own threads with type and archive filters, sorted and paginated.",
     safe: true,
   },
   {

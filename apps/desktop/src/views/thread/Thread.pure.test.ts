@@ -6,6 +6,7 @@ import {
   busyAfterThreadPush,
   sendButtonState,
   threadAccess,
+  threadFacts,
   pruneStopping,
   statusFromThreads,
   offlineMachine,
@@ -39,39 +40,76 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 
+describe("thread facts", () => {
+  const base = { chatId: "chat", chats: null, archivedChats: null, childTree: null };
+
+  it("reads the type from the tree and the flags from the lists", () => {
+    expect(threadFacts({
+      ...base,
+      childTree: { type: "subagent", archived: false, deleted: false },
+    })).toEqual({ type: "subagent", archived: false, deleted: false });
+    expect(threadFacts({
+      ...base,
+      chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
+      childTree: { type: "user", archived: true, deleted: false },
+    }).archived).toBe(false);
+  });
+
+  it("keeps type, archive and deletion independent", () => {
+    const archivedUser = threadFacts({
+      ...base,
+      archivedChats: [{ id: "chat", type: "user", archived: true, deleted: false }],
+    });
+    expect(archivedUser).toEqual({ type: "user", archived: true, deleted: false });
+    const deletedUser = threadFacts({
+      ...base,
+      chats: [{ id: "chat", type: "user", archived: false, deleted: true }],
+    });
+    expect(deletedUser).toEqual({ type: "user", archived: false, deleted: true });
+    expect(threadFacts({
+      ...base,
+      childTree: { type: "routine", archived: false, deleted: false },
+    }).type).toBe("routine");
+  });
+});
+
 describe("thread access", () => {
+  const facts = { type: "user" as const, archived: false, deleted: false };
   const base = {
     chatId: "child-chat",
     chats: [{ id: "parent-chat" }],
-    archivedChats: [{ id: "archived-chat" }],
-    childTree: null,
+    facts,
   };
 
   it("treats an unknown thread as unknown, never editable", () => {
     expect(threadAccess(base)).toBe("unknown");
     expect(threadAccess({ ...base, chats: null })).toBe("unknown");
-    expect(threadAccess({ ...base, archivedChats: null })).toBe("unknown");
   });
 
   it("keeps active chats writable and archived chats read-only", () => {
     expect(threadAccess({ ...base, chats: [{ id: "child-chat" }] })).toBe("writable");
-    expect(threadAccess({ ...base, archivedChats: [{ id: "child-chat" }] })).toBe("readonly");
+    expect(threadAccess({ ...base, facts: { ...facts, archived: true } })).toBe("readonly");
+    expect(threadAccess({ ...base, facts: { ...facts, deleted: true } })).toBe("readonly");
   });
 
   it("lets active membership win over a late archived list", () => {
     expect(threadAccess({
       ...base,
       chats: [{ id: "child-chat" }],
-      archivedChats: [{ id: "child-chat" }],
+      facts: { ...facts, archived: true },
     })).toBe("writable");
   });
 
-  it("marks a child tree with a parent read-only even before the lists load", () => {
+  it("marks a subagent or routine thread read-only even before the lists load", () => {
     expect(threadAccess({
       ...base,
       chats: null,
-      archivedChats: null,
-      childTree: { parent: { chat_id: "parent" } },
+      facts: { type: "subagent", archived: false, deleted: false },
+    })).toBe("readonly");
+    expect(threadAccess({
+      ...base,
+      chats: null,
+      facts: { type: "routine", archived: false, deleted: false },
     })).toBe("readonly");
   });
 
@@ -87,7 +125,6 @@ describe("thread access", () => {
     expect(threadAccess({
       ...base,
       chats: [],
-      archivedChats: [],
       treeFailed: true,
       synced: true,
       justCreated: true,

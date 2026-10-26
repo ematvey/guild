@@ -15,6 +15,7 @@ import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { busyAfterThreadPush, statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
 import { IS_TAURI } from "../../../lib/session";
+import { applyWindowTitle } from "../../../lib/window-title";
 
 
 export interface MemberSocketDeps {
@@ -192,6 +193,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         markBusy(false);
       },
       onMachineStatus: applyMachineStatus,
+      onWorkspaceIdentity: (identity) => applyWindowTitle(identity.name),
       onMachineList: applyMachineList,
       onArchivedThreadList: (next) => setArchivedChats(next),
       onProjectList: (next, archived) => {

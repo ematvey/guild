@@ -29,6 +29,11 @@ export interface Manifest {
   slug: unknown;
   version: unknown;
   description?: unknown;
+  title?: unknown;
+  summary?: unknown;
+  logo?: unknown;
+  publisher?: unknown;
+  docs_url?: unknown;
   dependencies?: unknown;
   mcp?: { url?: unknown } | null;
   auth?: { kind?: unknown; secret_names?: unknown; identity_key?: unknown } | null;
@@ -77,6 +82,13 @@ export function validateManifest(m: Manifest): void {
  *  fields pass unchanged. */
 export function validateV2(m: Manifest): void {
   validateManifest(m);
+  // Storefront metadata: optional, but each present field is one string.
+  for (const key of ["title", "summary", "logo", "publisher", "docs_url"] as const) {
+    const value = m[key];
+    if (value !== undefined && value !== null && typeof value !== "string") {
+      throw new Error(`${key} must be a string`);
+    }
+  }
   if (m.mcp !== null && m.mcp !== undefined) {
     const url = m.mcp.url;
     if (typeof url !== "string" || !(url.startsWith("http://") || url.startsWith("https://"))) {

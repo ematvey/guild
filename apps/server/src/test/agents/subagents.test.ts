@@ -153,7 +153,7 @@ dbDescribe("subagent tree tools", () => {
     expect(childRun.delegate_agent_id).toBe(targetAgent.id);
 
     const childThread = await store.threadById(result.thread_id);
-    expect(childThread?.kind).toBe("delegated");
+    expect(childThread?.type).toBe("subagent");
     expect(childThread?.parent_thread_id).toBe(thread.id);
     expect(childThread?.depth).toBe(1);
     expect(childThread?.closed_at).toBeNull();

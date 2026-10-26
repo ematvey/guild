@@ -11,7 +11,7 @@ import {
 
 /** The thread's own context: an isolated routine run, or a delivered thread. */
 export interface ThreadInstructionContext {
-  kind: string;
+  type: string;
   routineName: string | null;
   origin: { thread_id: string; title: string } | null;
 }
@@ -70,13 +70,13 @@ export function composeAgentInstructions(
   parts.push(
     `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
-  if (thread?.kind === "routine_run") {
+  if (thread?.type === "routine") {
     const name = (thread.routineName ?? "a routine").replace(/"/g, "&quot;");
     parts.push(
       [
         `<routine_run name="${name}">`,
-        "This turn was started by a routine, not by the user. Nobody reads this thread: the user sees only what you send.",
-        "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing; your final text stays here.",
+        "This turn was started by a routine, not by the user. Nobody reads this thread, and its final message is not delivered: the user sees only what you send.",
+        "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing. Do not restate the result here.",
         "</routine_run>",
       ].join("\n"),
     );

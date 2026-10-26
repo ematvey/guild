@@ -51,7 +51,7 @@ dbDescribe("agent run lifecycle", () => {
     };
     const agent = await store.create(owner, { name: "Lifecycle", model: "GLM-Test" });
     agentId = agent.id;
-    const thread = (await store.listThreads(agent.id, owner.id))[0]!;
+    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
     threadId = thread.id;
     chatId = thread.chat_id;
   }, 60_000);

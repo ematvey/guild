@@ -31,7 +31,7 @@ import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
 import { callPlugin } from "../platform/integrations/execute.js";
-import type { ToolOutcome } from "../platform/integrations/vendors/shared.js";
+import type { ToolOutcome } from "../integrations/shared.js";
 import type { IntegrationGateway } from "../platform/integrations/plugins.js";
 import {
   namespacedTool,
@@ -106,20 +106,19 @@ function parseAutoTool(turns: IntegrationTurn[], name: string): { index: number;
 // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
 function integrationTarget(turns: IntegrationTurn[], callName: string): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
   for (const turn of turns) {
-    const info = turn.tools.find((t) => toolMatches(turn.slug, t.spec.name, callName));
+    const info = turn.tools.find((t) => toolMatches(turn.slug, t, callName));
     if (info !== undefined) return { turn, info };
   }
   return undefined;
 }
 
-/** Whether a plugin tool spec answers a wire tool name — either exactly, or
- *  via the slug namespace (both sides stripped, legacy shape tolerated). */
+/** Whether a plugin tool answers a wire tool name: the declared name, the
+ *  provider's raw name (a trait tool answers both), or the slug-namespaced
+ *  shape a shipped client may still send. */
 // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
-function toolMatches(slug: string, specName: string, callName: string): boolean {
-  if (specName === callName) return true;
-  const s = unnamespacedTool(slug, specName);
-  const c = unnamespacedTool(slug, callName);
-  return s !== null && c !== null && s === c;
+function toolMatches(slug: string, info: IntegrationToolInfo, callName: string): boolean {
+  if (info.spec.name === callName || info.raw === callName) return true;
+  return unnamespacedTool(slug, callName) === info.raw;
 }
 
 /** The approval-gate consultation surface (harness/integrations.ts
@@ -243,8 +242,7 @@ export class IntegrationsRuntime {
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
       for (const info of turn.tools) {
-        const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-        if (!toolCurate(turn.rowConfig, turn.executor === "mcp", raw).enabled) continue;
+        if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
         tools.push(this.integrationTool(info));
         this.knownToolNames.add(info.spec.name);
       }
@@ -422,8 +420,7 @@ export class IntegrationsRuntime {
     const target = integrationTarget(snapshot.turns, callName);
     if (target === undefined) return undefined;
     const { turn, info } = target;
-    const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-    const curation = toolCurate(turn.rowConfig, turn.executor === "mcp", raw);
+    const curation = toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw);
     if (curation.alwaysAsk) return "ask";
     if (curation.alwaysAllow) return "skip";
     return info.class === "read" ? "skip" : "policy";
@@ -457,7 +454,7 @@ export class IntegrationsRuntime {
     if (!toolAllowed(turn, info, role)) {
       return { content: "not permitted by integration policy", isError: true };
     }
-    const raw = unnamespacedTool(turn.slug, callName) ?? callName;
+    const raw = info.raw;
     const outcome = await callPlugin(
       this.deps.gateway,
       turn,

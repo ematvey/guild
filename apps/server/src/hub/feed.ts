@@ -16,6 +16,7 @@ import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
 import {
   archivedThreadListSnapshot,
   machineListSnapshot,
+  workspaceIdentitySnapshot,
   projectListSnapshot,
   threadListSnapshot,
 } from "./workspace.js";
@@ -139,6 +140,17 @@ export class FeedForwarder implements GenerationStreamSink {
       // serialized push, so a snapshot taken before a write can never land
       // after the one that carries it.
       void this.pushWorkspace(parsed.org_id, parsed.user_id).catch(() => {});
+      return;
+    }
+    if (channel === "guild_org") {
+      let parsed: { org_id?: string };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      if (typeof parsed.org_id !== "string") return;
+      void this.pushWorkspaceIdentity(parsed.org_id).catch(() => {});
       return;
     }
     if (channel === "guild_events") {
@@ -416,7 +428,8 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.stopped) return;
     if (this.ctx.hub.sinksOfUser(userId).length === 0) return;
     const user = { org_id: orgId, id: userId };
-    const [chats, archived, projects, machines] = await Promise.all([
+    const [info, chats, archived, projects, machines] = await Promise.all([
+      workspaceIdentitySnapshot(this.ctx, orgId),
       threadListSnapshot(this.ctx, user),
       archivedThreadListSnapshot(this.ctx, user),
       projectListSnapshot(this.ctx, user),
@@ -424,6 +437,7 @@ export class FeedForwarder implements GenerationStreamSink {
     ]);
     // The legacy chat list stays first for old clients (and the Rust
     // daemon's bootstrap wait); the rest are additive frames.
+    this.sendToUser(userId, { type: "workspace_identity", ...info });
     this.sendToUser(userId, { type: "thread_list", chats });
     this.sendToUser(userId, { type: "archived_thread_list", chats: archived });
     this.sendToUser(userId, {
@@ -435,6 +449,14 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   // -- fan-out ------------------------------------------------------------------
+
+  /** The workspace identity moved (an admin renamed it or changed the
+   *  logo): every member socket of the org repaints its title. */
+  private async pushWorkspaceIdentity(orgId: string): Promise<void> {
+    if (this.stopped) return;
+    const info = await workspaceIdentitySnapshot(this.ctx, orgId);
+    this.sendToOrg(orgId, { type: "workspace_identity", ...info });
+  }
 
   /** Machine presence flip: the owner's member sockets repaint the online
    *  dot without polling the registry. */

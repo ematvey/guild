@@ -22,7 +22,7 @@ import { ChatBridge } from "../chats/bridge.js";
 import { createApprovalGate } from "../harness/approvals.js";
 import { SkillRuntime } from "../harness/skills.js";
 import { GuildRuntime } from "../harness/runtime.js";
-import { SharedPoolDatabase } from "../importer/durable.js";
+import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import { UserMcpRuntime } from "../harness/userMcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ChatStore } from "../platform/store/chats.js";

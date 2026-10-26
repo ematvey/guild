@@ -12,20 +12,118 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Integrations are plugins in a shop, and traits carry Guild-provided names
+  (2026-10-27).** The catalog was one 979-line switch in
+  `platform/integration-catalog.ts`: adding a connector meant editing the
+  core, and the admin page listed bare slugs. Each integration is now a
+  folder under `apps/server/src/integrations/<slug>/` holding
+  `integration.ts` (manifest: title, publisher, summary, long description,
+  docs URL, categories, traits, settings fields, tool declarations, the
+  connection probe, the execute function), `execute.ts`, and `logo.svg`.
+  `integrations/index.ts` is the only list, `loader.ts` validates every
+  manifest at startup and reads the logo, and `platform/integration-catalog.ts`
+  is a re-export shim. Grafana ships as the first new plugin:
+  `query_metrics` (PromQL through a named Prometheus datasource),
+  `query_logs` (LogQL through a named Loki datasource), `list_datasources`,
+  `list_dashboards`, `get_dashboard`, `list_alerts`, and `api`. Every tool
+  takes an optional `datasource` and the result names the datasource it
+  used — a wrong region is a wrong answer.
+  - **Trait tools.** A trait is a capability with one Guild-provided tool
+    name, description, and schema (`integrations/traits.ts`): `web_search`
+    and `web_fetch`. An integration declares which trait its tool
+    implements; the first enabled integration in index order keeps the
+    trait and the model sees one tool under the generic name. The
+    provider's raw tool name rides the tool info (`raw`) for dispatch, so
+    a shipped `searxng_web_search` call still resolves. Migration 0098
+    rewrites agent allowlists from the slug-namespaced names to the trait
+    names.
+  - **The shop.** `GET /api/v1/admin/integrations` returns one `items`
+    array — every plugin with its storefront metadata (title, summary,
+    description, logo SVG, publisher, version, docs URL, categories,
+    traits) and this org's install state (`configured`, `enabled`, `id`,
+    `config`). The page is a card grid with search; a card opens the
+    detail, which shows the description and offers "Add integration",
+    then becomes the settings/secrets/curation form. Registry v2 manifests
+    may carry `title`, `summary`, `logo`, `publisher`, and `docs_url`, so
+    an installed plugin looks the same as a shipped one.
+  - **The floor.** The change adds 19 files and 1045 lines (net of the
+    966-line catalog deletion) and raises the coherence floor in the same
+    commit; nothing removable was found inside the touched boxes.
+
+- **A thread has a type, and archive and deletion are flags (2026-10-27).**
+  The thread view read one `readonly` boolean for three different things, so
+  an archived user thread showed "Subagent thread. Read-only", and the
+  header menu hid the only Unarchive action. `agent_threads.kind` mixed the
+  type with the default-thread role; migration 0097 splits it into
+  `type ∈ user|subagent|routine` plus `is_default`, and adds
+  `chats.deleted_at` next to `archived_at`. The tree endpoint returns
+  `type`, `archived` and `deleted`; the sidebar list rows carry the same
+  three. `threadFacts()` derives them from the lists and the tree, and
+  `threadAccess()` reads the result: only a live, active user thread is
+  writable. Archiving keeps the menu (Unarchive, Delete) and shows an
+  Unarchive banner; deletion asks for confirmation, stops the subtree and
+  drops the thread from every list while keeping its transcript.
+  `DELETE /api/v1/threads/{id}` is the deletion route. Agents get
+  `conversations_list`: the calling agent's own threads, filtered by type,
+  archive and deletion state and parent, sorted by activity or creation
+  time, with an opaque keyset cursor (`limit` 1–100). It is in
+  `ALL_AGENT_TOOLS` and `DEFAULT_AGENT_TOOLS`.
+
+- **The skill editor edits the whole bundle, and the spent thread importer
+  is gone (2026-10-27).** The editor wrote `SKILL.md` and nothing else, so a
+  skill with `references/` or `scripts/` could only be republished by a fork
+  or the raw registry route; its own source endpoint already returned those
+  files. The editor now shows the bundle as a file tree
+  (`views/skills/skill-files.ts` + `FileTree.tsx`, shared with the detail
+  page's Files section): pick a file, edit it, add or delete one, and the
+  review step diffs every file, deletions included. `POST`/`PUT
+  /api/v1/skills` accept `files: [{path, content}]` and refuse unsafe paths
+  (`SKILL.md`, `manifest.json`, absolute, `..`, backslash). A published file
+  the source endpoint cannot return as text (binary, or over the 256 KiB
+  inline cap) blocks the save instead of being dropped by the round trip.
+  The change costs 422 lines, so the floor is paid with the thread importer:
+  the cutover it performed is done, its fixture was a captured snapshot of
+  the old log, and `importer/durable.ts` — the chat ↔ conversation mapping
+  the runtime and two test suites still use — moves to
+  `chats/durable-mapping.ts`. The `import-threads` script goes with it.
+
+- **Machines can be deauthorized, and the Approvals page is gone
+  (2026-10-26).** Settings → Machines was read-only, so a machine that left
+  the fleet stayed in the list forever, and the only "unpairing" was manual
+  row surgery. `DELETE /api/v1/machines/{id}` now drops the row, unbinds the
+  chats that ran on it (they fall back to the server executor), closes its
+  live socket and revokes the session it paired with — `machines.session_hash`
+  is recorded at connect (migration 0096), so the app cannot sign back in and
+  re-register itself. A machine with bound projects refuses with the project
+  names: their files live there, and re-homing them is the user's decision.
+  In the same pass the Settings → Approvals page is deleted: it restated the
+  composer's chat modes in a second vocabulary (`default/ask/allow/never` vs
+  `ask/approve_for_me/full_access`) that could not express "deny all", its
+  "Server default" label contradicted the server's own
+  `SERVER_DEFAULT_POLICY`, and its per-tool JSON box duplicated the
+  per-tool approval dropdowns on Integrations and could not even be saved
+  while "Server default" was selected. The account policy stays readable by
+  the API and the composer; nothing in the app writes it now.
+
 - **A routine run reaches the user only through `send_message`
   (2026-10-26).** A routine's run thread is an isolated transcript, so a
   digest written there is invisible: the Assistant's morning digest ran,
   succeeded and reached nobody. The run's system instructions now carry a
   `<routine_run>` block that says the thread is private and the user is
   reached only through `send_message`; a run with nothing worth reporting
-  sends nothing, and its final text stays in the transcript. A
+  sends nothing, and the transcript's final message is neither delivered nor
+  worth tokens. A
   `send_message` call records its calling
   thread as the delivered thread's `origin_thread_id`. That thread's
   instructions name the run thread, so a reply can read the work behind the
   message with `conversation_read`, and the chat tree returns `origin` so
-  the client renders a link to the run under the delivered message. Origin
-  is provenance, not delegation: `parent_thread_id` keeps the subagent
-  tree. The change is paid for by deleting 22 orphaned exports (dead UI
+  the client renders a link to the run inside the delivered message body,
+  above its timestamp. A routine run's transcript opens with the prompt
+  that started it: the scheduler writes that row, because no client command
+  exists to echo. The run thread is read-only in the UI and takes its title
+  from the tree, so a link into it lands on a titled transcript instead of
+  an unknown-thread state. Origin is provenance, not delegation:
+  `parent_thread_id` keeps the subagent tree. The change is paid for by deleting 22 orphaned exports (dead UI
   components, API helpers and thread-event utilities) that no importer
   reached.
 

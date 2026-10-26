@@ -7,7 +7,7 @@
     {
       "id": "integration-tool",
       "definition": "One tool an integration declares: a raw name, a description, a JSON Schema, and a manifest class.",
-      "canonical": "apps/server/src/platform/integration-catalog.ts",
+      "canonical": "apps/server/src/integrations/loader.ts",
       "types": [
         "IntegrationToolSpec",
         "IntegrationToolInfo"
@@ -17,6 +17,10 @@
         "plugin-tool"
       ],
       "representations": [
+        {
+          "where": "apps/server/src/integrations/loader.ts",
+          "role": "domain"
+        },
         {
           "where": "apps/server/src/platform/integration-catalog.ts",
           "role": "domain"
@@ -372,14 +376,14 @@
     {
       "id": "integration-secret",
       "definition": "One stored credential value of an integration, resolved at call time and never carried in a snapshot.",
-      "canonical": "apps/server/src/platform/integrations/vendors/shared.ts",
+      "canonical": "apps/server/src/integrations/shared.ts",
       "types": [],
       "aliases": [
         "connector-secret"
       ],
       "representations": [
         {
-          "where": "apps/server/src/platform/integrations/vendors/shared.ts",
+          "where": "apps/server/src/integrations/shared.ts",
           "role": "domain"
         },
         {
@@ -396,6 +400,38 @@
           "from": "domain",
           "to": "wire",
           "at": "apps/server/src/platform/http/admin.ts"
+        }
+      ]
+    },
+    {
+      "id": "integration-trait",
+      "definition": "A capability (web search, web fetch) with one Guild-provided tool name, description, and argument schema; an integration supplies the implementation.",
+      "canonical": "apps/server/src/integrations/traits.ts",
+      "types": [
+        "TraitSpec"
+      ],
+      "aliases": [
+        "capability"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/integrations/traits.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/plugins.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx"
         }
       ]
     }
@@ -427,57 +463,102 @@
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/atlassian.ts",
+      "where": "apps/server/src/integrations/atlassian/execute.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/firecrawl.ts",
+      "where": "apps/server/src/integrations/atlassian/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/github.ts",
+      "where": "apps/server/src/integrations/firecrawl/execute.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/gitlab.ts",
+      "where": "apps/server/src/integrations/firecrawl/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/google-workspace.ts",
+      "where": "apps/server/src/integrations/github/execute.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/hubspot.ts",
+      "where": "apps/server/src/integrations/github/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/langfuse.ts",
+      "where": "apps/server/src/integrations/gitlab/execute.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/searxng.ts",
+      "where": "apps/server/src/integrations/gitlab/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/shared.ts",
+      "where": "apps/server/src/integrations/google_workspace/execute.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/slack.ts",
+      "where": "apps/server/src/integrations/google_workspace/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
     {
-      "where": "apps/server/src/platform/integrations/vendors/superproxy.ts",
+      "where": "apps/server/src/integrations/hubspot/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/hubspot/integration.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/langfuse/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/langfuse/integration.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/searxng/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/searxng/integration.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/slack/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/slack/integration.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/superproxy/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/superproxy/integration.ts",
       "concept": "integration",
       "role": "domain"
     },
@@ -525,6 +606,46 @@
       "where": "apps/server/src/platform/skillReads.ts",
       "concept": "skill",
       "role": "db"
+    },
+    {
+      "where": "apps/server/src/integrations/loader.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/index.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/types.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/probe.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/api-tool.ts",
+      "concept": "integration-tool",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/grafana/execute.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/grafana/integration.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/integrations/traits.ts",
+      "concept": "integration-trait",
+      "role": "domain"
     }
   ],
   "no_concept": [

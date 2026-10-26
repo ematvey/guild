@@ -1,9 +1,9 @@
 // Machine registry routes:
-// the machines page list and the owner-scoped control-plane fs ops the
-// desktop UI drives directly. Pairing routes live in the auth lane
-// (/api/v1/auth/pair*, already native); there are no rename/delete routes
-// server-side — the label comes from the daemon's upgrade query, and
-// unpairing is registry adoption (re-pair) or manual row surgery.
+// the machines page list, the owner-scoped control-plane fs ops the desktop
+// UI drives directly, and deauthorization (forget the machine and revoke the
+// session it paired with). Pairing routes live in the auth lane
+// (/api/v1/auth/pair*, already native); there is no rename route — the label
+// comes from the daemon's upgrade query.
 
 import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
@@ -26,6 +26,29 @@ export function registerMachineRoutes(app: FastifyInstance, chats: ChatsCtx, ctx
       );
     });
     return { machines: list };
+  });
+
+  /** Deauthorizes a machine: drops its registry row, unbinds the chats that
+   *  ran on it (they fall back to the server executor), revokes the session
+   *  it paired with — so the app cannot sign back in and re-register — and
+   *  closes its live socket. A machine with bound projects refuses (409):
+   *  their files live there, and moving them is the user's decision. */
+  app.delete("/api/v1/machines/:id", async (req) => {
+    const user = await requireUser(ctx, req);
+    const machineId = parseUuidParam(req, "id");
+    const result = await chats.machines.deauthorize(user.org_id, user.id, machineId);
+    if (result.kind === "missing") throw ApiError.notFound("no such machine");
+    if (result.kind === "blocked") {
+      throw ApiError.conflict(
+        "machine_has_projects",
+        `this machine has projects bound to it: ${result.projects.join(", ")} — delete them first`,
+      );
+    }
+    chats.hub.displaceMachine(machineId);
+    if (result.session_hash !== null) {
+      await ctx.identity.revokeSessionHash(result.session_hash);
+    }
+    return { ok: true };
   });
 
   /** Control-plane request to a machine's executor socket, owner-scoped:

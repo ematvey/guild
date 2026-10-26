@@ -280,6 +280,12 @@ export class IdentityStore {
     ]);
   }
 
+  /** Revokes a session by its stored hash (the ws ticket's form), for callers
+   *  that hold the hash and not the token — machine deauthorization. */
+  async revokeSessionHash(hash: string): Promise<void> {
+    await this.pool.query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1", [hash]);
+  }
+
   /** The (session_hash, expires_at) a live bearer token maps to — the ws
    *  ticket mints this identity (session_grant). Only a still-valid
    *  session resolves. */

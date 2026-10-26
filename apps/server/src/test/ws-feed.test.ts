@@ -424,15 +424,15 @@ describe("member-socket feed", () => {
     );
     const rootThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Root session', 'user')`,
       [rootThread, agentId, stack.memberId, chat.id],
     );
     const childChat = await createChat("sync gate child");
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat.id, rootThread],
     );
     const runId = crypto.randomUUID();
@@ -701,8 +701,8 @@ describe("member-socket feed", () => {
       [agentId, stack.orgId, stack.memberId],
     );
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, chat_id, title, kind, user_id, depth)
-       VALUES ($1, $2, $3, 'Child thread', 'delegated', $4, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, chat_id, title, type, user_id, depth)
+       VALUES ($1, $2, $3, 'Child thread', 'subagent', $4, 1)`,
       [crypto.randomUUID(), agentId, chat.id, stack.memberId],
     );
 
@@ -763,8 +763,8 @@ describe("member-socket feed", () => {
     const rootThread = crypto.randomUUID();
     expect(rootThread).not.toBe(chat.id);
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Root session', 'user')`,
       [rootThread, agentId, stack.memberId, chat.id],
     );
 
@@ -781,8 +781,8 @@ describe("member-socket feed", () => {
     expect(childChat.id).not.toBe(chat.id);
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat.id, rootThread],
     );
     const runId = crypto.randomUUID();
@@ -841,9 +841,35 @@ describe("member-socket feed", () => {
     const ws = await memberSocket();
     // The legacy chat list is first (old clients wait for it); the rest of
     // the sidebar state follows on the same bootstrap.
+    const info = await waitFrame(ws, (f) => f.type === "workspace_identity");
+    expect(info.name).toBe("m2 test org");
     await waitFrame(ws, (f) => f.type === "archived_thread_list");
     await waitFrame(ws, (f) => f.type === "project_list");
     await waitFrame(ws, (f) => f.type === "machine_list");
+    ws.end();
+  });
+
+  it("pushes the workspace name to every member socket on a rename", { timeout: TEST_TIMEOUT }, async () => {
+    const ws = await memberSocket();
+    const renamed = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org",
+      headers: auth(stack.adminToken),
+      payload: { name: "Renamed workspace" },
+    });
+    expect(renamed.statusCode).toBe(200);
+    const info = await waitFrame(
+      ws,
+      (f) => f.type === "workspace_identity" && f.name === "Renamed workspace",
+    );
+    expect(info.name).toBe("Renamed workspace");
+    // Restore the harness's name for the tests that follow.
+    await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org",
+      headers: auth(stack.adminToken),
+      payload: { name: "m2 test org" },
+    });
     ws.end();
   });
 

@@ -76,7 +76,7 @@ dbDescribe("stale run reconciliation", () => {
       },
       { name: `Agent ${randomUUID().slice(0, 8)}`, model: "GLM-Test" },
     );
-    const parent = (await store.listThreads(agent.id, userId))[0]!;
+    const parent = (await store.listThreads(agent.id, userId)).threads[0]!;
     const child = await store.createChildThread(parent.id, agent.id, userId, "Child task");
     const run = await store.createRun({
       agent_id: agent.id,

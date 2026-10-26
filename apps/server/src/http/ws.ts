@@ -247,6 +247,7 @@ async function registerMachineRecord(
   meta: MachineConnectMeta,
   peerIp: string | null,
   clientId: string,
+  sessionHash: string,
   hub: LiveHub,
 ): Promise<void> {
   chats.wsLog?.(
@@ -263,6 +264,7 @@ async function registerMachineRecord(
       meta.os_version,
       meta.app_version,
       peerIp,
+      sessionHash,
     );
     if (outcome.adopted_from !== null) {
       // The re-key left any live registration under the old id without a
@@ -367,7 +369,7 @@ async function driveSocket(
       return;
     }
     machineRegistered = true;
-    await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", hub);
+    await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", sessionHash, hub);
     // Skills convergence at connect is the machine's own HTTP pull
     // (`GET /api/v1/skills/sync-payload`, Rust machine_link.rs) — no
     // sync frame rides the machine-connect stream (the WS golden replay
