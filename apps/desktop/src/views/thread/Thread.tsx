@@ -1519,7 +1519,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               className={`mx-auto w-full space-y-5 px-4 pt-6 text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
                 chatResizing ? "" : "transition-[max-width] duration-150"
               }`}
-              style={{ paddingBottom: composerH + 20, maxWidth: chatWidth }}
+              style={{ paddingBottom: composerH + 48, maxWidth: chatWidth }}
             >
               {hasMore && (
                 <div className="flex justify-center">
