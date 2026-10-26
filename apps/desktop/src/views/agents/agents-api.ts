@@ -340,19 +340,6 @@ export async function getAgentThread(
   );
 }
 
-export async function renameAgentThread(
-  id: string,
-  threadId: string,
-  title: string,
-): Promise<AgentThread> {
-  return oneOf<AgentThread>(
-    await request<unknown>(`${agentBase(id)}/threads/${encodeURIComponent(threadId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title }),
-    }),
-    "thread",
-  );
-}
 
 export type ChildThreadAction = "cancel" | "close";
 
@@ -361,31 +348,6 @@ export type ChildThreadActionResult =
   | { ok: false; unavailable: true }
   | { ok: false; unavailable: false; error: string };
 
-/** Cancel or close a child thread. The server endpoints are not built yet
- *  (WP3): a 404/501 means "not available yet", not a failed request. */
-export async function childThreadAction(
-  chatId: string,
-  action: ChildThreadAction,
-): Promise<ChildThreadActionResult> {
-  try {
-    // An empty JSON body: the server parses every POST body as JSON and
-    // rejects a bodyless request before the route runs.
-    await request<void>(
-      `/api/v1/threads/${encodeURIComponent(chatId)}/${action}`,
-      { method: "POST", body: "{}" },
-    );
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof AgentsApiError && (error.status === 404 || error.status === 501)) {
-      return { ok: false, unavailable: true };
-    }
-    return {
-      ok: false,
-      unavailable: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
 
 export async function createAgentThread(
   id: string,

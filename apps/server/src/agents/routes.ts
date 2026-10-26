@@ -704,7 +704,7 @@ export function registerAgentRoutes(
     requireActiveAgent(agent);
     const routine = await store.getRoutine(agentId, parseUuidParam(req, "rid"));
     const run = await runRoutineNow(
-      { pool: infra.pool, store, runtime: chats.runtime },
+      { pool: infra.pool, store, threads: chats.threads, runtime: chats.runtime },
       agent,
       routine,
     );
