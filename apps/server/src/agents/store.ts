@@ -21,7 +21,7 @@ import type {
   AgentRunStep,
   AgentStatus,
   AgentThread,
-  AgentThreadKind,
+  AgentThreadType,
   AgentToolName,
   AgentToolsMode,
   AgentTrigger,
@@ -141,7 +141,7 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a
   ${TS("a.deleted_at")} AS deleted_at, ${TS("a.purge_after")} AS purge_after,
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
-const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.kind,
+const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type, t.is_default,
   t.parent_thread_id, t.origin_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
   ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
 
@@ -155,6 +155,55 @@ const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.p
 
 const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.payload,
   ${TS("n.read_at")} AS read_at, ${TS("n.created_at")} AS created_at`;
+
+/** The largest page a thread list returns. */
+export const MAX_THREAD_PAGE = 100;
+
+export type ThreadSort = "activity_desc" | "activity_asc" | "created_desc" | "created_asc";
+
+/** The filters a thread list accepts. `archived: null` includes both the
+ *  active and the archived threads; the default is active only. */
+export interface ThreadListOptions {
+  types?: AgentThreadType[];
+  archived?: boolean | null;
+  deleted?: boolean;
+  parentThreadId?: string;
+  sort?: ThreadSort;
+  limit?: number;
+  cursor?: string | null;
+}
+
+/** A listed thread carries its chat's two flags: a thread row alone cannot
+ *  say whether the user archived or deleted it. */
+export interface ListedThread extends AgentThread {
+  archived: boolean;
+  deleted: boolean;
+}
+
+export interface ThreadPage {
+  threads: ListedThread[];
+  next_cursor: string | null;
+}
+
+function encodeThreadCursor(sort: ThreadSort, at: string, id: string): string {
+  return Buffer.from(JSON.stringify({ s: sort, t: at, i: id }), "utf8").toString("base64url");
+}
+
+function decodeThreadCursor(cursor: string, sort: ThreadSort): { at: string; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      s?: unknown;
+      t?: unknown;
+      i?: unknown;
+    };
+    if (parsed.s !== sort || typeof parsed.t !== "string" || typeof parsed.i !== "string") {
+      throw new Error("cursor does not match the requested sort");
+    }
+    return { at: parsed.t, id: parsed.i };
+  } catch {
+    throw ApiError.badRequest("invalid cursor");
+  }
+}
 
 /** Visibility predicate over an `agents` alias. Fixed placeholders:
  *  $1 = org id, $2 = caller is admin, $3 = caller user id. */
@@ -209,7 +258,8 @@ function toThread(row: Record<string, unknown>): AgentThread {
     chat_id: row.chat_id as string,
     title: (row.title as string | null) ?? "",
     title_locked: Boolean(row.title_locked),
-    kind: row.kind as AgentThreadKind,
+    type: row.type as AgentThreadType,
+    is_default: Boolean(row.is_default),
     parent_thread_id: (row.parent_thread_id as string | null) ?? null,
     origin_thread_id: (row.origin_thread_id as string | null) ?? null,
     depth: Number(row.depth ?? 0),
@@ -361,8 +411,8 @@ export class AgentStore {
       }
       const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
       await client.query(
-        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, $4, 'Main thread', false, 'default')`,
+        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type, is_default)
+         VALUES ($1, $2, $3, $4, 'Main thread', false, 'user', true)`,
         [uuidv7(), id, user.id, chat.id],
       );
       await client.query("COMMIT");
@@ -660,8 +710,19 @@ export class AgentStore {
    *  newest runs. Transcripts stay in the chat journal rows listed by id. */
   async export(orgId: string, agentId: string): Promise<Record<string, unknown>> {
     const agent = await this.fetchOrThrow(orgId, agentId);
-    const [threads, routines, runs] = await Promise.all([
-      this.listThreads(agentId, agent.owner_user_id, { includeRoutineRuns: true }),
+    const threads: AgentThread[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this.listThreads(agentId, agent.owner_user_id, {
+        types: ["user", "subagent", "routine"],
+        archived: null,
+        limit: MAX_THREAD_PAGE,
+        cursor,
+      });
+      threads.push(...page.threads);
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    const [routines, runs] = await Promise.all([
       this.listRoutines(agentId),
       this.listRuns(agentId, { limit: 200 }),
     ]);
@@ -723,8 +784,8 @@ export class AgentStore {
     agentId: string,
     userId: string,
     title: string,
-    kind: AgentThreadKind = "thread",
-    options: { originThreadId?: string } = {},
+    type: AgentThreadType = "user",
+    options: { originThreadId?: string; isDefault?: boolean } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
@@ -740,9 +801,9 @@ export class AgentStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, kind, origin_thread_id)
-         VALUES ($1, $2, $3, $4, $5, false, $6, $7)`,
-        [id, agentId, userId, chat.id, title, kind, options.originThreadId ?? null],
+           (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8)`,
+        [id, agentId, userId, chat.id, title, type, options.isDefault === true, options.originThreadId ?? null],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -785,8 +846,8 @@ export class AgentStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, kind, parent_thread_id, depth)
-         VALUES ($1, $2, $3, $4, $5, $8, 'delegated', $6, $7)`,
+           (id, agent_id, user_id, chat_id, title, title_locked, type, parent_thread_id, depth)
+         VALUES ($1, $2, $3, $4, $5, $8, 'subagent', $6, $7)`,
         [id, agentId, userId, chat.id, title, parentThreadId, depth, titleLocked],
       );
       await client.query("COMMIT");
@@ -804,18 +865,18 @@ export class AgentStore {
   async ensureDefaultThread(agentId: string, userId: string): Promise<AgentThread> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.kind = 'default'`,
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.is_default`,
       [agentId, userId],
     );
     const row = res.rows[0];
     if (row !== undefined) return toThread(row);
     try {
-      return await this.createThread(agentId, userId, "Main thread", "default");
+      return await this.createThread(agentId, userId, "Main thread", "user", { isDefault: true });
     } catch (error) {
       // A concurrent first turn may have created it between the two queries.
       const again = await this.pool.query<Record<string, unknown>>(
         `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-         WHERE t.agent_id = $1 AND t.user_id = $2 AND t.kind = 'default'`,
+         WHERE t.agent_id = $1 AND t.user_id = $2 AND t.is_default`,
         [agentId, userId],
       );
       const raced = again.rows[0];
@@ -824,23 +885,63 @@ export class AgentStore {
     }
   }
 
-  /** The caller's threads with this agent: default first, then most recent
-   *  activity. Routine-run and delegated threads are execution transcripts
-   *  and stay out of the user-facing list unless explicitly requested. */
+  /** One page of the caller's threads with this agent. Type, archive and
+   *  deletion are independent filters. A cursor is opaque: it carries the
+   *  sort key of the last returned row, so a page boundary never skips or
+   *  repeats a row. */
   async listThreads(
     agentId: string,
     userId: string,
-    options: { includeRoutineRuns?: boolean } = {},
-  ): Promise<AgentThread[]> {
-    let where = "t.agent_id = $1 AND t.user_id = $2";
-    if (options.includeRoutineRuns !== true) where += " AND t.kind NOT IN ('routine_run', 'delegated')";
+    options: ThreadListOptions = {},
+  ): Promise<ThreadPage> {
+    const types = options.types ?? ["user"];
+    const sort = options.sort ?? "activity_desc";
+    const limit = Math.max(1, Math.min(MAX_THREAD_PAGE, Math.floor(options.limit ?? 20)));
+    const params: unknown[] = [agentId, userId, types];
+    const where = ["t.agent_id = $1", "t.user_id = $2", "t.type = ANY($3::text[])"];
+    if (options.archived === true) where.push("c.archived_at IS NOT NULL");
+    else if (options.archived === false) where.push("c.archived_at IS NULL");
+    where.push(options.deleted === true ? "c.deleted_at IS NOT NULL" : "c.deleted_at IS NULL");
+    if (options.parentThreadId !== undefined) {
+      params.push(options.parentThreadId);
+      where.push(`t.parent_thread_id = $${params.length}`);
+    }
+    const column = sort.startsWith("created") ? "t.created_at" : "t.last_activity_at";
+    const descending = sort.endsWith("_desc");
+    const cursor = options.cursor === undefined || options.cursor === null
+      ? null
+      : decodeThreadCursor(options.cursor, sort);
+    if (cursor !== null) {
+      params.push(cursor.at, cursor.id);
+      where.push(
+        `(${column}, t.id) ${descending ? "<" : ">"} ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+      );
+    }
+    params.push(limit + 1);
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE ${where}
-       ORDER BY (t.kind = 'default') DESC, t.last_activity_at DESC, t.created_at DESC`,
-      [agentId, userId],
+      `SELECT ${THREAD_COLUMNS},
+              c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
+       FROM agent_threads t
+       JOIN chats c ON c.id = t.chat_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY ${column} ${descending ? "DESC" : "ASC"}, t.id ${descending ? "DESC" : "ASC"}
+       LIMIT $${params.length}`,
+      params,
     );
-    return res.rows.map(toThread);
+    const rows = res.rows.slice(0, limit).map((row) => ({
+      ...toThread(row),
+      archived: Boolean(row.archived),
+      deleted: Boolean(row.deleted),
+    }));
+    const last = rows[rows.length - 1];
+    const more = res.rows.length > limit;
+    return {
+      threads: rows,
+      next_cursor:
+        more && last !== undefined
+          ? encodeThreadCursor(sort, sort.startsWith("created") ? last.created_at : last.last_activity_at, last.id)
+          : null,
+    };
   }
 
   async getThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {

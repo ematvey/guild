@@ -77,14 +77,14 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("send_message records the calling thread as the delivered thread's origin", async () => {
-    const run = await store.createThread(agent.id, owner.id, "Morning email digest — run", "routine_run");
+    const run = await store.createThread(agent.id, owner.id, "Morning email digest — run", "routine");
     const result = await sendAgentMessage(
       { pool: env!.db, store, threads, agent, userId: owner.id, chatId: run.chat_id },
       { text: "The digest is ready.", title: "Morning digest" },
     );
     const delivered = await store.getThread(agent.id, owner.id, result.thread_id);
     expect(delivered.origin_thread_id).toBe(run.id);
-    expect(delivered.kind).toBe("thread");
+    expect(delivered.type).toBe("user");
   });
 
   it("registers the routine management tools", () => {
@@ -129,9 +129,55 @@ dbDescribe("agent conversation tools", () => {
     expect((await store.fetchAgent(other.id)).description).toBe("");
   });
 
+  it("conversations_list filters by type and flags and pages with a cursor", async () => {
+    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
+    const list = tools.find((tool) => tool.name === "conversations_list");
+    expect(list).toBeDefined();
+    const call = (args: Record<string, unknown>) =>
+      list!.execute(args as never, {} as never, {} as never) as Promise<{
+        structuredOutput?: {
+          threads: { thread_id: string; type: string; archived: boolean; deleted: boolean }[];
+          next_cursor: string | null;
+        };
+        isError?: boolean;
+      }>;
+
+    const main = (await store.listThreads(agent.id, owner.id)).threads[0]!;
+    const extra = await store.createThread(agent.id, owner.id, "A user thread");
+    const child = await store.createChildThread(main.id, agent.id, owner.id, "A child");
+    const routine = await store.createThread(agent.id, owner.id, "A run", "routine");
+    await chats.updateChat(orgId, extra.chat_id, owner, undefined, true);
+    await chats.deleteChat(orgId, routine.chat_id, owner);
+
+    // Default: live user threads only, newest activity first.
+    const userPage = await call({ limit: 2 });
+    expect(userPage.structuredOutput!.threads).toHaveLength(2);
+    expect(userPage.structuredOutput!.threads.every((t) => t.type === "user")).toBe(true);
+    expect(userPage.structuredOutput!.threads.every((t) => !t.archived && !t.deleted)).toBe(true);
+    const second = await call({ limit: 2, cursor: userPage.structuredOutput!.next_cursor });
+    expect(second.isError).toBeUndefined();
+    expect(second.structuredOutput!.threads[0]!.thread_id).not.toBe(
+      userPage.structuredOutput!.threads[0]!.thread_id,
+    );
+
+    // The type filter is separate from the flags.
+    const children = await call({ type: "subagent" });
+    expect(children.structuredOutput!.threads.map((t) => t.thread_id)).toContain(child.id);
+
+    // Archived and deleted are independent states, not types.
+    const archived = await call({ archived: true });
+    expect(archived.structuredOutput!.threads.map((t) => t.thread_id)).toContain(extra.id);
+    const deleted = await call({ type: "routine", deleted: true });
+    expect(deleted.structuredOutput!.threads.map((t) => t.thread_id)).toEqual([routine.id]);
+    expect(deleted.structuredOutput!.threads[0]!.deleted).toBe(true);
+
+    // A malformed cursor is an error, not a silent first page.
+    expect((await call({ cursor: "not-a-cursor" })).isError).toBe(true);
+  });
+
   it("search and read are scoped to the calling agent", async () => {
-    const ownThread = (await store.listThreads(agent.id, owner.id))[0]!;
-    const otherThread = (await store.listThreads(other.id, owner.id))[0]!;
+    const ownThread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
+    const otherThread = (await store.listThreads(other.id, owner.id)).threads[0]!;
     await store.insertChunks([
       {
         thread_id: ownThread.id,

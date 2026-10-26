@@ -38,7 +38,7 @@ dbDescribe("agent conversation search", () => {
     };
     const agent = await store.create(owner, { name: "Search agent", model: "GLM-Test" });
     agentId = agent.id;
-    threadId = (await store.listThreads(agent.id, owner.id))[0]!.id;
+    threadId = (await store.listThreads(agent.id, owner.id)).threads[0]!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -67,7 +67,7 @@ dbDescribe("agent conversation search", () => {
 
   it("scopes results to the agent and returns nothing for an empty query", async () => {
     const other = await store.create(owner, { name: "Other agent", model: "GLM-Test" });
-    const otherThread = (await store.listThreads(other.id, owner.id))[0]!.id;
+    const otherThread = (await store.listThreads(other.id, owner.id)).threads[0]!.id;
     await chunkThread(env!.db, {
       threadId: otherThread,
       agentId: other.id,
@@ -80,7 +80,7 @@ dbDescribe("agent conversation search", () => {
 
   it("caps results at 20 and honours a smaller limit", async () => {
     const bulk = await store.create(owner, { name: "Bulk agent", model: "GLM-Test" });
-    const bulkThread = (await store.listThreads(bulk.id, owner.id))[0]!.id;
+    const bulkThread = (await store.listThreads(bulk.id, owner.id)).threads[0]!.id;
     const chunks = Array.from({ length: 25 }, (_, index) => ({
       thread_id: bulkThread,
       agent_id: bulk.id,

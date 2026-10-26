@@ -543,7 +543,7 @@ function AgentOverview({
                   >
                     <MessageSquare className="size-3.5 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-                    {thread.kind === "default" && <ToneBadge tone="info">Default</ToneBadge>}
+                    {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
                     <span className="text-xs text-muted-foreground">
                       {relativeTime(thread.last_activity_at)}
                     </span>

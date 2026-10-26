@@ -1197,12 +1197,12 @@ export class GuildRuntime {
    *  opened from one of its runs. Null for a plain thread. */
   private async threadContextFor(chatId: string): Promise<ThreadInstructionContext | null> {
     const res = await this.pool.query<{
-      kind: string;
+      type: string;
       origin_thread_id: string | null;
       origin_title: string | null;
       routine_name: string | null;
     }>(
-      `SELECT t.kind, t.origin_thread_id,
+      `SELECT t.type, t.origin_thread_id,
               (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
               (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
                WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
@@ -1217,8 +1217,8 @@ export class GuildRuntime {
       row.origin_thread_id === null
         ? null
         : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
-    if (row.kind !== "routine_run" && origin === null) return null;
-    return { kind: row.kind, routineName: row.routine_name, origin };
+    if (row.type !== "routine" && origin === null) return null;
+    return { type: row.type, routineName: row.routine_name, origin };
   }
 
   /** The tree context of a spawned child thread, or undefined for a root. */
@@ -1359,8 +1359,8 @@ export class GuildRuntime {
     if (personal === null) return null;
     const threadId = uuidv7();
     const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
-       VALUES ($1, $2, $3, $4, $5, false, 'thread')
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
+       VALUES ($1, $2, $3, $4, $5, false, 'user')
        ON CONFLICT (chat_id) DO NOTHING
        RETURNING id`,
       [threadId, personal.id, userId, chatId, title],
@@ -1394,7 +1394,7 @@ export class GuildRuntime {
       }
       if (existing.agent_id !== agent.id) {
         await this.pool.query(
-          `UPDATE agent_threads SET agent_id = $2, kind = 'thread', last_activity_at = now()
+          `UPDATE agent_threads SET agent_id = $2, last_activity_at = now()
            WHERE chat_id = $1`,
           [chatId, agent.id],
         );
@@ -1403,8 +1403,8 @@ export class GuildRuntime {
     }
     const threadId = uuidv7();
     const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
-       VALUES ($1, $2, $3, $4, $5, false, 'thread')
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
+       VALUES ($1, $2, $3, $4, $5, false, 'user')
        ON CONFLICT (chat_id) DO NOTHING
        RETURNING id`,
       [threadId, agent.id, userId, chatId, title],
@@ -1426,12 +1426,12 @@ export class GuildRuntime {
   /** A thread keeps the agent that owns it when it is that agent's Main
    *  thread or a run transcript. Ordinary threads move with the picker. */
   async agentSwitchAllowed(chatId: string): Promise<boolean> {
-    const res = await this.pool.query<{ kind: string }>(
-      `SELECT kind FROM agent_threads WHERE chat_id = $1`,
+    const res = await this.pool.query<{ type: string; is_default: boolean }>(
+      `SELECT type, is_default FROM agent_threads WHERE chat_id = $1`,
       [chatId],
     );
-    const kind = res.rows[0]?.kind;
-    return kind === undefined || (kind !== "default" && kind !== "routine_run" && kind !== "delegated");
+    const row = res.rows[0];
+    return row === undefined || (row.type === "user" && !row.is_default);
   }
 
   /** Delivers one terminal child run to its parent thread. The run-settle
@@ -1808,10 +1808,11 @@ export class GuildRuntime {
       org_id: string;
       title: string | null;
       title_locked: boolean;
-      kind: string;
+      type: string;
+      is_default: boolean;
       model: string | null;
     }>(
-      `SELECT c.org_id, t.title, t.title_locked, t.kind, a.model
+      `SELECT c.org_id, t.title, t.title_locked, t.type, t.is_default, a.model
        FROM agent_threads t
        JOIN chats c ON c.id = t.chat_id
        JOIN agents a ON a.id = t.agent_id
@@ -1820,7 +1821,7 @@ export class GuildRuntime {
     );
     const row = res.rows[0];
     if (row === undefined) return;
-    if (row.kind !== "thread" || row.title_locked) return;
+    if (row.type !== "user" || row.is_default || row.title_locked) return;
     if ((row.title ?? "").trim() !== "") return;
     const first = await this.pool.query<{ content: string | null }>(
       `SELECT payload->>'content' AS content FROM thread_events

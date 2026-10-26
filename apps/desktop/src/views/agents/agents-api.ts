@@ -111,7 +111,9 @@ export interface AgentThread {
   chat_id: string;
   title: string;
   title_locked: boolean;
-  kind: "default" | "thread" | "routine_run" | "delegated";
+  type: "user" | "subagent" | "routine";
+  /** The user's Main thread with this agent. */
+  is_default: boolean;
   /** The run thread this one was opened from, when an agent delivered it. */
   origin_thread_id?: string | null;
   created_at: string;
@@ -608,6 +610,13 @@ export const SAFE_BASELINE_TOOLS: AgentToolInfo[] = [
     label: "Search conversations",
     group: "Memory",
     description: "Search this agent's own thread history.",
+    safe: true,
+  },
+  {
+    name: "conversations_list",
+    label: "List conversations",
+    group: "Memory",
+    description: "List this agent's own threads with type and archive filters, sorted and paginated.",
     safe: true,
   },
   {

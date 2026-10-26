@@ -84,7 +84,7 @@ dbDescribe("agent send_file and turn attachments", () => {
   });
 
   it("uploads, records a pending agent attachment and publishes it at turn end", async () => {
-    const thread = (await store.listThreads(agent.id, owner.id))[0]!;
+    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
     const run = await store.createRun({
       agent_id: agent.id,
       thread_id: thread.id,
@@ -151,7 +151,7 @@ dbDescribe("agent send_file and turn attachments", () => {
   it("rejects paths outside the workspace and symlinks", async () => {
     const workspace = path.join(root, "agents", orgId, agent.id);
     await mkdir(workspace, { recursive: true });
-    const thread = (await store.listThreads(agent.id, owner.id))[0]!;
+    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
     const run = await store.createRun({
       agent_id: agent.id,
       thread_id: thread.id,

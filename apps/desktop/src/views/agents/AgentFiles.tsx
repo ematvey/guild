@@ -342,7 +342,7 @@ export function AgentFiles({
     setEditBusy(true);
     try {
       const threads = await listAgentThreads(agentId);
-      const thread = threads.find((t) => t.kind === "default") ?? threads[0]
+      const thread = threads.find((t) => t.is_default) ?? threads[0]
         ?? (await createAgentThread(agentId, "Files"));
       await sendAgentTurn(agentId, {
         thread_id: thread.id,

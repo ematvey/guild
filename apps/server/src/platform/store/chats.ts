@@ -10,6 +10,7 @@ import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { UserRow } from "./identity.js";
+import type { AgentThreadType } from "../../agents/types.js";
 
 export interface ChatRow {
   id: string;
@@ -21,6 +22,10 @@ export interface ChatRow {
   machine_label: string | null;
   generating: boolean;
   project_id: string | null;
+  /** The user hid the chat from the sidebar; it still resolves. */
+  archived: boolean;
+  /** The user removed the chat; it drops out of every list. */
+  deleted: boolean;
 }
 
 export type CompactionStatus =
@@ -48,11 +53,16 @@ export interface ChatListRow {
   /** The chat's latest thread event (RFC3339), falling back to created_at
    *  for a chat with no events — the sidebar's recent-activity sort key. */
   last_activity_at: string;
+  /** What the chat's thread is. A chat with no thread row is a user chat. */
+  type: AgentThreadType;
+  archived: boolean;
+  deleted: boolean;
 }
 
 const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
     to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-    machine_id, machine_label, generating, project_id FROM chats`;
+    machine_id, machine_label, generating, project_id,
+    archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted FROM chats`;
 
 /** The chat subtree's running set for the whole list: one recursive walk over
  *  agent_threads, then the chats whose subtree holds a queued/running run. */
@@ -93,8 +103,12 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
           WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
-            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at,
+    COALESCE(xt.type, 'user') AS type,
+    c.archived_at IS NOT NULL AS archived,
+    c.deleted_at IS NOT NULL AS deleted
   FROM chats c
+  LEFT JOIN agent_threads xt ON xt.chat_id = c.id
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
   LEFT JOIN projects pr ON pr.id = c.project_id
@@ -106,9 +120,11 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
 /** Routine runs and delegation children are execution transcripts, not
  *  conversations: they stay out of the sidebar lists. The HTTP lists and the
  *  WebSocket thread_list push share this one predicate. */
-export const NOT_EXECUTION_TRANSCRIPT = `NOT EXISTS (
+/** A sidebar row is a user conversation: subagent and routine threads are
+ *  execution transcripts, reachable by direct link but never listed. */
+export const USER_THREAD = `NOT EXISTS (
     SELECT 1 FROM agent_threads xt
-    WHERE xt.chat_id = c.id AND xt.kind IN ('routine_run', 'delegated')
+    WHERE xt.chat_id = c.id AND xt.type <> 'user'
   )`;
 
 /** The sidebar lists sort by recent activity, not creation: a chat's place
@@ -127,6 +143,8 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
     machine_label: (r.machine_label as string | null) ?? null,
     generating: Boolean(r.generating),
     project_id: (r.project_id as string | null) ?? null,
+    archived: Boolean(r.archived),
+    deleted: Boolean(r.deleted),
   };
 }
 
@@ -246,8 +264,9 @@ export class ChatStore {
 
   async listChats(orgId: string, userId: string): Promise<ChatListRow[]> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
-       AND ${NOT_EXECUTION_TRANSCRIPT}
+      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2
+       AND c.archived_at IS NULL AND c.deleted_at IS NULL
+       AND ${USER_THREAD}
        ${LIST_ORDER}`,
       [orgId, userId],
     );
@@ -270,16 +289,20 @@ export class ChatStore {
                     WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
-                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
+                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at,
+              COALESCE(xt.type, 'user') AS type,
+              true AS archived, false AS deleted
        FROM chats c
+       LEFT JOIN agent_threads xt ON xt.chat_id = c.id
        LEFT JOIN working_chats wc ON wc.chat_id = c.id
        LEFT JOIN projects pr ON pr.id = c.project_id
        LEFT JOIN machines m ON m.machine_id = pr.machine_id
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
-       WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL
-         AND ${NOT_EXECUTION_TRANSCRIPT}
+       WHERE c.org_id = $1 AND c.user_id = $2
+         AND c.archived_at IS NOT NULL AND c.deleted_at IS NULL
+         AND ${USER_THREAD}
        ${LIST_ORDER}`,
       [orgId, userId],
     );
@@ -355,6 +378,43 @@ export class ChatStore {
       const row = res.rows[0]!;
       // A rename or archive moves the sidebar lists: the workspace push
       // carries the new title, or the row's move into the archived list.
+      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+      ]);
+      return rowToChat(row);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Soft-deletes the chat (owner-scoped, admin bypass). A deleted chat
+   *  drops out of every list but keeps its row and transcript; deletion is
+   *  separate from archiving and does not unarchive. Waiting commands settle
+   *  as cancelled in the same transaction. */
+  async deleteChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
+    const isAdmin = caller.role === "admin";
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query<Record<string, unknown>>(
+        `UPDATE chats SET deleted_at = now()
+         WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)
+         RETURNING id, org_id, user_id, title,
+           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,
+           machine_id, machine_label, generating, project_id,
+           archived_at IS NOT NULL AS archived, true AS deleted`,
+        [orgId, chatId, caller.id, isAdmin],
+      );
+      if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
+      await client.query(
+        "UPDATE turn_commands SET status = 'cancelled', finished_at = now() WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
+        [chatId],
+      );
+      await client.query("COMMIT");
+      const row = res.rows[0]!;
       await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
         JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
       ]);
@@ -629,6 +689,9 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     project_name: (r.project_name as string | null) ?? null,
     project_machine_label: (r.project_machine_label as string | null) ?? null,
     last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
+    type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
+    archived: Boolean(r.archived),
+    deleted: Boolean(r.deleted),
   };
 }
 

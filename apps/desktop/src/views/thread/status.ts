@@ -2,7 +2,7 @@
 // whether the open thread is writable, and which state the send button has.
 import type { ChatRoute } from "./route";
 import type { MachineInfo } from "../../lib/api/machines";
-import type { ChatSubagentNode, ChatSummary } from "../../lib/api/chats";
+import type { ChatSubagentNode, ChatSummary, ThreadType } from "../../lib/api/chats";
 
 export function statusFromThreads(chats: ChatSummary[]) {
   return Object.fromEntries(chats.map(chat => [chat.id, {
@@ -70,17 +70,46 @@ export function offlineMachine(
   return { label: row.machine_label ?? (machine.name || row.machine_id) };
 }
 
-/** What the composer may do for the visible thread. Active membership wins
- *  over a late archived list; a child tree with a parent is read-only; an
- *  unknown thread hides the composer rather than showing an editable one
- *  that would flip a moment later. */
+/** The three independent facts about a thread: what it is, and whether the
+ *  user archived or deleted it. They are not one state: an archived user
+ *  thread stays a user thread, and a deleted thread stays deleted after it
+ *  is unarchived. The sidebar lists are the live source for the flags; the
+ *  tree supplies the type and is the fallback for a chat that is in no
+ *  list (a subagent node). */
+export interface ThreadFacts {
+  type: ThreadType;
+  archived: boolean;
+  deleted: boolean;
+}
+
+export function threadFacts(input: {
+  chatId: string | null;
+  chats: ReadonlyArray<Pick<ChatSummary, "id" | "type" | "archived" | "deleted">> | null;
+  archivedChats: ReadonlyArray<Pick<ChatSummary, "id" | "type" | "archived" | "deleted">> | null;
+  childTree: { type: ThreadType; archived: boolean; deleted: boolean } | null;
+}): ThreadFacts {
+  const { chatId, chats, archivedChats, childTree } = input;
+  const active = chatId === null ? undefined : chats?.find((c) => c.id === chatId);
+  const archived = chatId === null ? undefined : archivedChats?.find((c) => c.id === chatId);
+  const row = active ?? archived;
+  return {
+    type: childTree?.type ?? row?.type ?? "user",
+    archived: active !== undefined ? !!active.archived : row !== undefined ? true : childTree?.archived === true,
+    deleted: row !== undefined ? !!row.deleted : childTree?.deleted === true,
+  };
+}
+
+/** What the composer may do for the visible thread. Type and flags are
+ *  separate: only a live, active user thread is writable. An active list
+ *  membership wins over a late archived list; an unknown thread hides the
+ *  composer rather than showing an editable one that would flip a moment
+ *  later. */
 export type ThreadAccess = "writable" | "readonly" | "unknown";
 
 export function threadAccess(input: {
   chatId: string | null;
   chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
-  archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
-  childTree: { parent: unknown; kind?: string } | null;
+  facts: ThreadFacts;
   /** The child-tree request settled without a tree (cached as null). */
   treeFailed?: boolean;
   /** An authoritative ThreadState has built the visible view. */
@@ -88,11 +117,12 @@ export function threadAccess(input: {
   /** The chat was just created and its sidebar row may still be in flight. */
   justCreated?: boolean;
 }): ThreadAccess {
-  const { chatId, chats, archivedChats, childTree, treeFailed, synced, justCreated } = input;
+  const { chatId, chats, facts, treeFailed, synced, justCreated } = input;
   if (chatId === null) return "writable";
-  if (childTree !== null && (childTree.parent !== null || childTree.kind === "routine_run")) return "readonly";
+  if (facts.type !== "user") return "readonly";
+  if (facts.deleted) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";
-  if (archivedChats?.some((c) => c.id === chatId)) return "readonly";
+  if (facts.archived) return "readonly";
   // A just-created chat keeps its editable composer while its row is still
   // in flight.
   if (justCreated) return "writable";

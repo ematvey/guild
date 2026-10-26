@@ -12,6 +12,25 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A thread has a type, and archive and deletion are flags (2026-10-27).**
+  The thread view read one `readonly` boolean for three different things, so
+  an archived user thread showed "Subagent thread. Read-only", and the
+  header menu hid the only Unarchive action. `agent_threads.kind` mixed the
+  type with the default-thread role; migration 0097 splits it into
+  `type ∈ user|subagent|routine` plus `is_default`, and adds
+  `chats.deleted_at` next to `archived_at`. The tree endpoint returns
+  `type`, `archived` and `deleted`; the sidebar list rows carry the same
+  three. `threadFacts()` derives them from the lists and the tree, and
+  `threadAccess()` reads the result: only a live, active user thread is
+  writable. Archiving keeps the menu (Unarchive, Delete) and shows an
+  Unarchive banner; deletion asks for confirmation, stops the subtree and
+  drops the thread from every list while keeping its transcript.
+  `DELETE /api/v1/threads/{id}` is the deletion route. Agents get
+  `conversations_list`: the calling agent's own threads, filtered by type,
+  archive and deletion state and parent, sorted by activity or creation
+  time, with an opaque keyset cursor (`limit` 1–100). It is in
+  `ALL_AGENT_TOOLS` and `DEFAULT_AGENT_TOOLS`.
+
 - **The skill editor edits the whole bundle, and the spent thread importer
   is gone (2026-10-27).** The editor wrote `SKILL.md` and nothing else, so a
   skill with `references/` or `scripts/` could only be republished by a fork

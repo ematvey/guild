@@ -36,6 +36,16 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -100,7 +110,7 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
-import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, workingForChat } from "./status";
+import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
 import type { Block } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
@@ -555,11 +565,17 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [chats, archivedChats]);
 
   const {
-    renameChat, archiveChat, unarchiveChat, renameProject, archiveProject, unarchiveProject,
+    renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject,
   } = useChatActions();
   const renameChatRow = useCallback((id: string, title: string) => { void renameChat(id, title); }, [renameChat]);
   const archiveChatRow = useCallback((id: string) => { void archiveChat(id); }, [archiveChat]);
   const unarchiveChatRow = useCallback((id: string) => { void unarchiveChat(id); }, [unarchiveChat]);
+  const deleteChatRow = useCallback((id: string) => {
+    void deleteChat(id);
+    if (viewChatId === id) {
+      pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+    }
+  }, [deleteChat, pushRoute, viewChatId]);
   const openCreateProject = useCallback(() => setCreateProjectOpen(true), []);
   const renameProjectRow = useCallback((id: string, name: string) => { void renameProject(id, name); }, [renameProject]);
   const archiveProjectRow = useCallback((id: string) => { void archiveProject(id); }, [archiveProject]);
@@ -691,23 +707,24 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // thread. An unknown thread hides the composer instead of showing an
   // editable one that would flip a moment later.
   const justCreatedChat = viewChatId !== null && justCreatedBusyRef.current === viewChatId;
+  const facts = threadFacts({ chatId: viewChatId, chats, archivedChats, childTree });
   const access = threadAccess({
     chatId: viewChatId,
     chats,
-    archivedChats,
-    childTree,
+    facts,
     treeFailed: childTreeFailed,
     synced: displayedSynced,
     justCreated: justCreatedChat,
   });
   const readOnlyThread = access === "readonly";
   const composerUnknown = access === "unknown";
-  const activeTitle = readOnlyThread
-    ? childTree?.title ?? (childTree?.kind === "routine_run" ? "Routine run" : "Subagent thread")
-    : activeChat?.title ?? (viewChatId === null ? "New chat" : "");
-  // Archived-chats membership is the only archived flag the client holds
-  // (ChatSummary rows don't carry one).
-  const chatArchived = !!archivedChats?.some((c) => c.id === viewChatId);
+  // A non-user thread's own title comes from its tree node: its chat row is
+  // never in the sidebar, so the list has no title to show.
+  const activeTitle = facts.type === "user"
+    ? activeChat?.title ?? (viewChatId === null ? "New chat" : "")
+    : childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread");
+  const chatArchived = facts.archived;
+  const chatDeleted = facts.deleted;
   // The header menu's rename: a popup dialog around the sidebar's rename
   // transport. Enter or Save commits, Esc/cancel discards.
   const [renameOpen, setRenameOpen] = useState(false);
@@ -731,6 +748,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     await archiveChat(viewChatId);
     pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
   }, [viewChatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
+  // Deletion is not archiving: the thread leaves every list, so the view
+  // navigates away. A confirmation gates the click.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const headerDelete = useCallback(async () => {
+    setDeleteOpen(false);
+    if (!viewChatId) return;
+    await deleteChat(viewChatId);
+    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+  }, [viewChatId, deleteChat, pushRoute]);
   // View entries: each contiguous thinking/tool run becomes one
   // WorkedForBlock; everything else (user, text, errors, compaction cards,
   // queued-send chips, approvals) stays 1:1.
@@ -1065,6 +1091,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       onRenameChat={renameChatRow}
       onArchiveChat={archiveChatRow}
       onUnarchiveChat={unarchiveChatRow}
+      onDeleteChat={deleteChatRow}
     />
   );
   const sidebar =
@@ -1415,7 +1442,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               </DesktopTooltip>
             )
           )}
-          {readOnlyThread && childTree?.parent ? (
+          {facts.type === "subagent" && childTree?.parent ? (
             <ChildThreadHeader tree={childTree} onBack={openChat} />
           ) : (
             <ThreadTitle
@@ -1435,7 +1462,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               <span>Working</span>
             </span>
           )}
-          {viewChatId && !readOnlyThread && (
+          {viewChatId && facts.type === "user" && !chatDeleted && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -1466,9 +1493,34 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   <Link2 className="size-4" />
                   Copy thread URL
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this thread?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The thread leaves your lists and its runs stop. Its transcript is kept.
+                  This cannot be undone in the app.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction className="bg-destructive text-white" onClick={() => void headerDelete()}>
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
@@ -1660,12 +1712,23 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         >
           {readOnlyThread ? (
             <div
-              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
+              className="pointer-events-auto mx-auto flex w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
               style={{ maxWidth: chatWidth }}
             >
-              {childTree?.kind === "routine_run"
-                ? "Routine run. Read-only — the agent wrote this transcript on a schedule."
-                : "Subagent thread. Read-only — the parent agent drives this conversation."}
+              <span className="min-w-0 flex-1">
+                {facts.deleted
+                  ? "Deleted. This thread is out of your lists and its runs have stopped."
+                  : facts.type === "routine"
+                    ? "Routine run. Read-only — the agent wrote this transcript on a schedule."
+                    : facts.type === "subagent"
+                      ? "Subagent thread. Read-only — the parent agent drives this conversation."
+                      : "Archived. Unarchive this thread to send a message."}
+              </span>
+              {facts.type === "user" && facts.archived && !facts.deleted && (
+                <Button variant="secondary" size="sm" onClick={() => void headerArchive()}>
+                  Unarchive
+                </Button>
+              )}
             </div>
           ) : composerUnknown ? (
             <div

@@ -424,15 +424,15 @@ describe("member-socket feed", () => {
     );
     const rootThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Root session', 'user')`,
       [rootThread, agentId, stack.memberId, chat.id],
     );
     const childChat = await createChat("sync gate child");
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat.id, rootThread],
     );
     const runId = crypto.randomUUID();
@@ -701,8 +701,8 @@ describe("member-socket feed", () => {
       [agentId, stack.orgId, stack.memberId],
     );
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, chat_id, title, kind, user_id, depth)
-       VALUES ($1, $2, $3, 'Child thread', 'delegated', $4, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, chat_id, title, type, user_id, depth)
+       VALUES ($1, $2, $3, 'Child thread', 'subagent', $4, 1)`,
       [crypto.randomUUID(), agentId, chat.id, stack.memberId],
     );
 
@@ -763,8 +763,8 @@ describe("member-socket feed", () => {
     const rootThread = crypto.randomUUID();
     expect(rootThread).not.toBe(chat.id);
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind)
-       VALUES ($1, $2, $3, $4, 'Root session', 'thread')`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type)
+       VALUES ($1, $2, $3, $4, 'Root session', 'user')`,
       [rootThread, agentId, stack.memberId, chat.id],
     );
 
@@ -781,8 +781,8 @@ describe("member-socket feed", () => {
     expect(childChat.id).not.toBe(chat.id);
     const childThread = crypto.randomUUID();
     await stack.env.db.query(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, kind, parent_thread_id, depth)
-       VALUES ($1, $2, $3, $4, 'Child session', 'delegated', $5, 1)`,
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child session', 'subagent', $5, 1)`,
       [childThread, agentId, stack.memberId, childChat.id, rootThread],
     );
     const runId = crypto.randomUUID();

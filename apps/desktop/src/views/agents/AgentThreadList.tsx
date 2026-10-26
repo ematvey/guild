@@ -12,7 +12,7 @@ import { ErrorState, Mono, ToneBadge } from "./agent-ui";
 
 /** Thread list: default thread pinned first, then most recent activity. */
 export function sortAgentThreads(threads: AgentThread[]): AgentThread[] {
-  const rank = (t: AgentThread) => (t.kind === "default" ? 0 : 1);
+  const rank = (t: AgentThread) => (t.is_default ? 0 : 1);
   return [...threads].sort((a, b) => {
     const byKind = rank(a) - rank(b);
     if (byKind !== 0) return byKind;
@@ -112,8 +112,8 @@ export function ThreadList({
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{thread.title}</span>
-                  {thread.kind === "default" && <ToneBadge tone="info">Default</ToneBadge>}
-                  {thread.kind === "routine_run" && <ToneBadge tone="neutral">Routine</ToneBadge>}
+                  {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
+                  {thread.type === "routine" && <ToneBadge tone="neutral">Routine</ToneBadge>}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
                   Last activity {relativeTime(thread.last_activity_at)}
