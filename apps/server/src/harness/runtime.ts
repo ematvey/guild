@@ -101,7 +101,7 @@ import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "
 import type { LiveBuffers } from "../chats/bridge.js";
 import { composeAgentInstructions, type ThreadInstructionContext } from "./instructions.js";
 import { TITLE_SYSTEM, cleanGeneratedTitle } from "./title.js";
-import { SharedPoolDatabase, applyChatMappingMigration } from "../importer/durable.js";
+import { SharedPoolDatabase, applyChatMappingMigration } from "../chats/durable-mapping.js";
 
 /** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
 export class ThreadAgentLocked extends Error {

@@ -6,8 +6,6 @@
 import { describe, expect, it } from "vitest";
 import {
   actionVariant,
-  buildFileTree,
-  bundleFilePaths,
   canManageSkill,
   detailActions,
   detailLoadState,
@@ -19,11 +17,11 @@ import {
   readBars,
   readSummary,
   shaPrefix,
-  isMarkdownPath,
   skillMdPreviewBody,
   sparkRects,
   updateAvailable,
 } from "./SkillDetail";
+import { buildFileTree, bundleFilePaths, isMarkdownPath } from "./skill-files";
 import { avatarChip } from "../../lib/format";
 import type { SkillDetail as SkillDetailData, SkillMe } from "./skills-api";
 

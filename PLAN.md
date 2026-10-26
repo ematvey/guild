@@ -12,6 +12,24 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The skill editor edits the whole bundle, and the spent thread importer
+  is gone (2026-10-27).** The editor wrote `SKILL.md` and nothing else, so a
+  skill with `references/` or `scripts/` could only be republished by a fork
+  or the raw registry route; its own source endpoint already returned those
+  files. The editor now shows the bundle as a file tree
+  (`views/skills/skill-files.ts` + `FileTree.tsx`, shared with the detail
+  page's Files section): pick a file, edit it, add or delete one, and the
+  review step diffs every file, deletions included. `POST`/`PUT
+  /api/v1/skills` accept `files: [{path, content}]` and refuse unsafe paths
+  (`SKILL.md`, `manifest.json`, absolute, `..`, backslash). A published file
+  the source endpoint cannot return as text (binary, or over the 256 KiB
+  inline cap) blocks the save instead of being dropped by the round trip.
+  The change costs 422 lines, so the floor is paid with the thread importer:
+  the cutover it performed is done, its fixture was a captured snapshot of
+  the old log, and `importer/durable.ts` — the chat ↔ conversation mapping
+  the runtime and two test suites still use — moves to
+  `chats/durable-mapping.ts`. The `import-threads` script goes with it.
+
 - **Machines can be deauthorized, and the Approvals page is gone
   (2026-10-26).** Settings → Machines was read-only, so a machine that left
   the fleet stayed in the list forever, and the only "unpairing" was manual

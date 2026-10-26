@@ -143,6 +143,18 @@
           "role": "ui"
         },
         {
+          "where": "apps/desktop/src/views/skills/skill-files.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/skills/FileTree.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/skills/SkillEditor.tsx",
+          "role": "ui"
+        },
+        {
           "where": "apps/server/src/harness/skills.ts",
           "role": "domain"
         },
