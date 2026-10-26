@@ -1,9 +1,8 @@
 //! Guild settings sections: the section catalog plus the inline pane the
 //! rail's Settings tab renders in the main column. User sections for
-//! everyone; org sections appear for admins. Sections are lazy-imported so
-//! the chat bundle only pays for what opens.
+//! everyone; org sections appear for admins.
 
-import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
+import { Skeleton } from "@guild/ui/components/skeleton";
 import { useEffect, useState } from "react";
 import {
   Bot,
@@ -21,7 +20,6 @@ import {
   Waypoints,
 } from "lucide-react";
 import { apiMe } from "../../lib/api/servers";
-import type { SectionDetailProps } from "./section-nav";
 import type { UsageQuery } from "./usage-route";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
@@ -30,6 +28,15 @@ import { MachineSection } from "./sections/MachineSection";
 import { GatewaySection } from "./sections/GatewaySection";
 import { AboutSection } from "./sections/AboutSection";
 import { AssistantSection } from "./sections/AssistantSection";
+import GeneralSection from "./sections/GeneralSection";
+import UsageSection from "./sections/UsageSection";
+import UsersSection from "./sections/UsersSection";
+import TeamsSection from "./sections/TeamsSection";
+import ModelsSection from "./sections/ModelsSection";
+import IntegrationsSection from "./sections/IntegrationsSection";
+import McpSection from "./sections/McpSection";
+import SsoSection from "./sections/SsoSection";
+import RegistrySection from "./sections/RegistrySection";
 
 type SectionId =
   | "account"
@@ -162,14 +169,7 @@ function SectionBody({
 }) {
   switch (id) {
     case "general":
-      return (
-        <LazySection
-          load={() => import("./sections/GeneralSection")}
-          name="GeneralSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <GeneralSection />;
     case "account":
       return <AccountSection email={email} />;
     case "appearance":
@@ -180,9 +180,7 @@ function SectionBody({
       return <GatewaySection />;
     case "usage":
       return (
-        <LazySection
-          load={() => import("./sections/UsageSection")}
-          name="UsageSection"
+        <UsageSection
           detail={detail}
           onDetailChange={onDetailChange}
           usage={usage}
@@ -192,108 +190,22 @@ function SectionBody({
     case "assistant":
       return <AssistantSection />;
     case "users":
-      return (
-        <LazySection
-          load={() => import("./sections/UsersSection")}
-          name="UsersSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <UsersSection detail={detail} onDetailChange={onDetailChange} />;
     case "teams":
-      return (
-        <LazySection
-          load={() => import("./sections/TeamsSection")}
-          name="TeamsSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <TeamsSection detail={detail} onDetailChange={onDetailChange} />;
     case "models":
-      return (
-        <LazySection
-          load={() => import("./sections/ModelsSection")}
-          name="ModelsSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <ModelsSection detail={detail} onDetailChange={onDetailChange} />;
     case "integrations":
-      return (
-        <LazySection
-          load={() => import("./sections/IntegrationsSection")}
-          name="IntegrationsSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <IntegrationsSection detail={detail} onDetailChange={onDetailChange} />;
     case "mcp":
-      return (
-        <LazySection
-          load={() => import("./sections/McpSection")}
-          name="McpSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <McpSection detail={detail} onDetailChange={onDetailChange} />;
     case "sso":
-      return (
-        <LazySection
-          load={() => import("./sections/SsoSection")}
-          name="SsoSection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <SsoSection />;
     case "registry":
-      return (
-        <LazySection
-          load={() => import("./sections/RegistrySection")}
-          name="RegistrySection"
-          detail={detail}
-          onDetailChange={onDetailChange}
-        />
-      );
+      return <RegistrySection detail={detail} onDetailChange={onDetailChange} />;
     case "about":
       return <AboutSection />;
   }
-}
-
-/// Minimal lazy loader: dynamic import with a spinner while the chunk lands.
-function LazySection({
-  load,
-  name,
-  detail,
-  onDetailChange,
-  usage,
-  onUsageChange,
-}: {
-  load: () => Promise<{ default: React.ComponentType<SectionDetailProps> }>;
-  name: string;
-  detail: string | null;
-  onDetailChange: (detail: string | null) => void;
-  usage?: UsageQuery;
-  onUsageChange?: (usage: UsageQuery) => void;
-}) {
-  const [Comp, setComp] = useState<React.ComponentType<SectionDetailProps> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setComp(null);
-    setError(null);
-    load()
-      .then((m) => !cancelled && setComp(() => m.default))
-      .catch(() => !cancelled && setError(`failed to load the ${name} section`));
-    return () => {
-      cancelled = true;
-    };
-  }, [load, name]);
-  if (error) return <p className="text-base text-destructive">{error}</p>;
-  if (!Comp)
-    return (
-      <SkeletonForm />
-    );
-  return <Comp detail={detail} onDetailChange={onDetailChange} usage={usage} onUsageChange={onUsageChange} />;
 }
 
 function AccountSection({ email }: { email: string }) {
