@@ -18,45 +18,6 @@ export interface MediaRef {
 
 export type MediaMap = Map<string, MediaRef>;
 
-/** OpenAI `input_audio` accepts wav/mp3 only. */
-function audioFormat(mime: string): string | undefined {
-  switch (mime) {
-    case "audio/wav":
-    case "audio/x-wav":
-    case "audio/wave":
-      return "wav";
-    case "audio/mpeg":
-    case "audio/mp3":
-      return "mp3";
-    default:
-      return undefined;
-  }
-}
-
-/** Model-facing image/audio data URIs for a turn's attachments, gated by
- *  the route's native modalities. Unsupported media stays in the log and in
- *  object storage, never silently deleted — it just does not reach this
- *  model. */
-export function mediaParts(
-  media: MediaMap,
-  atts: readonly MessageAttachment[],
-  modalities: readonly string[],
-): { images: string[]; audio: { data: string; format: string }[] } {
-  const images: string[] = [];
-  const audio: { data: string; format: string }[] = [];
-  for (const a of atts) {
-    const m = media.get(a.id);
-    if (!m) continue;
-    const supported = modalities.includes(a.modality);
-    if (a.modality === "image" && supported) {
-      images.push(`data:${m.mime};base64,${m.b64}`);
-    } else if (a.modality === "audio" && supported) {
-      const f = audioFormat(m.mime);
-      if (f) audio.push({ data: m.b64, format: f });
-    }
-  }
-  return { images, audio };
-}
 
 /** Inline cap for one document attachment's textual content (chars) — a
  *  single huge file must not blow the context window by itself. */

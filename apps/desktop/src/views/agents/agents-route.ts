@@ -98,9 +98,6 @@ export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["settings", "Settings"],
 ];
 
-export function isAgentTab(value: string): value is AgentTab {
-  return AGENT_TABS.some(([id]) => id === value);
-}
 
 const decode = (segment: string): string | null => {
   try {
@@ -314,21 +311,6 @@ export const RUN_TRIGGER_LABEL: Record<RunTrigger, string> = {
 /** Semantic tone used by status badges. */
 export type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
-export function runStatusTone(status: RunStatus): Tone {
-  switch (status) {
-    case "running":
-      return "info";
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "danger";
-    case "queued":
-      return "warning";
-    case "silent":
-    case "skipped":
-      return "neutral";
-  }
-}
 
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 export type AgentVisibility = "private" | "team" | "org";
@@ -346,7 +328,3 @@ export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   org: "Organization",
 };
 
-/** True when the route addresses the given agent's page. */
-export function routeAgentId(route: AgentsRoute): string | null {
-  return route.view === "agent" ? route.agentId : null;
-}

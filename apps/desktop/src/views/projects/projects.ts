@@ -138,10 +138,6 @@ export function uncUp(cwd: string): string {
   return `${WSL_HOST_PREFIX}${rest.slice(0, cut + 1)}`;
 }
 
-/** Converts the distro's LINUX $HOME into its UNC form. */
-export function wslHomeUnc(distro: string, home: string): string {
-  return `${wslRoot(distro)}${home.replace(/^\/+/, "").replace(/\//g, "\\")}`;
-}
 
 
 /** Joins a segment onto a canonical Linux path (trailing slash). */

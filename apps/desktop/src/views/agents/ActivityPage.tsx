@@ -761,9 +761,5 @@ export function ChatActivityPage({
 
 export { RunDetailPage } from "./TraceDetail";
 
-/** Small link helper used by agent pages. */
-export function activityRouteForAgent(agentId: string): AgentsRoute {
-  return { view: "agent", agentId, tab: "activity" };
-}
 
 export { agentsRoutePath };

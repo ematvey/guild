@@ -11,7 +11,6 @@
 // before it has proven itself. Do not replace it with the strict binding.
 
 import type { BundleManifest } from "@guild/protocol/BundleManifest.js";
-import { manifestToolClass } from "./domain/tool-class.js";
 
 export type { BundleManifest };
 
@@ -149,8 +148,3 @@ export function validateV2(m: Manifest): void {
   }
 }
 
-/** Effective manifest class for one tool: write, admin, or read (default
- *  for undeclared tools). */
-export function toolClass(m: Manifest, tool: string): string {
-  return manifestToolClass(m as unknown as Record<string, unknown>, tool);
-}

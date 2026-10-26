@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A routine run reaches the user only through `send_message`
+  (2026-10-26).** A routine's run thread is an isolated transcript, so a
+  digest written there is invisible: the Assistant's morning digest ran,
+  succeeded and reached nobody. The run's system instructions now carry a
+  `<routine_run>` block that says the thread is private and the result must
+  go out through `send_message`; a `send_message` call records its calling
+  thread as the delivered thread's `origin_thread_id`. That thread's
+  instructions name the run thread, so a reply can read the work behind the
+  message with `conversation_read`, and the chat tree returns `origin` so
+  the client renders a link to the run under the delivered message. Origin
+  is provenance, not delegation: `parent_thread_id` keeps the subagent
+  tree. The change is paid for by deleting 22 orphaned exports (dead UI
+  components, API helpers and thread-event utilities) that no importer
+  reached.
+
 - **The quality gate is one script, and the slow checks are cheaper
   (2026-10-26).** `scripts/check.sh` runs the baseline checks concurrently,
   prints PASS/FAIL with per-check seconds, and exits 1 on any failure; it

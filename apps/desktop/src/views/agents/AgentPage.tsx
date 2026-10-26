@@ -54,7 +54,6 @@ import {
   listAgentTools,
   listAgentRuns,
   listAgentThreads,
-  listAgents,
   listMyTeams,
   restoreAgent,
   sendAgentTurn,
@@ -1058,12 +1057,3 @@ function ReadOnlyConfig({ agent }: { agent: Agent }) {
   );
 }
 
-/** Directory data for callers that need an agent's display name. */
-export async function agentNameOf(id: string): Promise<string> {
-  try {
-    const agents = await listAgents();
-    return agents.find((a) => a.id === id)?.name ?? "Agent";
-  } catch {
-    return "Agent";
-  }
-}

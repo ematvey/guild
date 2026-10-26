@@ -34,9 +34,6 @@ const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "activity", label: "Activity", icon: Activity },
 ];
 
-/** The bottom rail buttons: Help (a popup, not a panel tab) above Settings
- *  (the panel tab), then the account menu. */
-export type RailBottomAction = "help" | "settings";
 
 function RailButton({
   label,
