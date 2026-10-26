@@ -5,7 +5,8 @@
 // re-resolved at call time.
 
 import { randomUUID } from "node:crypto";
-import { integrationByName, type IntegrationToolSpec } from "../integration-catalog.js";
+import { integrationByName, traitForTool, type IntegrationToolSpec } from "../integration-catalog.js";
+import { traitSpec } from "../../integrations/traits.js";
 import { manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 
@@ -38,8 +39,14 @@ export interface IntegrationGateway extends PluginSecretSource {
 export type IntegrationExecutor = "rust" | "mcp";
 
 export interface IntegrationToolInfo {
+  /** The declaration the model sees. For a trait tool this is the
+   *  Guild-provided spec, not the provider's. */
   spec: IntegrationToolSpec;
   class: string;
+  /** The provider's own tool name — what the connector receives. */
+  raw: string;
+  /** The trait this tool implements, when it implements one. */
+  trait?: string;
 }
 
 /** Resolution snapshot for one enabled plugin — everything the script API
@@ -140,6 +147,7 @@ function toMcpToolInfo(slug: string, manifest: Json, tool: McpTool): Integration
       parameters: tool.inputSchema,
     },
     class: manifestToolClass(manifest, tool.name),
+    raw: tool.name,
   };
 }
 
@@ -176,7 +184,7 @@ export async function resolveIntegrations(
       }
       let specs: IntegrationToolSpec[];
       try {
-        specs = connector.tools(config);
+        specs = connector.toolSpecs(config);
       } catch {
         warn(`integration ${row.name}: broken config, skipping`);
         continue;
@@ -188,6 +196,7 @@ export async function resolveIntegrations(
         tools: specs.map((spec) => ({
           spec: { ...spec, name: namespacedTool(row.name, spec.name) },
           class: toolClassOf(connector, spec.name),
+          raw: spec.name,
         })),
         rowConfig: config,
         secretNames,
@@ -242,7 +251,32 @@ export async function resolveIntegrations(
           : "email",
     });
   }
+  assignTraits(out);
   return out;
+}
+
+/** Trait tools take their Guild-provided name, description, and schema, and
+ *  only the first integration that declares a trait keeps it: the trait has
+ *  one implementation per conversation, so the model never sees two tools
+ *  with the same name. */
+function assignTraits(turns: IntegrationTurn[]): void {
+  const claimed = new Set<string>();
+  for (const turn of turns) {
+    const kept: IntegrationToolInfo[] = [];
+    for (const info of turn.tools) {
+      const trait = traitForTool(turn.slug, info.raw);
+      if (trait === undefined) {
+        kept.push(info);
+        continue;
+      }
+      if (claimed.has(trait)) continue;
+      const spec = traitSpec(trait);
+      if (spec === undefined) continue;
+      claimed.add(trait);
+      kept.push({ ...info, trait, spec: { name: spec.name, description: spec.description, parameters: spec.parameters } });
+    }
+    turn.tools = kept;
+  }
 }
 
 // The compiled-in catalog metadata (src/platform/integration-catalog.ts) —
@@ -253,7 +287,7 @@ function catalog(name: string) {
 }
 
 function catalogDescription(name: string): string {
-  return catalog(name)?.description ?? "";
+  return catalog(name)?.summary ?? "";
 }
 
 function catalogSecretNames(name: string): string[] {

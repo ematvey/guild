@@ -1,5 +1,5 @@
-import { VENDOR_API_MAX_CHARS, secret, pathSegment, fetchJson, clampNumber, callVendorApi, langfuseBaseUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { VENDOR_API_MAX_CHARS, secret, pathSegment, fetchJson, clampNumber, callVendorApi, langfuseBaseUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- langfuse ----------
 

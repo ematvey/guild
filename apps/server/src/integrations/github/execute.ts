@@ -1,5 +1,5 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, githubApiUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, githubApiUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- github ----------
 

@@ -6,7 +6,7 @@
 
 import { mcpConnect, type McpPeer } from "./mcp.js";
 import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
-import { callSignals, type Json, type ToolOutcome } from "./vendors/shared.js";
+import { callSignals, type Json, type ToolOutcome } from "../../integrations/shared.js";
 import { integrationByName } from "../integration-catalog.js";
 
 // ---------- the plugin dispatcher (call_plugin) ----------

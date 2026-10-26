@@ -1,5 +1,5 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, fetchTimeout, transportCause, clampNumber, callVendorApi, slackBaseUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, fetchTimeout, transportCause, clampNumber, callVendorApi, slackBaseUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- slack ----------
 

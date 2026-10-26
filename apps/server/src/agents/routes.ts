@@ -13,7 +13,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
-import { resolveIntegrations, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { resolveIntegrations } from "../platform/integrations/plugins.js";
 import { toolCurate } from "../platform/integrations/policy.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
@@ -50,7 +50,6 @@ const AGENT_TOOL_CATALOG = [
   { name: "delete_routine", label: "Delete routine", group: "Routines", description: "Delete a routine and stop its schedule.", safe: true },
   { name: "subagents", label: "Subagents", group: "Agents", description: "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.", safe: false },
   { name: "send_file", label: "Send file", group: "Files", description: "Attach a workspace file to the turn's response.", safe: false },
-  { name: "web_search", label: "Web search", group: "Web", description: "Search the web.", safe: false },
 ];
 
 /** The enabled integration tools an agent may be granted. Names are the
@@ -70,14 +69,19 @@ async function integrationToolCatalog(
   const tools: { name: string; label: string; group: string; description: string; safe: boolean }[] = [];
   for (const turn of turns) {
     for (const info of turn.tools) {
-      const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-      if (!toolCurate(turn.rowConfig, turn.executor === "mcp", raw).enabled) continue;
+      if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
+      // A trait tool is Guild-provided: it joins the Web group under its
+      // generic name, whatever integration implements it.
+      const traitLabel = info.trait === undefined ? null : info.trait === "web_search" ? "Web search" : "Web fetch";
       tools.push({
         name: info.spec.name,
-        label: raw.replace(/_/g, " "),
-        group: `Integration · ${turn.slug
-          .replace(/_/g, " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase())}`,
+        label: traitLabel ?? info.raw.replace(/_/g, " "),
+        group:
+          info.trait === undefined
+            ? `Integration · ${turn.slug
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (c) => c.toUpperCase())}`
+            : "Web",
         description: info.spec.description,
         safe: false,
       });

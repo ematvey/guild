@@ -1,6 +1,6 @@
 import { createHash, createSign } from "node:crypto";
-import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- google_workspace ----------
 
