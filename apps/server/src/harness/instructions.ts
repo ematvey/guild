@@ -9,6 +9,14 @@ import {
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
 
+/** What the current thread is, beyond its agent: a routine run is isolated
+ *  from the user, and a thread the agent opened links back to its run. */
+export interface ThreadInstructionContext {
+  kind: string;
+  routineName: string | null;
+  origin: { thread_id: string; title: string } | null;
+}
+
 /** The system instructions of an agent thread: who the agent is, where its
  *  files live, what its threads and workspace share, and the workspace
  *  config files themselves (SOUL, AGENTS, USER, MEMORY). The agent edits
@@ -23,6 +31,7 @@ export function composeAgentInstructions(
   machineBound = false,
   spawnedBy?: { parent_name: string; depth: number; can_spawn: boolean },
   canDelegate = false,
+  thread?: ThreadInstructionContext,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -62,6 +71,29 @@ export function composeAgentInstructions(
   parts.push(
     `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
   );
+  if (thread?.kind === "routine_run") {
+    const name = (thread.routineName ?? "a routine").replace(/"/g, "&quot;");
+    parts.push(
+      [
+        `<routine_run name="${name}">`,
+        "This turn was started by a routine, not by the user. Nobody reads this thread: the user sees only what you send.",
+        "Deliver the result by calling send_message with the full text the user should read. Your final message here stays in this thread.",
+        "</routine_run>",
+      ].join("\n"),
+    );
+  }
+  if (thread?.origin !== undefined && thread.origin !== null) {
+    const title = thread.origin.title.replace(/"/g, "&quot;");
+    const from = thread.routineName === null ? "an agent run" : `the routine "${thread.routineName.replace(/"/g, "&quot;")}"`;
+    parts.push(
+      [
+        `<opened_by_agent thread="${thread.origin.thread_id}" title="${title}">`,
+        `The agent opened this thread from its own run, while executing ${from}. The user replies here.`,
+        `Read the work behind the delivered message with conversation_read on thread ${thread.origin.thread_id}.`,
+        "</opened_by_agent>",
+      ].join("\n"),
+    );
+  }
   if (spawnedBy !== undefined) {
     const spawner = spawnedBy.parent_name.replace(/"/g, "&quot;");
     parts.push(

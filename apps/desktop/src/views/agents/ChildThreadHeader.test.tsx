@@ -12,6 +12,7 @@ const childTree: ChatTree = {
   status: "running",
   depth: 1,
   parent: { chat_id: "parent-chat", title: "Parent session" },
+  origin: null,
 };
 
 describe("ChildThreadHeader", () => {

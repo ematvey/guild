@@ -511,14 +511,18 @@ export function registerAgentRoutes(
       run_status: string | null;
       parent_chat_id: string | null;
       parent_title: string | null;
+      origin_chat_id: string | null;
+      origin_title: string | null;
     }>(
       `SELECT t.kind, t.title, t.depth, t.agent_id, a.name AS agent_name,
               (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
                ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
-              p.chat_id AS parent_chat_id, p.title AS parent_title
+              p.chat_id AS parent_chat_id, p.title AS parent_title,
+              o.chat_id AS origin_chat_id, o.title AS origin_title
        FROM agent_threads t
        JOIN agents a ON a.id = t.agent_id
        LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+       LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
        WHERE t.chat_id = $1`,
       [chatId],
     );
@@ -533,6 +537,7 @@ export function registerAgentRoutes(
         status: null,
         depth: 0,
         parent: null,
+        origin: null,
       });
     }
     return sendJson(reply, {
@@ -547,6 +552,10 @@ export function registerAgentRoutes(
         row.parent_chat_id === null
           ? null
           : { chat_id: row.parent_chat_id, title: row.parent_title ?? "" },
+      origin:
+        row.origin_chat_id === null
+          ? null
+          : { chat_id: row.origin_chat_id, title: row.origin_title ?? "" },
     });
   };
   app.get("/api/v1/chats/:id/tree", chatTree);

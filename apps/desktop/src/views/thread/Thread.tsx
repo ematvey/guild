@@ -13,6 +13,7 @@ import {
   Check,
   ChevronDown,
   CornerDownRight,
+  CornerUpLeft,
   EllipsisVertical,
   FolderOpen,
   Link2,
@@ -821,10 +822,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // identical across prompt edits, so React bails out of the transcript
   // and typing costs only the composer.
   const lastBlockIndex = blocks.length - 1;
+  // A delivered message names the run thread it came from; the link sits
+  // under that message so a reader can open the work behind it.
+  const originLink = childTree?.origin ?? null;
+  const firstTextIndex = displayEntries.findIndex((e) => e.kind === "plain" && e.b.kind === "text");
   const transcriptEntries = useMemo(
     () =>
       displayEntries.map((e, i) => {
-        return (
+        const entry = (
           e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
           e.kind === "work" ? (
             <WorkedForBlock
@@ -889,8 +894,23 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             />
           )
         );
+        if (entry === null) return null;
+        if (i !== firstTextIndex || originLink === null) return entry;
+        return [
+          entry,
+          <button
+            key="origin-thread"
+            type="button"
+            onClick={() => openChat(originLink.chat_id)}
+            className="flex w-fit items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <CornerUpLeft className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">Opened by the agent run</span>
+            <span className="max-w-56 truncate text-foreground">{originLink.title}</span>
+          </button>,
+        ];
       }),
-    [displayEntries, finalAgent, lastAgent, streaming, viewChatId, stopping, lastBlockIndex, blocks, openChildChat],
+    [displayEntries, finalAgent, lastAgent, streaming, viewChatId, stopping, lastBlockIndex, blocks, openChildChat, openChat, originLink, firstTextIndex],
   );
   // The running part of the chat's thread subtree, rendered at the end of
   // the transcript. The nodes arrive on the member socket, never by polling.

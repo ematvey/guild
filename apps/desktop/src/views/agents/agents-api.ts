@@ -111,7 +111,9 @@ export interface AgentThread {
   chat_id: string;
   title: string;
   title_locked: boolean;
-  kind: "default" | "thread" | "routine_run";
+  kind: "default" | "thread" | "routine_run" | "delegated";
+  /** The run thread this one was opened from, when an agent delivered it. */
+  origin_thread_id?: string | null;
   created_at: string;
   last_activity_at: string;
   unread?: boolean;

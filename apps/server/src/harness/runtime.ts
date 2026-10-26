@@ -99,7 +99,7 @@ import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
-import { composeAgentInstructions } from "./instructions.js";
+import { composeAgentInstructions, type ThreadInstructionContext } from "./instructions.js";
 import { TITLE_SYSTEM, cleanGeneratedTitle } from "./title.js";
 import { SharedPoolDatabase, applyChatMappingMigration } from "../importer/durable.js";
 
@@ -1176,6 +1176,8 @@ export class GuildRuntime {
       config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name) };
     }
     const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
+    const thread =
+      chatId === undefined ? undefined : ((await this.threadContextFor(chatId)) ?? undefined);
     const canDelegate =
       spawnedBy === undefined
         ? agent.tools_mode === "all" || agent.tools.includes("subagents")
@@ -1187,7 +1189,36 @@ export class GuildRuntime {
       machineBound,
       spawnedBy,
       canDelegate,
+      thread,
     );
+  }
+
+  /** The thread's own context: an isolated routine run, or a thread the agent
+   *  opened from one of its runs. Null for a plain thread. */
+  private async threadContextFor(chatId: string): Promise<ThreadInstructionContext | null> {
+    const res = await this.pool.query<{
+      kind: string;
+      origin_thread_id: string | null;
+      origin_title: string | null;
+      routine_name: string | null;
+    }>(
+      `SELECT t.kind, t.origin_thread_id,
+              (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
+              (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
+               WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
+               ORDER BY rn.created_at DESC LIMIT 1) AS routine_name
+       FROM agent_threads t
+       WHERE t.chat_id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    const origin =
+      row.origin_thread_id === null
+        ? null
+        : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
+    if (row.kind !== "routine_run" && origin === null) return null;
+    return { kind: row.kind, routineName: row.routine_name, origin };
   }
 
   /** The tree context of a spawned child thread, or undefined for a root. */
@@ -1572,6 +1603,7 @@ export class GuildRuntime {
       threads: this.threads,
       agent,
       userId: ref.user_id,
+      chatId,
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });
