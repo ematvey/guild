@@ -14,7 +14,6 @@ import {
   Layers,
   Palette,
   Plug,
-  ShieldCheck,
   Sparkles,
   User,
   Users,
@@ -30,7 +29,6 @@ import { FactCard, FactGrid } from "./components/fact-card";
 import { MachineSection } from "./sections/MachineSection";
 import { GatewaySection } from "./sections/GatewaySection";
 import { AboutSection } from "./sections/AboutSection";
-import { ApprovalsSection } from "./sections/ApprovalsSection";
 import { AssistantSection } from "./sections/AssistantSection";
 
 type SectionId =
@@ -38,7 +36,6 @@ type SectionId =
   | "appearance"
   | "machine"
   | "gateway"
-  | "approvals"
   | "general"
   | "usage"
   | "assistant"
@@ -66,14 +63,8 @@ export interface SectionDef {
 export const SETTINGS_SECTIONS: SectionDef[] = [
   { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
   { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
-  { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
+  { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
   { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
-  {
-    id: "approvals",
-    label: "Approvals",
-    icon: <ShieldCheck className="size-4" />,
-    group: "user",
-  },
   { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
   { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace", admin: true },
   { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace", admin: true },
@@ -187,8 +178,6 @@ function SectionBody({
       return <MachineSection />;
     case "gateway":
       return <GatewaySection />;
-    case "approvals":
-      return <ApprovalsSection />;
     case "usage":
       return (
         <LazySection

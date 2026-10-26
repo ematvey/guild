@@ -58,6 +58,14 @@ function nonEmpty(value: string | null | undefined): string | null {
   return value !== null && value !== undefined && value !== "" ? value : null;
 }
 
+/** Result of a deauthorization: the row is gone, or bound projects block it
+ *  (their files live on that machine, so they are never silently re-homed).
+ *  `session_hash` is the session the machine paired with, for revocation. */
+export type DeauthorizeResult =
+  | { kind: "removed"; session_hash: string | null }
+  | { kind: "blocked"; projects: string[] }
+  | { kind: "missing" };
+
 export class MachineStore {
   constructor(readonly pool: PlatformPool) {}
 
@@ -104,6 +112,7 @@ export class MachineStore {
     osVersion: string | null,
     appVersion: string | null,
     ip: string | null,
+    sessionHash: string | null = null,
   ): Promise<UpsertOutcome> {
     label = nonEmpty(label);
     fingerprint = nonEmpty(fingerprint);
@@ -111,6 +120,7 @@ export class MachineStore {
     osVersion = nonEmpty(osVersion);
     appVersion = nonEmpty(appVersion);
     ip = nonEmpty(ip);
+    sessionHash = nonEmpty(sessionHash);
 
     const client = await this.pool.connect();
     try {
@@ -145,10 +155,11 @@ export class MachineStore {
              os_version = COALESCE($5, os_version),
              app_version = COALESCE($6, app_version),
              last_ip = COALESCE($7, last_ip),
+             session_hash = COALESCE($8, session_hash),
              last_connected_at = now(), last_seen_at = now()
            WHERE machine_id = $1
            RETURNING ${DB_COLUMNS}`,
-          [machineId, label, fingerprint, os, osVersion, appVersion, ip],
+          [machineId, label, fingerprint, os, osVersion, appVersion, ip, sessionHash],
         );
         await client.query("COMMIT");
         await this.notifyWorkspace(client, orgId, userId);
@@ -178,11 +189,12 @@ export class MachineStore {
                os_version = COALESCE($6, os_version),
                app_version = COALESCE($7, app_version),
                last_ip = COALESCE($8, last_ip),
+               session_hash = COALESCE($9, session_hash),
                last_connected_at = now(), last_seen_at = now(),
                re_paired_at = now()
              WHERE machine_id = $1
              RETURNING ${DB_COLUMNS}`,
-            [old.machine_id, machineId, userId, label, os, osVersion, appVersion, ip],
+            [old.machine_id, machineId, userId, label, os, osVersion, appVersion, ip, sessionHash],
           );
           // Registry identity and all durable execution bindings move together.
           for (const table of ["projects", "chats"]) {
@@ -199,14 +211,61 @@ export class MachineStore {
 
       const rowRes = await client.query<MachineRow>(
         `INSERT INTO machines
-           (machine_id, org_id, user_id, label, hardware_fingerprint, os, os_version, app_version, last_ip)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (machine_id, org_id, user_id, label, hardware_fingerprint, os, os_version, app_version, last_ip, session_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING ${DB_COLUMNS}`,
-        [machineId, orgId, userId, label, fingerprint, os, osVersion, appVersion, ip],
+        [machineId, orgId, userId, label, fingerprint, os, osVersion, appVersion, ip, sessionHash],
       );
       await client.query("COMMIT");
       await this.notifyWorkspace(client, orgId, userId);
       return { row: toRow(rowRes.rows[0]!), adopted_from: null };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // rollback after an already-rolled-back transaction is fine
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Removes a machine from the registry for good: the row goes, chats that
+   *  ran on it fall back to the server executor, and the caller revokes the
+   *  returned session so the app cannot re-register on its next reconnect.
+   *  Projects keep their binding — deleting a project is the user's call —
+   *  so a machine with bound projects refuses instead. */
+  async deauthorize(orgId: string, userId: string, machineId: string): Promise<DeauthorizeResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rowRes = await client.query<{ session_hash: string | null }>(
+        `SELECT session_hash FROM machines
+         WHERE machine_id = $1 AND org_id = $2 AND user_id = $3 FOR UPDATE`,
+        [machineId, orgId, userId],
+      );
+      const row = rowRes.rows[0];
+      if (row === undefined) {
+        await client.query("ROLLBACK");
+        return { kind: "missing" };
+      }
+      const boundRes = await client.query<{ name: string }>(
+        "SELECT name FROM projects WHERE machine_id = $1 AND org_id = $2 ORDER BY name",
+        [machineId, orgId],
+      );
+      if (boundRes.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return { kind: "blocked", projects: boundRes.rows.map((r) => r.name) };
+      }
+      await client.query(
+        "UPDATE chats SET machine_id = NULL, machine_label = NULL WHERE machine_id = $1 AND org_id = $2",
+        [machineId, orgId],
+      );
+      await client.query("DELETE FROM machines WHERE machine_id = $1", [machineId]);
+      await this.notifyWorkspace(client, orgId, userId);
+      await client.query("COMMIT");
+      return { kind: "removed", session_hash: row.session_hash };
     } catch (error) {
       try {
         await client.query("ROLLBACK");
