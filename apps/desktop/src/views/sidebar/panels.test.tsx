@@ -16,7 +16,7 @@ describe("ChatListItem", () => {
       <ChatListItem title="Deploy notes" active status={idle} onClick={() => {}} onRename={() => {}} onArchive={() => {}} />,
     );
     expect(html).toContain("Deploy notes");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-sidebar-accent");
     expect(html).toContain("Row actions");
   });
 
@@ -135,6 +135,6 @@ describe("panels", () => {
       <SettingsPanel role="admin" activeSection="general" onSelectSection={() => {}} />,
     );
     expect(html).toContain("Workspace");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-sidebar-accent");
   });
 });

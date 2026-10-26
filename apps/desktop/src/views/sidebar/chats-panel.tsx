@@ -51,7 +51,7 @@ export const ChatsPanel = memo(function ChatsPanel({
               role="button"
               tabIndex={0}
               aria-label="New thread"
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
               onClick={onNewChat}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") onNewChat();

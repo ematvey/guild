@@ -119,7 +119,7 @@ export const WorkPanel = memo(function WorkPanel({
                 onClick={() =>
                   setLimits((l) => ({ ...l, [p.id]: limit + PROJECT_PAGE_STEP }))
                 }
-                className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
               >
                 <ChevronDown className="size-3" />
                 Show {Math.min(PROJECT_PAGE_STEP, chats.length - limit)} more
@@ -140,7 +140,7 @@ export const WorkPanel = memo(function WorkPanel({
             role="button"
             tabIndex={0}
             title="New project"
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="rounded p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
             onClick={onNewProject}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") onNewProject();

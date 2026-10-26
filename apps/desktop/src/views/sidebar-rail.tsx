@@ -57,7 +57,7 @@ function RailButton({
         onClick={onClick}
         className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
           active
-            ? "bg-accent text-accent-foreground"
+            ? "bg-sidebar-accent text-sidebar-foreground"
             : "text-muted-foreground hover:text-foreground"
         }`}
       >
