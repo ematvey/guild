@@ -21,13 +21,34 @@
         "durable-storage"
       ],
       "representations": [
-        { "where": "apps/server/src/storage/postgres/storage.ts", "role": "db" },
-        { "where": "apps/server/src/storage/postgres/migrations.ts", "role": "db" },
-        { "where": "apps/server/src/storage/postgres/pg.ts", "role": "db" },
-        { "where": "apps/server/src/storage/postgres/scoped.ts", "role": "db" },
-        { "where": "apps/server/src/storage/postgres/live-projection.ts", "role": "db" },
-        { "where": "apps/server/src/importer/durable.ts", "role": "db" },
-        { "where": "apps/server/src/storage/postgres/executor.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/storage/postgres/storage.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/migrations.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/pg.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/scoped.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/live-projection.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/chats/durable-mapping.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/executor.ts",
+          "role": "domain"
+        }
       ],
       "translations": [
         {
@@ -49,9 +70,18 @@
         "chat-conversations-table"
       ],
       "representations": [
-        { "where": "apps/server/src/harness/conversation-directory.ts", "role": "db" },
-        { "where": "apps/server/src/importer/durable.ts", "role": "db" },
-        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/harness/conversation-directory.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/chats/durable-mapping.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/harness/runtime.ts",
+          "role": "domain"
+        }
       ],
       "translations": [
         {
@@ -74,8 +104,14 @@
         "scheduler-lifetime"
       ],
       "representations": [
-        { "where": "apps/server/src/harness/conversation-host.ts", "role": "domain" },
-        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/harness/conversation-host.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/harness/runtime.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -92,8 +128,14 @@
         "turn-admission"
       ],
       "representations": [
-        { "where": "apps/server/src/harness/operations.ts", "role": "domain" },
-        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/harness/operations.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/harness/runtime.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -107,9 +149,18 @@
         "queued-input"
       ],
       "representations": [
-        { "where": "apps/server/src/harness/queue-recovery.ts", "role": "domain" },
-        { "where": "apps/server/src/harness/inbox-merge.ts", "role": "domain" },
-        { "where": "apps/server/src/harness/runtime.ts", "role": "domain" }
+        {
+          "where": "apps/server/src/harness/queue-recovery.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/harness/inbox-merge.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/harness/runtime.ts",
+          "role": "domain"
+        }
       ],
       "translations": []
     },
@@ -135,10 +186,22 @@
         "worker-process"
       ],
       "representations": [
-        { "where": "apps/server/src/worker/supervisor.ts", "role": "domain" },
-        { "where": "apps/server/src/worker/main.ts", "role": "domain" },
-        { "where": "apps/server/src/worker/dispatch-proxy.ts", "role": "domain" },
-        { "where": "apps/server/src/worker/protocol.ts", "role": "wire" }
+        {
+          "where": "apps/server/src/worker/supervisor.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/worker/main.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/worker/dispatch-proxy.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/worker/protocol.ts",
+          "role": "wire"
+        }
       ],
       "translations": [
         {
@@ -147,51 +210,122 @@
           "at": "apps/server/src/worker/supervisor.ts"
         }
       ]
-    },
-    {
-      "id": "thread-importer",
-      "definition": "The offline rebuild of the durable store from the thread-event log, one conversation per chat.",
-      "canonical": "apps/server/src/importer/importer.ts",
-      "types": [
-        "ImportCounts",
-        "ImporterLogger",
-        "ImporterOptions"
-      ],
-      "aliases": [
-        "import-threads"
-      ],
-      "representations": [
-        { "where": "apps/server/src/importer/importer.ts", "role": "domain" }
-      ],
-      "translations": []
     }
   ],
   "attaches": [
-    { "where": "apps/server/src/harness/agent-tools.ts", "concept": "tool", "role": "domain" },
-    { "where": "apps/server/src/harness/codemode-lint.ts", "concept": "tool", "role": "domain" },
-    { "where": "apps/server/src/harness/extension.ts", "concept": "tool", "role": "domain" },
-    { "where": "apps/server/src/harness/tool-schema.ts", "concept": "tool", "role": "domain" },
-    { "where": "apps/server/src/harness/guide-text.ts", "concept": "skill", "role": "domain" },
-    { "where": "apps/server/src/harness/instructions.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/harness/integrations.ts", "concept": "integration", "role": "domain" },
-    { "where": "apps/server/src/harness/models.ts", "concept": "gateway-route", "role": "wire" },
-    { "where": "apps/server/src/harness/thread-history.ts", "concept": "thread-event", "role": "domain" },
-    { "where": "apps/server/src/harness/title.ts", "concept": "chat", "role": "domain" },
-    { "where": "apps/server/src/harness/runtime.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/harness/runtime.ts", "concept": "agent", "role": "domain" },
-    { "where": "apps/server/src/sandbox/agent.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/sandbox/env.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/sandbox/protocol.ts", "concept": "sandbox", "role": "wire" },
-    { "where": "apps/server/src/sandbox/serve.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/sandbox/runner/main.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/sandbox/runner/spec.ts", "concept": "sandbox", "role": "domain" },
-    { "where": "apps/server/src/sandbox/runner/docker.ts", "concept": "sandbox", "role": "db" }
+    {
+      "where": "apps/server/src/harness/agent-tools.ts",
+      "concept": "tool",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/codemode-lint.ts",
+      "concept": "tool",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/extension.ts",
+      "concept": "tool",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/tool-schema.ts",
+      "concept": "tool",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/guide-text.ts",
+      "concept": "skill",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/instructions.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/integrations.ts",
+      "concept": "integration",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/models.ts",
+      "concept": "gateway-route",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/harness/thread-history.ts",
+      "concept": "thread-event",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/title.ts",
+      "concept": "chat",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/runtime.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/harness/runtime.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/agent.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/env.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/protocol.ts",
+      "concept": "sandbox",
+      "role": "wire"
+    },
+    {
+      "where": "apps/server/src/sandbox/serve.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/runner/main.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/runner/spec.ts",
+      "concept": "sandbox",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/sandbox/runner/docker.ts",
+      "concept": "sandbox",
+      "role": "db"
+    }
   ],
   "no_concept": [
-    { "where": "apps/server/src/importer/cli.ts", "reason": "infrastructure" },
-    { "where": "apps/server/src/storage/postgres/benchmark.ts", "reason": "infrastructure" },
-    { "where": "apps/server/src/storage/postgres/test-support.ts", "reason": "infrastructure" },
-    { "where": "apps/server/vitest.config.ts", "reason": "infrastructure" }
+    {
+      "where": "apps/server/src/importer/cli.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/storage/postgres/benchmark.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/storage/postgres/test-support.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/vitest.config.ts",
+      "reason": "infrastructure"
+    }
   ],
   "types_no_concept": []
 }

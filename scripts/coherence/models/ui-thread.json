@@ -182,11 +182,6 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/ApprovalsSection.tsx",
-      "concept": "approval",
-      "role": "ui"
-    },
-    {
       "where": "apps/desktop/src/views/settings/sections/AssistantSection.tsx",
       "concept": "approval",
       "role": "ui"

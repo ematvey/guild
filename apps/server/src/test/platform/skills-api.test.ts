@@ -178,6 +178,50 @@ describe("skills api", () => {
     expect(byPath.get("scripts/run.sh")).toBe("echo hi\n");
   });
 
+  it("editor save writes the extra bundle files, and a later edit replaces them", async () => {
+    const files = [
+      { path: "references/notes.md", content: "# notes\nrule one\n" },
+      { path: "scripts/run.sh", content: "echo hi\n" },
+    ];
+    const created = await inject("POST", "/api/v1/skills", e.memberToken, {
+      slug: "multi-file-skill",
+      description: "d",
+      body: "# body",
+      files,
+    });
+    expect(created.statusCode).toBe(200);
+
+    const src = await inject("GET", "/api/v1/skills/multi-file-skill/source", e.memberToken);
+    type Source = { files: Array<{ path: string; content: string | null }> };
+    const byPath = new Map((src.json() as Source).files.map((f) => [f.path, f.content]));
+    expect(byPath.get("references/notes.md")).toBe("# notes\nrule one\n");
+    expect(byPath.get("scripts/run.sh")).toBe("echo hi\n");
+
+    const edited = await inject("PUT", "/api/v1/skills/multi-file-skill", e.memberToken, {
+      description: "d",
+      body: "# body",
+      files: [{ path: "references/notes.md", content: "# notes\nrule two\n" }],
+    });
+    expect(edited.statusCode).toBe(200);
+    const next = await inject("GET", "/api/v1/skills/multi-file-skill/source", e.memberToken);
+    const nextByPath = new Map((next.json() as Source).files.map((f) => [f.path, f.content]));
+    expect(nextByPath.get("references/notes.md")).toBe("# notes\nrule two\n");
+    // The PUT replaces the bundle: a file left out of the payload is gone.
+    expect(nextByPath.has("scripts/run.sh")).toBe(false);
+  });
+
+  it("editor save refuses unsafe file paths", async () => {
+    for (const path of ["SKILL.md", "manifest.json", "/etc/passwd", "../escape.md", "a//b.md"]) {
+      const res = await inject("POST", "/api/v1/skills", e.memberToken, {
+        slug: `bad-path-${path.replace(/[^a-z0-9]/gi, "")}`,
+        description: "d",
+        body: "# x",
+        files: [{ path, content: "x" }],
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
   it("collapses a multi-line description to one line on save", async () => {
     await inject("POST", "/api/v1/skills", e.memberToken, {
       slug: "single-line-skill",

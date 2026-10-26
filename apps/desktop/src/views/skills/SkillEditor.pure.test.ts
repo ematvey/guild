@@ -13,12 +13,14 @@ import {
   type EditorForm,
   type ReviewBase,
 } from "./SkillEditor";
+import { filePathError } from "./skill-files";
 
 const base: EditorForm = {
   slug: "code-review",
   description: "Reviews diffs against repo standards",
   body: "# Code review\n\nReviews diffs.",
   ownerTeamId: null,
+  files: [],
 };
 
 describe("slugError (mirrors the server's manifest validation)", () => {
@@ -53,6 +55,7 @@ describe("saveRequest", () => {
       slug: "code-review",
       description: "Reviews diffs against repo standards",
       body: "# Code review\n\nReviews diffs.",
+      files: [],
     });
   });
 
@@ -69,6 +72,7 @@ describe("saveRequest", () => {
     expect(req.body).toEqual({
       description: "Reviews diffs against repo standards",
       body: "# Code review\n\nReviews diffs.",
+      files: [],
     });
   });
 
@@ -101,7 +105,7 @@ describe("canSave", () => {
   });
 });
 
-const reviewBase: ReviewBase = { description: base.description, skill_md: base.body };
+const reviewBase: ReviewBase = { description: base.description, skill_md: base.body, files: [] };
 
 describe("reviewChanges (the publish guard's diff)", () => {
   it("create mode treats everything as added — full content diff of SKILL.md", () => {
@@ -147,5 +151,81 @@ describe("reviewChanges (the publish guard's diff)", () => {
     const review = reviewChanges("edit", base, null);
     expect(review.hasChanges).toBe(true);
     expect(review.changes[0]).toMatchObject({ path: "SKILL.md", status: "added" });
+  });
+});
+
+describe("multi-file drafts (the editor's file tree)", () => {
+  const withFiles: EditorForm = {
+    ...base,
+    files: [{ path: "references/notes.md", content: "# notes\nrule one\n" }],
+  };
+
+  it("create mode sends every bundle file in the payload", () => {
+    expect(saveRequest("create", withFiles).body).toMatchObject({
+      files: [{ path: "references/notes.md", content: "# notes\nrule one\n" }],
+    });
+    expect(saveRequest("edit", withFiles).body).toMatchObject({
+      files: [{ path: "references/notes.md", content: "# notes\nrule one\n" }],
+    });
+  });
+
+  it("create mode lists SKILL.md and each extra file as added", () => {
+    const review = reviewChanges("create", withFiles, null);
+    expect(review.changes.map((c) => [c.path, c.status])).toEqual([
+      ["SKILL.md", "added"],
+      ["references/notes.md", "added"],
+    ]);
+  });
+
+  it("edit mode diffs a changed extra file and leaves unchanged ones out", () => {
+    const edited: EditorForm = {
+      ...withFiles,
+      files: [
+        { path: "references/notes.md", content: "# notes\nrule two\n" },
+        { path: "scripts/run.sh", content: "echo hi\n" },
+      ],
+    };
+    const review = reviewChanges("edit", edited, {
+      ...reviewBase,
+      files: [
+        { path: "references/notes.md", content: "# notes\nrule one\n" },
+        { path: "scripts/run.sh", content: "echo hi\n" },
+      ],
+    });
+    expect(review.changes.map((c) => [c.path, c.status])).toEqual([
+      ["references/notes.md", "modified"],
+    ]);
+    expect(review.changes[0]!.diff).toEqual([
+      { type: "ctx", text: "# notes" },
+      { type: "del", text: "rule one" },
+      { type: "add", text: "rule two" },
+    ]);
+  });
+
+  it("a file removed from the draft is a deletion in the review", () => {
+    const review = reviewChanges("edit", base, {
+      ...reviewBase,
+      files: [{ path: "scripts/run.sh", content: "echo hi\n" }],
+    });
+    expect(review.changes).toHaveLength(1);
+    expect(review.changes[0]).toMatchObject({ path: "scripts/run.sh", status: "deleted" });
+    expect(review.hasChanges).toBe(true);
+  });
+});
+
+describe("filePathError (the add-file gate, mirrors the server)", () => {
+  it("accepts relative nested paths", () => {
+    expect(filePathError("references/notes.md")).toBeNull();
+    expect(filePathError("scripts/run.sh")).toBeNull();
+  });
+
+  it("refuses the server-written files and unsafe paths", () => {
+    expect(filePathError("")).not.toBeNull();
+    expect(filePathError("SKILL.md")).not.toBeNull();
+    expect(filePathError("manifest.json")).not.toBeNull();
+    expect(filePathError("/etc/passwd")).not.toBeNull();
+    expect(filePathError("a\\b.md")).not.toBeNull();
+    expect(filePathError("../escape.md")).not.toBeNull();
+    expect(filePathError("a//b.md")).not.toBeNull();
   });
 });
