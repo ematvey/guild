@@ -46,6 +46,9 @@ export interface SocketHandlers {
   onAuthRequired?: () => void;
   onError?: (message: string) => void;
   onOrgEvent?: (event: unknown) => void;
+  /** The workspace's display identity (name, logo), sent with every
+   *  workspace push and on every rename. */
+  onWorkspaceIdentity?: (identity: { name: string; logo_url?: string }) => void;
 }
 
 /** Converts the current HTTP origin into the WebSocket origin. */
@@ -122,6 +125,9 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       return;
     case "org_event":
       handlers.onOrgEvent?.(message.event);
+      return;
+    case "workspace_identity":
+      handlers.onWorkspaceIdentity?.({ name: message.name, logo_url: message.logo_url });
       return;
   }
 }

@@ -19,6 +19,18 @@
         {
           "where": "apps/server/src/platform/http/org.ts",
           "role": "wire"
+        },
+        {
+          "where": "crates/protocol/src/ws.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/hub/protocol.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/hub/workspace.ts",
+          "role": "wire"
         }
       ],
       "translations": [
@@ -26,6 +38,11 @@
           "from": "db",
           "to": "wire",
           "at": "apps/server/src/platform/http/org.ts"
+        },
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/server/src/hub/protocol.ts"
         }
       ]
     },
