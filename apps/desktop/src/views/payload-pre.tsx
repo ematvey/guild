@@ -11,7 +11,7 @@ export function PayloadPre({
 }) {
   return (
     <pre
-      className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed text-muted-foreground ${className}`}
+      className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed text-muted-foreground ${className}`}
     >
       {text}
     </pre>

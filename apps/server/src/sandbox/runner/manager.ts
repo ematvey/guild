@@ -252,11 +252,22 @@ export class SandboxManager {
     if (excess > 0) throw new RunnerError(503, "sandbox capacity reached");
   }
 
+  /** A dead FUSE session answers ENOTCONN from any fs call on the volume,
+   *  not only the two root dirs `volumesAlive` probes. Such a failure costs
+   *  the process, and the client hears a retryable 503 instead of a 500. */
+  private volumeFailure(error: unknown): never {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOTCONN") {
+      this.restartForVolume(this.config.agentDataDir);
+      throw new RunnerError(503, "sandbox runner volume is stale; the runner is restarting");
+    }
+    throw error;
+  }
+
   /** Idempotent: running → as is; stopped → started; missing → created. */
   async ensure(key: string, subpath: string): Promise<{ name: string; state: string }> {
     if (!validKey(key)) throw new RunnerError(400, "invalid sandbox key");
     if (!validSubpath(subpath)) throw new RunnerError(400, "invalid workspace subpath");
-    await this.requireVolumes();
+    await this.requireVolumes().catch((error: unknown) => this.volumeFailure(error));
     const name = containerName(this.config, key);
     return this.withLock(name, async () => {
       let existing = await this.inspect(name);
@@ -278,7 +289,7 @@ export class SandboxManager {
       }
       this.touch(name);
       return { name, state: "running" };
-    });
+    }).catch((error: unknown) => this.volumeFailure(error));
   }
 
   private async owned(name: string): Promise<ContainerInspect> {
