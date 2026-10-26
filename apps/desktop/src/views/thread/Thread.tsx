@@ -1631,7 +1631,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             {!atBottom && (
               <div
                 className="pointer-events-none absolute inset-x-0 z-20 px-3 sm:px-4"
-                style={{ bottom: composerH + 12 }}
+                style={{ bottom: composerH - 12 }}
               >
                 <div
                   className="mx-auto flex w-full justify-end"
