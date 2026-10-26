@@ -11,6 +11,8 @@ import { uuidv7 } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
 import { AgentStore } from "./store.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
 
@@ -27,6 +29,7 @@ type SchedulerRuntime = Pick<GuildRuntime, "submitTurn">;
 export interface AgentSchedulerDeps {
   pool: PlatformPool;
   store: AgentStore;
+  threads: ThreadStore;
   runtime: SchedulerRuntime;
   log: Logger;
   enabled?: boolean;
@@ -335,6 +338,7 @@ export class AgentScheduler {
         summary: row.routine_name,
       });
       runId = run.id;
+      await this.deps.threads.appendEvent(thread.chat_id, userMessageEvent(row.prompt));
       await this.deps.pool.query(
         "UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1",
         [row.id, run.id],
@@ -420,7 +424,7 @@ export class AgentScheduler {
 /** Runs a routine immediately, outside the tick loop. Manual runs are real
  *  occurrences, so they share the hidden thread and run-history shape. */
 export async function runRoutineNow(
-  deps: Pick<AgentSchedulerDeps, "pool" | "store" | "runtime">,
+  deps: Pick<AgentSchedulerDeps, "pool" | "store" | "threads" | "runtime">,
   agent: Agent,
   routine: AgentRoutine,
 ): Promise<AgentRun> {
@@ -454,6 +458,7 @@ export async function runRoutineNow(
     summary: routine.name,
   });
   await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [occurrence.id, run.id]);
+  await deps.threads.appendEvent(thread.chat_id, userMessageEvent(routine.prompt));
   try {
     await deps.runtime.submitTurn(thread.chat_id, agent.org_id, {
       orgId: agent.org_id,

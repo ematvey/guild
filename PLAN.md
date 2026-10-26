@@ -59,9 +59,13 @@ first. Code comments describe only the present.
   thread as the delivered thread's `origin_thread_id`. That thread's
   instructions name the run thread, so a reply can read the work behind the
   message with `conversation_read`, and the chat tree returns `origin` so
-  the client renders a link to the run under the delivered message. Origin
-  is provenance, not delegation: `parent_thread_id` keeps the subagent
-  tree. The change is paid for by deleting 22 orphaned exports (dead UI
+  the client renders a link to the run inside the delivered message body,
+  above its timestamp. A routine run's transcript opens with the prompt
+  that started it: the scheduler writes that row, because no client command
+  exists to echo. The run thread is read-only in the UI and takes its title
+  from the tree, so a link into it lands on a titled transcript instead of
+  an unknown-thread state. Origin is provenance, not delegation:
+  `parent_thread_id` keeps the subagent tree. The change is paid for by deleting 22 orphaned exports (dead UI
   components, API helpers and thread-event utilities) that no importer
   reached.
 

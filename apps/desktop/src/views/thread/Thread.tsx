@@ -158,10 +158,16 @@ const TextBlock = memo(function TextBlock({
   b,
   showStamp,
   showInterrupted,
+  origin,
+  onOpenOrigin,
 }: {
   b: Block;
   showStamp: boolean;
   showInterrupted: boolean;
+  /** The run this message was delivered from. Rendered in the body so the
+   *  timestamp stays under the link. */
+  origin?: { chat_id: string; title: string } | null;
+  onOpenOrigin?: (chatId: string) => void;
 }) {
   return (
     <div className="group relative">
@@ -169,6 +175,17 @@ const TextBlock = memo(function TextBlock({
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {b.text}
         </Markdown>
+        {origin != null && (
+          <button
+            type="button"
+            onClick={() => onOpenOrigin?.(origin.chat_id)}
+            className="flex w-fit items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <CornerUpLeft className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">Opened by the agent run</span>
+            <span className="max-w-56 truncate text-foreground">{origin.title}</span>
+          </button>
+        )}
         {b.interrupted && showInterrupted && (
           <div className="text-xs text-muted-foreground">stopped</div>
         )}
@@ -686,7 +703,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const readOnlyThread = access === "readonly";
   const composerUnknown = access === "unknown";
   const activeTitle = readOnlyThread
-    ? childTree?.title ?? "Subagent thread"
+    ? childTree?.title ?? (childTree?.kind === "routine_run" ? "Routine run" : "Subagent thread")
     : activeChat?.title ?? (viewChatId === null ? "New chat" : "");
   // Archived-chats membership is the only archived flag the client holds
   // (ChatSummary rows don't carry one).
@@ -891,24 +908,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               b={e.b}
               showStamp={finalAgent.has(e.i) && !(streaming && e.i === lastAgent)}
               showInterrupted={!streaming}
+              origin={i === firstTextIndex ? originLink : null}
+              onOpenOrigin={openChat}
             />
           )
         );
-        if (entry === null) return null;
-        if (i !== firstTextIndex || originLink === null) return entry;
-        return [
-          entry,
-          <button
-            key="origin-thread"
-            type="button"
-            onClick={() => openChat(originLink.chat_id)}
-            className="flex w-fit items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <CornerUpLeft className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">Opened by the agent run</span>
-            <span className="max-w-56 truncate text-foreground">{originLink.title}</span>
-          </button>,
-        ];
+        return entry;
       }),
     [displayEntries, finalAgent, lastAgent, streaming, viewChatId, stopping, lastBlockIndex, blocks, openChildChat, openChat, originLink, firstTextIndex],
   );
@@ -1658,7 +1663,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
               style={{ maxWidth: chatWidth }}
             >
-              Subagent thread. Read-only — the parent agent drives this conversation.
+              {childTree?.kind === "routine_run"
+                ? "Routine run. Read-only — the agent wrote this transcript on a schedule."
+                : "Subagent thread. Read-only — the parent agent drives this conversation."}
             </div>
           ) : composerUnknown ? (
             <div

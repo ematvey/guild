@@ -80,7 +80,7 @@ export function threadAccess(input: {
   chatId: string | null;
   chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
   archivedChats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
-  childTree: { parent: unknown } | null;
+  childTree: { parent: unknown; kind?: string } | null;
   /** The child-tree request settled without a tree (cached as null). */
   treeFailed?: boolean;
   /** An authoritative ThreadState has built the visible view. */
@@ -90,7 +90,7 @@ export function threadAccess(input: {
 }): ThreadAccess {
   const { chatId, chats, archivedChats, childTree, treeFailed, synced, justCreated } = input;
   if (chatId === null) return "writable";
-  if (childTree !== null && childTree.parent !== null) return "readonly";
+  if (childTree !== null && (childTree.parent !== null || childTree.kind === "routine_run")) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";
   if (archivedChats?.some((c) => c.id === chatId)) return "readonly";
   // A just-created chat keeps its editable composer while its row is still
