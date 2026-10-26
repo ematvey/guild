@@ -218,7 +218,7 @@ export function OnboardingGuide({
     <Dialog open onOpenChange={(o) => { if (!o) onDone(null); }}>
       <DialogContent className="max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-3xl">
         <DialogTitle className="sr-only">Guild guide</DialogTitle>
-        <div className="grid sm:min-h-[26rem] sm:grid-cols-[1fr_13rem]">
+        <div className="grid grid-cols-1 sm:min-h-[26rem] sm:grid-cols-[minmax(0,1fr)_13rem]">
           {/* selected section */}
           <div className="flex flex-col p-6">
             <div className="mb-4 flex items-center gap-3">
