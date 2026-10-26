@@ -75,8 +75,8 @@ export function composeAgentInstructions(
     parts.push(
       [
         `<routine_run name="${name}">`,
-        "This turn was started by a routine, not by the user. Nobody reads this thread: the user sees only what you send.",
-        "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing; your final text stays here.",
+        "This turn was started by a routine, not by the user. Nobody reads this thread, and its final message is not delivered: the user sees only what you send.",
+        "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing. Do not restate the result here.",
         "</routine_run>",
       ].join("\n"),
     );

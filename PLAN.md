@@ -54,7 +54,8 @@ first. Code comments describe only the present.
   succeeded and reached nobody. The run's system instructions now carry a
   `<routine_run>` block that says the thread is private and the user is
   reached only through `send_message`; a run with nothing worth reporting
-  sends nothing, and its final text stays in the transcript. A
+  sends nothing, and the transcript's final message is neither delivered nor
+  worth tokens. A
   `send_message` call records its calling
   thread as the delivered thread's `origin_thread_id`. That thread's
   instructions name the run thread, so a reply can read the work behind the
