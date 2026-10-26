@@ -861,7 +861,7 @@ function RouteDetail({
             />
             Enabled — selectable in chats
           </label>
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <Field label="Price in, $/Mtok">
               <Input
                 value={String(draft.price_per_mtok_in_usd)}
