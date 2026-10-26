@@ -9,7 +9,7 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/rust-json.js";
-import { INTEGRATIONS, integrationByName, type IntegrationManifest } from "../integration-catalog.js";
+import { INTEGRATIONS, integrationByName } from "../integration-catalog.js";
 import { isToolClass, manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import {
@@ -173,20 +173,6 @@ async function setOrgPrompt(
 
 // ---------- integrations (read paths + per-tool curation) ----------
 
-/** The schema/secret/categories metadata one connector contributes to the
- *  admin list (both as a configured row and in the available list). */
-function connectorMetadata(m: IntegrationManifest): {
-  categories: string[];
-  secret_names: string[];
-  settings: unknown;
-} {
-  return {
-    categories: m.categories,
-    secret_names: m.secret_names,
-    settings: m.fields.length > 0 ? { fields: m.fields } : null,
-  };
-}
-
 /** Currently approved manifest of one registry integration item, if any. */
 async function latestIntegrationManifest(
   gateway: GatewayCtx,
@@ -216,64 +202,103 @@ async function saveManifest(
   }
 }
 
+/** One shop entry: the plugin's storefront metadata plus its install state
+ *  for this org. The list is one array — the shop shows every integration,
+ *  installed or not. */
+function shopEntry(
+  base: {
+    name: string;
+    title: string;
+    version: string;
+    publisher: string;
+    summary: string;
+    description: string;
+    docs_url: string | null;
+    logo: string;
+    categories: string[];
+    traits: Record<string, string>;
+    secret_names: string[];
+    settings: unknown;
+  },
+  row: { id: string; org_id: string; config: unknown; enabled: boolean } | null,
+): Record<string, unknown> {
+  return {
+    ...base,
+    configured: row !== null,
+    id: row?.id ?? null,
+    org_id: row?.org_id ?? null,
+    config: row?.config ?? {},
+    enabled: row?.enabled ?? false,
+  };
+}
+
 export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: GatewayCtx, identity: IdentityCtx): void {
-  // Lists this org's integration plugins (configured and unconfigured).
-  // `available` holds the compiled-in kinds plus approved registry v2
-  // plugins that have no configured row yet.
+  // The integration shop: every installed plugin with its storefront
+  // metadata and this org's install state, plus the approved registry v2
+  // plugins. One list; the client filters and renders it.
   app.get("/api/v1/admin/integrations", async (req, reply) => {
     const admin = await requireAdmin(identity, req);
     const rows = await gateway.integrations.list(admin.org_id);
-    const rowValues: unknown[] = [];
-    for (const row of rows) {
-      const rowConfig = (row.config ?? {}) as Record<string, unknown>;
-      const mcpUrl = readMcpUrl(rowConfig);
-      const manifest = await latestIntegrationManifest(gateway, admin.org_id, row.name);
-      const mcpClaimed = (manifest !== null && manifest["mcp"] !== null && manifest["mcp"] !== undefined) || mcpUrl !== null;
-      // A compiled-in kind reports its own categories; a registry v2 MCP
-      // plugin shadows the compiled-in kind of the same slug.
-      const categories = mcpClaimed ? ["mcp"] : integrationByName(row.name)?.categories ?? ["other"];
-      const secretNames = mcpClaimed
-        ? manifestSecretNames(manifest ?? {})
-        : integrationByName(row.name)?.secret_names ?? [];
-      const settings = mcpClaimed ? (manifest?.["settings"] ?? null) : connectorMetadataFor(row.name)?.settings ?? null;
-      rowValues.push({
-        id: row.id,
-        org_id: row.org_id,
-        name: row.name,
-        config: row.config ?? {},
-        enabled: row.enabled,
-        categories,
-        secret_names: secretNames,
-        settings,
-      });
-    }
-    const available: unknown[] = [];
+    const items: Record<string, unknown>[] = [];
+    const rowByName = new Map(rows.map((r) => [r.name, r]));
     for (const connector of INTEGRATIONS) {
-      // A compiled-in kind with an existing row is configured — it leaves
-      // the available list (an installed registry bundle of the same slug
-      // shadows it).
-      if (rows.some((r) => r.name === connector.name)) continue;
-      available.push({
-        name: connector.name,
-        categories: connector.categories,
-        secret_names: connector.secret_names,
-        settings: connectorMetadata(connector).settings,
-      });
+      const row = rowByName.get(connector.name) ?? null;
+      // A registry bundle of the same slug shadows the compiled-in kind.
+      const manifest = row === null ? null : await latestIntegrationManifest(gateway, admin.org_id, connector.name);
+      const mcpClaimed = manifest !== null && manifest["mcp"] !== null && manifest["mcp"] !== undefined;
+      if (mcpClaimed) continue;
+      items.push(
+        shopEntry(
+          {
+            name: connector.name,
+            title: connector.title,
+            version: connector.version,
+            publisher: connector.publisher,
+            summary: connector.summary,
+            description: connector.description,
+            docs_url: connector.docs_url,
+            logo: connector.logo,
+            categories: connector.categories,
+            traits: connector.traits,
+            secret_names: connector.secret_names,
+            settings: connector.fields.length > 0 ? { fields: connector.fields } : null,
+          },
+          row,
+        ),
+      );
     }
     for (const item of await gateway.registry.listItems(admin.org_id, "integration")) {
-      if (item.review_status !== "approved" || rows.some((r) => r.name === item.slug)) continue;
+      if (item.review_status !== "approved") continue;
       const manifest = await latestIntegrationManifest(gateway, admin.org_id, item.slug);
       if (manifest === null || manifest["mcp"] === null || manifest["mcp"] === undefined) continue;
       const auth = (manifest["auth"] ?? null) as Record<string, unknown> | null;
-      const secretNames = Array.isArray(auth?.["secret_names"]) ? (auth?.["secret_names"] as string[]) : [];
-      available.push({
-        name: item.slug,
-        categories: ["mcp"],
-        secret_names: secretNames,
-        settings: manifest["settings"] ?? null,
-      });
+      const secretNames = Array.isArray(auth?.["secret_names"]) ? (auth["secret_names"] as string[]) : [];
+      items.push(
+        shopEntry(
+          {
+            name: item.slug,
+            title: typeof manifest["title"] === "string" ? (manifest["title"] as string) : item.slug,
+            version: typeof manifest["version"] === "string" ? (manifest["version"] as string) : "",
+            publisher: typeof manifest["publisher"] === "string" ? (manifest["publisher"] as string) : "Registry",
+            summary:
+              typeof manifest["summary"] === "string"
+                ? (manifest["summary"] as string)
+                : typeof manifest["description"] === "string"
+                  ? (manifest["description"] as string)
+                  : "",
+            description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
+            docs_url: typeof manifest["docs_url"] === "string" ? (manifest["docs_url"] as string) : null,
+            logo: typeof manifest["logo"] === "string" ? (manifest["logo"] as string) : "",
+            categories: ["mcp"],
+            traits: {},
+            secret_names: secretNames,
+            settings: manifest["settings"] ?? null,
+          },
+          rowByName.get(item.slug) ?? null,
+        ),
+      );
     }
-    sendJson(reply, { integrations: rowValues, available });
+    sendJson(reply, { items });
     return reply;
   });
 
@@ -371,7 +396,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
       }
       let specs;
       try {
-        specs = connector.tools(rowConfig);
+        specs = connector.toolSpecs(rowConfig);
       } catch (error) {
         throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
       }
@@ -465,11 +490,6 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     sendJson(reply, { ok: true });
     return reply;
   });
-}
-
-function connectorMetadataFor(name: string): { settings: unknown } | null {
-  const connector = integrationByName(name);
-  return connector === undefined ? null : { settings: connectorMetadata(connector).settings };
 }
 
 /** The mcp.url setting of an integration row config, when set. */
@@ -649,7 +669,7 @@ async function saveIntegration(
   const configForTools = (config ?? {}) as Record<string, unknown>;
   // Validate via the connector's own config check before saving.
   try {
-    connector.tools(configForTools);
+    connector.toolSpecs(configForTools);
   } catch (error) {
     throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
   }

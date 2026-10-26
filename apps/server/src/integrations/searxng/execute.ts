@@ -1,5 +1,5 @@
-import { fetchJson, clampNumber, searxngBaseUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { fetchJson, clampNumber, searxngBaseUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- searxng ----------
 

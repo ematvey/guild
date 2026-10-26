@@ -277,10 +277,14 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
     expect(res.body).toBe('{"items":[{"description":"Web search through a SearxNG instance","slug":"searxng","tool_count":1}]}');
   });
 
-  it("lists the policy-filtered tool catalog with schemas and classes — byte-identical to the Rust capture", async () => {
+  it("lists the policy-filtered tool catalog with schemas and classes — a trait tool carries the Guild-provided name", async () => {
     const res = await call("GET", "/api/v1/integrations/searxng/tools", e.adminToken);
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.list_tools.body));
+    const body = JSON.parse(res.body) as { tools: { name: string; class: string; description: string; parameters: unknown }[] };
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]).toMatchObject({ name: "web_search", class: "read" });
+    expect(body.tools[0].description).toContain("Search the public web");
+    expect(body.tools[0].parameters).toMatchObject({ required: ["query"] });
   });
 
   it("404 for an unknown slug, exactly like Rust", async () => {
@@ -437,9 +441,9 @@ describe("admin integration save path", () => {
   it("a valid save with connection test persists config + secrets (test passed against the fake backend)", async () => {
     await seedIntegration("superproxy", {}, false);
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "superproxy")!.id;
+    const id = rows.items.find((r) => r.name === "superproxy")!.id;
     connectorHits = [];
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
       config: { base_url: connectorBase() },
@@ -462,9 +466,9 @@ describe("admin integration save path", () => {
   it("a failing connection test is a 400 and nothing is persisted (a broken connection is never stored)", async () => {
     await seedIntegration("github", { api_url: `${connectorBase()}/unauthorized` }, false, { token: "old" });
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "github")!.id;
+    const id = rows.items.find((r) => r.name === "github")!.id;
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
       enabled: true,
       secrets: { token: "new" },
@@ -483,9 +487,9 @@ describe("admin integration save path", () => {
   it("enabling without the declared secrets is a 409 missing_secrets", async () => {
     await seedIntegration("hubspot", { base_url: connectorBase() }, false);
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "hubspot")!.id;
+    const id = rows.items.find((r) => r.name === "hubspot")!.id;
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, { enabled: true });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body).error.code).toBe("missing_secrets");
@@ -494,9 +498,9 @@ describe("admin integration save path", () => {
   it("a broken config is a 400 with the connector's validation text", async () => {
     await seedIntegration("slack", {}, false);
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "slack")!.id;
+    const id = rows.items.find((r) => r.name === "slack")!.id;
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, { config: { base_url: 42 } });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error.message).toBe("invalid integration config: slack config base_url must be a string");
@@ -521,9 +525,9 @@ describe("admin integration save path", () => {
   it("the tools curation listing reads the compiled-in declarations with classes (builtin)", async () => {
     await seedIntegration("atlassian", { site: "https://x.atlassian.net", email: "a@b.c" }, false, { token: "t" });
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "atlassian")!.id;
+    const id = rows.items.find((r) => r.name === "atlassian")!.id;
     const res = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as {
@@ -547,9 +551,9 @@ describe("MCP plugin rows", () => {
   it("installing a v2 MCP plugin creates the row; the admin tools listing connects live and merges discovered tools with the stored curation", async () => {
     await installMcpPlugin("test-mcp-m7", mcpUrl());
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "test-mcp-m7")!.id;
+    const id = rows.items.find((r) => r.name === "test-mcp-m7")!.id;
     // Disabled (fresh install) → not resolved, no connection.
     const disabled = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(disabled.statusCode).toBe(200);
@@ -589,9 +593,9 @@ describe("MCP plugin rows", () => {
   it("an unreachable MCP backend fails the save gate with the Rust error text", async () => {
     await installMcpPlugin("test-mcp-down", "http://127.0.0.1:1/mcp");
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "test-mcp-down")!.id;
+    const id = rows.items.find((r) => r.name === "test-mcp-down")!.id;
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
       enabled: true,
       secrets: { api_key: "k" },
@@ -614,9 +618,9 @@ describe("MCP plugin rows", () => {
   it("the script API resolves an MCP row through live discovery and serves the policy-filtered catalog", async () => {
     await installMcpPlugin("test-mcp-m7b", mcpUrl());
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
-      integrations: { id: string; name: string }[];
+      items: { id: string; name: string }[];
     };
-    const id = rows.integrations.find((r) => r.name === "test-mcp-m7b")!.id;
+    const id = rows.items.find((r) => r.name === "test-mcp-m7b")!.id;
     await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
       enabled: true,
       secrets: { api_key: "k" },

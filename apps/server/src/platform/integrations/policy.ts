@@ -1,7 +1,7 @@
 // Per-tool integration policy: the stored curation map, the role/class
 // gate, and the acting-identity override rule.
 
-import { unnamespacedTool, type Json, type IntegrationToolInfo, type IntegrationTurn } from "./plugins.js";
+import type { Json, IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
 import { classRank, isToolClass } from "../domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
@@ -59,8 +59,7 @@ function allowedClasses(rowConfig: Json, role: string): string[] {
  *  admin-only — owners count as admins). Guards built-in and MCP tools
  *  alike. */
 export function toolAllowed(turn: IntegrationTurn, info: IntegrationToolInfo, role: string): boolean {
-  const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-  if (!toolCurate(turn.rowConfig, turn.executor === "mcp", raw).enabled) return false;
+  if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin" && role !== "owner") return false;
   return allowedClasses(turn.rowConfig, role).some((c) => classRank(c) >= classRank(info.class));
 }

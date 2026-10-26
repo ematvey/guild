@@ -712,27 +712,20 @@ describe("M6 admin integrations (read paths)", () => {
     );
     const list = await inject("GET", "/api/v1/admin/integrations", e.adminToken);
     expect(list.statusCode).toBe(200);
-    const body = json(list) as unknown as {
-      integrations: Record<string, unknown>[];
-      available: Record<string, unknown>[];
-    };
-    const githubRow = body.integrations.find((r) => r["name"] === "github");
-    expect(githubRow).toMatchObject({ enabled: true, categories: ["other"], secret_names: ["token"] });
+    const body = json(list) as unknown as { items: Record<string, unknown>[] };
+    const githubRow = body.items.find((r) => r["name"] === "github");
+    expect(githubRow).toMatchObject({ configured: true, enabled: true, categories: ["code"], secret_names: ["token"] });
     expect((githubRow!["settings"] as { fields: unknown[] }).fields.length).toBe(2);
-    const mcpRow = body.integrations.find((r) => r["name"] === "test-mcp");
-    expect(mcpRow).toMatchObject({ categories: ["mcp"] });
+    const mcpRow = body.items.find((r) => r["name"] === "test-mcp");
+    expect(mcpRow).toMatchObject({ categories: ["mcp"], configured: true });
 
-    const availableNames = body.available.map((a) => a["name"]);
-    // Every compiled-in kind except the configured github is available.
-    expect(availableNames).toContain("searxng");
-    expect(availableNames).toContain("slack");
-    expect(availableNames).not.toContain("github");
-    const slack = body.available.find((a) => a["name"] === "slack") as Record<string, unknown>;
-    expect(slack["categories"]).toEqual(["other"]);
-    expect(slack["secret_names"]).toEqual(["bot_token"]);
-    // The installed registry MCP plugin has a configured row, so it is
-    // not in the available list.
-    expect(availableNames).not.toContain("test-mcp");
+    // Every plugin is in the shop; the unconfigured ones report their
+    // storefront metadata.
+    expect(body.items.map((r) => r["name"])).toContain("searxng");
+    const slack = body.items.find((a) => a["name"] === "slack") as Record<string, unknown>;
+    expect(slack).toMatchObject({ configured: false, categories: ["messaging"], secret_names: ["bot_token"] });
+    expect(slack["summary"]).toBe("Slack: list channels and users, read channel history, post messages");
+    expect(String(slack["logo"])).toContain("<svg");
   });
 
   it("lists secrets masked (values never appear) and curates tools", async () => {
@@ -811,9 +804,9 @@ describe("M6 admin integrations (read paths)", () => {
     expect(delGithub.statusCode).toBe(200);
     // Deleting the configured row puts github back on the available list.
     const after = json(await inject("GET", "/api/v1/admin/integrations", e.adminToken)) as unknown as {
-      available: { name: string }[];
+      items: { name: string; configured: boolean }[];
     };
-    expect(after.available.map((a) => a.name)).toContain("github");
+    expect(after.items.find((a) => a.name === "github")!.configured).toBe(false);
 
     const ins = await e.env.db.query(
       "INSERT INTO integrations (id, org_id, name, config, enabled) VALUES ($1, $2, 'slack', '{}', false) RETURNING id",

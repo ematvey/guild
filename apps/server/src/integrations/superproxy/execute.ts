@@ -1,5 +1,5 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, fetchJson, clampNumber, truncateWithMarker, superproxyBaseUrl } from "./shared.js";
-import type { ToolOutcome, Json } from "./shared.js";
+import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, fetchJson, clampNumber, truncateWithMarker, superproxyBaseUrl } from "../shared.js";
+import type { ToolOutcome, Json } from "../shared.js";
 
 // ---------- superproxy ----------
 

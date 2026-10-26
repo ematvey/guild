@@ -12,6 +12,44 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Integrations are plugins in a shop, and traits carry Guild-provided names
+  (2026-10-27).** The catalog was one 979-line switch in
+  `platform/integration-catalog.ts`: adding a connector meant editing the
+  core, and the admin page listed bare slugs. Each integration is now a
+  folder under `apps/server/src/integrations/<slug>/` holding
+  `integration.ts` (manifest: title, publisher, summary, long description,
+  docs URL, categories, traits, settings fields, tool declarations, the
+  connection probe, the execute function), `execute.ts`, and `logo.svg`.
+  `integrations/index.ts` is the only list, `loader.ts` validates every
+  manifest at startup and reads the logo, and `platform/integration-catalog.ts`
+  is a re-export shim. Grafana ships as the first new plugin:
+  `query_metrics` (PromQL through a named Prometheus datasource),
+  `query_logs` (LogQL through a named Loki datasource), `list_datasources`,
+  `list_dashboards`, `get_dashboard`, `list_alerts`, and `api`. Every tool
+  takes an optional `datasource` and the result names the datasource it
+  used — a wrong region is a wrong answer.
+  - **Trait tools.** A trait is a capability with one Guild-provided tool
+    name, description, and schema (`integrations/traits.ts`): `web_search`
+    and `web_fetch`. An integration declares which trait its tool
+    implements; the first enabled integration in index order keeps the
+    trait and the model sees one tool under the generic name. The
+    provider's raw tool name rides the tool info (`raw`) for dispatch, so
+    a shipped `searxng_web_search` call still resolves. Migration 0098
+    rewrites agent allowlists from the slug-namespaced names to the trait
+    names.
+  - **The shop.** `GET /api/v1/admin/integrations` returns one `items`
+    array — every plugin with its storefront metadata (title, summary,
+    description, logo SVG, publisher, version, docs URL, categories,
+    traits) and this org's install state (`configured`, `enabled`, `id`,
+    `config`). The page is a card grid with search; a card opens the
+    detail, which shows the description and offers "Add integration",
+    then becomes the settings/secrets/curation form. Registry v2 manifests
+    may carry `title`, `summary`, `logo`, `publisher`, and `docs_url`, so
+    an installed plugin looks the same as a shipped one.
+  - **The floor.** The change adds 19 files and 1045 lines (net of the
+    966-line catalog deletion) and raises the coherence floor in the same
+    commit; nothing removable was found inside the touched boxes.
+
 - **A thread has a type, and archive and deletion are flags (2026-10-27).**
   The thread view read one `readonly` boolean for three different things, so
   an archived user thread showed "Subagent thread. Read-only", and the
