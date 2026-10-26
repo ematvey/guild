@@ -12,6 +12,24 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Machines can be deauthorized, and the Approvals page is gone
+  (2026-10-26).** Settings → Machines was read-only, so a machine that left
+  the fleet stayed in the list forever, and the only "unpairing" was manual
+  row surgery. `DELETE /api/v1/machines/{id}` now drops the row, unbinds the
+  chats that ran on it (they fall back to the server executor), closes its
+  live socket and revokes the session it paired with — `machines.session_hash`
+  is recorded at connect (migration 0096), so the app cannot sign back in and
+  re-register itself. A machine with bound projects refuses with the project
+  names: their files live there, and re-homing them is the user's decision.
+  In the same pass the Settings → Approvals page is deleted: it restated the
+  composer's chat modes in a second vocabulary (`default/ask/allow/never` vs
+  `ask/approve_for_me/full_access`) that could not express "deny all", its
+  "Server default" label contradicted the server's own
+  `SERVER_DEFAULT_POLICY`, and its per-tool JSON box duplicated the
+  per-tool approval dropdowns on Integrations and could not even be saved
+  while "Server default" was selected. The account policy stays readable by
+  the API and the composer; nothing in the app writes it now.
+
 - **A routine run reaches the user only through `send_message`
   (2026-10-26).** A routine's run thread is an isolated transcript, so a
   digest written there is invisible: the Assistant's morning digest ran,

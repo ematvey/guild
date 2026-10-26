@@ -112,21 +112,6 @@ export async function getApproval(): Promise<ApprovalPolicy | null> {
   return (v?.approval ?? v) as ApprovalPolicy | null;
 }
 
-/// Saves the user's approval policy (null resets to the server default).
-/// Throws with the API's validation message on an invalid policy body.
-export async function setApproval(policy: ApprovalPolicy | null): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/me/approval"), {
-    method: "PUT",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: policy === null ? JSON.stringify({ approval: null }) : JSON.stringify(policy),
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `approval policy rejected (${res.status})`);
-  }
-}
-
 /// Reads the org's admin-configured assistant system prompt and the
 /// effective default the server uses when no override is stored. Admin API.
 export interface AssistantPrompt {

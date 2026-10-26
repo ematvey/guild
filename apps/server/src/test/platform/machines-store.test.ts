@@ -126,3 +126,50 @@ describe("MachineStore.upsertConnected", () => {
     expect(await store.bindable("ghost", userId, orgId)).toBe(false);
   });
 });
+
+describe("MachineStore.deauthorize", () => {
+  it("refuses while projects are bound, naming them", async () => {
+    await store.upsertConnected(orgId, userId, "da-bound", "Bound", null, null, null, null, null);
+    await env.db.query(
+      `INSERT INTO projects (id, org_id, user_id, name, folder, machine_id)
+       VALUES (gen_random_uuid(), $1, $2, 'keep-me', 'C:\\keep', 'da-bound')`,
+      [orgId, userId],
+    );
+    const result = await store.deauthorize(orgId, userId, "da-bound");
+    expect(result).toEqual({ kind: "blocked", projects: ["keep-me"] });
+    expect((await env.db.query("SELECT 1 FROM machines WHERE machine_id = 'da-bound'")).rows.length).toBe(1);
+  });
+
+  it("drops the row, unbinds chats and returns the session to revoke", async () => {
+    await store.upsertConnected(
+      orgId, userId, "da-free", "Free", null, null, null, null, null, "session-hash-1",
+    );
+    const chat = (
+      await env.db.query<{ id: string }>(
+        `INSERT INTO chats (id, org_id, user_id, title, machine_id, machine_label)
+         VALUES (gen_random_uuid(), $1, $2, 'c', 'da-free', 'Free') RETURNING id`,
+        [orgId, userId],
+      )
+    ).rows[0]!.id;
+
+    const result = await store.deauthorize(orgId, userId, "da-free");
+    expect(result).toEqual({ kind: "removed", session_hash: "session-hash-1" });
+    expect((await env.db.query("SELECT 1 FROM machines WHERE machine_id = 'da-free'")).rows.length).toBe(0);
+    // The chat keeps running, on the server executor.
+    const row = (
+      await env.db.query<{ machine_id: string | null; machine_label: string | null }>(
+        "SELECT machine_id, machine_label FROM chats WHERE id = $1",
+        [chat],
+      )
+    ).rows[0]!;
+    expect(row.machine_id).toBeNull();
+    expect(row.machine_label).toBeNull();
+  });
+
+  it("reports a machine that is not the caller's", async () => {
+    await store.upsertConnected(orgId, userId, "da-owner", "Mine", null, null, null, null, null);
+    const other = await insertUser("m5-store-da@example.test");
+    expect(await store.deauthorize(orgId, other, "da-owner")).toEqual({ kind: "missing" });
+    expect(await store.deauthorize(orgId, userId, "da-absent")).toEqual({ kind: "missing" });
+  });
+});
