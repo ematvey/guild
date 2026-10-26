@@ -262,6 +262,9 @@ export async function resolveIntegrations(
 function assignTraits(turns: IntegrationTurn[]): void {
   const claimed = new Set<string>();
   for (const turn of turns) {
+    // An installed MCP plugin owns its tool names: only a compiled-in
+    // integration's manifest declares traits.
+    if (turn.executor !== "rust") continue;
     const kept: IntegrationToolInfo[] = [];
     for (const info of turn.tools) {
       const trait = traitForTool(turn.slug, info.raw);
