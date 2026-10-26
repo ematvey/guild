@@ -166,7 +166,8 @@ export type ThreadSort = "activity_desc" | "activity_asc" | "created_desc" | "cr
 export interface ThreadListOptions {
   types?: AgentThreadType[];
   archived?: boolean | null;
-  deleted?: boolean;
+  /** null includes deleted threads (the export path); default false. */
+  deleted?: boolean | null;
   parentThreadId?: string;
   sort?: ThreadSort;
   limit?: number;
@@ -716,6 +717,7 @@ export class AgentStore {
       const page = await this.listThreads(agentId, agent.owner_user_id, {
         types: ["user", "subagent", "routine"],
         archived: null,
+        deleted: null,
         limit: MAX_THREAD_PAGE,
         cursor,
       });
@@ -901,7 +903,8 @@ export class AgentStore {
     const where = ["t.agent_id = $1", "t.user_id = $2", "t.type = ANY($3::text[])"];
     if (options.archived === true) where.push("c.archived_at IS NOT NULL");
     else if (options.archived === false) where.push("c.archived_at IS NULL");
-    where.push(options.deleted === true ? "c.deleted_at IS NOT NULL" : "c.deleted_at IS NULL");
+    if (options.deleted === true) where.push("c.deleted_at IS NOT NULL");
+    else if (options.deleted !== null) where.push("c.deleted_at IS NULL");
     if (options.parentThreadId !== undefined) {
       params.push(options.parentThreadId);
       where.push(`t.parent_thread_id = $${params.length}`);
