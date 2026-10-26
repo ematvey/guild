@@ -278,7 +278,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
                 />
                 <Bar
                   dataKey={barDataKey}
-                  fill="var(--color-cost)"
+                  fill={`var(--color-${barDataKey})`}
                   radius={4}
                   barSize={14}
                 />
@@ -386,8 +386,8 @@ function CostChart({
         <Area
           dataKey={dataKey}
           type="monotone"
-          stroke="var(--color-cost)"
-          fill="var(--color-cost)"
+          stroke={`var(--color-${dataKey})`}
+          fill={`var(--color-${dataKey})`}
           fillOpacity={0.12}
           strokeWidth={1.5}
         />
