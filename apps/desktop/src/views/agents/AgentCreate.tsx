@@ -293,7 +293,7 @@ export function AgentCreate({
                 />
               )}
               {models !== null && models.length > 0 && (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {models.map((option) => (
                     <button
                       key={option.id}
@@ -388,7 +388,7 @@ export function AgentCreate({
                   <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {group.group}
                   </p>
-                  <div className="grid gap-1.5 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {group.tools.map((tool) => {
                       const checked = tools.includes(tool.name);
                       return (
@@ -423,7 +423,7 @@ export function AgentCreate({
 
           {step === "visibility" && (
             <div className="space-y-4">
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {VISIBILITY_OPTIONS.map(([id, label, body, Icon]) => (
                 <button
                   key={id}
@@ -450,7 +450,7 @@ export function AgentCreate({
                     Teams.
                   </p>
                 ) : (
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {teams.map((team) => {
                       const checked = teamIds.includes(team.id);
                       return (

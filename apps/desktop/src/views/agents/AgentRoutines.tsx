@@ -334,7 +334,7 @@ function RoutineDetail({
       </div>
 
       <Section title="Routine" description="Schedules and prompts are managed in chat.">
-        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-xs font-medium text-muted-foreground">Name</dt>
             <dd className="mt-0.5">{routine.name}</dd>
