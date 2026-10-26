@@ -166,7 +166,8 @@ describe("composeAgentInstructions", () => {
       { kind: "routine_run", routineName: "Morning email digest", origin: null },
     );
     expect(text).toContain('<routine_run name="Morning email digest">');
-    expect(text).toContain("calling send_message with the full text");
+    expect(text).toContain("Reach the user with send_message");
+    expect(text).toContain("When the run found nothing worth reporting, send nothing");
     expect(text).toContain("Nobody reads this thread");
   });
 

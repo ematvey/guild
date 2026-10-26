@@ -16,8 +16,10 @@ first. Code comments describe only the present.
   (2026-10-26).** A routine's run thread is an isolated transcript, so a
   digest written there is invisible: the Assistant's morning digest ran,
   succeeded and reached nobody. The run's system instructions now carry a
-  `<routine_run>` block that says the thread is private and the result must
-  go out through `send_message`; a `send_message` call records its calling
+  `<routine_run>` block that says the thread is private and the user is
+  reached only through `send_message`; a run with nothing worth reporting
+  sends nothing, and its final text stays in the transcript. A
+  `send_message` call records its calling
   thread as the delivered thread's `origin_thread_id`. That thread's
   instructions name the run thread, so a reply can read the work behind the
   message with `conversation_read`, and the chat tree returns `origin` so

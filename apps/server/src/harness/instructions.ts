@@ -9,8 +9,7 @@ import {
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
 
-/** What the current thread is, beyond its agent: a routine run is isolated
- *  from the user, and a thread the agent opened links back to its run. */
+/** The thread's own context: an isolated routine run, or a delivered thread. */
 export interface ThreadInstructionContext {
   kind: string;
   routineName: string | null;
@@ -77,7 +76,7 @@ export function composeAgentInstructions(
       [
         `<routine_run name="${name}">`,
         "This turn was started by a routine, not by the user. Nobody reads this thread: the user sees only what you send.",
-        "Deliver the result by calling send_message with the full text the user should read. Your final message here stays in this thread.",
+        "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing; your final text stays here.",
         "</routine_run>",
       ].join("\n"),
     );
