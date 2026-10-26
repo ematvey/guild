@@ -13,6 +13,17 @@ import type { Wire } from "./protocol.js";
  *  wedged. A bounded failure ends the tool call instead of the turn. */
 const ATTACH_TIMEOUT_MS = 30_000;
 
+/** A failed runner call, carrying its status: 503 means the runner is
+ *  replacing a sandbox or restarting itself, and one retry is worth it. */
+export class SandboxRunnerError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 export interface SandboxTarget {
   /** Stable sandbox identity: `ws:<org>:<name>` or `chat:<org>:<conversationId>`. */
   key: string;
@@ -45,7 +56,9 @@ export class RunnerClient {
       signal: AbortSignal.timeout(120_000),
     });
     const body = (await res.json().catch(() => ({}))) as { name?: string; error?: string };
-    if (!res.ok || typeof body.name !== "string") throw new Error(`sandbox ensure failed: ${body.error ?? res.status}`);
+    if (!res.ok || typeof body.name !== "string") {
+      throw new SandboxRunnerError(`sandbox ensure failed: ${body.error ?? res.status}`, res.status);
+    }
     return body.name;
   }
 
@@ -67,7 +80,7 @@ export class RunnerClient {
       const closeListeners: Array<(error?: Error) => void> = [];
       let closed = false;
       let opened = false;
-      const timer = setTimeout(() => fail(new Error(`sandbox attach timed out after ${this.attachTimeoutMs} ms`)), this.attachTimeoutMs);
+      const timer = setTimeout(() => fail(new SandboxRunnerError(`sandbox attach timed out after ${this.attachTimeoutMs} ms`, 0)), this.attachTimeoutMs);
       timer.unref?.();
       /** Settles the open promise exactly once. The socket is terminated, so
        *  an upgrade that never answers cannot leave the caller waiting. */
@@ -90,14 +103,16 @@ export class RunnerClient {
       // ws reports a refused or aborted handshake as `error` with the socket
       // already CLOSING, so the ready state cannot decide this.
       ws.on("close", () => {
-        fail(new Error("sandbox attach closed before it opened"));
+        fail(new SandboxRunnerError("sandbox attach closed before it opened", 0));
         end();
       });
       ws.on("error", (error) => {
-        fail(error);
+        fail(error instanceof SandboxRunnerError ? error : new SandboxRunnerError(error.message, 0));
         end(error);
       });
-      ws.on("unexpected-response", (_req, res) => fail(new Error(`sandbox attach failed: ${res.statusCode}`)));
+      ws.on("unexpected-response", (_req, res) =>
+        fail(new SandboxRunnerError(`sandbox attach failed: ${res.statusCode}`, res.statusCode ?? 0)),
+      );
       ws.on("open", () => {
         opened = true;
         clearTimeout(timer);
@@ -117,6 +132,15 @@ export class RunnerClient {
 interface PoolEntry {
   env: SandboxExecutionEnv;
   lastUsed: number;
+}
+
+/** 503 is the runner replacing a sandbox or restarting itself; a refused or
+ *  reset connection is it restarting. A timeout means it is wedged, and a
+ *  retry would only repeat the wait. */
+function recoverable(error: unknown): boolean {
+  if (error instanceof SandboxRunnerError) return error.status === 503;
+  const code = ((error as { cause?: NodeJS.ErrnoException }).cause ?? error as NodeJS.ErrnoException).code;
+  return code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE";
 }
 
 export interface SandboxPoolOptions {
@@ -147,10 +171,7 @@ export class SandboxPool {
       const env: SandboxExecutionEnv = new SandboxExecutionEnv({
         id: `sandbox:${target.key}`,
         cwd: "/workspace",
-        connect: async () => {
-          const name = await this.options.runner.ensure(target);
-          return this.options.runner.connect(name);
-        },
+        connect: () => this.attach(target),
         onConnected: async () => {
           try {
             await this.options.onConnected?.(target, env);
@@ -164,6 +185,21 @@ export class SandboxPool {
     }
     entry.lastUsed = Date.now();
     return entry.env;
+  }
+
+  /** Opens the agent wire. A 503 means the runner is replacing a sandbox
+   *  whose workspace mount died, or restarting after a volume remount; both
+   *  heal on their own, so a few retries ride it out. */
+  private async attach(target: SandboxTarget): Promise<Wire> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.options.runner.connect(await this.options.runner.ensure(target));
+      } catch (error) {
+        if (attempt >= 3 || !recoverable(error)) throw error;
+        this.options.log.warn({ err: error, key: target.key, attempt }, "sandbox runner is recovering; retrying");
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+    }
   }
 
   private sweep(): void {

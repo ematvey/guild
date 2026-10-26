@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENTS_ACTIVITY,
+  DEFAULT_ACTIVITY_FILTERS,
   agentTabRoute,
   agentsRailTab,
   agentsRoutePath,
   agentsRouteTab,
   fileBreadcrumbs,
   fileExtension,
-  formatFileSize,
   joinPath,
   parentPath,
   parseAgentsRoute,
@@ -23,11 +24,13 @@ const routes: AgentsRoute[] = [
   { view: "agent", agentId: "a1", tab: "routines", routineId: "r1" },
   { view: "agent", agentId: "a1", tab: "files" },
   { view: "agent", agentId: "a1", tab: "files", filePath: "notes/today.md" },
-  { view: "agent", agentId: "a1", tab: "activity" },
+  { view: "agent", agentId: "a1", tab: "activity", filters: DEFAULT_ACTIVITY_FILTERS },
   { view: "agent", agentId: "a1", tab: "settings" },
-  { view: "activity" },
+  AGENTS_ACTIVITY,
+  { view: "activity", filters: { ...DEFAULT_ACTIVITY_FILTERS, tab: "calls", period: "30d", q: "deploy" } },
   { view: "run", runId: "run-1" },
-  { view: "session", sessionId: "session-1" },
+  { view: "trace", traceId: "trace-1" },
+  { view: "chat", chatId: "chat-1" },
 ];
 
 describe("agents route contract", () => {
@@ -39,11 +42,13 @@ describe("agents route contract", () => {
   });
 
   it("maps every route to exactly one rail tab", () => {
-    expect(agentsRailTab({ view: "activity" })).toBe("activity");
+    expect(agentsRailTab(AGENTS_ACTIVITY)).toBe("activity");
     expect(agentsRailTab({ view: "run", runId: "r" })).toBe("activity");
-    expect(agentsRailTab({ view: "session", sessionId: "s" })).toBe("activity");
+    expect(agentsRailTab({ view: "trace", traceId: "t" })).toBe("activity");
+    expect(agentsRailTab({ view: "chat", chatId: "c" })).toBe("activity");
     expect(agentsRailTab({ view: "directory" })).toBe("agents");
     expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe("agents");
+    expect(agentsRailTab({ view: "agent", agentId: "a", tab: "activity" })).toBe("agents");
   });
 
   it("keeps the agent tab from the URL", () => {
@@ -61,6 +66,7 @@ describe("agents route contract", () => {
 
   it("returns null for paths owned by other surfaces", () => {
     expect(parseAgentsRoute("/chats")).toBeNull();
+    expect(parseAgentsRoute("/sessions/old")).toEqual({ view: "chat", chatId: "old" });
     expect(parseAgentsRoute("/thread/x")).toBeNull();
     expect(parseAgentsRoute("/skills")).toBeNull();
     expect(parseAgentsRoute("/")).toBeNull();
@@ -110,14 +116,6 @@ describe("file path helpers", () => {
     expect(previewKindOf("table.csv")).toBe("csv");
     expect(previewKindOf("archive.zip")).toBe("binary");
     expect(fileExtension("Makefile")).toBe("");
-  });
-
-  it("formats sizes for file rows", () => {
-    expect(formatFileSize(0)).toBe("0 B");
-    expect(formatFileSize(900)).toBe("900 B");
-    expect(formatFileSize(1536)).toBe("1.5 KB");
-    expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0 MB");
-    expect(formatFileSize(null)).toBe("—");
   });
 });
 

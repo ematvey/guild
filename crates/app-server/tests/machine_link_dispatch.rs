@@ -7,40 +7,15 @@
 //! `StreamEvent` variant flapped every deployed daemon.
 
 use futures::{SinkExt, StreamExt};
-use guild_app_server::auth_state::AuthState;
-use guild_app_server::cloud::CloudClient;
-use guild_app_server::jsonrpc_loop::{Session, Shared};
+mod common;
+use common::standalone_listener;
+use guild_app_server::auth_state::{AuthChange, AuthState};
+use guild_app_server::jsonrpc_loop::{EngineState, Shared};
 use guild_app_server::machine_link::run;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
-
-/// Collision-proof loopback listener (see tests/agent_rpc.rs).
-async fn standalone_listener() -> tokio::net::TcpListener {
-    loop {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let mut ports = std::collections::HashSet::<u16>::new();
-        for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                for line in content.lines().skip(1) {
-                    if let Some(p) = line.split_whitespace().nth(1) {
-                        if let Ok(n) = u64::from_str_radix(p.rsplit(':').next().unwrap_or("0"), 16)
-                        {
-                            if n as u16 != port {
-                                ports.insert(n as u16);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !ports.contains(&port) {
-            return listener;
-        }
-    }
-}
 
 /// What the server observed on its side of one session.
 #[derive(Debug)]
@@ -209,17 +184,33 @@ async fn reader_stays_live_during_tool_execution_and_ignores_unknown_frames() {
         done_tx,
     ));
 
-    let mut session = Session::default();
-    session.auth = AuthState::from_parts(
-        Some(CloudClient {
-            base_url: format!("http://127.0.0.1:{port}"),
-            token: "tok".into(),
-        }),
-        None,
-        Some("machine-dispatch".into()),
-        None,
-    );
-    let shared = Shared::new(session);
+    let shared = Shared::new(EngineState::default());
+    {
+        let mut session = shared.session.lock().unwrap();
+        session.auth = AuthState::default();
+        session
+            .auth
+            .transition(
+                AuthChange::Login {
+                    base_url: format!("http://127.0.0.1:{port}"),
+                    token: "tok".into(),
+                    email: "a@b.c".into(),
+                },
+                None,
+                &shared.links,
+            )
+            .unwrap();
+        session
+            .auth
+            .transition(
+                AuthChange::Identify {
+                    machine_id: "machine-dispatch".into(),
+                },
+                None,
+                &shared.links,
+            )
+            .unwrap();
+    }
     let link_shared = shared.clone();
     let rx = shared
         .links

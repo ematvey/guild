@@ -1,18 +1,20 @@
-// The agent workspace config files: seeding from the templates and reading
-// them back for the system prompt. The server owns the volume path, so no
-// sandbox round trip is needed; a read is one small file open.
+// promptFiles: the agent config files (AGENTS.md or its override, plus
+// MEMORY.md) that seed the workspace and ride the system prompt. The server
+// owns the volume path, so no sandbox round trip is needed; a read is one
+// small file open.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { seedFiles } from "./templates.js";
 
-/** Per-file prompt cap; a longer file is cut with a marker. */
-export const FILE_MAX_CHARS = 8 * 1024;
-/** Total prompt budget across every config file. */
-export const TOTAL_MAX_CHARS = 24 * 1024;
+/** Total prompt budget across every config file: the same 32 KiB rule the
+ *  desktop applies to its project chain. */
+export const TOTAL_MAX_CHARS = 32 * 1024;
 
-/** The seeded files, in prompt order, with whether a missing one is noted. */
+/** The config files, in prompt order, with whether a missing one is noted.
+ *  The override shadows the plain AGENTS.md. */
 export const CONFIG_FILES: ReadonlyArray<{ name: string; required: boolean }> = [
+  { name: "AGENTS.override.md", required: false },
   { name: "AGENTS.md", required: true },
   { name: "MEMORY.md", required: false },
 ];
@@ -24,8 +26,13 @@ export interface AgentConfigFiles {
   missing: string[];
 }
 
+/** The agent workspace subpath, relative to the workspace volume. */
+export function agentWorkspaceSubpath(orgId: string, agentId: string): string {
+  return `agents/${orgId}/${agentId}`;
+}
+
 export function agentWorkspaceDir(writeRoot: string, orgId: string, agentId: string): string {
-  return path.resolve(writeRoot, "agents", orgId, agentId);
+  return path.resolve(writeRoot, agentWorkspaceSubpath(orgId, agentId));
 }
 
 /** Seeds the workspace with the template files it does not have yet. An
@@ -56,16 +63,25 @@ export async function seedAgentWorkspace(dir: string): Promise<string[]> {
 export async function readAgentConfig(dir: string): Promise<AgentConfigFiles> {
   const files = new Map<string, string>();
   const missing: string[] = [];
-  for (const entry of CONFIG_FILES) {
-    let text: string;
+  const read = async (name: string): Promise<string | null> => {
     try {
-      text = await readFile(path.join(dir, entry.name), "utf8");
+      return await readFile(path.join(dir, name), "utf8");
     } catch {
-      if (entry.required) missing.push(entry.name);
-      continue;
+      return null;
     }
-    files.set(entry.name, text);
+  };
+  // One AGENTS file per directory: the override shadows the plain file.
+  let agents: string | null = null;
+  for (const name of ["AGENTS.override.md", "AGENTS.md"]) {
+    agents = await read(name);
+    if (agents !== null) {
+      files.set(name, agents);
+      break;
+    }
   }
+  if (agents === null) missing.push("AGENTS.md");
+  const memory = await read("MEMORY.md");
+  if (memory !== null) files.set("MEMORY.md", memory);
   return { files, missing };
 }
 
@@ -77,7 +93,7 @@ export const AGENT_WORKSPACE_PATH = "/workspace";
  *  disk. The tag carries the path so the model can name the file it edits. */
 export function renderFileBlock(name: string, text: string, budget: number): string {
   const body = text.trim();
-  const limit = Math.min(FILE_MAX_CHARS, budget);
+  const limit = budget;
   const open = `<agent_workspace_file path="${AGENT_WORKSPACE_PATH}/${name}">`;
   if (body.length <= limit) return `${open}\n${body}\n</agent_workspace_file>`;
   const cut = body.slice(0, limit);

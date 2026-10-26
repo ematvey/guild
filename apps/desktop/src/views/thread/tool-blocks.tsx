@@ -208,13 +208,13 @@ function ToolBody({ t }: { t: ToolBlock }) {
       <div className="space-y-2">
         <CodemodeCallList calls={m?.calls ?? []} />
         {code && (
-          <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed">
+          <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed">
             {highlightJs(code)}
           </pre>
         )}
         {t.content && (
           <pre
-            className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed ${
+            className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed ${
               t.status === "error" ? "text-destructive" : "text-muted-foreground"
             }`}
           >
@@ -265,7 +265,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
           <span className="animate-pulse text-muted-foreground">running…</span>
         )}
         {sources.length === 0 && t.content && (
-          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs text-muted-foreground">
             {t.content}
           </pre>
         )}
@@ -325,13 +325,13 @@ function ToolBody({ t }: { t: ToolBlock }) {
     return (
       <div className="space-y-2">
         {command && (
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed">
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed">
             <span className="select-none text-muted-foreground/60">$ </span>
             {command}
           </pre>
         )}
         {output && (
-          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
             {output}
           </pre>
         )}
@@ -361,7 +361,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             </span>
           )}
         </div>
-        <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed">
+        <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed">
           {lines.map((l, i) => (
             <div key={i} className="flex gap-2">
               <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">
@@ -382,7 +382,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             {m.path}
           </span>
         )}
-        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono">
+        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs">
           {(t.content ?? "").split("\n").map((l, i) => (
             <div
               key={i}
@@ -412,13 +412,13 @@ function ToolBody({ t }: { t: ToolBlock }) {
   return (
     <div className="space-y-2">
       {prettyArgs && prettyArgs !== "{}" && (
-        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
+        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
           {prettyArgs}
         </pre>
       )}
       {t.content && (
         <pre
-          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed ${
+          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed ${
             t.status === "error" ? "text-destructive" : "text-muted-foreground"
           }`}
         >

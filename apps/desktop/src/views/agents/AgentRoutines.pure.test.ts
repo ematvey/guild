@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { humanSchedule, nextRunLabel, scheduleLabel } from "./AgentRoutines";
+import { humanSchedule, scheduleLabel } from "./AgentRoutines";
+import { nextRunLabel } from "../../lib/relative-time";
 import type { AgentRoutine } from "./agents-api";
 
 function routine(patch: Partial<AgentRoutine>): AgentRoutine {

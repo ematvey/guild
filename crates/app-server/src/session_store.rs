@@ -44,6 +44,7 @@ pub fn default_path() -> anyhow::Result<PathBuf> {
 /// The path the daemon's token.json watcher polls. `GUILD_TOKEN_PATH`
 /// overrides it (tests, custom store locations) — the default path is the
 /// config-dir token.json every auth transition persists to.
+// coherence:seam owner=@maintainer until=2027-01-31 reason="test hook redirects the token store"
 pub fn store_watch_path() -> anyhow::Result<PathBuf> {
     if let Ok(p) = std::env::var("GUILD_TOKEN_PATH") {
         if !p.is_empty() {

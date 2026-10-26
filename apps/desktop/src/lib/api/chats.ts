@@ -17,8 +17,6 @@ export interface ChatSummary {
   working?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
-  /** Assistant turns newer than the read marker (sidebar badge). */
-  unread_count?: number;
   /** A tool call in this chat waits for the user's approval (red dot,
    *  supersedes unread). */
   blocked?: boolean;
@@ -27,8 +25,6 @@ export interface ChatSummary {
   project_id?: string;
   project_name?: string;
   project_machine_label?: string;
-  /** Whether the bound machine's socket is live right now. */
-  machine_online?: boolean;
   /** The chat's latest thread event (RFC3339), falling back to created_at —
    *  the sidebar's recent-activity sort key. List rows carry it; the live
    *  thread-event fan-out moves it forward as turns land. */
@@ -45,6 +41,8 @@ export interface ChatTree {
   status: string | null;
   depth: number;
   parent: { chat_id: string; title: string } | null;
+  /** The run thread this one was opened from, when an agent delivered it. */
+  origin: { chat_id: string; title: string } | null;
 }
 
 /** The open chat's position in the thread tree, for the child thread header. */
@@ -66,15 +64,6 @@ export interface ChatSubagentNode {
   title: string;
   depth: number;
   status: string | null;
-}
-
-export interface ChatMessage {
-  role: string;
-  content: string;
-  /// Present on assistant rows that requested tool calls.
-  tool_calls?: { id: string; name: string; arguments: unknown }[];
-  /// Present on tool rows: the call this result answers.
-  tool_call_id?: string;
 }
 
 export async function listChats(): Promise<ChatSummary[] | null> {
@@ -360,25 +349,7 @@ export interface ChatSnapshot {
   frames: StreamFrame[];
 }
 
-export async function chatSnapshot(chatId: string): Promise<ChatSnapshot> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke("chat_snapshot", { chatId });
-}
 
-/// Chat project binding (replaces the removed per-chat folder): null
-/// clears the chat's project.
-export async function setChatProject(
-  chatId: string,
-  projectId: string | null,
-): Promise<ChatSummary | null> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/project`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify({ project_id: projectId }),
-  });
-  if (!res.ok) return null;
-  return res.json().catch(() => null);
-}
 
 /** The agent bound to a chat (the composer's agent picker). */
 export async function chatAgent(chatId: string): Promise<unknown | null> {

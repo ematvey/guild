@@ -26,18 +26,20 @@ export const APPROVAL_MODES: Record<
   },
 };
 
-export const APPROVAL_MODE_LABELS: Record<ChatApprovalMode, string> = {
-  ask: "Ask for approval",
-  approve_for_me: "Approve for me",
-  full_access: "Full access",
-};
+/** The one policy→chat mapping. The account policy and the chat mode are
+ *  separate vocabularies: an unset policy is the AI judge, "never" has no
+ *  chat equivalent (deny-all is policy-only), and "allow" is full access. */
+export function policyChatMode(p: ApprovalPolicy | null): ChatApprovalMode | null {
+  if (p?.default === "ask") return "ask";
+  if (p?.default === "allow") return "full_access";
+  if (p?.default === "never") return null;
+  return "approve_for_me";
+}
 
-/// Label for an unset chat (the account default applies). The server treats
-/// no stored account policy as the AI judge (approve_for_me); an explicit
-/// Settings default maps onto the matching mode label.
+/// Label for an unset chat (the account default applies). "Deny all" is an
+/// account policy with no chat mode, so it keeps its own label.
 export function accountDefaultLabel(p: ApprovalPolicy | null): string {
-  if (p?.default === "ask") return APPROVAL_MODE_LABELS.ask;
-  if (p?.default === "allow") return APPROVAL_MODE_LABELS.full_access;
   if (p?.default === "never") return "Deny all";
-  return APPROVAL_MODE_LABELS.approve_for_me;
+  const mode = policyChatMode(p) ?? "approve_for_me";
+  return APPROVAL_MODES[mode].label;
 }

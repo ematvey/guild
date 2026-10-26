@@ -17,18 +17,16 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
-import { WorkspaceRailButton } from "./workspace-menu";
+import { ServerRailButton } from "./server-menu";
 import { IS_TAURI } from "../lib/session";
+import type { ChatRoute } from "./thread/route";
 
-export type SidebarTab =
-  | "chats"
-  | "agents"
-  | "work"
-  | "activity"
-  | "skills"
-  | "settings";
+/** A rail entry is a projection of the route, never stored panel state: the
+ *  panel tabs come from ChatRoute.tab, and the full-page surfaces from
+ *  their own route fields. */
+export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills";
 
-const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
+const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
@@ -36,9 +34,6 @@ const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "activity", label: "Activity", icon: Activity },
 ];
 
-/** The bottom rail buttons: Help (a popup, not a panel tab) above Settings
- *  (the panel tab), then the account menu. */
-export type RailBottomAction = "help" | "settings";
 
 function RailButton({
   label,
@@ -62,7 +57,7 @@ function RailButton({
         onClick={onClick}
         className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
           active
-            ? "bg-accent text-accent-foreground"
+            ? "bg-sidebar-accent text-sidebar-foreground"
             : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -92,9 +87,11 @@ export function SidebarRail({
   onAddWorkspace,
   role,
   isMobile,
+  unreadChats,
+  unreadProjects,
 }: {
-  activeTab: SidebarTab;
-  onTabChange: (tab: SidebarTab) => void;
+  activeTab: RailTab;
+  onTabChange: (tab: RailTab) => void;
   /** The big help/learn popup (a route overlay, not a panel tab). */
   onOpenHelp: () => void;
   email: string;
@@ -109,6 +106,10 @@ export function SidebarRail({
   /** Mobile drawer: the skills page is a desktop-only surface (its main
    *  column does not render on mobile), so its tab is dropped. */
   isMobile?: boolean;
+  /** Unseen chats the Chats panel lists. */
+  unreadChats?: number;
+  /** Unseen chats the Projects panel lists. */
+  unreadProjects?: number;
 }) {
   const tabs = (role === "admin" ? TABS : TABS.filter((tab) => tab.id !== "activity")).filter(
     (tab) => !(isMobile && tab.id === "skills"),
@@ -118,7 +119,7 @@ export function SidebarRail({
       <div className="flex flex-col items-center gap-1">
         {/* First button: the active workspace (logo/initial); its dropdown
             carries the switcher rows. Renders nothing on the web. */}
-        <WorkspaceRailButton
+        <ServerRailButton
           onAddWorkspace={onAddWorkspace}
           onReload={() => window.location.reload()}
         />
@@ -129,6 +130,7 @@ export function SidebarRail({
             icon={Icon}
             active={activeTab === id}
             onClick={() => onTabChange(id)}
+            badge={id === "chats" ? unreadChats : id === "work" ? unreadProjects : undefined}
           />
         ))}
       </div>

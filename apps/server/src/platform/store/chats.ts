@@ -40,8 +40,6 @@ export interface ChatListRow {
   /** This chat or any descendant thread has a queued/running run. */
   working: boolean;
   unread: boolean;
-  /** Assistant turns newer than the caller's read marker. */
-  unread_count: number;
   /** A tool call is waiting for the user's approval in this chat. */
   blocked: boolean;
   project_id: string | null;
@@ -82,8 +80,10 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     c.machine_id, c.machine_label, c.generating,
     (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
     pr.name AS project_name, m.label AS project_machine_label,
-    (c.generating = false AND COALESCE(ur.n, 0) > 0) AS unread,
-    COALESCE(ur.n, 0) AS unread_count,
+    (c.generating = false AND EXISTS (
+      SELECT 1 FROM thread_events e
+      WHERE e.chat_id = c.id AND e.type = 'assistant_message'
+        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread,
     EXISTS (
       SELECT 1 FROM thread_events e
       WHERE e.chat_id = c.id AND e.type = 'approval_request'
@@ -96,11 +96,6 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
   FROM chats c
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
-  LEFT JOIN LATERAL (
-    SELECT count(*)::int AS n FROM thread_events e
-    WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-      AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)
-  ) ur ON true
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
   LEFT JOIN projects pr ON pr.id = c.project_id
   LEFT JOIN machines m ON m.machine_id = pr.machine_id
@@ -266,7 +261,6 @@ export class ChatStore {
               c.machine_id, c.machine_label, c.generating,
               (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
               pr.name AS project_name, m.label AS project_machine_label, false AS unread,
-              0 AS unread_count,
               EXISTS (
                 SELECT 1 FROM thread_events e
                 WHERE e.chat_id = c.id AND e.type = 'approval_request'
@@ -358,7 +352,13 @@ export class ChatStore {
         );
       }
       await client.query("COMMIT");
-      return rowToChat(res.rows[0]!);
+      const row = res.rows[0]!;
+      // A rename or archive moves the sidebar lists: the workspace push
+      // carries the new title, or the row's move into the archived list.
+      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+      ]);
+      return rowToChat(row);
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
@@ -578,7 +578,7 @@ export class ChatStore {
         [threadId, chatId, clean],
       );
       await client.query("COMMIT");
-      await this.pool.query("SELECT pg_notify('guild_thread_title', $1)", [
+      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
         JSON.stringify({ org_id: orgId, user_id: row.user_id, chat_id: chatId }),
       ]);
     } catch (error) {
@@ -591,7 +591,9 @@ export class ChatStore {
 
   /** Marks the chat read for the caller: the marker moves to the newest
    *  thread event's `seq` (migration 0066 shape — event ids cannot order
-   *  events; the BIGSERIAL write order is the comparison space). A chat
+   *  events; the BIGSERIAL write order is the comparison space). The marker
+   *  only ever moves forward: a read frame that arrives late, or a repeat
+   *  sent after a reconnect, cannot resurrect an already-cleared dot. A chat
    *  with no events has nothing unread — no marker. */
   async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
     await this.getChat(orgId, chatId, caller);
@@ -603,7 +605,8 @@ export class ChatStore {
     if (lastReadSeq === undefined) return;
     await this.pool.query(
       `INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
-       ON CONFLICT (chat_id, user_id) DO UPDATE SET last_read_seq = EXCLUDED.last_read_seq`,
+       ON CONFLICT (chat_id, user_id) DO UPDATE
+         SET last_read_seq = GREATEST(chat_reads.last_read_seq, EXCLUDED.last_read_seq)`,
       [chatId, caller.id, lastReadSeq],
     );
   }
@@ -621,7 +624,6 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     generating: Boolean(r.generating),
     working: Boolean(r.working),
     unread: Boolean(r.unread),
-    unread_count: Number(r.unread_count ?? 0),
     blocked: Boolean(r.blocked),
     project_id: (r.project_id as string | null) ?? null,
     project_name: (r.project_name as string | null) ?? null,

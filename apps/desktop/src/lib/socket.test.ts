@@ -48,6 +48,7 @@ describe("routeMessage", () => {
       onAuthRequired: () => calls.push("auth"),
       onError: (message) => calls.push(`error:${message}`),
       onOrgEvent: () => calls.push("org"),
+      onMachineStatus: (machineId, online) => calls.push(`machine:${machineId}:${online}`),
     };
 
     routeMessage({ type: "hello" }, handlers);
@@ -59,6 +60,7 @@ describe("routeMessage", () => {
     routeMessage({ type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: undefined, event: delta }, handlers);
     routeMessage({ type: "displaced" }, handlers);
     routeMessage({ type: "auth_required" }, handlers);
+    routeMessage({ type: "machine_status", machine_id: "m1", online: false }, handlers);
 
     expect(calls).toEqual([
       "threads:1",
@@ -69,6 +71,7 @@ describe("routeMessage", () => {
       "frame:chat-1:delta",
       "displaced",
       "auth",
+      "machine:m1:false",
     ]);
 
     routeMessage({ type: "error", message: "bad" }, handlers);
@@ -140,6 +143,26 @@ describe("startSocket", () => {
     deliver(sockets[1], { type: "sync_done", chat_id: "chat" });
     expect(depths.get("chat")).toBe(0);
     expect(accepted).toEqual([9, 10]);
+    connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+  });
+
+  it("reports a dropped read mark instead of claiming it was sent", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", { getItem: () => "client" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })));
+    const sockets: FakeSocket[] = [];
+    const connection = startSocket({
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      getOpenChatId: () => "chat",
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connection.markRead("chat")).toBe(false);
+    sockets[0].open();
+    expect(connection.markRead("chat")).toBe(true);
+    expect(sockets[0].sent.some((frame) => frame.includes('"type":"read"'))).toBe(true);
+    sockets[0].close();
+    expect(connection.markRead("chat")).toBe(false);
     connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
   });
 

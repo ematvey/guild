@@ -7,9 +7,10 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
-import { modalityOf } from "../chats/turn-text.js";
+import { modalityOf } from "../platform/domain/mime.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
+import { terminalAssistantText } from "./lifecycle.js";
 
 export interface ChildRunFinished {
   /** The child thread whose run ended. */
@@ -81,25 +82,14 @@ export async function assistantTextForRun(
   chatId: string,
   since: string,
 ): Promise<string> {
-  const res = await pool.query<{ payload: Record<string, unknown> }>(
-    `SELECT payload FROM thread_events
+  const res = await pool.query<{ type: string; payload: Record<string, unknown> }>(
+    `SELECT type, payload FROM thread_events
      WHERE chat_id = $1 AND type = 'assistant_message'
        AND created_at >= $2::timestamptz
      ORDER BY seq DESC`,
     [chatId, since],
   );
-  for (const row of res.rows) {
-    const blocks = Array.isArray(row.payload.blocks)
-      ? (row.payload.blocks as { type?: string; text?: string }[])
-      : [];
-    if (blocks.some((block) => block.type === "tool_call")) continue;
-    return blocks
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text!)
-      .join("\n")
-      .trim();
-  }
-  return "";
+  return terminalAssistantText(res.rows);
 }
 
 export class ChildResultDelivery {

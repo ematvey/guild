@@ -15,11 +15,6 @@ generating: boolean,
  */
 unread: boolean, 
 /**
- * Assistant turns newer than the reader's marker (sidebar badge);
- * zero is omitted from list rows.
- */
-unread_count: number, 
-/**
  * The project (named workspace folder) the chat runs in; None =
  * folderless. Defaults for old clients.
  */

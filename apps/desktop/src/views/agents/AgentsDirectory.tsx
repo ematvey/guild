@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Bot, Plus, Search, Sparkles } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
-import { Skeleton } from "@guild/ui/components/skeleton";
 import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
 import { VISIBILITY_LABEL } from "./agents-route";
 import { listAgents, type Agent } from "./agents-api";
+import { count } from "../../lib/format";
 import { ModelName } from "./agent-model";
 import {
   AgentGlyph,
@@ -199,7 +199,7 @@ export function AgentRow({
   const tools =
     agent.tools_mode === "all"
       ? "All tools"
-      : `${agent.tools.length} tool${agent.tools.length === 1 ? "" : "s"}`;
+      : count(agent.tools.length, "tool");
   return (
     <button
       type="button"
@@ -253,15 +253,3 @@ function Separator() {
   );
 }
 
-/** Skeleton header used by the agent page while its row loads. */
-export function AgentHeaderSkeleton() {
-  return (
-    <div className="flex items-center gap-3">
-      <Skeleton className="size-9 rounded-lg" />
-      <div className="space-y-2">
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-3 w-56" />
-      </div>
-    </div>
-  );
-}

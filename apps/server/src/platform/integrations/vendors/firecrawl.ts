@@ -1,12 +1,7 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, SCRAPE_EXCERPT_CHARS, MAP_LINK_LIMIT, FIRECRAWL_DEFAULT_BASE_URL, secretOrNull, configString, trimTrailingSlash, fetchTimeout, transportCause, excerpt, clampNumber, truncateWithMarker } from "./shared.js";
+import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, SCRAPE_EXCERPT_CHARS, MAP_LINK_LIMIT, secretOrNull, fetchTimeout, transportCause, excerpt, clampNumber, truncateWithMarker, firecrawlBaseUrl } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- firecrawl ----------
-
-function firecrawlBaseUrl(config: Json): string {
-  const fromConfig = configString(config, "base_url");
-  return trimTrailingSlash(fromConfig !== undefined && fromConfig !== "" ? fromConfig : FIRECRAWL_DEFAULT_BASE_URL);
-}
 
 async function firecrawlPost(base: string, path: string, body: Json, key: string | null): Promise<Json> {
   const headers: Record<string, string> = { "content-type": "application/json" };

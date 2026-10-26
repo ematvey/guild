@@ -1,0 +1,722 @@
+{
+  "model_roots": [],
+  "concepts": [
+    {
+      "id": "org",
+      "definition": "The tenant that owns every record, key and member.",
+      "canonical": "apps/server/src/platform/store/orgs.ts",
+      "types": [
+        "OrgSettings"
+      ],
+      "aliases": [
+        "tenant"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/orgs.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/org.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/org.ts"
+        }
+      ]
+    },
+    {
+      "id": "user",
+      "definition": "One person in an org, with an identity type and a password or IdP subject.",
+      "canonical": "apps/server/src/platform/store/identity.ts",
+      "types": [
+        "UserRow",
+        "UserListRow",
+        "UserInfo",
+        "LoginRequest",
+        "LoginResponse"
+      ],
+      "aliases": [
+        "member",
+        "identity"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/identity.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/auth.ts",
+          "role": "wire"
+        },
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/auth.ts"
+        }
+      ]
+    },
+    {
+      "id": "team",
+      "definition": "A group of org members used for grants and usage attribution.",
+      "canonical": "apps/server/src/platform/store/teams.ts",
+      "types": [
+        "TeamRow"
+      ],
+      "aliases": [
+        "group"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/teams.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/teams.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/teams.ts"
+        }
+      ]
+    },
+    {
+      "id": "turn-command",
+      "definition": "A queued instruction about a running turn: stop, steer or withdraw.",
+      "canonical": "apps/server/src/platform/store/turn_commands.ts",
+      "types": [
+        "TurnCommand"
+      ],
+      "aliases": [
+        "queued-command"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/turn_commands.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/chats/bridge.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/chats/bridge.ts"
+        }
+      ]
+    },
+    {
+      "id": "registry-item",
+      "definition": "A skill or integration entry in the org catalog, with its versions.",
+      "canonical": "apps/server/src/platform/store/registry.ts",
+      "types": [
+        "RegistryItemRow",
+        "VersionRow",
+        "SkillSearchRow"
+      ],
+      "aliases": [
+        "registry-entry"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/registry.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/registry.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/http/releases.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/registry.ts"
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "definition": "A third-party service the org connects, with its encrypted secret and tools.",
+      "canonical": "apps/server/src/platform/store/integrations.ts",
+      "types": [
+        "IntegrationRow",
+        "SecretRow"
+      ],
+      "aliases": [
+        "connector"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/integrations.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/integration_tools.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/integration_tools.ts"
+        }
+      ]
+    },
+    {
+      "id": "agent-run",
+      "definition": "One execution of an agent turn, with its status and terminal text.",
+      "canonical": "apps/server/src/agents/store.ts",
+      "types": [],
+      "aliases": [
+        "agent-execution"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/agents/store.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/trace-hook.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/TraceDetail.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/agents/trace-hook.ts"
+        }
+      ]
+    },
+    {
+      "id": "routine",
+      "definition": "A saved prompt an agent runs on a webhook or an interval.",
+      "canonical": "apps/server/src/agents/routines.ts",
+      "types": [],
+      "aliases": [
+        "trigger"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/agents/routines.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/store.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/agents/store.ts"
+        }
+      ]
+    },
+    {
+      "id": "executor",
+      "definition": "The place one tool call runs: a bound machine or the server sandbox.",
+      "canonical": "apps/server/src/machines/dispatch.ts",
+      "types": [],
+      "aliases": [
+        "executor-kind"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/machines/dispatch.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/sandbox/client.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/machines/dispatch.ts"
+        }
+      ]
+    },
+    {
+      "id": "sandbox",
+      "definition": "The gVisor container that runs server-side tools for unbound chats.",
+      "canonical": "apps/server/src/sandbox/client.ts",
+      "types": [],
+      "aliases": [
+        "sandbox-runner"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/sandbox/client.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/sandbox/runner/manager.ts",
+          "role": "db"
+        }
+      ],
+      "translations": [
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/sandbox/runner/manager.ts"
+        }
+      ]
+    },
+    {
+      "id": "attachment",
+      "definition": "A user-uploaded file bound to a chat turn, with bytes in object storage.",
+      "canonical": "apps/server/src/platform/store/attachments.ts",
+      "types": [
+        "AttachmentRow"
+      ],
+      "aliases": [
+        "upload"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/attachments.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/attachments.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/api/chats.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/attachments.ts"
+        }
+      ]
+    },
+    {
+      "id": "tool-artifact",
+      "definition": "A saved large tool output, addressed by id and filename.",
+      "canonical": "apps/server/src/platform/store/toolArtifacts.ts",
+      "types": [
+        "ToolArtifactRow"
+      ],
+      "aliases": [
+        "saved-tool-output"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/toolArtifacts.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/tool-artifacts.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/tool-artifacts.ts"
+        }
+      ]
+    },
+    {
+      "id": "usage-event",
+      "definition": "One row in ClickHouse recording a model request's tokens and cost.",
+      "canonical": "apps/server/src/platform/usage.ts",
+      "types": [],
+      "aliases": [
+        "spend"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/usage.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/usage.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/usage.ts"
+        }
+      ]
+    },
+    {
+      "id": "org-event",
+      "definition": "One audit-log entry published to the org and fanned out over LISTEN/NOTIFY.",
+      "canonical": "apps/server/src/platform/store/events.ts",
+      "types": [
+        "EventRow"
+      ],
+      "aliases": [
+        "audit-event"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/events.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/notify.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/http/events.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/events.ts"
+        }
+      ]
+    },
+    {
+      "id": "release",
+      "definition": "One published desktop build per platform, with its signature and size.",
+      "canonical": "apps/server/src/platform/store/releases.ts",
+      "types": [
+        "ReleaseRow"
+      ],
+      "aliases": [
+        "build"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/releases.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/releases.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/api/releases.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/releases.ts"
+        }
+      ]
+    },
+    {
+      "id": "api-key",
+      "definition": "An org-scoped bearer key for the OpenAI-compatible gateway.",
+      "canonical": "apps/server/src/platform/store/api_keys.ts",
+      "types": [
+        "ApiKeyRow",
+        "NewApiKey"
+      ],
+      "aliases": [
+        "gateway-key"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/api_keys.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/api_keys.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/api_keys.ts"
+        }
+      ]
+    },
+    {
+      "id": "gateway-route",
+      "definition": "One model name the org gateway maps to a provider and key, with a quota.",
+      "canonical": "apps/server/src/platform/store/gateway.ts",
+      "types": [
+        "RouteRow",
+        "AdminRouteRow",
+        "ProviderRow"
+      ],
+      "aliases": [
+        "model-route"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/gateway.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/gateway.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/api/models.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/gateway.ts"
+        }
+      ]
+    },
+    {
+      "id": "pairing-token",
+      "definition": "A short-lived secret that pairs one desktop with the server.",
+      "canonical": "apps/server/src/platform/store/pairing.ts",
+      "types": [
+        "PairingTokenRow",
+        "NewPairingToken",
+        "PairRequest",
+        "PairResponse",
+        "CreatePairingTokenRequest",
+        "PairingTokenResponse",
+        "PairingTokenInfo"
+      ],
+      "aliases": [
+        "pair-code"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/pairing.ts",
+          "role": "db"
+        },
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/api/folders.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/auth.ts"
+        }
+      ]
+    },
+    {
+      "id": "oidc-config",
+      "definition": "The org's single identity provider settings.",
+      "canonical": "apps/server/src/platform/store/oidc.ts",
+      "types": [
+        "OidcConfigRow"
+      ],
+      "aliases": [
+        "sso"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/oidc.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/oidc.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/oidc.ts"
+        }
+      ]
+    },
+    {
+      "id": "user-mcp-server",
+      "definition": "A user-configured MCP server whose tools join the turn.",
+      "canonical": "apps/server/src/platform/store/userMcp.ts",
+      "types": [
+        "UserMcpRow",
+        "UserMcpHeaderPreview"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/store/userMcp.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/http/user_mcp.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/harness/userMcp.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/harness/userMcp.ts"
+        }
+      ]
+    }
+  ],
+  "no_concept": [
+    {
+      "where": "apps/server/src/app.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/index.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/config.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/db.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/clickhouse.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/crypto.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/time.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/s3.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/errors.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/trace.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/migrations.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/root-context.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/route-contexts.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/integration-catalog.ts",
+      "reason": "types-only"
+    },
+    {
+      "where": "apps/server/src/http/cors.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/http/web.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/http/ws.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/http/error.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/http/sse-writer.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/http/login-throttle.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/http/faro.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/domain/json.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/domain/mcp.ts",
+      "reason": "types-only"
+    },
+    {
+      "where": "apps/server/src/execpolicy/matcher.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/execpolicy/rule-parser.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/storage/postgres/index.ts",
+      "reason": "barrel"
+    }
+  ],
+  "shared_canonical": [
+    "apps/server/src/platform/store/identity.ts",
+    "apps/server/src/agents/store.ts"
+  ],
+  "attaches": []
+}

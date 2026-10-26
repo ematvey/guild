@@ -231,11 +231,10 @@ describe("chats CRUD wire", () => {
         url: "/api/v1/chats",
         headers: auth(stack.memberToken),
       });
-      const chats = (JSON.parse(res.body) as { chats: { id: string; unread: boolean; unread_count?: number }[] }).chats;
+      const chats = (JSON.parse(res.body) as { chats: { id: string; unread: boolean }[] }).chats;
       return chats.find((c) => c.id === chat.id)!;
     };
     expect((await listRow()).unread).toBe(true);
-    expect((await listRow()).unread_count).toBe(1);
     const read = await stack.env.app.inject({
       method: "POST",
       url: `/api/v1/chats/${chat.id}/read`,
@@ -245,14 +244,12 @@ describe("chats CRUD wire", () => {
     expect(read.statusCode).toBe(200);
     // The v4 user event out-sorts the v7 marker id — seq ordering must say read.
     expect((await listRow()).unread).toBe(false);
-    expect((await listRow()).unread_count).toBe(0);
     // A newer turn re-marks the chat unread.
     await platform.threads.appendEvent(
       chat.id,
       { type: "assistant_message", turn: 2, step: 2, blocks: [{ type: "text", text: "second turn" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
     );
     expect((await listRow()).unread).toBe(true);
-    expect((await listRow()).unread_count).toBe(1);
   });
 });
 
@@ -745,7 +742,7 @@ describe("gateway/chat turn flow", () => {
     const id = JSON.parse(created.body).id as string;
     const runtime = stack.env.app.platform.runtime;
     await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    const conversation = await runtime.conversationForChat(id);
     await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
     await conversation.commit(async tx => {
       for (let i = 0; i < 3; i++) await tx.appendEntry(UserEntry, conversation.id, { model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }] });
@@ -777,7 +774,7 @@ describe("gateway/chat turn flow", () => {
     const id = JSON.parse(created.body).id as string;
     const runtime = stack.env.app.platform.runtime;
     await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    const conversation = await runtime.conversationForChat(id);
     await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
     const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
     expect(started.statusCode).toBe(200);

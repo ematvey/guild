@@ -7,6 +7,8 @@ import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./sessio
 import { clientId } from "./machine-rpc";
 import { StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
 import { ChatSubagentNode, ChatSummary } from "./api/chats";
+import type { Project } from "./api/projects";
+import type { MachineInfo } from "./api/machines";
 
 export interface SocketLike {
   readonly readyState: number;
@@ -29,6 +31,14 @@ export interface SocketHandlers {
   /** The open chat's thread subtree with each node's latest run status. */
   onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
+  /** The archived chats list, sent with every workspace push. */
+  onArchivedThreadList?: (chats: ChatSummary[]) => void;
+  /** Active and archived projects, sent with every workspace push. */
+  onProjectList?: (projects: Project[], archived: Project[]) => void;
+  /** The machine registry rows, sent with every workspace push. */
+  onMachineList?: (machines: MachineInfo[]) => void;
+  /** One machine's socket presence flip (claimed or released). */
+  onMachineStatus?: (machine_id: string, online: boolean) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
   onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
   onSync: (chat_id: string, phase: "begin" | "done") => void;
@@ -71,6 +81,21 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);
       return;
+    case "archived_thread_list":
+      handlers.onArchivedThreadList?.(message.chats as unknown as ChatSummary[]);
+      return;
+    case "project_list":
+      handlers.onProjectList?.(
+        message.projects as unknown as Project[],
+        message.archived_projects as unknown as Project[],
+      );
+      return;
+    case "machine_list":
+      handlers.onMachineList?.(message.machines as unknown as MachineInfo[]);
+      return;
+    case "machine_status":
+      handlers.onMachineStatus?.(message.machine_id, message.online);
+      return;
     case "subagent_tree":
       handlers.onSubagentTree?.(message.chat_id, message.nodes as unknown as ChatSubagentNode[]);
       return;
@@ -108,7 +133,7 @@ export function startSocket(
     getOpenChatId: () => string | null;
     socketFactory?: SocketFactory;
   },
-): { stop: () => void; resync: () => void; markRead: (chatId: string) => void } {
+): { stop: () => void; resync: () => void; markRead: (chatId: string) => boolean } {
   const factory = opts.socketFactory ?? ((url: string) => openSocket(url));
   let socket: SocketLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -264,10 +289,17 @@ export function startSocket(
     },
     resync: () => sendSync(),
     // The duplex read-mark: rides the member socket the turn's frames
-    // already arrive on — no separate HTTP request per new content.
-    markRead: (chatId: string) => {
-      if (socket?.readyState !== 1) return;
-      socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+    // already arrive on — no separate HTTP request per new content. Returns
+    // whether the frame left the socket, so the caller retries a dropped
+    // mark instead of clearing the dot for a write that never happened.
+    markRead: (chatId: string): boolean => {
+      if (socket?.readyState !== 1) return false;
+      try {
+        socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+        return true;
+      } catch {
+        return false;
+      }
     },
   };
 } // shared with the settings window client code

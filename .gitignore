@@ -25,3 +25,6 @@ deploy/compose/.env.bak*
 # (scripts/check-bindings.sh compiles them; the .ts sources are the truth).
 crates/protocol/bindings/**/*.js
 crates/protocol/bindings/**/*.d.ts
+
+# Python bytecode from scripts/coherence
+__pycache__/

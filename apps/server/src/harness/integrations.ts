@@ -32,16 +32,15 @@ import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
 import { callPlugin } from "../platform/integrations/execute.js";
 import type { ToolOutcome } from "../platform/integrations/vendors/shared.js";
-import type { PluginGateway } from "../platform/integrations/plugins.js";
+import type { IntegrationGateway } from "../platform/integrations/plugins.js";
 import {
   namespacedTool,
-  resolvePlugins,
-  toolAllowed,
-  toolCurate,
+  resolveIntegrations,
   unnamespacedTool,
-  type PluginToolInfo,
-  type PluginTurn,
+  type IntegrationToolInfo,
+  type IntegrationTurn,
 } from "../platform/integrations/plugins.js";
+import { toolAllowed, toolCurate } from "../platform/integrations/policy.js";
 
 type Json = Record<string, unknown>;
 
@@ -58,14 +57,13 @@ export interface IntegrationCaller {
 interface TurnSnapshot {
   orgId: string;
   chatId: string;
-  turns: PluginTurn[];
+  turns: IntegrationTurn[];
   caller: IntegrationCaller | null;
 }
 
 /** The narrow gateway slice the runtime needs (structurally the
  *  GatewayCtx). Secrets are re-resolved at call time — snapshots never
  *  carry values. */
-export type IntegrationGateway = PluginGateway;
 
 export interface IntegrationsRuntimeDeps {
   gateway: IntegrationGateway;
@@ -80,18 +78,19 @@ export interface IntegrationsRuntimeDeps {
 }
 
 /** The system-prompt index line for one enabled integration (spec §7.1). */
-function indexLine(turn: PluginTurn): string {
+function indexLine(turn: IntegrationTurn): string {
   return `Integration ${turn.slug}: ${turn.description} — call ${namespacedTool(turn.slug, "list_tools")} to discover its tools.`;
 }
 
 /** The Guild-provided auto tool names (spec §7.2/§7.3). */
-function autoToolNames(turn: PluginTurn): [string, string] {
+function autoToolNames(turn: IntegrationTurn): [string, string] {
   return [namespacedTool(turn.slug, "list_tools"), namespacedTool(turn.slug, "guide")];
 }
 
 /** Recognizes an auto-tool call: `<slug>_list_tools` / `<slug>_guide`
  *  (legacy `int_<slug>_…` names tolerated). */
-function parseAutoTool(turns: PluginTurn[], name: string): { index: number; kind: "list_tools" | "guide" } | undefined {
+// coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
+function parseAutoTool(turns: IntegrationTurn[], name: string): { index: number; kind: "list_tools" | "guide" } | undefined {
   const stripped = name.startsWith("int_") ? name.slice(4) : name;
   for (const [index, turn] of turns.entries()) {
     const [list, guide] = autoToolNames(turn);
@@ -104,7 +103,8 @@ function parseAutoTool(turns: PluginTurn[], name: string): { index: number; kind
 /** The plugin turn + tool a wire tool name resolves against — the
  *  execution gate and the audit share this matcher (legacy-prefixed names
  *  tolerated). */
-function pluginTarget(turns: PluginTurn[], callName: string): { turn: PluginTurn; info: PluginToolInfo } | undefined {
+// coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
+function integrationTarget(turns: IntegrationTurn[], callName: string): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
   for (const turn of turns) {
     const info = turn.tools.find((t) => toolMatches(turn.slug, t.spec.name, callName));
     if (info !== undefined) return { turn, info };
@@ -114,6 +114,7 @@ function pluginTarget(turns: PluginTurn[], callName: string): { turn: PluginTurn
 
 /** Whether a plugin tool spec answers a wire tool name — either exactly, or
  *  via the slug namespace (both sides stripped, legacy shape tolerated). */
+// coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
 function toolMatches(slug: string, specName: string, callName: string): boolean {
   if (specName === callName) return true;
   const s = unnamespacedTool(slug, specName);
@@ -185,9 +186,9 @@ export class IntegrationsRuntime {
     orgId: string,
     allowedToolNames?: ReadonlySet<string>,
   ): Promise<TurnPreparation> {
-    let turns: PluginTurn[] = [];
+    let turns: IntegrationTurn[] = [];
     try {
-      turns = await resolvePlugins(this.deps.gateway, orgId, (m) => this.warn(m));
+      turns = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
     } catch (error) {
       this.warn(`integrations resolve failed: ${(error as Error).message}`);
       throw error;
@@ -212,7 +213,7 @@ export class IntegrationsRuntime {
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
       for (const info of turn.tools) {
-        if (toolAllowed(turn, info, role)) tools.push(this.connectorTool(info));
+        if (toolAllowed(turn, info, role)) tools.push(this.integrationTool(info));
       }
     }
     return { extensions: [extension], tools };
@@ -237,14 +238,14 @@ export class IntegrationsRuntime {
    *  Guild-provided disclosure pair per plugin plus every curated-enabled
    *  connector tool. Curated-off tools are not registered at all — not
    *  declared to the model and not callable. */
-  private installOrgExtension(orgId: string, turns: PluginTurn[], conversationId: number): Extension<ToolRegistration> {
+  private installOrgExtension(orgId: string, turns: IntegrationTurn[], conversationId: number): Extension<ToolRegistration> {
     const tools: ToolRegistration[] = [];
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
       for (const info of turn.tools) {
         const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
         if (!toolCurate(turn.rowConfig, turn.executor === "mcp", raw).enabled) continue;
-        tools.push(this.connectorTool(info));
+        tools.push(this.integrationTool(info));
         this.knownToolNames.add(info.spec.name);
       }
     }
@@ -272,7 +273,7 @@ export class IntegrationsRuntime {
   }
 
   private static toolRegistration(
-    spec: PluginToolInfo["spec"],
+    spec: IntegrationToolInfo["spec"],
     execute: (
       args: Json,
       callId: string,
@@ -310,7 +311,7 @@ export class IntegrationsRuntime {
   }
 
   /** `{slug}_list_tools`: the role-filtered tool specs as compact JSON. */
-  private listToolsTool(turn: PluginTurn): ToolRegistration {
+  private listToolsTool(turn: IntegrationTurn): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(
       {
         name: namespacedTool(turn.slug, "list_tools"),
@@ -338,7 +339,7 @@ export class IntegrationsRuntime {
 
   /** `{slug}_guide`: the usage guide (SKILL.md/README.md) of the
    *  integration's approved cookbook bundle, when one is installed. */
-  private guideTool(turn: PluginTurn): ToolRegistration {
+  private guideTool(turn: IntegrationTurn): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(
       {
         name: namespacedTool(turn.slug, "guide"),
@@ -357,7 +358,7 @@ export class IntegrationsRuntime {
     );
   }
 
-  private connectorTool(info: PluginToolInfo): ToolRegistration {
+  private integrationTool(info: IntegrationToolInfo): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(info.spec, async (args, callId, conversationId, signal) => {
       return this.executeToolCall(conversationId, callId, info.spec.name, args, signal);
     });
@@ -380,9 +381,9 @@ export class IntegrationsRuntime {
       orgId = null;
     }
     if (orgId === null) return undefined;
-    let turns: PluginTurn[] = [];
+    let turns: IntegrationTurn[] = [];
     try {
-      turns = await resolvePlugins(this.deps.gateway, orgId, (m) => this.warn(m));
+      turns = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
     } catch {
       turns = [];
     }
@@ -397,7 +398,7 @@ export class IntegrationsRuntime {
   private async authorizedSnapshot(conversationId: number): Promise<TurnSnapshot | undefined> {
     const declared = await this.snapshotFor(conversationId);
     if (!declared) return undefined;
-    const turns = await resolvePlugins(this.deps.gateway, declared.orgId, (message) => this.warn(message));
+    const turns = await resolveIntegrations(this.deps.gateway, declared.orgId, (message) => this.warn(message));
     return { ...declared, turns, caller: await this.chatCaller(declared.chatId) };
   }
 
@@ -411,13 +412,14 @@ export class IntegrationsRuntime {
   async gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification> {
     // Cheap path: a name this runtime never registered and no auto-tool
     // shape cannot be an integration tool — coding tools pay no resolve.
+    // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
     if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
       return undefined;
     }
     const snapshot = await this.authorizedSnapshot(conversationId);
     if (snapshot === undefined || snapshot.turns.length === 0) return undefined;
     if (parseAutoTool(snapshot.turns, callName) !== undefined) return "skip";
-    const target = pluginTarget(snapshot.turns, callName);
+    const target = integrationTarget(snapshot.turns, callName);
     if (target === undefined) return undefined;
     const { turn, info } = target;
     const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
@@ -446,7 +448,7 @@ export class IntegrationsRuntime {
       // Handled by the dedicated tools; unreachable here, but fail closed.
       return { content: `unknown server tool ${callName}`, isError: true };
     }
-    const target = pluginTarget(turns, callName);
+    const target = integrationTarget(turns, callName);
     if (target === undefined || snapshot === undefined) {
       return { content: `unknown server tool ${callName}`, isError: true };
     }
@@ -562,4 +564,4 @@ export class IntegrationsRuntime {
   }
 }
 
-export { parseAutoTool, pluginTarget };
+export { parseAutoTool, integrationTarget };

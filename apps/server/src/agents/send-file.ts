@@ -3,7 +3,7 @@
 // row onto the assistant event.
 
 import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Type } from "typebox";
 import type { JsonValue } from "@earendil-works/chord";
@@ -16,32 +16,10 @@ import { attachmentObjectKey, safeFilename, type AttachmentStore } from "../plat
 import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
 import type { Agent, AgentRun } from "./types.js";
-import { normalizeRelativePath } from "./files.js";
+import { resolveAgentReadPath } from "./files.js";
+import { contentTypeOf } from "../platform/domain/mime.js";
 
 const MAX_SEND_BYTES = 64 * 1024 * 1024;
-
-const CONTENT_TYPES: Record<string, string> = {
-  csv: "text/csv",
-  gif: "image/gif",
-  htm: "text/html",
-  html: "text/html",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  json: "application/json",
-  md: "text/markdown",
-  pdf: "application/pdf",
-  png: "image/png",
-  svg: "image/svg+xml",
-  txt: "text/plain",
-  webp: "image/webp",
-  xml: "application/xml",
-  zip: "application/zip",
-};
-
-function contentTypeOf(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  return CONTENT_TYPES[ext] ?? "application/octet-stream";
-}
 
 export interface SendFileContext {
   attachments: Pick<AttachmentStore, "createAgentFile">;
@@ -64,32 +42,15 @@ export interface SendFileResult {
 
 export class SendFileError extends Error {}
 
-async function resolveWorkspaceFile(root: string, relPath: string): Promise<{ abs: string; rel: string }> {
-  const rel = normalizeRelativePath(relPath);
-  if (rel === "") throw new SendFileError("path must name a file");
-  const abs = path.resolve(root, rel);
-  if (abs !== root && !abs.startsWith(root + path.sep)) throw new SendFileError("path escapes the agent workspace");
-  const realRoot = await realpath(root).catch(() => {
-    throw new SendFileError("agent workspace is unavailable");
-  });
-  const realAbs = await realpath(abs).catch(() => {
-    throw new SendFileError("no such file");
-  });
-  if (realAbs !== realRoot && !realAbs.startsWith(realRoot + path.sep)) {
-    throw new SendFileError("path escapes the agent workspace");
-  }
-  const stats = await lstat(abs).catch(() => null);
-  if (stats === null || !stats.isFile() || stats.isSymbolicLink()) throw new SendFileError("not a regular file");
-  if (Number(stats.size) > MAX_SEND_BYTES) throw new SendFileError("file is larger than 64 MiB");
-  return { abs, rel };
-}
-
 /** Reads, hashes and uploads the file, then inserts the pending attachment
  *  row. A failed upload throws here, inside the tool call, before the turn
  *  ends. */
 export async function sendFile(context: SendFileContext, args: { path: string; as?: string }): Promise<SendFileResult> {
-  const root = path.resolve(context.workspaceRoot, "agents", context.agent.org_id, context.agent.id);
-  const { abs, rel } = await resolveWorkspaceFile(root, args.path);
+  const { abs, rel } = await resolveAgentReadPath(context.workspaceRoot, context.agent.org_id, context.agent.id, args.path);
+  if (rel === "") throw new SendFileError("path must name a file");
+  const stats = await lstat(abs).catch(() => null);
+  if (stats === null || !stats.isFile() || stats.isSymbolicLink()) throw new SendFileError("not a regular file");
+  if (Number(stats.size) > MAX_SEND_BYTES) throw new SendFileError("file is larger than 64 MiB");
   const filename = safeFilename((args.as ?? path.basename(rel)).trim());
   if (filename === null) throw new SendFileError("bad filename");
   const bytes = await readFile(abs);

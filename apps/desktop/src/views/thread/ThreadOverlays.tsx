@@ -1,7 +1,8 @@
 // The thread view's floating surfaces: the device-setup dialog, the
 // onboarding guide and the create-project dialog.
-import { apiOnboarded } from "../../lib/api/workspaces";
+import { apiOnboarded } from "../../lib/api/servers";
 import { machineId } from "../../lib/machine-rpc";
+import { IS_TAURI } from "../../lib/session";
 import type { MachineInfo } from "../../lib/api/machines";
 import type { Project } from "../../lib/api/projects";
 import { DeviceSetupDialog } from "../device-setup";
@@ -9,14 +10,11 @@ import { OnboardingGuide, type OnboardingExit } from "../onboarding";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import type { RoutePatch } from "./route";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
 export function ThreadOverlays({
   deviceOpen,
   onboardOpen,
   createProjectOpen,
   onCloseCreateProject,
-  onProjectCreated,
   onboarded,
   onOnboarded,
   machines,
@@ -27,7 +25,6 @@ export function ThreadOverlays({
   onboardOpen: boolean;
   createProjectOpen: boolean;
   onCloseCreateProject: (open: boolean) => void;
-  onProjectCreated: () => void;
   onboarded: boolean;
   onOnboarded?: () => void;
   machines: MachineInfo[] | null;
@@ -88,9 +85,8 @@ export function ThreadOverlays({
         onOpenChange={onCloseCreateProject}
         machines={machines}
         localMachineId={machineId()}
-        isTauri={isTauri}
+        isTauri={IS_TAURI}
         projects={projects}
-        onCreated={onProjectCreated}
       />
     </>
   );

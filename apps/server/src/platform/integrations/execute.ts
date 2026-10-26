@@ -1,46 +1,15 @@
-// The plugin dispatcher (call_plugin): resolves a connector slug to its
-// execute function, re-resolves the secrets (snapshots never carry values),
-// and runs the built-in connector directly or the MCP peer. One execute
-// function per vendor lives under vendors/; the shared request helpers and
-// the generic `api` tool live in vendors/shared.ts.
+// The integration dispatcher (call_plugin): resolves an integration slug to
+// its execute function, re-resolves the secrets (snapshots never carry
+// values), and runs the built-in integration directly or the MCP peer. One
+// execute function per vendor lives under vendors/; the shared request
+// helpers and the generic `api` tool live in vendors/shared.ts.
 
 import { mcpConnect, type McpPeer } from "./mcp.js";
-import { envelopeHeaders, type PluginTurn } from "./plugins.js";
+import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
 import { callSignals, type Json, type ToolOutcome } from "./vendors/shared.js";
-import { searxngExecute } from "./vendors/searxng.js";
-import { superproxyExecute } from "./vendors/superproxy.js";
-import { firecrawlExecute } from "./vendors/firecrawl.js";
-import { googleWorkspaceExecute } from "./vendors/google-workspace.js";
-import { hubspotExecute } from "./vendors/hubspot.js";
-import { langfuseExecute } from "./vendors/langfuse.js";
-import { atlassianExecute } from "./vendors/atlassian.js";
-import { slackExecute } from "./vendors/slack.js";
-import { githubExecute } from "./vendors/github.js";
-import { gitlabExecute } from "./vendors/gitlab.js";
-import {
-  API_TIMEOUT_MS,
-  CALL_TIMEOUT_MS,
-  LIST_TIMEOUT_MS,
-} from "./vendors/shared.js";
+import { integrationByName } from "../integration-catalog.js";
 
 // ---------- the plugin dispatcher (call_plugin) ----------
-
-/** Per-connector dispatch, resolved from the compiled-in catalog names. */
-function builtinExecute(slug: string): ((config: Json, tool: string, args: Json, secrets: [string, string][], actingAs: string | null) => Promise<ToolOutcome>) | undefined {
-  switch (slug) {
-    case "searxng": return searxngExecute;
-    case "superproxy": return superproxyExecute;
-    case "firecrawl": return firecrawlExecute;
-    case "google_workspace": return googleWorkspaceExecute;
-    case "hubspot": return hubspotExecute;
-    case "langfuse": return langfuseExecute;
-    case "atlassian": return atlassianExecute;
-    case "slack": return slackExecute;
-    case "github": return githubExecute;
-    case "gitlab": return gitlabExecute;
-    default: return undefined;
-  }
-}
 
 /** Runs one tool on a compiled-in connector directly (the script API and
  *  tests dispatch through callPlugin; this is the raw connector surface). */
@@ -54,28 +23,18 @@ export async function executeConnectorTool(
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
-  const execute = builtinExecute(slug);
-  if (execute === undefined) throw new Error(`unknown integration ${slug}`);
-  return callSignals.run(signal, () => execute(config, tool, args, secrets, actingAs));
+  const integration = integrationByName(slug);
+  if (integration === undefined) throw new Error(`unknown integration ${slug}`);
+  return callSignals.run(signal, () => integration.execute(config, tool, args, secrets, actingAs));
 }
 
 /** Secrets the connector needs — the resolved store values ride only to
  *  execute(); the names come from the turn snapshot's declared list. */
-export interface PluginCallIdentity {
+export interface IntegrationCallIdentity {
   orgId: string;
   callerId: string;
   callId: string;
   actingAs: string | null;
-}
-
-/** The narrow store surface the dispatcher re-resolves secrets through
- *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
-export interface PluginSecretSource {
-  integrationSecrets: {
-    names(orgId: string, integration: string): Promise<string[]>;
-    resolve(orgId: string, integration: string, names: string[], masterKey: Buffer): Promise<[string, string][]>;
-  };
-  masterKey(): Buffer;
 }
 
 /** Executes one call against a resolved plugin (call_plugin): re-resolves
@@ -84,24 +43,22 @@ export interface PluginSecretSource {
  *  the MCP server with the identity envelope and calls the raw tool name. */
 export async function callPlugin(
   source: PluginSecretSource,
-  turn: PluginTurn,
+  turn: IntegrationTurn,
   rawTool: string,
   args: Json,
-  identity: PluginCallIdentity,
+  identity: IntegrationCallIdentity,
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
   const masterKey = source.masterKey();
   if (turn.executor === "rust") {
-    const execute = builtinExecute(turn.slug);
-    if (execute === undefined) throw new Error(`unknown integration ${turn.slug}`);
     // Every stored secret of the slug rides to execute — the connector
     // picks what it needs (superproxy's optional gateway token included);
     // values never reach logs or events.
     const names = await source.integrationSecrets.names(identity.orgId, turn.slug);
     const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, names, masterKey);
     signal?.throwIfAborted();
-    return callSignals.run(signal, () => execute(turn.rowConfig, rawTool, args, secrets, identity.actingAs));
+    return executeConnectorTool(turn.slug, turn.rowConfig, rawTool, args, secrets, identity.actingAs, signal);
   }
   // MCP plugin: a short-lived call connection keeps caller and call ID
   // exact (the Rust pool's per-call connect).
@@ -128,5 +85,4 @@ export async function callPlugin(
   return { content: result.content };
 }
 
-export const EXECUTE_TIMEOUTS = { CALL_TIMEOUT_MS, LIST_TIMEOUT_MS, API_TIMEOUT_MS };
 

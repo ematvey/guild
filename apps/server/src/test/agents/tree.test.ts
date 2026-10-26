@@ -74,6 +74,7 @@ describe("chat tree", () => {
       status: "succeeded",
       depth: 1,
       parent: { chat_id: parentChat, title: "Parent session" },
+      origin: null,
     });
 
     const alias = await stack.env.app.inject({
@@ -166,6 +167,7 @@ describe("chat tree", () => {
       status: null,
       depth: 0,
       parent: null,
+      origin: null,
     });
 
     const agentId = randomUUID();
@@ -195,6 +197,7 @@ describe("chat tree", () => {
       status: null,
       depth: 0,
       parent: null,
+      origin: null,
     });
   });
 });

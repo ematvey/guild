@@ -46,7 +46,9 @@ export function CreateProjectDialog({
    * opens it instead of creating a duplicate. */
   projects: Project[] | null;
   /** Called with the opened-or-created project (the caller selects it). */
-  onCreated: (project: Project) => void;
+  /** Optional: the server pushes the project list, so callers that only
+   *  need the sidebar to update pass nothing. */
+  onCreated?: (project: Project) => void;
 }) {
   const [view, setView] = useState<View>({ kind: "sources" });
   const [distros, setDistros] = useState<Distro[] | null>(null);
@@ -87,34 +89,33 @@ export function CreateProjectDialog({
     }
   }, [open, isTauri]);
 
-  /** The project already bound to this machine + folder, if any. Folder
-   * comparison is case-insensitive: Windows paths differ in case freely. */
-  const existingFor = (folder: string): Project | null =>
-    (projects ?? []).find(
-      (p) =>
-        p.machine_id === localMachineId &&
-        p.folder.replace(/\\+$/, "").toLowerCase() === folder.replace(/\\+$/, "").toLowerCase(),
-    ) ?? null;
-
-  /** Remote variant: the binding carries the machine's id, and Linux paths
-   * compare case-sensitively. */
-  const existingForMachine = (machineId: string) => (folder: string): Project | null =>
-    (projects ?? []).find((p) => p.machine_id === machineId && p.folder === folder) ?? null;
+  /** The project already bound to this machine + folder, if any. Windows
+   *  and WSL folder identity ignores case and trailing separators; Linux
+   *  paths compare exactly. */
+  const existingForMachine = (machineId: string) => {
+    const pathKey =
+      machineId === localMachineId
+        ? (folder: string) => folder.replace(/\\+$/, "").toLowerCase()
+        : (folder: string) => folder;
+    return (folder: string): Project | null =>
+      (projects ?? []).find(
+        (p) => p.machine_id === machineId && pathKey(p.folder) === pathKey(folder),
+      ) ?? null;
+  };
 
   /** Choosing a folder commits immediately: an existing project opens, a
    * new one is created with the folder's basename as its name. */
   const commitFolder = async (folder: string, machineId: string = localMachineId) => {
-    const existing =
-      machineId === localMachineId ? existingFor(folder) : existingForMachine(machineId)(folder);
+    const existing = existingForMachine(machineId)(folder);
     if (existing) {
-      onCreated(existing);
+      onCreated?.(existing);
       onOpenChange(false);
       return;
     }
     setBusy(true);
     try {
       const project = await createProject({ folder, machine_id: machineId });
-      onCreated(project);
+      onCreated?.(project);
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -178,7 +179,7 @@ export function CreateProjectDialog({
               </div>
               <PathSpecifier
                 distro={view.distro}
-                existingFor={existingFor}
+                existingFor={existingForMachine(localMachineId)}
                 onConfirm={(f) => void commitFolder(f)}
               />
             </div>

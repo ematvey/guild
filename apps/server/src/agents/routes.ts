@@ -13,7 +13,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
-import { resolvePlugins, toolCurate, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { resolveIntegrations, unnamespacedTool } from "../platform/integrations/plugins.js";
+import { toolCurate } from "../platform/integrations/policy.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { chatSubagentNodes } from "./tree.js";
@@ -61,7 +62,7 @@ async function integrationToolCatalog(
 ): Promise<{ name: string; label: string; group: string; description: string; safe: boolean }[]> {
   let turns;
   try {
-    turns = await resolvePlugins(gateway, orgId, () => {});
+    turns = await resolveIntegrations(gateway, orgId, () => {});
   } catch {
     return [];
   }
@@ -510,14 +511,18 @@ export function registerAgentRoutes(
       run_status: string | null;
       parent_chat_id: string | null;
       parent_title: string | null;
+      origin_chat_id: string | null;
+      origin_title: string | null;
     }>(
       `SELECT t.kind, t.title, t.depth, t.agent_id, a.name AS agent_name,
               (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
                ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
-              p.chat_id AS parent_chat_id, p.title AS parent_title
+              p.chat_id AS parent_chat_id, p.title AS parent_title,
+              o.chat_id AS origin_chat_id, o.title AS origin_title
        FROM agent_threads t
        JOIN agents a ON a.id = t.agent_id
        LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+       LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
        WHERE t.chat_id = $1`,
       [chatId],
     );
@@ -532,6 +537,7 @@ export function registerAgentRoutes(
         status: null,
         depth: 0,
         parent: null,
+        origin: null,
       });
     }
     return sendJson(reply, {
@@ -546,6 +552,10 @@ export function registerAgentRoutes(
         row.parent_chat_id === null
           ? null
           : { chat_id: row.parent_chat_id, title: row.parent_title ?? "" },
+      origin:
+        row.origin_chat_id === null
+          ? null
+          : { chat_id: row.origin_chat_id, title: row.origin_title ?? "" },
     });
   };
   app.get("/api/v1/chats/:id/tree", chatTree);
@@ -758,20 +768,6 @@ export function registerAgentRoutes(
     const run = await store.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
     return sendJson(reply, { children: await store.childRuns(run.id) });
-  });
-
-  app.get("/api/v1/runs/:id/artifacts", async (req, reply) => {
-    const user = await requireUser(auth, req);
-    const run = await store.getRun(parseUuidParam(req, "id"));
-    await store.requireAccess(user, run.agent_id, "use");
-    const artifacts = await store.listArtifacts(run.id);
-    return sendJson(reply, {
-      run_id: run.id,
-      artifacts,
-      staged: artifacts.filter((artifact) => artifact.status === "staged").length,
-      inboxed: artifacts.filter((artifact) => artifact.status === "inbox").length,
-      released: artifacts.filter((artifact) => artifact.status === "released").length,
-    });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {

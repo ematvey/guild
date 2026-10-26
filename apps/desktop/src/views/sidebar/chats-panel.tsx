@@ -51,7 +51,7 @@ export const ChatsPanel = memo(function ChatsPanel({
               role="button"
               tabIndex={0}
               aria-label="New thread"
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
               onClick={onNewChat}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") onNewChat();
@@ -76,7 +76,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                 key={c.id}
                 title={c.title}
                 active={c.id === chatId}
-                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, unreadCount: c.unread_count, blocked: !!c.blocked }}
+                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}

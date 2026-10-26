@@ -99,7 +99,7 @@ pub fn prepare(project: &Path, prompt: &str) -> Result<MachineContext, String> {
         project,
         prompt,
         &fs_bridge::guild_config_dir(),
-        &fs_bridge::home_dir(),
+        &fs_bridge::skills_home(),
     )
 }
 

@@ -25,7 +25,7 @@ import { threadEventRowWire, threadEventWire, type MessageAttachment, type Threa
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
 import type { ChatRow } from "../store/chats.js";
-import { modalityOf } from "../../chats/turn-text.js";
+import { modalityOf } from "../domain/mime.js";
 import { ThreadAgentLocked } from "../../harness/runtime.js";
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ import { ThreadAgentLocked } from "../../harness/runtime.js";
 // ---------------------------------------------------------------------------
 
 /** The hub-aware online flag for a chat row's bound machine — the same
- *  truth threadListSnapshot (ws push) and GET /api/v1/machines use. Null
+ *  truth the workspace push and GET /api/v1/machines use. Null
  *  binding → false (the flag is hub-coupled only when a machine exists). */
 export function machineOnlineOf(chats: ChatsCtx, row: { machine_id: string | null }): boolean {
   return row.machine_id !== null && chats.hub.machineOnline(row.machine_id);
@@ -52,8 +52,6 @@ export function chatWire(row: {
   /** List rows only: this chat or a descendant has a queued/running run. */
   working?: boolean;
   unread?: boolean;
-  /** List rows only: assistant turns newer than the caller's read marker. */
-  unread_count?: number;
   blocked?: boolean;
   project_id: string | null;
   project_name?: string | null;
@@ -79,7 +77,6 @@ export function chatWire(row: {
   out.generating = row.generating;
   if (row.working !== undefined) out.working = row.working;
   out.unread = row.unread ?? false;
-  if (row.unread_count !== undefined) out.unread_count = row.unread_count;
   if (row.blocked !== undefined) out.blocked = row.blocked;
   if (row.last_activity_at !== undefined) out.last_activity_at = row.last_activity_at;
   if (row.project_id !== null) out.project_id = row.project_id;
@@ -90,7 +87,7 @@ export function chatWire(row: {
 }
 
 /** The thread list rows (http/feed.rs thread_list) — hub-aware online
- *  flags, identical to the ws push's threadListSnapshot. */
+ *  flags, identical to the workspace push's chat rows. */
 async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
   const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
   return rows.map((row) =>
@@ -105,7 +102,6 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
       generating: row.generating,
       working: row.working,
       unread: row.unread,
-      unread_count: row.unread_count,
       blocked: row.blocked,
       project_id: row.project_id,
       project_name: row.project_name,

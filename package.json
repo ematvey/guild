@@ -5,5 +5,9 @@
     "apps/*",
     "packages/ui",
     "crates/protocol/bindings"
-  ]
+  ],
+  "scripts": {
+    "coherence": "python3 scripts/coherence/check.py check",
+    "coherence:report": "python3 scripts/coherence/check.py report"
+  }
 }

@@ -1,4 +1,4 @@
-import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, trimTrailingSlash, pathSegment, urlencode, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi } from "./shared.js";
+import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, urlencode, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, atlassianSite } from "./shared.js";
 import type { ToolOutcome, Json } from "./shared.js";
 
 // ---------- atlassian ----------
@@ -12,13 +12,12 @@ interface AtlassianCreds {
 function atlassianCreds(config: Json, secrets: [string, string][]): AtlassianCreds {
   // Site and email are plain settings (config wins, the legacy
   // secret-named rows are the fallback); only the token is a credential.
-  const site = configString(config, "site") ?? secretOrNull(secrets, "site");
-  if (site === undefined || site === null || site === "") throw new Error("atlassian requires the site setting");
+  const site = atlassianSite(config, secrets);
   const email = configString(config, "email") ?? secretOrNull(secrets, "email");
   if (email === undefined || email === null || email === "") throw new Error("atlassian requires the email setting");
   const token = secretOrNull(secrets, "token");
   if (token === null || token === "") throw new Error("atlassian secret 'token' is not stored");
-  return { site: trimTrailingSlash(site), email, token };
+  return { site, email, token };
 }
 
 const ATLASSIAN_JIRA_FIELDS = "summary,status,issuetype,assignee,created";

@@ -9,7 +9,7 @@
 // JSON.stringify preserves string-key insertion order.
 
 import { threadEventRowWire } from "../platform/domain/thread-events.js";
-import { rustFloatText } from "../platform/provider/sse.js";
+import { rustFloatText } from "../platform/provider/rust-json.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,7 +67,15 @@ export type WsServerMsg =
       type: "subagent_tree";
       chat_id: string;
       nodes: unknown[];
-    };
+    }
+  | { type: "machine_status"; machine_id: string; online: boolean }
+  | { type: "archived_thread_list"; chats: unknown[] }
+  | {
+      type: "project_list";
+      projects: unknown[];
+      archived_projects: unknown[];
+    }
+  | { type: "machine_list"; machines: unknown[] };
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
@@ -292,6 +300,24 @@ export function serializeServerMsg(msg: WsServerMsg): string {
           ["nodes", msg.nodes],
         ]),
       );
+    case "machine_status":
+      return JSON.stringify(
+        frame("machine_status", [
+          ["machine_id", msg.machine_id],
+          ["online", msg.online],
+        ]),
+      );
+    case "archived_thread_list":
+      return JSON.stringify(frame("archived_thread_list", [["chats", msg.chats]]));
+    case "project_list":
+      return JSON.stringify(
+        frame("project_list", [
+          ["projects", msg.projects],
+          ["archived_projects", msg.archived_projects],
+        ]),
+      );
+    case "machine_list":
+      return JSON.stringify(frame("machine_list", [["machines", msg.machines]]));
   }
 }
 

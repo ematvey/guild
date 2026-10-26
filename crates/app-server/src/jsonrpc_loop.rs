@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
 #[derive(Default)]
-pub struct Session {
+pub struct EngineState {
     /// Auth fields — the cloud session, the signed-in email, and the
     /// machine identity. Owned by `auth_state`: reads through its
     /// accessors, every mutation through `AuthState::transition`.
@@ -49,10 +49,10 @@ enum Incoming {
 }
 
 /// Engine state shared by every client connection (daemon groundwork):
-/// one Session, one event fan-out, one agent JoinSet, one shutdown flag.
+/// one engine state, one event fan-out, one agent JoinSet, one shutdown flag.
 #[derive(Clone)]
 pub struct Shared {
-    pub session: Arc<Mutex<Session>>,
+    pub session: Arc<Mutex<EngineState>>,
     /// Broadcast channel for protocol events (agent.*, chat.*). Every
     /// connected client receives every event. Capacity 256.
     pub events: tokio::sync::broadcast::Sender<Value>,
@@ -79,7 +79,7 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: EngineState) -> Self {
         let (events, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel(false);
         let (links, link_spawn_rx) = crate::machine_link::new_registry();
@@ -104,13 +104,13 @@ impl Shared {
     }
 }
 
-/// Restores a persisted session (token.json) into a fresh Session, so an
+/// Restores a persisted session (token.json) into a fresh EngineState, so an
 /// app restart or a GUI engine re-spawn keeps auth. Thin wrapper over
 /// `AuthState::restored` (the auth-state module owns the store).
-pub async fn restored_session() -> anyhow::Result<Session> {
-    let session = Session {
+pub async fn restored_session() -> anyhow::Result<EngineState> {
+    let session = EngineState {
         auth: AuthState::restored().await?,
-        ..Session::default()
+        ..EngineState::default()
     };
     Ok(session)
 }
@@ -137,7 +137,11 @@ fn response_value(id: u64, resp: anyhow::Result<Response>) -> Value {
 /// Reads requests until EOF, handles them, writes responses/events to the
 /// writer. Returns the (mutated) session and the writer back. Thin wrapper:
 /// one Shared, one connection.
-pub async fn serve<R, W>(reader: R, writer: W, session: Session) -> anyhow::Result<(Session, W)>
+pub async fn serve<R, W>(
+    reader: R,
+    writer: W,
+    session: EngineState,
+) -> anyhow::Result<(EngineState, W)>
 where
     R: std::io::Read + Send + 'static,
     W: std::io::Write + Send + 'static,
@@ -500,7 +504,7 @@ fn auth_change_with_store(
 /// worst. In-flight agent runs keep their own cloud client and fail on their
 /// revoked bearer; the epoch bump makes their late writes stale and the
 /// cleared flags let the new principal start fresh.
-pub(crate) fn reset_if_principal_changed(s: &mut Session, previous: Option<(String, String)>) {
+pub(crate) fn reset_if_principal_changed(s: &mut EngineState, previous: Option<(String, String)>) {
     if principal_of(s) != previous {
         s.chat_id = None;
         s.project_dir = None;
@@ -512,7 +516,7 @@ pub(crate) fn reset_if_principal_changed(s: &mut Session, previous: Option<(Stri
 }
 
 /// The account a session's execution state belongs to: server + email.
-pub(crate) fn principal_of(s: &Session) -> Option<(String, String)> {
+pub(crate) fn principal_of(s: &EngineState) -> Option<(String, String)> {
     let cloud = s.auth.cloud()?;
     Some((cloud.base_url.clone(), s.auth.email()?.to_string()))
 }
@@ -647,14 +651,20 @@ async fn adopt_login_with_identity(
         .unwrap_or_else(|| Uuid::now_v7().to_string());
     auth_change_with_store(shared, AuthChange::Identify { machine_id }, store.clone())?;
     // The switcher's identity data (name + logo) rides the fresh token;
-    // best-effort, after the session is fully adopted.
-    shared
-        .session
-        .lock()
-        .unwrap()
-        .auth
-        .refresh_org_identity(&base_url, store.as_deref())
-        .await;
+    // best-effort, after the session is fully adopted. The fetch runs with
+    // the session lock released: the guard is a std::sync::Mutex, and
+    // holding it across the network await parks a worker thread that every
+    // other task needs (the daemon runs two workers), which wedges the
+    // daemon until restart.
+    let cloud = shared.session.lock().unwrap().auth.cloud_of(&base_url).cloned();
+    if let Some(cloud) = cloud {
+        if let Ok((name, logo)) = cloud.org_settings().await {
+            let mut session = shared.session.lock().unwrap();
+            session
+                .auth
+                .apply_org_identity(&base_url, name, logo, store.as_deref());
+        }
+    }
     Ok(())
 }
 
@@ -791,7 +801,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// contract); failures before the ack are RPC errors, failures during the
 /// run arrive as agent.error events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    // 1. Session state under the lock; context assembly and all HTTP after.
+    // 1. Engine state under the lock; context assembly and all HTTP after.
     let (cloud, project_dir, model, prompt, machine_id, epoch) = match (|| {
         let mut s = shared.session.lock().unwrap();
         let cloud = s
@@ -845,7 +855,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     };
 
     // Caller-assembled context (the client owns discovery — the webview
-    // via lib/context.ts, an engine client via its own assembly over the
+    // via lib/turn-context.ts, an engine client via its own assembly over the
     // fs.* bridge): the shim forwards it into the additive request fields.
     let skills_index = req.params["skills_index"].as_str().map(str::to_string);
     let agents_md = req.params["agents_md"].as_str().map(str::to_string);
@@ -962,7 +972,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
 /// Resolves a pending approval. Polls briefly so an approve that races the
 /// registration (UI sends immediately after the event) still lands.
 async fn agent_approve(
-    session: Arc<Mutex<Session>>,
+    session: Arc<Mutex<EngineState>>,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
@@ -1017,7 +1027,7 @@ async fn agent_approve(
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-fn policy_set(session: Arc<Mutex<Session>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+fn policy_set(session: Arc<Mutex<EngineState>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = (|| {
         let tool = param(&req, "tool")?.to_string();
         let policy: Approval = serde_json::from_value(req.params["policy"].clone())
@@ -1033,7 +1043,7 @@ fn policy_set(session: Arc<Mutex<Session>>, req: Request, out_tx: mpsc::Unbounde
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-fn policy_get(session: Arc<Mutex<Session>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+fn policy_get(session: Arc<Mutex<EngineState>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let policy = session.lock().unwrap().policy.clone();
     let _ = out_tx.send(
         serde_json::to_value(Response::ok(req.id, serde_json::to_value(&policy).unwrap())).unwrap(),
@@ -1041,7 +1051,7 @@ fn policy_get(session: Arc<Mutex<Session>>, req: Request, out_tx: mpsc::Unbounde
 }
 
 async fn registry_publish(
-    session: Arc<Mutex<Session>>,
+    session: Arc<Mutex<EngineState>>,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
@@ -1067,7 +1077,7 @@ async fn registry_publish(
 }
 
 async fn registry_install(
-    session: Arc<Mutex<Session>>,
+    session: Arc<Mutex<EngineState>>,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
@@ -1119,7 +1129,7 @@ async fn registry_install(
 /// Lists locally discovered skills with provenance, scope, and disabled
 /// flag — the desktop skills manager's data source.
 async fn registry_uninstall(
-    session: Arc<Mutex<Session>>,
+    session: Arc<Mutex<EngineState>>,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
@@ -1159,7 +1169,7 @@ mod machine_link_tests {
     }
 
     pub(crate) fn logged_in_shared_at(base_url: &str) -> Shared {
-        let session = Session {
+        let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
                     base_url: base_url.to_string(),
@@ -1177,7 +1187,7 @@ mod machine_link_tests {
     }
 
     fn logged_in_shared() -> Shared {
-        let session = Session {
+        let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
                     base_url: "http://srv".into(),
@@ -1381,7 +1391,7 @@ mod machine_link_tests {
 
     #[tokio::test]
     async fn identify_without_login_parks_the_link_but_keeps_identity() {
-        let mut shared = Shared::new(Session::default());
+        let mut shared = Shared::new(EngineState::default());
         shared.store_path =
             Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
         let mut link_rx = shared.links.subscribe_or_create("http://srv");
@@ -1533,9 +1543,9 @@ mod agent_start_tests {
     #[tokio::test]
     async fn missing_prompt_does_not_wedge_the_session_flag() {
         // Logged in with a machine identity so the closure reaches the
-        // agent_running guard and the prompt check (Session::default fails
+        // agent_running guard and the prompt check (EngineState::default fails
         // earlier, at the login gate, which would make this vacuous).
-        let session = Session {
+        let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
                     base_url: "http://srv".into(),
@@ -1682,7 +1692,7 @@ mod agent_start_tests {
             )
             .mount(&server)
             .await;
-        let session = Session {
+        let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
                     base_url: server.uri(),
@@ -1742,7 +1752,7 @@ mod agent_start_tests {
     /// propagates, and a retry succeeds.
     #[test]
     fn a_failed_persist_during_an_account_switch_still_resets_account_state() {
-        let session = Session {
+        let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
                     base_url: "http://srv".into(),

@@ -8,7 +8,7 @@
 // `message_stop`), byte-compatible with the Rust server.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
+import { ApiError, RAW_BODY, missingFieldError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
 import type { GatewayCtx } from "../route-contexts.js";
 import {
@@ -23,7 +23,7 @@ import {
   type GatewayCredential,
   type RoutedCall,
 } from "./llm.js";
-import { rustJsonText } from "../provider/sse.js";
+import { rustJsonText } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ToolSpec, type ToolCall } from "../provider/types.js";
 import { sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";
@@ -319,16 +319,10 @@ async function handleMessages(
 ): Promise<void> {
   const body = requireJsonBody(req) as Record<string, unknown>;
   if (body["model"] === undefined) {
-    throw new TextError(
-      422,
-      `${DESERIALIZE_PREFIX}missing field \`model\` at line 1 column ${(req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0}`,
-    );
+    throw missingFieldError("model", (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
   }
   if (body["messages"] === undefined) {
-    throw new TextError(
-      422,
-      `${DESERIALIZE_PREFIX}missing field \`messages\` at line 1 column ${(req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0}`,
-    );
+    throw missingFieldError("messages", (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
   }
   const req0 = body as unknown as AnthropicRequest;
   // A nonpositive client limit is invalid (the OpenAI ingress rejects it

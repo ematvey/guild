@@ -35,7 +35,6 @@ export interface MachineDispatchHost {
   machineOnline(machineId: string): boolean;
 }
 
-export const CLIENT_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** The daemon's guild-core `execute` accepts milliseconds. */
 const DEFAULT_EXECUTE_TIMEOUT_MS = 300_000;

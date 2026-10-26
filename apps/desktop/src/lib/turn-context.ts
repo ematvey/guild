@@ -115,6 +115,16 @@ export async function projectAgentDocs(
       break; // one file per directory: the first existing candidate wins
     }
   }
+  // MEMORY.md rides alongside the chain, read once at the project root.
+  if (remaining > 0) {
+    const memoryPath = `${projectDir}/MEMORY.md`;
+    const memory = await fs.readText(projectDir, memoryPath);
+    if (memory !== null && memory.trim() !== "") {
+      const truncated = truncateBytes(memory, remaining);
+      remaining -= byteLength(truncated);
+      out.push({ path: memoryPath, contents: truncated });
+    }
+  }
   return out;
 }
 

@@ -12,8 +12,6 @@ import type {
   Agent,
   AgentAccess,
   AgentActivityEntry,
-  AgentArtifactStatus,
-  AgentDelegationArtifact,
   AgentNotice,
   AgentRole,
   AgentRoutine,
@@ -144,7 +142,7 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a
   ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
 
 const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.kind,
-  t.parent_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
+  t.parent_thread_id, t.origin_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
   ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
 
 const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
@@ -154,9 +152,6 @@ const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.p
   ${TS("r.created_at")} AS created_at,
   (SELECT name FROM agents WHERE id = r.agent_id) AS agent_name,
   (SELECT name FROM agent_routines WHERE id = r.routine_id) AS routine_name`;
-
-const ARTIFACT_COLUMNS = `d.id, d.run_id, d.parent_run_id, d.agent_id, d.path, d.size,
-  d.status, d.inbox_path, d.staging_path, ${TS("d.created_at")} AS created_at`;
 
 const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.payload,
   ${TS("n.read_at")} AS read_at, ${TS("n.created_at")} AS created_at`;
@@ -216,6 +211,7 @@ function toThread(row: Record<string, unknown>): AgentThread {
     title_locked: Boolean(row.title_locked),
     kind: row.kind as AgentThreadKind,
     parent_thread_id: (row.parent_thread_id as string | null) ?? null,
+    origin_thread_id: (row.origin_thread_id as string | null) ?? null,
     depth: Number(row.depth ?? 0),
     closed_at: row.closed_at === null || row.closed_at === undefined ? null : pgTimestampToRfc3339(row.closed_at as string),
     created_at: pgTimestampToRfc3339(row.created_at as string),
@@ -245,21 +241,6 @@ function toRun(row: Record<string, unknown>): AgentRun {
     created_at: pgTimestampToRfc3339(row.created_at as string),
     agent_name: (row.agent_name as string | null) ?? null,
     routine_name: (row.routine_name as string | null) ?? null,
-  };
-}
-
-function toArtifact(row: Record<string, unknown>): AgentDelegationArtifact {
-  return {
-    id: row.id as string,
-    run_id: row.run_id as string,
-    parent_run_id: row.parent_run_id as string,
-    agent_id: row.agent_id as string,
-    path: row.path as string,
-    size: Number(row.size ?? 0),
-    status: row.status as AgentArtifactStatus,
-    inbox_path: (row.inbox_path as string | null) ?? null,
-    staging_path: (row.staging_path as string | null) ?? null,
-    created_at: pgTimestampToRfc3339(row.created_at as string),
   };
 }
 
@@ -743,6 +724,7 @@ export class AgentStore {
     userId: string,
     title: string,
     kind: AgentThreadKind = "thread",
+    options: { originThreadId?: string } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
@@ -757,9 +739,10 @@ export class AgentStore {
         null,
       );
       await client.query(
-        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, kind)
-         VALUES ($1, $2, $3, $4, $5, false, $6)`,
-        [id, agentId, userId, chat.id, title, kind],
+        `INSERT INTO agent_threads
+           (id, agent_id, user_id, chat_id, title, title_locked, kind, origin_thread_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7)`,
+        [id, agentId, userId, chat.id, title, kind, options.originThreadId ?? null],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -1220,51 +1203,6 @@ export class AgentStore {
       [runId],
     );
     return res.rows.map(toRun);
-  }
-
-  async createArtifact(input: {
-    run_id: string;
-    parent_run_id: string;
-    agent_id: string;
-    path: string;
-    size: number;
-    status: AgentArtifactStatus;
-    inbox_path?: string | null;
-    staging_path?: string | null;
-  }): Promise<AgentDelegationArtifact> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `WITH d AS (
-         INSERT INTO agent_delegation_artifacts
-           (id, run_id, parent_run_id, agent_id, path, size, status, inbox_path, staging_path)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (run_id, path) DO UPDATE SET
-           size = EXCLUDED.size, status = EXCLUDED.status,
-           inbox_path = EXCLUDED.inbox_path, staging_path = EXCLUDED.staging_path
-         RETURNING *)
-       SELECT ${ARTIFACT_COLUMNS} FROM d`,
-      [
-        uuidv7(),
-        input.run_id,
-        input.parent_run_id,
-        input.agent_id,
-        input.path,
-        input.size,
-        input.status,
-        input.inbox_path ?? null,
-        input.staging_path ?? null,
-      ],
-    );
-    return toArtifact(res.rows[0]!);
-  }
-
-  async listArtifacts(runId: string): Promise<AgentDelegationArtifact[]> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${ARTIFACT_COLUMNS} FROM agent_delegation_artifacts d
-       WHERE d.run_id = $1 OR d.parent_run_id = $1
-       ORDER BY d.created_at ASC, d.path ASC`,
-      [runId],
-    );
-    return res.rows.map(toArtifact);
   }
 
   async createRun(input: CreateRunInput): Promise<AgentRun> {
