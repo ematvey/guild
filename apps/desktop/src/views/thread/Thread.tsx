@@ -700,6 +700,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [chats, chatStatus]);
 
   const activeChat = chats?.find((c) => c.id === viewChatId);
+  // An archived thread is in the archived list, not the active one; its row
+  // still supplies the title.
+  const listedChat = activeChat ?? archivedChats?.find((c) => c.id === viewChatId);
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
@@ -721,7 +724,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // A non-user thread's own title comes from its tree node: its chat row is
   // never in the sidebar, so the list has no title to show.
   const activeTitle = facts.type === "user"
-    ? activeChat?.title ?? (viewChatId === null ? "New chat" : "")
+    ? listedChat?.title ?? childTree?.title ?? (viewChatId === null ? "New chat" : "")
     : childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread");
   const chatArchived = facts.archived;
   const chatDeleted = facts.deleted;
