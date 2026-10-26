@@ -234,6 +234,40 @@
           "at": "apps/desktop/src/lib/fs-bridge.ts"
         }
       ]
+    },
+    {
+      "id": "window-title",
+      "definition": "The app window's title: the workspace name followed by the app name.",
+      "canonical": "apps/desktop/src/lib/window-title.ts",
+      "aliases": [
+        "document-title"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/window-title.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/lib/socket-client.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/hooks/use-member-socket.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/lib/socket-client.ts"
+        },
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/thread/hooks/use-member-socket.ts"
+        }
+      ]
     }
   ],
   "no_concept": [

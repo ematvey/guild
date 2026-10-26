@@ -841,9 +841,35 @@ describe("member-socket feed", () => {
     const ws = await memberSocket();
     // The legacy chat list is first (old clients wait for it); the rest of
     // the sidebar state follows on the same bootstrap.
+    const info = await waitFrame(ws, (f) => f.type === "workspace_identity");
+    expect(info.name).toBe("m2 test org");
     await waitFrame(ws, (f) => f.type === "archived_thread_list");
     await waitFrame(ws, (f) => f.type === "project_list");
     await waitFrame(ws, (f) => f.type === "machine_list");
+    ws.end();
+  });
+
+  it("pushes the workspace name to every member socket on a rename", { timeout: TEST_TIMEOUT }, async () => {
+    const ws = await memberSocket();
+    const renamed = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org",
+      headers: auth(stack.adminToken),
+      payload: { name: "Renamed workspace" },
+    });
+    expect(renamed.statusCode).toBe(200);
+    const info = await waitFrame(
+      ws,
+      (f) => f.type === "workspace_identity" && f.name === "Renamed workspace",
+    );
+    expect(info.name).toBe("Renamed workspace");
+    // Restore the harness's name for the tests that follow.
+    await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org",
+      headers: auth(stack.adminToken),
+      payload: { name: "m2 test org" },
+    });
     ws.end();
   });
 

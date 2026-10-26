@@ -15,6 +15,7 @@ export const NOTIFY_CHANNELS = [
   "guild_events",
   "guild_subagent_tree",
   "guild_workspace",
+  "guild_org",
 ] as const;
 
 export class NotifyHub {
