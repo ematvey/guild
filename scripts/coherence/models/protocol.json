@@ -26,6 +26,14 @@
           "role": "domain"
         },
         {
+          "where": "packages/wire/src/types.ts",
+          "role": "wire"
+        },
+        {
+          "where": "packages/wire/src/parse.ts",
+          "role": "wire"
+        },
+        {
           "where": "apps/desktop/src/lib/socket-client.ts",
           "role": "ui"
         }
