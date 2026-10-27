@@ -12,6 +12,14 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A read mark pushes the workspace lists (2026-10-27).** `markRead` wrote
+  `chat_reads` and stopped there, so only the client that sent the mark hid
+  its dot — the client did that optimistically. Every other open client of
+  the user kept a stale `unread: true` until an unrelated workspace push.
+  The write now fires `guild_workspace` like the other list-moving writes,
+  so the sidebar lists repaint on both the socket read frame and
+  `POST /threads/{id}/read`.
+
 - **Integrations are plugins in a shop, and traits carry Guild-provided names
   (2026-10-27).** The catalog was one 979-line switch in
   `platform/integration-catalog.ts`: adding a connector meant editing the
