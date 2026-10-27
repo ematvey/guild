@@ -669,6 +669,11 @@ export class ChatStore {
          SET last_read_seq = GREATEST(chat_reads.last_read_seq, EXCLUDED.last_read_seq)`,
       [chatId, caller.id, lastReadSeq],
     );
+    // The marker is sidebar state: every other open client of this user
+    // must clear the dot, so the read write pushes the workspace lists.
+    await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+      JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId }),
+    ]);
   }
 }
 

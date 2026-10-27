@@ -752,6 +752,39 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("pushes the cleared unread dot to the user's other sockets when one client reads", async () => {
+    const chat = await createChat("read fan-out");
+    await stack.env.db.query(
+      "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, 'assistant_message', $3)",
+      [crypto.randomUUID(), chat.id, JSON.stringify({ type: "assistant_message", text: "unread here" })],
+    );
+
+    const reader = await memberSocket();
+    const other = await memberSocket();
+    // The dot is up on the second tab before the read lands, so the frame
+    // below can only come from the read write.
+    await waitFrame(
+      other,
+      (f) =>
+        f.type === "thread_list" &&
+        (f.chats as { id: string; unread: boolean }[]).some((c) => c.id === chat.id && c.unread),
+    );
+    reader.send(JSON.stringify({ type: "read", chat_id: chat.id }));
+
+    // The other tab holds no marker of its own: the only way its dot clears
+    // is the read write pushing the workspace lists.
+    const frame = await waitFrame(
+      other,
+      (f) =>
+        f.type === "thread_list" &&
+        (f.chats as { id: string; unread: boolean }[]).some((c) => c.id === chat.id && !c.unread),
+    );
+    const row = (frame.chats as { id: string; unread: boolean }[]).find((c) => c.id === chat.id)!;
+    expect(row.unread).toBe(false);
+    reader.end();
+    other.end();
+  });
+
   it("pushes the chat's thread subtree on sync and on every tree change", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("tree push");
     const agentId = crypto.randomUUID();
