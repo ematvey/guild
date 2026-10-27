@@ -78,9 +78,10 @@ and data semantics stay the same. Restate is dropped.
 | compaction checkpoints          | pi-durable compaction (auto per decision 12)              |
 | usage recording                 | `pi.usage` docs → existing ClickHouse sink                |
 
-Forced compat requirements (not decisions): hub WS frames byte-compatible
-(existing daemons never update), JWT session tokens verify/issue identically,
-web UI/admin dist embedded at build time as today.
+Forced compat requirements (not decisions): hub WS frames
+presence-compatible (existing daemons never update; the same field must be
+present or absent, key order and number text may differ), JWT session tokens
+verify/issue identically, web UI/admin dist embedded at build time as today.
 
 ## Amendments
 
