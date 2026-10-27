@@ -294,6 +294,35 @@
           "at": "apps/server/src/platform/provider/anthropic.ts"
         }
       ]
+    },
+    {
+      "id": "rest-dto",
+      "definition": "The data-transfer types that cross the TS/Rust boundary over HTTP, described once in protocol/rest.schema.json.",
+      "canonical": "protocol/rest.schema.json",
+      "types": [
+        "ThreadEvent",
+        "Block",
+        "Message",
+        "MessageAudio",
+        "Project",
+        "CreateProjectRequest"
+      ],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "protocol/rest.schema.json",
+          "role": "wire"
+        },
+        {
+          "where": "packages/wire/src/rest.ts",
+          "role": "wire"
+        },
+        {
+          "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        }
+      ],
+      "translations": []
     }
   ],
   "no_concept": [
