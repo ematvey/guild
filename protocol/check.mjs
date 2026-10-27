@@ -27,18 +27,18 @@ function resolveVariant(schema, variant) {
   return schema.$defs?.[name] ?? variant;
 }
 
-// Every oneOf variant must declare its tag as a const under `type`.
+// The tag values a tagged union declares. A plain struct has no tags, so it
+// has no coverage rule: validation alone is the check for those roots.
 function variantTypes(schema, root) {
   const rootDef = schema.$defs?.[root];
   if (!rootDef) fail(`schema has no $defs.${root}`);
-  const variants = rootDef.oneOf ?? [rootDef];
+  const variants = rootDef.oneOf;
+  if (variants === undefined) return null;
   const types = [];
   for (const variant of variants) {
     const resolved = resolveVariant(schema, variant);
     const tag = resolved.properties?.type?.const;
-    if (typeof tag !== 'string') {
-      fail(`$defs.${root}: variant without a string const under type`);
-    }
+    if (typeof tag !== 'string') return null;
     types.push(tag);
   }
   return types;
@@ -129,6 +129,7 @@ async function main() {
     const schema = schemas.get(schemaName);
     for (const root of schemaRoots) {
       const expected = variantTypes(schema, root);
+      if (expected === null) continue;
       const actual = seen.get(`${schemaName}.${root}`) ?? new Set();
       for (const type of expected) {
         if (!actual.has(type)) missing.push(`${schemaName}.${root}: ${type}`);
