@@ -5,6 +5,11 @@
   "description": "The data-transfer types that cross the TypeScript/Rust boundary over HTTP. Derived from crates/protocol/src/api.rs and crates/protocol/src/registry.rs, which is what the wire actually is. Presence is explicit. A field with only `#[serde(default)]` is always serialized and appears in `required`, even when its value is null. A field with `#[serde(skip_serializing_if = \"Option::is_none\")]` is omitted when it is None and is not in `required`. An `Option<T>` with no skip attribute is required and nullable. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
   "$defs": {
     "Uuid": { "type": "string", "format": "uuid" },
+    "DateTime": {
+      "description": "An RFC 3339 timestamp. chrono::DateTime<Utc> in Rust.",
+      "type": "string",
+      "format": "date-time"
+    },
     "Json": {
       "description": "Any JSON value. serde_json::Value in Rust, JsonValue in TypeScript."
     },
@@ -413,6 +418,41 @@
           "type": "string",
           "description": "`wav` or `mp3`."
         }
+      }
+    },
+
+    "Project": {
+      "description": "One project: a named folder bound to a machine.",
+      "type": "object",
+      "required": ["id", "name", "folder", "machine_id", "machine_label", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string" },
+        "folder": {
+          "type": "string",
+          "description": "Windows path; UNC (`\\\\wsl.localhost\\…`) for a WSL distro folder."
+        },
+        "machine_id": { "type": "string" },
+        "machine_label": {
+          "description": "Always serialized. null when unset.",
+          "type": ["string", "null"]
+        },
+        "created_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
+    "CreateProjectRequest": {
+      "description": "Creates a project: a named folder bound to a machine.",
+      "type": "object",
+      "required": ["name", "folder", "machine_id"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Always serialized. null when omitted; defaults to the folder's basename.",
+          "type": ["string", "null"]
+        },
+        "folder": { "type": "string" },
+        "machine_id": { "type": "string" }
       }
     },
 

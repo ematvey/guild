@@ -165,6 +165,27 @@ export interface MessageAudio {
   format: string;
 }
 
+/** One project: a named folder bound to a machine. */
+export interface Project {
+  id: string;
+  name: string;
+  /** Windows path; UNC (`\\wsl.localhost\…`) for a WSL distro folder. */
+  folder: string;
+  machine_id: string;
+  /** Always serialized. null when unset. */
+  machine_label: string | null;
+  /** RFC 3339 timestamp. */
+  created_at: string;
+}
+
+/** Creates a project: a named folder bound to a machine. */
+export interface CreateProjectRequest {
+  /** Always serialized. null when omitted; defaults to the folder's basename. */
+  name: string | null;
+  folder: string;
+  machine_id: string;
+}
+
 /** A registry bundle manifest, shared by the hub and the machines. */
 export interface BundleManifest {
   /** `skill`, `mcp` or `integration`. */

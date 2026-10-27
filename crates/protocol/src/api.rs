@@ -106,7 +106,7 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreateProjectRequest {

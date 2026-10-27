@@ -73,6 +73,9 @@ fn check_rest_root(root: &str) {
         "BundleManifest" => {
             round_trip::<protocol::registry::BundleManifest>(&file, frames);
         }
+        "CreateProjectRequest" => {
+            round_trip::<protocol::api::CreateProjectRequest>(&file, frames);
+        }
         "FieldSpec" => {
             round_trip::<protocol::registry::FieldSpec>(&file, frames);
         }
@@ -90,6 +93,9 @@ fn check_rest_root(root: &str) {
         }
         "MessageAudio" => {
             round_trip::<protocol::api::MessageAudio>(&file, frames);
+        }
+        "Project" => {
+            round_trip::<protocol::api::Project>(&file, frames);
         }
         "SettingsManifest" => {
             round_trip::<protocol::registry::SettingsManifest>(&file, frames);
