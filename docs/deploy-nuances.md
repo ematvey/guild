@@ -127,8 +127,8 @@ docker compose build server && docker compose up -d server
 ```
 
 - The image's `webui` stage runs `npm ci --workspace apps/desktop` + `vite
-  build` (it also needs `packages/ui/src` and the generated
-  `crates/protocol/bindings`). Changing anything under `apps/desktop/` or
+  build` (it also needs `packages/ui/src` and `packages/wire/src`). Changing
+  anything under `apps/desktop/` or
   `packages/ui/` invalidates that stage; the TS compile stage is
   independent, so npm is usually the long pole.
 - Backend changes (`apps/server/src`) invalidate the build stage only —
@@ -153,7 +153,7 @@ head"` to inspect the served bundle directly.
 | Stage | Base | Does |
 |---|---|---|
 | `build` | node:22 | `npm ci --workspace apps/server` + `tsc` (dist compiled at build time) |
-| `webui` | node:22 | `npm ci --workspace apps/desktop` + `vite build` (chat SPA, needs `packages/ui/src` + `crates/protocol/bindings`) |
+| `webui` | node:22 | `npm ci --workspace apps/desktop` + `vite build` (chat SPA, needs `packages/ui/src` + `packages/wire/src`) |
 | runtime | node:22-slim | production `node_modules` + the server dist + the SPA dist + the static exec-policy rules; `node dist/index.js` |
 
 Notes:

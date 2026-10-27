@@ -5,8 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BundleManifest {
     /// skill | mcp | integration
@@ -33,8 +31,6 @@ pub struct BundleManifest {
 }
 
 /// Streamable-HTTP MCP endpoint implementing the plugin contract.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct McpManifest {
     pub url: String,
@@ -43,8 +39,6 @@ pub struct McpManifest {
 /// One admin-facing configuration field. The integration settings UI is
 /// rendered from these — the manifest is the schema, the admin UI is
 /// generated, nothing is hardcoded per connector.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FieldSpec {
     pub name: String,
@@ -66,8 +60,6 @@ pub struct FieldSpec {
 /// plain settings and credential (`secret`) fields alike. Credentials are
 /// stored encrypted and rendered masked; a manifest declares them exactly
 /// once, there is no free-form secret add.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SettingsManifest {
     #[serde(default)]
@@ -89,8 +81,6 @@ impl SettingsManifest {
 
 /// Auth shape: one org-wide secret, an impersonated org credential, or a
 /// per-member OAuth token cached by Guild.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuthManifest {
     #[serde(default = "default_auth_kind")]
@@ -121,8 +111,6 @@ fn default_identity_key() -> String {
 
 /// Per-tool class declaration from the connector: read (default), write,
 /// admin.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ToolsManifest {
     #[serde(default)]
@@ -130,8 +118,6 @@ pub struct ToolsManifest {
 }
 
 /// v1-compatible trigger descriptor (same shape as routine.json entries).
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TriggerSpec {
     pub kind: String,

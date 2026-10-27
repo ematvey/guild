@@ -30,7 +30,7 @@ python3 scripts/coherence/check.py coverage # files with no concept, per area
 `check` is the gate. `update` is the only way to move the floor.
 
 Scanned roots are `apps/`, `crates/` and `packages/`; scanned suffixes are
-`.rs`, `.ts` and `.tsx`. Generated `crates/protocol/bindings/`, `target/`,
+`.rs`, `.ts` and `.tsx`. `target/`,
 `node_modules/` and `dist/` are skipped.
 
 ## Counters

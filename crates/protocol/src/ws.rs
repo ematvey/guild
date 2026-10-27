@@ -7,8 +7,6 @@ use uuid::Uuid;
 
 /// Executor-owned context returned by the versioned context.prepare_v1 operation.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub struct MachineContext {
     pub instructions: Option<String>,
     pub skills_index: String,
@@ -22,8 +20,6 @@ pub struct MachineContext {
 /// server sent over this socket (control-plane ops: folder browse).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub enum WsClientMsg {
     /// Liveness probe: the server answers with a `pong` server frame
     /// without any per-message session revalidation. Web clients cannot
@@ -63,8 +59,6 @@ pub enum WsClientMsg {
 /// LiveFrame is a separate, non-replayable stream for command consumers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub enum WsServerMsg {
     Hello,
     /// This machine's singleton slot was taken by a newer connection.
@@ -114,7 +108,6 @@ pub enum WsServerMsg {
     ThreadEvents {
         chat_id: Uuid,
         /// Newest `seq` carried by `events` (client watermark guard).
-        #[cfg_attr(feature = "ts", ts(type = "number"))]
         seq: i64,
         events: Vec<serde_json::Value>,
     },
@@ -129,7 +122,6 @@ pub enum WsServerMsg {
         chat_id: Uuid,
         /// JSON numbers, not TS bigint — the wire is JSON and the member
         /// watermark comparison runs on `number`.
-        #[cfg_attr(feature = "ts", ts(type = "number"))]
         seq: i64,
         events: Vec<serde_json::Value>,
         text: String,
@@ -161,7 +153,6 @@ pub enum WsServerMsg {
     LiveFrame {
         chat_id: Uuid,
         generation_id: Uuid,
-        #[cfg_attr(feature = "ts", ts(type = "number"))]
         seq: i64,
         machine_id: Option<String>,
         event: crate::api::StreamEvent,

@@ -39,8 +39,7 @@ scripts/check.sh --fast       # skip cargo test and the server suite
 scripts/check.sh --only coherence
 ```
 
-The gate runs, in this order of dependency (the bindings check waits for
-cargo test, because cargo test rewrites the generated bindings):
+The gate runs these checks concurrently:
 
 ```bash
 cargo nextest run --workspace
@@ -48,7 +47,7 @@ npm test --workspace apps/server        # TS server suite (disposable PG/CH data
 cd apps/desktop && npm test             # frontend vitest
 cargo clippy --workspace --all-targets -- -D warnings
 scripts/check-windows.sh                # SKIP when the Windows target is absent
-scripts/check-bindings.sh               # runs after cargo test
+node protocol/check.mjs
 npm run coherence
 ```
 
@@ -134,9 +133,10 @@ minisign-signed. Full process: `docs/clients.md`.
   over Postgres LISTEN/NOTIFY; subscribe with
   `GET /api/v1/events/stream` (SSE) or read recent events from
   `GET /api/v1/events`. Emitted on skill publish and member join today.
-- **Generated TS types** (§6): `crates/protocol/bindings/**` is generated
-  with `cargo test -p protocol --features ts` (freshness check:
-  `scripts/check-bindings.sh`); do not edit by hand.
+- **Wire types** (§6): the TypeScript types are hand-written in
+  `packages/wire` from `protocol/*.schema.json`; the Rust types are
+  hand-written in `crates/protocol/src`. Nothing generates TypeScript from
+  Rust.
 
 ### Promote a queued message to steering
 

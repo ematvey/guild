@@ -146,7 +146,7 @@ and the backfill inputs.
 ```bash
 npm test --workspace apps/server
 cd apps/desktop && npm test
-scripts/check-bindings.sh      # must stay clean: decision 16 adds no frame field
+node protocol/check.mjs        # must stay clean: decision 16 adds no frame field
 ```
 
 A desktop change always ships with a client release (`docs/clients.md`), and

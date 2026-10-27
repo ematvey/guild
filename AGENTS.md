@@ -29,7 +29,7 @@ you.
   store NOTIFY. Clients do not poll HTTP for state the socket carries, and
   a grandchild's event is pushed to every ancestor chat that displays it.
   New display state gets a frame variant in `crates/protocol/src/ws.rs`
-  (regenerate the bindings), a serializer arm in
+  and `packages/wire/src/types.ts`, a serializer arm in
   `apps/server/src/hub/protocol.ts`, a NOTIFY channel, and a feed handler.
   The client applies the frame; it never re-fetches.
 - **The server pushes all operational, status and chat state; clients never
@@ -81,9 +81,9 @@ you.
 
 ## Traps
 
-- **Generated TS bindings**: `crates/protocol/bindings/**` is generated
-  (`cargo test -p protocol --features ts`; check freshness with
-  `scripts/check-bindings.sh`). Never edit by hand.
+- **Wire types are hand-written**: `packages/wire` on the TypeScript side,
+  `crates/protocol/src` on the Rust side, both from `protocol/*.schema.json`.
+  Nothing generates TypeScript from Rust.
 - **Default cargo members exclude the Tauri app** (`apps/desktop`): its
   dependency tree dominates compile time. `cargo test/build` skip it —
   target it explicitly with `-p guild-desktop`.

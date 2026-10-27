@@ -563,38 +563,17 @@ current cycle; this file keeps the rest. Same entry format.
   stage installs Bun (copied from oven/bun:1 into the node:22-slim base,
   so node stays available) and executes `apps/server/src` directly
   (`bun src/index.ts`); the sandbox-runner service runs
-  `bun src/sandbox/runner/main.ts` the same way. The only compile left in
-  the server image is the generated protocol bindings (their .js/.d.ts
-  siblings are what make @guild/protocol imports resolvable at all — Bun
-  does not substitute extensions through bare package exports either,
-  measured 2026-10-14). Local scripts: `start` → bun, `dev` stays tsx,
-  `typecheck` stays tsc (fed by check-bindings.sh's compile). The sandbox
+  `bun src/sandbox/runner/main.ts` the same way. Local scripts: `start` →
+  bun, `dev` stays tsx, `typecheck` stays tsc. The sandbox
   agent keeps running node inside the separate guild-sandbox image —
   untouched. Schema-first IDL (protobuf) for the protocol remains the
   longer-term direction (see Future directions).
 
-- **Bindings compile in place; @guild/protocol exports an identity map
-  (2026-10-14).** The NodeNext-consuming server could not actually resolve
-  `@guild/protocol/ThreadEvent.js`: the .js→.ts substitution only applies to
-  relative imports, never bare package subpaths through node_modules. The
-  package now exports an identity map (`"./*": "./*"` — the import subpath
-  already carries the .js suffix; a `./*.js` target would double it).
-  `check-bindings.sh` and the image build compile the generated .ts in place
-  (sibling .js + .d.ts, gitignored; sources stay the single source of
-  truth): tsc resolves types through the .d.ts siblings, node at runtime
-  through the real .js. The image's runtime stage copies the bindings
-  package (node_modules/@guild/protocol is a symlink into it). Desktop is
-  unaffected (extensionless relative imports via vite).
-
-- **Type single-sourcing: hub consumes generated protocol bindings; registry
+- **Type single-sourcing: hub consumes the protocol types; registry
   manifest moved into protocol (2026-10-14).** The hub hand-mirrored Rust
   protocol types in three places and the mirrors had drifted (the TS
   ToolSpec was missing the `kind` field). Now: `apps/server` imports the
-  generated `crates/protocol/bindings/*.ts` directly — bindings are an npm
-  workspace package (`@guild/protocol`, `crates/protocol/bindings
-  /package.json`), and the freshness gate (`scripts/check-bindings.sh`)
-  normalizes ts-rs's extensionless imports to NodeNext `.js` specifiers so
-  NodeNext tsc resolves them (bundler-mode desktop is unaffected).
+  protocol types directly.
   Swapped: provider message types (InternalMessage = generated Message;
   builders omit optional fields instead of writing nulls — serde defaults
   accept both) and the thread-event model (domain/thread-events.ts re-
