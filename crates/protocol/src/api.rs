@@ -5,16 +5,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct UserInfo {
     pub id: Uuid,
     pub email: String,
@@ -25,8 +21,6 @@ pub struct UserInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserInfo,
@@ -36,34 +30,25 @@ pub struct LoginResponse {
 /// (`g1|<server_url>|<hex secret>`) that the client redeems here for a
 /// normal session. Format: CreatePairingTokenResponse is returned once.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct PairRequest {
     pub code: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct PairResponse {
     pub token: String,
     pub user: UserInfo,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreatePairingTokenRequest {
     /// Token lifetime in minutes (default 30, capped server-side).
     #[serde(skip_serializing_if = "Option::is_none")]
     /// JSON numbers, not TS bigint — the wire is JSON.
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ttl_minutes: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct PairingTokenResponse {
     pub id: Uuid,
     /// One-time secret — shown/copied once; the client composes the full
@@ -73,8 +58,6 @@ pub struct PairingTokenResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct PairingTokenInfo {
     pub id: Uuid,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -82,8 +65,6 @@ pub struct PairingTokenInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -94,8 +75,6 @@ pub struct CreateChatRequest {
 
 /// One project (spec §1): a named folder bound to a machine.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct Project {
     pub id: Uuid,
     pub name: String,
@@ -107,8 +86,6 @@ pub struct Project {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreateProjectRequest {
     /// Display label; defaults to the folder's basename when omitted.
     pub name: Option<String>,
@@ -117,8 +94,6 @@ pub struct CreateProjectRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct UpdateProjectRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -135,8 +110,6 @@ pub struct UpdateProjectRequest {
 /// PATCH /api/v1/chats/{id} — rename and/or archive. Only present fields
 /// change.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct UpdateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -145,8 +118,6 @@ pub struct UpdateChatRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct Chat {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -185,8 +156,6 @@ pub struct Chat {
 /// joined with the hub's live socket state. Connected rows sort before
 /// offline ones, then by last_seen_at descending.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct MachineInfo {
     pub machine_id: String,
     /// Hostname label; falls back to machine_id when unset.
@@ -208,8 +177,6 @@ pub struct MachineInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct Message {
     pub role: String,
     pub content: String,
@@ -242,8 +209,6 @@ pub struct Message {
 
 /// One audio part on a user turn (OpenAI `input_audio` contract).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct MessageAudio {
     /// Raw base64 (no data: prefix).
     pub data: String,
@@ -296,8 +261,6 @@ impl Message {
 /// `web_browse` get native labels and cards regardless of which integration
 /// provides the tool; `generic` renders the bare tool name.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
     WebSearch,
@@ -308,8 +271,6 @@ pub enum ToolKind {
 
 /// Declared callable tool (JSON Schema parameters).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -320,8 +281,6 @@ pub struct ToolSpec {
 
 /// One tool invocation requested by the model.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -329,8 +288,6 @@ pub struct ToolCall {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ChatCompletionRequest {
     /// Optional stable identity for the committed user-message echo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -393,8 +350,6 @@ pub struct ChatCompletionRequest {
 /// Frames streamed from the gateway on `POST /api/v1/gateway/chat`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 pub enum StreamEvent {
     Delta {
         content: String,
@@ -474,7 +429,6 @@ pub enum StreamEvent {
 
 /// Who runs a tool call.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum ToolExecutor {
     Client,
@@ -483,8 +437,6 @@ pub enum ToolExecutor {
 
 /// Token accounting carried on an assistant thread event.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct UsagePayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_in: Option<u32>,
@@ -496,9 +448,7 @@ pub struct UsagePayload {
 
 /// One typed block inside an assistant thread event, in stream order.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", ts(export))]
 pub enum Block {
     Text {
         text: String,
@@ -521,14 +471,11 @@ pub enum Block {
 /// A file attached to a user turn (chip metadata: the bytes live in object
 /// storage; documents' text is inlined into the turn content).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct MessageAttachment {
     pub id: Uuid,
     pub filename: String,
     pub content_type: String,
     /// JSON numbers, not TS bigint — the wire is JSON.
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub size_bytes: i64,
     /// `image` | `audio` | `video` | `document` — derived from the content
     /// type; drives chip rendering and model-modality gating.
@@ -539,8 +486,6 @@ pub struct MessageAttachment {
 /// me" policy LLM). Journaled on the approval request so the thread shows
 /// why a call asked instead of running silently.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct JudgeVerdict {
     pub approve: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -554,9 +499,7 @@ pub struct JudgeVerdict {
 /// Model-facing message history and client rendering are both derivations of
 /// these events (deepseek-harness session model).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", ts(export))]
 pub enum ThreadEvent {
     /// File attached to this user turn: bytes live in object storage
     /// (`/api/v1/attachments/{id}`); documents' text is inlined into the

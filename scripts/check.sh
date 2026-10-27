@@ -1,10 +1,6 @@
 #!/bin/sh
 # The quality gate: every baseline check, run concurrently, one summary.
 #
-# Ordering: the Rust test run can regenerate crates/protocol/bindings with extensionless
-# imports, and check-bindings.sh restores the .js suffix. The bindings check
-# therefore starts only after cargo test has finished.
-#
 # Cargo jobs share one target-dir lock, so they queue behind each other even
 # though they are started together. The TS, desktop and coherence checks run
 # beside them.
@@ -14,8 +10,8 @@
 #   scripts/check.sh --fast          # skip cargo test and the server suite
 #   scripts/check.sh --only <name>   # one check
 #
-# Check names: cargo-test server-test desktop-test clippy windows bindings
-#              protocol coherence
+# Check names: cargo-test server-test desktop-test clippy windows protocol
+#              coherence
 set -u
 
 cd "$(dirname "$0")/.."
@@ -42,7 +38,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ALL_CHECKS="cargo-test server-test desktop-test clippy windows bindings protocol coherence"
+ALL_CHECKS="cargo-test server-test desktop-test clippy windows protocol coherence"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
 check_cargo_test() { cargo nextest run --workspace; }
@@ -50,7 +46,6 @@ check_server_test() { npm test --workspace apps/server; }
 check_desktop_test() { cd apps/desktop && npm test; }
 check_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
 check_windows() { ./scripts/check-windows.sh; }
-check_bindings() { ./scripts/check-bindings.sh; }
 check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }
 
@@ -110,16 +105,9 @@ else
     case "$name" in
       cargo-test) [ "$FAST" -eq 1 ] && continue ;;
       server-test) [ "$FAST" -eq 1 ] && continue ;;
-      bindings) continue ;;
     esac
     start_job "$name"
   done
-
-  if [ "$FAST" -eq 0 ]; then
-    # Bindings must not race the bindings rewrite that cargo test performs.
-    wait_job cargo-test
-  fi
-  start_job bindings
 
   for name in $ALL_CHECKS; do
     case "$name" in
@@ -129,7 +117,7 @@ else
   done
 
   RAN=$ALL_CHECKS
-  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows bindings protocol coherence"
+  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows protocol coherence"
 fi
 
 for name in $RAN; do

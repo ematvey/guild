@@ -11,7 +11,3 @@ anyhow.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-ts-rs = { version = "11", optional = true, features = ["serde-compat", "uuid-impl", "chrono-impl", "serde-json-impl", "no-serde-warnings"] }
-
-[features]
-ts = ["dep:ts-rs"]

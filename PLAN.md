@@ -137,9 +137,8 @@ first. Code comments describe only the present.
 
 - **The quality gate is one script, and the slow checks are cheaper
   (2026-10-26).** `scripts/check.sh` runs the baseline checks concurrently,
-  prints PASS/FAIL with per-check seconds, and exits 1 on any failure; it
-  also orders the bindings check after the Rust tests, which rewrite the
-  generated bindings. `cargo nextest run --workspace` replaces
+  prints PASS/FAIL with per-check seconds, and exits 1 on any failure.
+  `cargo nextest run --workspace` replaces
   `cargo test --workspace` (13 s vs 39 s, same 241 tests; per-test process
   isolation also removed the `machine_link` mock-socket failure). The TS
   server suite drops from 50 s to 20 s by raising vitest to 14 workers (the
@@ -745,8 +744,7 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   `cargo nextest run --workspace`, the TS server suite
   (`npm test --workspace apps/server`), desktop vitest, strict clippy
   (`--all-targets`), the Windows compile check (`scripts/check-windows.sh`),
-  the bindings freshness gate (`scripts/check-bindings.sh`) and
-  `npm run coherence`.
+  `node protocol/check.mjs` and `npm run coherence`.
 
 ## Next steps (ordered)
 
@@ -800,14 +798,12 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   the latest, so the wrong-scope damage is small. Revisit when a shared
   agent needs a fixed skill set for everyone.
 
-- **Schema-first protocol types (protobuf or similar), dropping the
-  Rust-side ts-rs generation** (2026-10-14): define the wire types
-  once in a language-neutral IDL and generate both the Rust and TS types
-  from it, instead of Rust being the source of truth with ts-rs emitting
-  `crates/protocol/bindings/*.ts`. Removes the npm-workspace-inside-crates
-  oddity and the per-type export tests. Precondition for picking the tool:
-  it must preserve the freshness gate (generated-vs-committed diff) and the
-  64-bit wire-field number handling (`ts(type = "number")` today).
+- **Schema-first protocol types (protobuf or similar)** (2026-10-14):
+  define the wire types once in a language-neutral IDL and generate both the
+  Rust and TS types from it, instead of hand-writing them on each side.
+  Removes the per-type export tests. Precondition for picking the tool: it
+  must preserve the fixture conformance gate and the 64-bit wire-field
+  number handling.
 
 - **Wire field renames (`chat_id` → `thread_id`) are still open.** The
   routes and client paths moved to threads in 0.5.47; the wire fields did

@@ -16,15 +16,9 @@ pub const BUILD_ID: &str = env!("GUILD_BUILD_ID");
 
 /// Request from client to server (either side can be "client").
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts",
-    ts(export, export_to = "rpc/Request.ts", optional_fields)
-)]
 pub struct Request {
     pub jsonrpc: String,
     /// JSON numbers, not TS bigint — the wire is JSON.
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub id: u64,
     pub protocol: u32,
     pub method: String,
@@ -50,14 +44,8 @@ impl Request {
 
 #[derive(Serialize, Deserialize, Debug, Clone, thiserror::Error)]
 #[error("rpc error {code}: {message}")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts",
-    ts(export, export_to = "rpc/RpcError.ts", optional_fields)
-)]
 pub struct RpcError {
     /// JSON numbers, not TS bigint — the wire is JSON.
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub code: i64,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,15 +70,9 @@ impl RpcError {
 
 /// Reply to a `Request`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts",
-    ts(export, export_to = "rpc/Response.ts", optional_fields)
-)]
 pub struct Response {
     pub jsonrpc: String,
     /// JSON numbers, not TS bigint — the wire is JSON.
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub id: u64,
     pub protocol: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,11 +105,6 @@ impl Response {
 
 /// Unsolicited server-push message (streaming deltas, status).
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts",
-    ts(export, export_to = "rpc/Event.ts", optional_fields)
-)]
 pub struct Event {
     pub protocol: u32,
     pub event: String,
@@ -148,8 +125,6 @@ impl Event {
 /// One message per line — any JSON value.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "rpc/Message.ts"))]
 pub enum Message {
     Request(Request),
     Response(Response),

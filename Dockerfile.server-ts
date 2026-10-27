@@ -2,14 +2,11 @@
 # surface (health, auth, chats/turns on pi-durable, hub WS, gateway,
 # registry, releases, projects, teams, admin, integrations, faro, web UI).
 # Runtime is Bun executing the TS sources directly — no tsc dist, no
-# compile of the server itself. The only compile is the generated protocol
-# bindings (their .js/.d.ts siblings are what make the @guild/protocol
-# imports resolvable — see PLAN). The chat SPA is built in a `webui` stage
+# compile of the server itself. The chat SPA is built in a `webui` stage
 # and served from apps/desktop/dist (GUILD_WEB_DIST default; see
 # apps/server/src/http/web.ts).
 
-# Build stage: npm workspaces install (root package.json/lockfile) + the
-# compiled bindings the runtime's imports resolve through.
+# Build stage: npm workspaces install (root package.json/lockfile).
 FROM node:22 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -17,15 +14,9 @@ COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/
 COPY apps/server/package.json apps/server/
 COPY packages/ui/package.json packages/ui/
-# Generated protocol bindings: the @guild/protocol workspace package the
-# server's TS imports for its wire types (installed by npm ci, read by the
-# runtime).
-COPY crates/protocol/bindings ./crates/protocol/bindings
+COPY packages/wire/package.json packages/wire/
 RUN npm ci --workspace apps/server --no-audit --no-fund
-# Compiled bindings: the package serves its files as-is ("./*": "./*"), so
-# the runtime resolves imports to real .js (tsc types come from the
-# .d.ts siblings the same emit produces). Sources stay generated .ts.
-RUN npm run build --workspace @guild/protocol
+COPY packages/wire/src ./packages/wire/src
 # The static exec-policy rules: the TS matcher loads the shared rule set
 # from apps/server/assets (relocated out of the Rust tree ahead of its
 # deletion).
@@ -34,16 +25,16 @@ COPY apps/server/assets/exec_policy_base.rules apps/server/assets/exec_policy_ba
 COPY apps/server/migrations ./apps/server/migrations
 
 # Frontend stage: build the chat SPA (apps/desktop) for the TS server to
-# serve at /. Needs the shared UI kit and the generated protocol bindings
-# (the desktop code imports them via relative paths).
+# serve at /. Needs the shared UI kit and the wire types.
 FROM node:22 AS webui
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/
 COPY packages/ui/package.json packages/ui/
+COPY packages/wire/package.json packages/wire/
 RUN npm ci --workspace apps/desktop --no-audit --no-fund
 COPY packages/ui/src ./packages/ui/src
-COPY crates/protocol/bindings ./crates/protocol/bindings
+COPY packages/wire/src ./packages/wire/src
 COPY apps/desktop/index.html apps/desktop/vite.config.ts apps/desktop/tsconfig.json apps/desktop/
 COPY apps/desktop/src ./apps/desktop/src
 COPY apps/desktop/public ./apps/desktop/public
@@ -59,10 +50,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 # The server sources Bun runs.
 COPY apps/server/src ./apps/server/src
-# The @guild/protocol package the dist imports resolve through node_modules:
-# the workspace symlink points here, so the package (exports map + compiled
-# .js/.d.ts) must exist at runtime too.
-COPY --from=build /app/crates/protocol/bindings ./crates/protocol/bindings
+# The @guild/wire package the server imports resolve through node_modules:
+# the workspace symlink points here, so the package must exist at runtime too.
+COPY --from=build /app/packages/wire ./packages/wire
 # The chat SPA: GUILD_WEB_DIST's default (../desktop/dist from the server
 # cwd) resolves here.
 COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist
