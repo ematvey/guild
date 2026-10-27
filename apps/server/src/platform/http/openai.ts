@@ -25,7 +25,7 @@ import {
 import type { GatewayCtx } from "../route-contexts.js";
 import { rustJsonText, serializeRustJson } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
-import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
+import type { Json } from "@guild/wire/rest";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";
 import type { UsageSink } from "../usage.js";
@@ -158,7 +158,7 @@ export function toInternalMessages(msgs: OpenAiMessage[]): [string | null, Inter
               tool_calls: m.tool_calls.map((c) => ({
                 id: c.id,
                 name: c.function.name,
-                arguments: parseToolArguments(c.function.arguments) as JsonValue,
+                arguments: parseToolArguments(c.function.arguments) as Json,
               })),
             }
           : {}),

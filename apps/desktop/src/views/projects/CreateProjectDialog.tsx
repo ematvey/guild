@@ -114,7 +114,7 @@ export function CreateProjectDialog({
     }
     setBusy(true);
     try {
-      const project = await createProject({ folder, machine_id: machineId });
+      const project = await createProject({ name: null, folder, machine_id: machineId });
       onCreated?.(project);
       onOpenChange(false);
     } catch (e) {

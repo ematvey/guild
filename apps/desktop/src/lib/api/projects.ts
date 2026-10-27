@@ -1,7 +1,6 @@
 // Projects: a named folder bound to a machine (spec §1/§2).
 
-import type { Project } from "../../../../../crates/protocol/bindings/Project";
-import type { CreateProjectRequest } from "../../../../../crates/protocol/bindings/CreateProjectRequest";
+import type { CreateProjectRequest, Project } from "@guild/wire/rest";
 
 import { apiUrl, getToken } from "../session";
 

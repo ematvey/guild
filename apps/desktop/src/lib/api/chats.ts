@@ -158,7 +158,7 @@ export async function createChat(title: string, projectId?: string | null): Prom
 }
 
 /// Frame shape passed to stream consumers: loose — the server owns the
-/// protocol (see crates/protocol/bindings/StreamEvent.ts); consumers
+/// protocol (see packages/wire/src/types.ts); consumers
 /// dispatch on `type` and read only the fields they know.
 
 export async function uploadAttachment(

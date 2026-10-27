@@ -3,13 +3,10 @@
 // Anthropic wire shape. Route resolution keys off the wire protocol, never
 // off the provider's display name.
 //
-// Message/ToolCall/ToolSpec/MessageAudio come from the generated protocol
-// bindings (crates/protocol/bindings, from protocol::api) — single source of
+// Message/ToolCall/ToolSpec/MessageAudio come from @guild/wire/rest, the
+// hand-written TypeScript side of protocol/rest.schema.json — single source of
 // truth, no hand mirrors.
-import type { Message } from "@guild/protocol/Message.js";
-import type { MessageAudio } from "@guild/protocol/MessageAudio.js";
-import type { ToolCall } from "@guild/protocol/ToolCall.js";
-import type { ToolSpec } from "@guild/protocol/ToolSpec.js";
+import type { Message, MessageAudio, ToolCall, ToolSpec } from "@guild/wire/rest";
 
 export type { MessageAudio, ToolCall, ToolSpec };
 
@@ -19,7 +16,7 @@ export type { MessageAudio, ToolCall, ToolSpec };
 export type InternalMessage = Message;
 
 export function hasMedia(message: InternalMessage): boolean {
-  return message.images.length > 0 || message.audio.length > 0;
+  return (message.images?.length ?? 0) > 0 || (message.audio?.length ?? 0) > 0;
 }
 
 /** One streamed piece of an assistant turn. */

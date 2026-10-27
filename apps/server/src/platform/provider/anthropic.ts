@@ -10,7 +10,7 @@ import {
   type ProviderRequest,
   type ToolCall,
 } from "./types.js";
-import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
+import type { Json } from "@guild/wire/rest";
 import { sseDataStreams } from "./sse.js";
 
 /** Anthropic requires an explicit cap on every request. */
@@ -37,11 +37,11 @@ export function anthropicBody(req: ProviderRequest): Record<string, unknown> {
       // Anthropic tool_result: plain string when text-only; image parts
       // ride as content blocks (text + base64 images).
       const content: unknown =
-        m.images.length === 0
+        (m.images ?? []).length === 0
           ? m.content
           : [
               ...(m.content !== "" ? [{ type: "text", text: m.content }] : []),
-              ...m.images.map((uri) => imageBlock(uri)),
+              ...(m.images ?? []).map((uri) => imageBlock(uri)),
             ];
       const result = {
         type: "tool_result",
@@ -102,10 +102,10 @@ export function anthropicBody(req: ProviderRequest): Record<string, unknown> {
       if (m.content.trim() !== "") {
         blocks.push({ type: "text", text: m.content });
       }
-      for (const uri of m.images) {
+      for (const uri of m.images ?? []) {
         blocks.push(imageBlock(uri));
       }
-      if (m.audio.length > 0) {
+      if ((m.audio ?? []).length > 0) {
         throw ProviderError.upstream(
           "audio input parts are not supported by the anthropic protocol (they are accepted only on openai-shape routes)",
         );
@@ -392,7 +392,7 @@ async function* anthropicStream(res: Response): AsyncIterable<ProviderChunk | Pr
             argumentsValue = p.arguments;
           }
         }
-        const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as JsonValue };
+        const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as Json };
         yield { kind: "toolCallDone", call };
       }
     }

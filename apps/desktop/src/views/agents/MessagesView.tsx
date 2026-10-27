@@ -6,8 +6,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { JsonView } from "./JsonView";
-import type { Message } from "../../../../../crates/protocol/bindings/Message";
-import type { JsonValue } from "../../../../../crates/protocol/bindings/serde_json/JsonValue";
+import type { Json, Message } from "@guild/wire/rest";
 
 /** One message as it appears inside an LLM request payload: OpenAI's shape,
  *  not the protocol's. The mapper below turns it into a Message. */
@@ -24,10 +23,10 @@ interface PayloadMessage {
   reasoning_content?: string;
 }
 
-function parseArguments(value: string | undefined): JsonValue {
+function parseArguments(value: string | undefined): Json {
   if (value === undefined) return {};
   try {
-    return JSON.parse(value) as JsonValue;
+    return JSON.parse(value) as Json;
   } catch {
     return value;
   }
