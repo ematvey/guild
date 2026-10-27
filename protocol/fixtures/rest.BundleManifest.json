@@ -1,0 +1,80 @@
+[
+  {
+    "kind": "skill",
+    "slug": "code-review",
+    "version": "1.0.0",
+    "description": "",
+    "dependencies": [],
+    "mcp": null,
+    "auth": null,
+    "settings": null,
+    "tools": null,
+    "triggers": [],
+    "skills": []
+  },
+  {
+    "kind": "integration",
+    "slug": "acme-crm",
+    "version": "2.1.0",
+    "description": "Acme CRM connector",
+    "dependencies": [
+      "oauth-helper"
+    ],
+    "mcp": {
+      "url": "https://mcp.acme.example/crm"
+    },
+    "auth": {
+      "kind": "per_user_token",
+      "secret_names": [
+        "acme_token"
+      ],
+      "identity_key": "email"
+    },
+    "settings": {
+      "fields": [
+        {
+          "name": "base_url",
+          "kind": "string",
+          "label": "Base URL",
+          "required": true,
+          "default": "https://api.acme.example",
+          "help": "The API root.",
+          "placeholder": "https://api.acme.example"
+        },
+        {
+          "name": "page_size",
+          "kind": "number",
+          "label": null,
+          "required": false,
+          "default": 50,
+          "help": null,
+          "placeholder": null
+        }
+      ]
+    },
+    "tools": {
+      "classes": {
+        "search": "read",
+        "create": "write",
+        "purge": "admin"
+      }
+    },
+    "triggers": [
+      {
+        "kind": "webhook",
+        "name": "on_ticket",
+        "trigger_config": {
+          "path": "/ticket"
+        },
+        "prompt": "Summarize the ticket.",
+        "model": "gpt-5",
+        "allowed_tools": [
+          "read_file"
+        ]
+      }
+    ],
+    "skills": [
+      "crm-basics"
+    ]
+  }
+]

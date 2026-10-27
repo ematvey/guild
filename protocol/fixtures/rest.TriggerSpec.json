@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "interval",
+    "name": null,
+    "trigger_config": {
+      "every_minutes": 60
+    },
+    "prompt": "Check the inbox.",
+    "model": "gpt-5",
+    "allowed_tools": null
+  },
+  {
+    "kind": "webhook",
+    "name": "on_ticket",
+    "trigger_config": {
+      "path": "/ticket",
+      "secret_names": [
+        "hook_secret"
+      ]
+    },
+    "prompt": "Summarize the ticket.",
+    "model": "gpt-5",
+    "allowed_tools": [
+      "read_file",
+      "write_file"
+    ]
+  }
+]
