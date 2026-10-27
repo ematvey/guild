@@ -1,0 +1,16 @@
+[
+  {
+    "id": "018f0b7c-0000-7000-8000-000000000001",
+    "filename": "notes.pdf",
+    "content_type": "application/pdf",
+    "size_bytes": 20480,
+    "modality": "document"
+  },
+  {
+    "id": "018f0b7c-0000-7000-8000-000000000002",
+    "filename": "photo.png",
+    "content_type": "image/png",
+    "size_bytes": 1024,
+    "modality": "image"
+  }
+]

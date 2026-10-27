@@ -1,0 +1,587 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guild.local/protocol/rest.schema.json",
+  "title": "Guild REST data-transfer types",
+  "description": "The data-transfer types that cross the TypeScript/Rust boundary over HTTP. Derived from crates/protocol/src/api.rs and crates/protocol/src/registry.rs, which is what the wire actually is. Presence is explicit. A field with only `#[serde(default)]` is always serialized and appears in `required`, even when its value is null. A field with `#[serde(skip_serializing_if = \"Option::is_none\")]` is omitted when it is None and is not in `required`. An `Option<T>` with no skip attribute is required and nullable. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Json": {
+      "description": "Any JSON value. serde_json::Value in Rust, JsonValue in TypeScript."
+    },
+
+    "ToolKind": {
+      "description": "Coarse tool category the UI renders natively. The Rust enum is `ToolKind` with `rename_all = \"snake_case\"`.",
+      "enum": ["web_search", "web_browse", "generic"]
+    },
+
+    "ThreadEvent": {
+      "description": "One durable thread event: the append-only source of truth for a chat. The tag is `type`, from `#[serde(tag = \"type\", rename_all = \"snake_case\")]`.",
+      "oneOf": [
+        { "$ref": "#/$defs/ThreadEventUserMessage" },
+        { "$ref": "#/$defs/ThreadEventSystemMessage" },
+        { "$ref": "#/$defs/ThreadEventAssistantMessage" },
+        { "$ref": "#/$defs/ThreadEventToolResult" },
+        { "$ref": "#/$defs/ThreadEventCompaction" },
+        { "$ref": "#/$defs/ThreadEventApprovalRequest" },
+        { "$ref": "#/$defs/ThreadEventApprovalDecision" },
+        { "$ref": "#/$defs/ThreadEventTurnError" },
+        { "$ref": "#/$defs/ThreadEventChildSpawned" },
+        { "$ref": "#/$defs/ThreadEventChildResult" },
+        { "$ref": "#/$defs/ThreadEventChildClosed" }
+      ]
+    },
+    "ThreadEventUserMessage": {
+      "type": "object",
+      "required": ["type", "content", "attachments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "user_message" },
+        "content": { "type": "string" },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageAttachment" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "queued": {
+          "type": "boolean",
+          "description": "Omitted when absent. The message waits in the conversation inbox until the next boundary."
+        },
+        "mode": {
+          "type": "string",
+          "description": "Omitted when absent. `steer` or `queue`."
+        }
+      }
+    },
+    "ThreadEventSystemMessage": {
+      "type": "object",
+      "required": ["type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "system_message" },
+        "content": { "type": "string" }
+      }
+    },
+    "ThreadEventAssistantMessage": {
+      "type": "object",
+      "required": ["type", "turn", "step", "blocks", "usage", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "assistant_message" },
+        "turn": { "type": "integer", "minimum": 0 },
+        "step": { "type": "integer", "minimum": 0 },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/Block" } },
+        "usage": { "$ref": "#/$defs/UsagePayload" },
+        "model": { "type": "string" },
+        "interrupted": {
+          "type": "boolean",
+          "description": "Omitted when absent. True when the stream was aborted mid-flight."
+        },
+        "error": {
+          "type": "string",
+          "description": "Omitted when absent. The human-readable provider error."
+        }
+      }
+    },
+    "ThreadEventToolResult": {
+      "type": "object",
+      "required": ["type", "turn", "step", "call_id", "name", "content", "is_error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_result" },
+        "turn": { "type": "integer", "minimum": 0 },
+        "step": { "type": "integer", "minimum": 0 },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "is_error": {
+          "type": "boolean",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "meta": {
+          "description": "Omitted when absent. Tool-private widget payload; any JSON value.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/Json" }]
+        },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Omitted when empty. Data URIs on the model-facing tool result."
+        },
+        "kind": { "$ref": "#/$defs/ToolKind" },
+        "artifact_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Omitted when absent. The spilled artifact for an oversized result."
+        }
+      }
+    },
+    "ThreadEventCompaction": {
+      "type": "object",
+      "required": ["type", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "compaction" },
+        "summary": { "type": "string" },
+        "tokens_before": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Omitted when absent."
+        },
+        "keep_last": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Omitted when absent."
+        },
+        "model": {
+          "type": "string",
+          "description": "Omitted when absent."
+        },
+        "usage": { "$ref": "#/$defs/UsagePayload" }
+      }
+    },
+    "ThreadEventApprovalRequest": {
+      "type": "object",
+      "required": ["type", "call_id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "approval_request" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "string" },
+        "judge": {
+          "$ref": "#/$defs/JudgeVerdict",
+          "description": "Omitted when absent. The approval judge did not run."
+        }
+      }
+    },
+    "ThreadEventApprovalDecision": {
+      "type": "object",
+      "required": ["type", "call_id", "approved"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "approval_decision" },
+        "call_id": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "reason": {
+          "type": "string",
+          "description": "Omitted when absent."
+        },
+        "expired": {
+          "type": "boolean",
+          "description": "Omitted when false. Present and true when nobody was waiting for the decision."
+        }
+      }
+    },
+    "ThreadEventTurnError": {
+      "type": "object",
+      "required": ["type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "turn_error" },
+        "message": { "type": "string" }
+      }
+    },
+    "ThreadEventChildSpawned": {
+      "type": "object",
+      "required": ["type", "thread_id", "run_id", "chat_id", "agent_name", "title", "status", "task"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "child_spawned" },
+        "thread_id": { "$ref": "#/$defs/Uuid" },
+        "run_id": { "$ref": "#/$defs/Uuid" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "agent_name": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "task": {
+          "type": "string",
+          "description": "Always serialized. `#[serde(default)]` only."
+        }
+      }
+    },
+    "ThreadEventChildResult": {
+      "type": "object",
+      "required": ["type", "thread_id", "run_id", "chat_id", "agent_name", "title", "status", "final_text", "attachments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "child_result" },
+        "thread_id": { "$ref": "#/$defs/Uuid" },
+        "run_id": { "$ref": "#/$defs/Uuid" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "agent_name": {
+          "type": "string",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "title": {
+          "type": "string",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "status": { "type": "string" },
+        "started_at": {
+          "type": "string",
+          "description": "Omitted when absent."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Omitted when absent."
+        },
+        "final_text": {
+          "type": "string",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageAttachment" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        }
+      }
+    },
+    "ThreadEventChildClosed": {
+      "type": "object",
+      "required": ["type", "thread_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "child_closed" },
+        "thread_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+
+    "Block": {
+      "description": "One typed block inside an assistant thread event, in stream order. The tag is `type`, from `#[serde(tag = \"type\", rename_all = \"snake_case\")]`.",
+      "oneOf": [
+        { "$ref": "#/$defs/BlockText" },
+        { "$ref": "#/$defs/BlockReasoning" },
+        { "$ref": "#/$defs/BlockToolCall" }
+      ]
+    },
+    "BlockText": {
+      "type": "object",
+      "required": ["type", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      }
+    },
+    "BlockReasoning": {
+      "type": "object",
+      "required": ["type", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "reasoning" },
+        "text": { "type": "string" }
+      }
+    },
+    "BlockToolCall": {
+      "type": "object",
+      "required": ["type", "id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_call" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": {
+          "type": "string",
+          "description": "The RAW JSON string exactly as the model produced it. Not the `ToolCall` struct: this field is a string, not a JSON value."
+        }
+      }
+    },
+
+    "JudgeVerdict": {
+      "type": "object",
+      "required": ["approve"],
+      "additionalProperties": false,
+      "properties": {
+        "approve": { "type": "boolean" },
+        "reason": {
+          "type": "string",
+          "description": "Omitted when absent."
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Omitted when absent. Judge round-trip time in milliseconds."
+        }
+      }
+    },
+    "MessageAttachment": {
+      "type": "object",
+      "required": ["id", "filename", "content_type", "size_bytes", "modality"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "filename": { "type": "string" },
+        "content_type": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "modality": {
+          "type": "string",
+          "description": "`image`, `audio`, `video` or `document`, derived from the content type."
+        }
+      }
+    },
+    "UsagePayload": {
+      "description": "Token accounting on an assistant thread event. Every field is omitted when absent, so an empty object is valid.",
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "tokens_in": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Omitted when absent."
+        },
+        "tokens_out": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Omitted when absent."
+        },
+        "cost_usd": {
+          "type": "number",
+          "description": "Omitted when absent."
+        }
+      }
+    },
+    "ToolCall": {
+      "description": "One tool invocation requested by the model, in model-facing message history.",
+      "type": "object",
+      "required": ["id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "$ref": "#/$defs/Json" }
+      }
+    },
+    "ToolSpec": {
+      "description": "A declared callable tool, with JSON Schema parameters.",
+      "type": "object",
+      "required": ["name", "description", "parameters", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "parameters": { "$ref": "#/$defs/Json" },
+        "kind": {
+          "$ref": "#/$defs/ToolKind",
+          "description": "Always serialized. `#[serde(default)]` only."
+        }
+      }
+    },
+
+    "Message": {
+      "description": "One model-facing message on the request and reply path.",
+      "type": "object",
+      "required": ["role", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "role": { "type": "string" },
+        "content": { "type": "string" },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Omitted when empty. Image parts as data URIs."
+        },
+        "audio": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageAudio" },
+          "description": "Omitted when empty."
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCall" },
+          "description": "Omitted when absent."
+        },
+        "tool_call_id": {
+          "type": "string",
+          "description": "Omitted when absent. Set on role=`tool` messages."
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "Omitted when absent. Assistant-only chain-of-thought."
+        }
+      }
+    },
+    "MessageAudio": {
+      "description": "One audio part on a user turn (OpenAI `input_audio` contract).",
+      "type": "object",
+      "required": ["data", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "type": "string",
+          "description": "Raw base64, no `data:` prefix."
+        },
+        "format": {
+          "type": "string",
+          "description": "`wav` or `mp3`."
+        }
+      }
+    },
+
+    "BundleManifest": {
+      "description": "A registry bundle manifest: the wire model shared by the hub and the machines. Every non-Option field is always serialized. The four v2 sections are `Option` with only `#[serde(default)]`, so they are always serialized and are nullable.",
+      "type": "object",
+      "required": ["kind", "slug", "version", "description", "dependencies", "mcp", "auth", "settings", "tools", "triggers", "skills"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "`skill`, `mcp` or `integration`."
+        },
+        "slug": { "type": "string" },
+        "version": { "type": "string" },
+        "description": {
+          "type": "string",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "mcp": {
+          "description": "Always serialized. null for a v1 bundle or a bundle without an MCP endpoint.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/McpManifest" }]
+        },
+        "auth": {
+          "description": "Always serialized. null when the bundle declares no auth shape.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/AuthManifest" }]
+        },
+        "settings": {
+          "description": "Always serialized. null when the bundle declares no settings.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/SettingsManifest" }]
+        },
+        "tools": {
+          "description": "Always serialized. null when the bundle declares no tool classes.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/ToolsManifest" }]
+        },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TriggerSpec" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        }
+      }
+    },
+    "McpManifest": {
+      "description": "A Streamable-HTTP MCP endpoint that implements the plugin contract.",
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" }
+      }
+    },
+    "FieldSpec": {
+      "description": "One admin-facing configuration field. The integration settings UI is generated from these.",
+      "type": "object",
+      "required": ["name", "kind", "label", "required", "default", "help", "placeholder"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "description": "`string`, `text`, `number`, `boolean` or `secret`."
+        },
+        "label": {
+          "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
+          "type": ["string", "null"]
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "default": {
+          "description": "Always serialized. null when unset. Any JSON value otherwise. `#[serde(default)]` on an Option, with no skip.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/Json" }]
+        },
+        "help": {
+          "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
+          "type": ["string", "null"]
+        },
+        "placeholder": {
+          "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "SettingsManifest": {
+      "description": "The typed settings schema of an integration: plain settings and `secret` credential fields alike.",
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FieldSpec" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        }
+      }
+    },
+    "AuthManifest": {
+      "description": "The auth shape of an integration: one org-wide secret, an impersonated org credential, or a per-member OAuth token.",
+      "type": "object",
+      "required": ["kind", "secret_names", "identity_key"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Always serialized. `org_secret` (the default), `org_secret_impersonated` or `per_user_token`."
+        },
+        "secret_names": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "identity_key": {
+          "type": "string",
+          "description": "Always serialized. Defaults to `email`."
+        }
+      }
+    },
+    "ToolsManifest": {
+      "description": "Per-tool class declarations from the connector.",
+      "type": "object",
+      "required": ["classes"],
+      "additionalProperties": false,
+      "properties": {
+        "classes": {
+          "type": "object",
+          "description": "A BTreeMap from tool name to class. Always serialized. `#[serde(default)]` only. The keys are tool names, so this object is a map, not a struct: `additionalProperties` carries the value type.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "TriggerSpec": {
+      "description": "A v1-compatible trigger descriptor, the same shape as a routine.json entry.",
+      "type": "object",
+      "required": ["kind", "name", "trigger_config", "prompt", "model", "allowed_tools"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "`webhook` or `interval`."
+        },
+        "name": {
+          "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
+          "type": ["string", "null"]
+        },
+        "trigger_config": {
+          "$ref": "#/$defs/Json",
+          "description": "Always serialized. `#[serde(default)]` only."
+        },
+        "prompt": { "type": "string" },
+        "model": { "type": "string" },
+        "allowed_tools": {
+          "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        }
+      }
+    }
+  }
+}
