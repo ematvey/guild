@@ -150,7 +150,7 @@ export class ChildResultDelivery {
       title: childRow.title,
       status,
       ...(startedAt === null ? {} : { started_at: pgTimestampToRfc3339(startedAt) }),
-      reason,
+      ...(reason === null ? {} : { reason }),
       final_text: input.final_text,
       attachments,
     });

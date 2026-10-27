@@ -6,6 +6,7 @@
   "description": "Hand-written TypeScript types for the Guild member and machine socket, shared by the server and the desktop.",
   "exports": {
     "./types": "./src/types.ts",
+    "./rest": "./src/rest.ts",
     "./parse": "./src/parse.ts"
   }
 }

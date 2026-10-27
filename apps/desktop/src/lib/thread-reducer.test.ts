@@ -21,7 +21,7 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 /** A durable user_message whose row id is the client's message id — the
  * shape the optimistic-send reconciliation matches on. */
 function echo(seq: number, content: string, messageId: string): ThreadEventRow {
-  return { id: messageId, seq, event: { type: "user_message", content }, created_at: "t" };
+  return { id: messageId, seq, event: { type: "user_message", content, attachments: [] }, created_at: "t" };
 }
 
 function state(
@@ -73,14 +73,14 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
     const r = createThreadReducer();
     r.open("c1");
     const first = r.applyState(
-      state("c1", 2, [row(1, { type: "user_message", content: "go" }), row(2, assistantText("hi"))]),
+      state("c1", 2, [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, assistantText("hi"))]),
     );
     expect(first.blocks.map((b) => b.key)).toEqual(["1:0", "2:0"]);
     const userBlock = first.blocks[0];
 
     const second = r.applyState(
       state("c1", 3, [
-        row(1, { type: "user_message", content: "go" }),
+        row(1, { type: "user_message", content: "go", attachments: [] }),
         row(2, assistantText("hi")),
         row(3, {
           type: "tool_result",
@@ -102,7 +102,7 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
     const r = createThreadReducer();
     r.open("c1");
     const events = [
-      row(1, { type: "user_message", content: "go" }),
+      row(1, { type: "user_message", content: "go", attachments: [] }),
       row(2, {
         type: "assistant_message",
         turn: 1,
@@ -146,7 +146,7 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
   it("keeps the in-flight thinking block's key stable and its buffer full-replaced", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "go" })], "", "part one"));
+    r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "go", attachments: [] })], "", "part one"));
     const first = r.applyState(state("c1", 3, [], "", "part one", true));
     const seed = first.blocks.find((b) => b.kind === "reasoning");
     expect(seed?.key).toBe("live-thinking-c1");
@@ -223,7 +223,7 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
   it("marks out-of-order states stale and changes nothing", () => {
     const r = createThreadReducer();
     r.open("c1");
-    const first = r.applyState(state("c1", 5, [row(1, { type: "user_message", content: "go" })]));
+    const first = r.applyState(state("c1", 5, [row(1, { type: "user_message", content: "go", attachments: [] })]));
     const stale = r.applyState(state("c1", 4, [], "late delta"));
     expect(stale.stale).toBe(true);
     expect(stale.blocks).toBe(first.blocks);
@@ -239,7 +239,7 @@ describe("applyThreadEvents: live buffer supersession", () => {
     // otherwise the reasoning renders twice until a refresh re-derives.
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go", attachments: [] })]));
     r.applyFrame({ type: "thinking_delta", content: "thinking part one" });
     r.applyFrame({ type: "thinking_delta", content: " more thinking" });
     const fanned = r.applyThreadEvents("c1", 3, [
@@ -265,7 +265,7 @@ describe("applyThreadEvents: live buffer supersession", () => {
   it("a mid-turn durable assistant_message replaces the streamed text buffer — no duplicate", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go", attachments: [] })]));
     r.applyFrame({ type: "delta", content: "partial answer" });
     const fanned = r.applyThreadEvents("c1", 3, [
       row(2, {
@@ -287,7 +287,7 @@ describe("applyThreadEvents: live buffer supersession", () => {
     // the sync that follows must still build the full history.
     const r = createThreadReducer();
     const events = [
-      row(1, { type: "user_message", content: "go" }),
+      row(1, { type: "user_message", content: "go", attachments: [] }),
       row(2, assistantText("first")),
       row(3, assistantText("second")),
     ];
@@ -301,7 +301,7 @@ describe("applyThreadEvents: live buffer supersession", () => {
   it("keeps delta rows newer than the sync window", () => {
     const r = createThreadReducer();
     const events = [
-      row(1, { type: "user_message", content: "go" }),
+      row(1, { type: "user_message", content: "go", attachments: [] }),
       row(2, assistantText("first")),
       row(3, assistantText("second")),
     ];
@@ -317,18 +317,18 @@ describe("queued steering mode updates", () => {
     reducer.open("chat");
     const queued: ThreadEventRow = {
       id: "same-message", seq: 1, created_at: "t",
-      event: { type: "user_message", content: "correction", queued: true, mode: "queue" },
+      event: { type: "user_message", content: "correction", attachments: [], queued: true, mode: "queue" },
     };
     reducer.applyState(state("chat", 1, [queued]));
     const promoted: ThreadEventRow = {
       ...queued, seq: 2,
-      event: { type: "user_message", content: "correction", queued: true, mode: "steer" },
+      event: { type: "user_message", content: "correction", attachments: [], queued: true, mode: "steer" },
     };
     const update = reducer.applyThreadEvents("chat", 2, [promoted]);
     expect(update.blocks.filter(block => block.kind === "user")).toHaveLength(1);
     expect(update.blocks[0]).toMatchObject({ eventId: "same-message", queued: true, queuedMode: "steer" });
     const delivered = reducer.applyThreadEvents("chat", 3, [{
-      ...queued, seq: 3, event: { type: "user_message", content: "correction" },
+      ...queued, seq: 3, event: { type: "user_message", content: "correction", attachments: [] },
     }]);
     expect(delivered.blocks.filter(block => block.kind === "user")).toHaveLength(1);
     expect(delivered.blocks[0]).toMatchObject({ eventId: "same-message" });
@@ -341,7 +341,7 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
     const r = createThreadReducer(); r.open("chat");
     const applied = r.applyThreadEvents("chat", 10, [
       row(9, assistantText("hi", 1)),
-      row(8, { type: "user_message", content: "go" }),
+      row(8, { type: "user_message", content: "go", attachments: [] }),
     ]);
     expect(applied.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
     // Rows at/below the watermark replay nothing.
@@ -349,7 +349,7 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
     expect(again.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
     // A full sync with the same log adds no duplicates.
     const synced = r.applyState(state("chat", 11, [
-      row(8, { type: "user_message", content: "go" }),
+      row(8, { type: "user_message", content: "go", attachments: [] }),
       row(9, assistantText("hi", 1)),
     ], "", "", false));
     expect(synced.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
@@ -357,8 +357,8 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
 
   it("never regresses the watermark", () => {
     const r = createThreadReducer(); r.open("chat");
-    r.applyState(state("chat", 50, [row(10, { type: "user_message", content: "a" })]));
-    r.applyThreadEvents("chat", 5, [row(4, { type: "user_message", content: "old" })]);
+    r.applyState(state("chat", 50, [row(10, { type: "user_message", content: "a", attachments: [] })]));
+    r.applyThreadEvents("chat", 5, [row(4, { type: "user_message", content: "old", attachments: [] })]);
     // A stale thread_state with an older seq is still recognized as stale.
     expect(r.applyState(state("chat", 5, [])).stale).toBe(true);
   });
@@ -433,13 +433,13 @@ describe("applyState: approval upsert mid-stream", () => {
 
     r.open(null);
     r.open("c2");
-    r.applyState(state("c2", 2, [row(1, { type: "user_message", content: "go" }), request]));
+    r.applyState(state("c2", 2, [row(1, { type: "user_message", content: "go", attachments: [] }), request]));
     const expired = r.applyState(
       state(
         "c2",
         3,
         [
-          row(1, { type: "user_message", content: "go" }),
+          row(1, { type: "user_message", content: "go", attachments: [] }),
           request,
           row(3, {
             type: "approval_decision",
@@ -484,12 +484,12 @@ describe("optimistic send vs server sync", () => {
     r.optimisticSend(pending);
     expect(viewBlocks(r, "c1").some((b) => b.key === "pending-1" && b.pending)).toBe(true);
     // sync raced the HTTP request: no echo → the command stays visible
-    const racing = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "earlier" })]));
+    const racing = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "earlier", attachments: [] })]));
     expect(racing.blocks.some((b) => b.key === "pending-1" && b.pending)).toBe(true);
     // the echo (row id == client message id) settles it
     const settled = r.applyState(
       state("c1", 3, [
-        row(1, { type: "user_message", content: "earlier" }),
+        row(1, { type: "user_message", content: "earlier", attachments: [] }),
         echo(2, "hello", "pending-1"),
       ]),
     );
@@ -504,7 +504,7 @@ describe("optimistic send vs server sync", () => {
     const r = createThreadReducer();
     r.open("c1");
     r.optimisticSend(pending);
-    const crossed = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "hello" })]));
+    const crossed = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "hello", attachments: [] })]));
     expect(crossed.blocks.some((b) => b.key === "pending-1" && b.pending)).toBe(true);
   });
 
@@ -530,7 +530,7 @@ describe("optimistic send vs server sync", () => {
     const err = failed.blocks.find((b) => b.kind === "error");
     expect(err?.text).toBe("network down");
     // marker released: a later sync without an echo re-appends nothing
-    const later = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "old" })]));
+    const later = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "old", attachments: [] })]));
     expect(later.blocks.some((b) => b.pending)).toBe(false);
   });
 
@@ -551,7 +551,7 @@ describe("compacting guard (the null === null flash)", () => {
   it("shows the line only for the compaction's chat — never on a null chatId", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })], "", "", true));
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go", attachments: [] })], "", "", true));
     expect(r.setCompacting("c1").compacting).toBe(true);
     // navigation to the new-chat view while armed: no line (null !== "c1")
     expect(r.open(null).compacting).toBe(false);
@@ -561,7 +561,7 @@ describe("compacting guard (the null === null flash)", () => {
   it("a new compaction event settles the pending line", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go", attachments: [] })]));
     r.setCompacting("c1");
     // busy while the summarization runs: line stays
     expect(r.applyState(state("c1", 2, [], "", "summarizing", true)).compacting).toBe(true);
@@ -570,7 +570,7 @@ describe("compacting guard (the null === null flash)", () => {
       state(
         "c1",
         3,
-        [row(1, { type: "user_message", content: "go" }), row(2, { type: "compaction", summary: "so far: go" })],
+        [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, { type: "compaction", summary: "so far: go" })],
         "",
         "",
         false,
@@ -583,7 +583,7 @@ describe("compacting guard (the null === null flash)", () => {
   it("a no-op task outcome clears the line without depending on generation state", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go", attachments: [] })]));
     r.setCompacting("c1");
     r.applyState(state("c1", 2, [], "", "thinking", true));
     const ended = r.applyState(state("c1", 3, [], "", "", false));
@@ -606,7 +606,7 @@ describe("compacting guard (the null === null flash)", () => {
     const r = createThreadReducer();
     r.open("c1");
     const history = [
-      row(1, { type: "user_message", content: "go" }),
+      row(1, { type: "user_message", content: "go", attachments: [] }),
       row(2, { type: "compaction", summary: "old" }),
     ];
     r.applyState(state("c1", 2, history));
@@ -641,8 +641,8 @@ describe("artifact card on spilled tool_result frames", () => {
   it("joins the result onto its call across publishes; the card is reachable", () => {
     const r = createThreadReducer();
     r.open("c1");
-    r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "go" }), row(2, callEvent)]));
-    const all = [row(1, { type: "user_message", content: "go" }), row(2, callEvent), row(3, spilled)];
+    r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, callEvent)]));
+    const all = [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, callEvent), row(3, spilled)];
     const filled = r.applyState(state("c1", 3, all));
     expect(filled.blocks).toHaveLength(2);
     const card = artifactCardOf(filled.blocks[1].tool!);
@@ -677,7 +677,7 @@ describe("open / adopt / cache", () => {
   it("caches the previous chat's blocks and restores them on switch-back", () => {
     const r = createThreadReducer();
     r.open("a");
-    r.applyState(state("a", 1, [row(1, { type: "user_message", content: "hi" })]));
+    r.applyState(state("a", 1, [row(1, { type: "user_message", content: "hi", attachments: [] })]));
     const toB = r.open("b");
     expect(toB.blocks).toEqual([]);
     expect(toB.restored).toBe(false);
@@ -699,7 +699,7 @@ describe("open / adopt / cache", () => {
   it("invalidate forces a full re-derive on the next state", () => {
     const r = createThreadReducer();
     r.open("a");
-    const events = [row(1, { type: "user_message", content: "go" }), row(2, assistantText("hi"))];
+    const events = [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, assistantText("hi"))];
     r.applyState(state("a", 2, events));
     r.invalidate();
     const again = r.applyState(state("a", 2, events, "", "", false));
@@ -772,7 +772,7 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
 
   it("derivation shows the error when it is the thread's latest block", () => {
     const blocks = eventsToBlocks([
-      row(1, { type: "user_message", content: "hello" }),
+      row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
     ]);
     expect(blocks.filter(b => b.kind === "error").map(b => b.text)).toEqual(["502: provider auth failed"]);
@@ -780,7 +780,7 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
 
   it("a later retry's content supersedes the earlier error", () => {
     const blocks = eventsToBlocks([
-      row(1, { type: "user_message", content: "hello" }),
+      row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: transient")),
       row(3, assistantText("hi there")),
     ]);
@@ -790,7 +790,7 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
 
   it("only the latest of several failed attempts renders", () => {
     const blocks = eventsToBlocks([
-      row(1, { type: "user_message", content: "hello" }),
+      row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: attempt one")),
       row(3, assistantError("502: attempt two (final)")),
     ]);
@@ -800,12 +800,12 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
   it("an error from a finished turn is pruned once a new turn produces content", () => {
     const r = createThreadReducer(); r.open("chat");
     r.applyThreadEvents("chat", 0, [
-      row(1, { type: "user_message", content: "hello" }),
+      row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
     ]);
     expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(true);
     const after = r.applyThreadEvents("chat", 0, [
-      row(3, { type: "user_message", content: "try again" }),
+      row(3, { type: "user_message", content: "try again", attachments: [] }),
       row(4, assistantText("works now", 1)),
     ]);
     expect(after.blocks.some(b => b.kind === "error")).toBe(false);
@@ -814,9 +814,9 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
   it("an error is pruned once a newer user message lands, even before its answer", () => {
     const r = createThreadReducer(); r.open("chat");
     r.applyThreadEvents("chat", 0, [
-      row(1, { type: "user_message", content: "hello" }),
+      row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
-      row(3, { type: "user_message", content: "queued retry" }),
+      row(3, { type: "user_message", content: "queued retry", attachments: [] }),
     ]);
     expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(false);
   });
@@ -824,7 +824,7 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
 
 describe("older-page loading (bounded tail + prepend)", () => {
   const user = (seq: number, content: string) =>
-    row(seq, { type: "user_message", content });
+    row(seq, { type: "user_message", content, attachments: [] });
 
   it("a tail state reports has_more and the oldest loaded seq", () => {
     const r = createThreadReducer();
@@ -911,8 +911,12 @@ describe("subagent records (child events)", () => {
     type: "child_result",
     thread_id: "child-thread",
     run_id: "child-run",
+    chat_id: "child-chat",
+    agent_name: "Researcher",
+    title: "market scan",
     status: "succeeded",
     final_text: "done",
+    attachments: [],
     ...over,
   });
   const closed = (over: Partial<Extract<ThreadEvent, { type: "child_closed" }>> = {}): ThreadEvent => ({
