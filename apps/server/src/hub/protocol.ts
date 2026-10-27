@@ -8,6 +8,7 @@
 // build plain objects with keys inserted in exactly that order —
 // JSON.stringify preserves string-key insertion order.
 
+import type { ClientFrame, ServerFrame, StreamEvent } from "@guild/wire/types";
 import { threadEventRowWire } from "../platform/domain/thread-events.js";
 import { rustFloatText } from "../platform/provider/rust-json.js";
 
@@ -15,78 +16,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Server → client. Returns the exact bytes serde_json::to_string would
  *  produce for each WsServerMsg variant. */
-export type WsServerMsg =
-  | { type: "tool_cancel"; call_id: string }
-  | { type: "hello" }
-  | { type: "displaced" }
-  | { type: "auth_required" }
-  | {
-      type: "tool_dispatch";
-      chat_id: string;
-      call_id: string;
-      name: string;
-      arguments: string;
-      workdir?: string;
-    }
-  | { type: "error"; message: string }
-  | { type: "machine_request"; request_id: string; op: string; payload: unknown }
-  | { type: "thread_list"; chats: unknown[] }
-  | { type: "chat_status"; chat_id: string; generating: boolean }
-  | { type: "sync_begin"; chat_id: string }
-  | {
-      type: "thread_state";
-      chat_id: string;
-      seq: number;
-      events: unknown[];
-      text: string;
-      thinking: string;
-      generating: boolean;
-      project_id?: string;
-      project_name?: string;
-      project_machine_label?: string;
-      has_more_events?: boolean;
-    }
-  | { type: "sync_done"; chat_id: string }
-  | {
-      type: "thread_events";
-      chat_id: string;
-      seq: number;
-      events: unknown[];
-    }
-  | { type: "pong" }
-  | {
-      type: "live_frame";
-      chat_id: string;
-      generation_id: string;
-      seq: number;
-      machine_id: string | null;
-      event: StreamWireEvent | unknown;
-    }
-  | { type: "org_event"; event: unknown }
-  | {
-      type: "subagent_tree";
-      chat_id: string;
-      nodes: unknown[];
-    }
-  | { type: "machine_status"; machine_id: string; online: boolean }
-  | { type: "archived_thread_list"; chats: unknown[] }
-  | {
-      type: "project_list";
-      projects: unknown[];
-      archived_projects: unknown[];
-    }
-  | { type: "machine_list"; machines: unknown[] }
-  | { type: "workspace_identity"; name: string; logo_url?: string };
+export type WsServerMsg = ServerFrame;
 
 /** The StreamEvent variants the server streams inside live_frame frames
  *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
-export type StreamWireEvent =
-  | { type: "delta"; content: string }
-  | { type: "thinking_delta"; content: string }
-  | { type: "tool_started"; call_id: string; name: string; arguments: string; executor: "client" | "server"; kind?: string }
-  | { type: "tool_completed"; call_id: string; name: string; content: string; is_error: boolean }
-  | { type: "done"; message_id: string; cost_usd: number; tokens_in: number; tokens_out: number }
-  | { type: "error"; code: string; message: string };
+export type StreamWireEvent = StreamEvent;
 
 function rawJson(value: unknown): string {
   try {
@@ -333,28 +267,15 @@ export function serializeServerMsg(msg: WsServerMsg): string {
  *  serde's defaults: absent optional fields become null/empty; unknown
  *  variants (and unparseable text) return null and are discarded by the
  *  reader without closing the socket. */
-export type WsClientMsg =
-  | { type: "sync"; chat_id: string | null }
-  | { type: "ping" }
-  | { type: "read"; chat_id: string }
-  | {
-      type: "machine_response";
-      request_id: string;
-      ok: boolean;
-      payload?: unknown;
-      error?: string;
-    }
-  | {
-      type: "tool_result";
-      chat_id: string;
-      call_id: string;
-      content: string;
-      is_error: boolean;
-      meta: unknown;
-      images: string[];
-    };
+export type WsClientMsg = ClientFrame;
 
-export function parseClientMsg(text: string): WsClientMsg | null {
+/** A parsed client frame. `tool_result` always carries the normalized
+ *  `images` array (serde default), so consumers see it as required. */
+export type ParsedClientMsg =
+  | Exclude<WsClientMsg, { type: "tool_result" }>
+  | (WsClientMsg & { type: "tool_result"; images: string[] });
+
+export function parseClientMsg(text: string): ParsedClientMsg | null {
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(text) as Record<string, unknown>;
