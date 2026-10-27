@@ -3,18 +3,13 @@
 //
 // Two concerns live here:
 //  1. Typed constructors for the events this server writes (the bridge and
-//     the turn-accept path), with fields in Rust declaration order.
-//  2. `renderThreadEventRow` — the byte-compat wire form of a persisted row
-//     ({id, chat_id, seq, event, created_at}, ThreadEventRow declaration
-//     order) as the Rust server serializes it: compact JSON, variant fields
-//     in declaration order, f64 fields keeping serde's ryu ".0" style
-//     (rustJsonText). Clients render from these bytes; byte-compat is a
-//     forced compat requirement (spec "Forced compat").
+//     the turn-accept path).
+//  2. The wire form of a persisted row ({id, chat_id, seq, event,
+//     created_at}) as plain objects.
 //
 // Events written by the OLD Rust server carry the same shapes; the renderer
 // normalizes both eras to one wire form.
 
-import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------
@@ -141,42 +136,37 @@ export function turnErrorEvent(message: string): ThreadEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Wire rendering (byte-compat with the Rust serde_json output)
+// Wire rendering (plain objects, JSON text)
 // ---------------------------------------------------------------------------
 
-/** Serializes one ThreadEvent the way serde renders the Value-interpolated
- *  wire (serde_json Value maps are BTreeMap-sorted at EVERY level — the
- *  live :18080 capture confirms rows and event objects both come out in
- *  byte-sorted key order; skip_serializing_if honored, f64 values in ryu
- *  style). The input may be a parsed legacy row payload — unknown extra
- *  fields are dropped, exactly as a closed serde enum drops them
- *  (deny_unknown_fields is not set, but re-serialization never carries them
- *  either). */
-export function threadEventWire(event: ThreadEvent): string {
+/** One ThreadEvent as a plain object. `undefined` fields stay absent in the
+ *  JSON text; the shape is the closed typed variant, so extra input fields
+ *  never reach the wire. */
+export function threadEventObject(event: ThreadEvent): Record<string, unknown> {
   switch (event.type) {
     case "user_message":
-      return obj({
+      return {
         type: "user_message",
         content: event.content,
         attachments: event.attachments ?? [],
         ...(event.queued ? { queued: true } : {}),
         ...(event.mode ? { mode: event.mode } : {}),
-      });
+      };
     case "system_message":
-      return obj({ type: "system_message", content: event.content });
+      return { type: "system_message", content: event.content };
     case "assistant_message":
-      return obj({
+      return {
         type: "assistant_message",
         turn: event.turn,
         step: event.step,
         blocks: event.blocks,
-        usage: raw(usageWire(event.usage)),
+        usage: event.usage,
         model: event.model,
         interrupted: event.interrupted,
         error: event.error ?? undefined,
-      });
+      };
     case "tool_result":
-      return obj({
+      return {
         type: "tool_result",
         turn: event.turn,
         step: event.step,
@@ -188,30 +178,30 @@ export function threadEventWire(event: ThreadEvent): string {
         images: event.images ?? [],
         kind: event.kind,
         artifact_id: event.artifact_id,
-      });
+      };
     case "compaction":
-      return obj({
+      return {
         type: "compaction",
         summary: event.summary,
         tokens_before: event.tokens_before,
         keep_last: event.keep_last,
         model: event.model,
-        usage: event.usage ? raw(usageWire(event.usage)) : undefined,
-      });
+        usage: event.usage,
+      };
     case "approval_request":
-      return obj({ type: "approval_request", call_id: event.call_id, name: event.name, arguments: event.arguments });
+      return { type: "approval_request", call_id: event.call_id, name: event.name, arguments: event.arguments };
     case "approval_decision":
-      return obj({
+      return {
         type: "approval_decision",
         call_id: event.call_id,
         approved: event.approved,
         reason: event.reason,
         expired: event.expired ?? false,
-      });
+      };
     case "turn_error":
-      return obj({ type: "turn_error", message: event.message });
+      return { type: "turn_error", message: event.message };
     case "child_spawned":
-      return obj({
+      return {
         type: "child_spawned",
         thread_id: event.thread_id,
         run_id: event.run_id,
@@ -220,9 +210,9 @@ export function threadEventWire(event: ThreadEvent): string {
         title: event.title,
         status: event.status,
         task: event.task,
-      });
+      };
     case "child_result":
-      return obj({
+      return {
         type: "child_result",
         thread_id: event.thread_id,
         run_id: event.run_id,
@@ -234,66 +224,31 @@ export function threadEventWire(event: ThreadEvent): string {
         reason: event.reason,
         final_text: event.final_text,
         attachments: event.attachments ?? [],
-      });
+      };
     case "child_closed":
-      return obj({ type: "child_closed", thread_id: event.thread_id });
+      return { type: "child_closed", thread_id: event.thread_id };
     default:
       throw new Error(`unknown thread event type ${(event as { type?: string }).type}`);
   }
 }
 
-/** One persisted row as serde_json renders the Value (sorted keys: the GET
- *  /thread list item and the ThreadState frame's event payloads). */
-export function threadEventRowWire(row: ThreadEventRow): string {
-  return obj({
+export function threadEventWire(event: ThreadEvent): string {
+  return JSON.stringify(threadEventObject(event));
+}
+
+/** One persisted row as a plain object. */
+export function threadEventRowObject(row: ThreadEventRow): Record<string, unknown> {
+  return {
     id: row.id,
     chat_id: row.chat_id,
     seq: row.seq,
-    event: raw(threadEventWire(row.event)),
+    event: threadEventObject(row.event),
     created_at: row.created_at,
-  });
+  };
 }
 
-/** UsagePayload wire form: all three fields are Option + skip_serializing_if
- *  (sorted: cost_usd, tokens_in, tokens_out). */
-function usageWire(usage: UsagePayload | undefined): string {
-  return obj({
-    tokens_in: usage?.tokens_in,
-    tokens_out: usage?.tokens_out,
-    cost_usd: usage?.cost_usd === undefined ? undefined : rustFloat(usage.cost_usd),
-  });
-}
-
-// Ordered-object helpers: insertion order kept, undefined dropped, and an
-// already-rendered value (`raw()`) spliced in without re-quoting.
-
-/** Embedded pre-rendered JSON (avoids double-quoting). */
-function raw(text: string): { __raw: string } {
-  return { __raw: text };
-}
-
-function isRaw(value: unknown): value is { __raw: string } {
-  return typeof value === "object" && value !== null && "__raw" in (value as Record<string, unknown>);
-}
-
-function rustJsonTextRaw(value: unknown): string {
-  if (isRaw(value)) return value.__raw;
-  if (Array.isArray(value)) return `[${value.map(rustJsonTextRaw).join(",")}]`;
-  if (value !== null && typeof value === "object" && !("__rustFloat" in value)) {
-    // serde_json Value maps are BTreeMaps: byte-sorted keys at every level.
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${rustJsonTextRaw((value as Record<string, unknown>)[k])}`).join(",")}}`;
-  }
-  return rustJsonText(value);
-}
-
-function obj(fields: Record<string, unknown>): string {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined) continue;
-    out[key] = value;
-  }
-  return rustJsonTextRaw(out);
+export function threadEventRowWire(row: ThreadEventRow): string {
+  return JSON.stringify(threadEventRowObject(row));
 }
 
 /** Normalizes a legacy parsed payload (from the DB JSONB column) into the
