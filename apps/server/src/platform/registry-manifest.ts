@@ -1,28 +1,17 @@
 // Manifest validation — the TS port of protocol/src/registry.rs's
-// validate_manifest/validate_v2 (the Rust originals moved there with the
-// manifest wire types; the strict typed shape is the generated binding
-// @guild/protocol/BundleManifest, consumed wherever a manifest is trusted).
+// validate_manifest/validate_v2. The manifest wire types live in
+// @guild/wire/rest, hand-written from protocol/rest.schema.json.
 // Message texts mirror the Rust anyhow strings, including the FieldSpec
 // debug render, because the publish handler passes them straight into the
 // 400 body.
 //
 // The `Manifest` interface below is deliberately loose (fields `unknown`):
 // it is the untrusted-input shape the validators walk — user-submitted JSON
-// before it has proven itself. Do not replace it with the strict binding.
+// before it has proven itself. Do not replace it with the strict type.
 
-import type { BundleManifest } from "@guild/protocol/BundleManifest.js";
+import type { BundleManifest, FieldSpec } from "@guild/wire/rest";
 
 export type { BundleManifest };
-
-export interface FieldSpec {
-  name: string;
-  kind: string;
-  label?: string | null;
-  required?: boolean;
-  default?: unknown;
-  help?: string | null;
-  placeholder?: string | null;
-}
 
 export interface Manifest {
   kind: unknown;

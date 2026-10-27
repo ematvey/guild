@@ -86,11 +86,11 @@ describe("routeMessage", () => {
   it("routes incremental thread_events frames to their handler", () => {
     const seen: { chatId: string; seq: number; rows: ThreadEventRow[] }[] = [];
     routeMessage(
-      { type: "thread_events", chat_id: "chat-1", seq: 9, events: [row(9, { type: "user_message", content: "go" })] } as never,
+      { type: "thread_events", chat_id: "chat-1", seq: 9, events: [row(9, { type: "user_message", content: "go", attachments: [] })] } as never,
       { onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
         onThreadEvents: (chatId, seq, rows) => seen.push({ chatId, seq, rows }) },
     );
-    expect(seen).toEqual([{ chatId: "chat-1", seq: 9, rows: [row(9, { type: "user_message", content: "go" })] }]);
+    expect(seen).toEqual([{ chatId: "chat-1", seq: 9, rows: [row(9, { type: "user_message", content: "go", attachments: [] })] }]);
   });
 });
 

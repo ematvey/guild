@@ -4,6 +4,14 @@
 // client (the wire carries JsonValue).
 
 import { apiUrl, getToken } from "./session";
+import type {
+  ThreadEvent,
+  UsagePayload,
+  Block as ThreadBlock,
+  MessageAttachment as MessageAttachmentMeta,
+} from "@guild/wire/rest";
+
+export type { ThreadEvent, UsagePayload, ThreadBlock, MessageAttachmentMeta };
 
 export interface ThreadState {
   chat_id: string;
@@ -60,145 +68,11 @@ export async function fetchThreadContext(chatId: string, model: string, signal: 
   return response.json();
 }
 
-// ---- Thread events (shapes mirror crates/protocol/bindings/ThreadEvent.ts;
-// the event log is the durable source of truth, message history and the
-// rendered thread are both derivations of it) ----
+// ---- Thread events (the event log is the durable source of truth; message
+// history and the rendered thread are both derivations of it) ----
 
-export type UsagePayload = { tokens_in?: number; tokens_out?: number; cost_usd?: number };
-
-export type ThreadBlock =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "tool_call"; id: string; name: string; arguments: string };
-
-/** A file attached to a user turn (chip metadata; bytes via
- * /api/v1/attachments/{id}). `modality`: image | audio | video | document. */
-
-export type MessageAttachmentMeta = {
-  id: string;
-  filename: string;
-  content_type: string;
-  size_bytes: number;
-  modality: string;
-};
-
-export type ThreadEvent =
-  | {
-      type: "user_message";
-      content: string;
-      attachments?: MessageAttachmentMeta[];
-      /** Admitted while a turn was still generating: not yet seen by the
-       *  model — rendered as a queued chip above the composer, not a
-       *  transcript bubble, until the agent picks it up (the server moves
-       *  the event and clears the flag at placement). */
-      queued?: boolean;
-      /** Requested placement for the same chip: "steer" joins the running
-       *  turn at the next tool boundary; "queue" (and absent) runs as the
-       *  next turn's input. */
-      mode?: "steer" | "queue";
-    }
-  | { type: "system_message"; content: string }
-  | {
-      type: "assistant_message";
-      turn: number;
-      step: number;
-      blocks: ThreadBlock[];
-      usage: UsagePayload;
-      model: string;
-      /** Aborted mid-stream: blocks carry the delivered prefix only. */
-      interrupted?: boolean | null;
-      /** Failed provider attempt: the error text. Rendered only while this
-       *  is the thread's latest block; a later retry supersedes it. */
-      error?: string | null;
-    }
-  | {
-      type: "tool_result";
-      turn: number;
-      step: number;
-      call_id: string;
-      name: string;
-      /** Model-facing text (what the model reads as the tool result). */
-      content: string;
-      is_error: boolean;
-      /** Tool-private widget payload; opaque to the loop. */
-      meta?: unknown | null;
-      /** Coarse tool category (web_search | web_browse | generic); absent on
-       * pre-kind events. */
-      kind?: "web_search" | "web_browse" | "generic" | null;
-      /** Spilled-result artifact this result points at (bytes via
-       * /api/v1/tool_artifacts/{id}); the render card lives in `meta.card`.
-       * Absent on inline results and old events. */
-      artifact_id?: string | null;
-    }
-  | {
-      type: "compaction";
-      summary: string;
-      /** Total tokens the pre-compaction history represented (informational). */
-      tokens_before?: number | null;
-      /** Message-bearing events immediately before this one kept verbatim in context. */
-      keep_last?: number | null;
-      /** Model + usage of the summarization call. */
-      model?: string | null;
-      usage?: UsagePayload | null;
-    }
-  | {
-      type: "approval_request";
-      call_id: string;
-      name: string;
-      arguments: string;
-    }
-  | {
-      type: "approval_decision";
-      call_id: string;
-      approved: boolean;
-      reason?: string | null;
-      /** Nobody was waiting when the decision landed; the call never ran. */
-      expired?: boolean;
-    }
-  | { type: "turn_error"; message: string }
-  | {
-      type: "child_spawned";
-      /** The child agent thread id. */
-      thread_id: string;
-      /** The child run id. */
-      run_id: string;
-      /** The durable chat id the child thread projects into. */
-      chat_id: string;
-      /** The child thread's agent name, for the row label. */
-      agent_name: string;
-      /** The child thread's title: the session name its spawner chose. */
-      title: string;
-      /** The request the parent sent to the child. Older events carry an
-       *  empty string. */
-      task: string;
-      /** The child run's status at spawn time. */
-      status: string;
-    }
-  | {
-      type: "child_result";
-      /** The child agent thread id. */
-      thread_id: string;
-      /** The durable chat id the child thread projects into. */
-      chat_id?: string | null;
-      /** The child thread's agent name, for the row label. */
-      agent_name?: string | null;
-      /** The child thread's title: the session name its spawner chose. */
-      title?: string | null;
-      run_id: string;
-      /** The child run's terminal status; `cancelled` is a user stop. */
-      status: string;
-      reason?: string | null;
-      /** The run's start (RFC3339): the elapsed anchor when no
-       *  child_spawned row is loaded. */
-      started_at?: string | null;
-      final_text: string;
-      attachments?: MessageAttachmentMeta[];
-    }
-  | {
-      type: "child_closed";
-      /** The child agent thread id the user closed. */
-      thread_id: string;
-    };
+// The REST shapes live in @guild/wire/rest, hand-written from
+// protocol/rest.schema.json. The local names stay for the view code.
 
 export interface ThreadEventRow {
   id: string;
