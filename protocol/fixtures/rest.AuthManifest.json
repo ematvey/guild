@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "org_secret",
+    "secret_names": [],
+    "identity_key": "email"
+  },
+  {
+    "kind": "per_user_token",
+    "secret_names": [
+      "acme_token"
+    ],
+    "identity_key": "email"
+  }
+]
