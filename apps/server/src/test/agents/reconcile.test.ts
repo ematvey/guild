@@ -168,7 +168,6 @@ dbDescribe("stale run reconciliation", () => {
       agent_name: "Clients",
       title: "Child task",
       status: "succeeded",
-      reason: null,
       final_text: "the answer",
       attachments: [],
     });
@@ -191,7 +190,6 @@ dbDescribe("stale run reconciliation", () => {
       agent_name: "Clients",
       title: "Child task",
       status: "succeeded",
-      reason: null,
       final_text: "the answer",
       attachments: [],
     });

@@ -226,11 +226,12 @@ export interface PendingSend {
 }
 
 /** The queued-chip fields a user_message event carries (absent = delivered). */
-function queuedFieldsOf(ev: { queued?: boolean; mode?: "steer" | "queue" }): {
+function queuedFieldsOf(ev: { queued?: boolean; mode?: string }): {
   queued?: boolean;
   queuedMode?: "steer" | "queue";
 } {
-  return ev.queued ? { queued: true, queuedMode: ev.mode ?? "queue" } : {};
+  if (!ev.queued) return {};
+  return { queued: true, queuedMode: ev.mode === "steer" ? "steer" : "queue" };
 }
 
 function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
@@ -266,8 +267,9 @@ function reconcileQueuedSends(
     if (row.event.type !== "user_message") return [b];
     // Identity-preserving: untouched blocks keep their object so the
     // applyEvent dedupe and React memoization keep working.
-    if (!!b.queued === (row.event.queued === true) && (!row.event.queued || b.queuedMode === (row.event.mode ?? "queue"))) return [b];
-    return [{ ...b, ...clearedQueuedFields(), ...(row.event.queued ? { queued: true, queuedMode: row.event.mode ?? "queue" } : {}) }];
+    const queued = row.event.type === "user_message" ? queuedFieldsOf(row.event) : {};
+    if (!!b.queued === (row.event.type === "user_message" && row.event.queued === true) && (!b.queued || b.queuedMode === queued.queuedMode)) return [b];
+    return [{ ...b, ...clearedQueuedFields(), ...queued }];
   });
 }
 

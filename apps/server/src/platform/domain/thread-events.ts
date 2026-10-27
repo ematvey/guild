@@ -18,19 +18,21 @@ import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------
-// Event value types — generated protocol bindings (protocol::api), single
-// source of truth with the Rust enum (serde internally-tagged snake_case).
+// Event value types — hand-written in @guild/wire/rest from
+// protocol/rest.schema.json, single source of truth with the Rust enum
+// (serde internally-tagged snake_case).
 // ---------------------------------------------------------------------------
 
-import type { ThreadEvent } from "@guild/protocol/ThreadEvent.js";
-import type { JudgeVerdict } from "@guild/protocol/JudgeVerdict.js";
-export type { JudgeVerdict };
-import type { Block } from "@guild/protocol/Block.js";
-import type { MessageAttachment } from "@guild/protocol/MessageAttachment.js";
-import type { UsagePayload } from "@guild/protocol/UsagePayload.js";
-import type { ToolKind } from "@guild/protocol/ToolKind.js";
+import type {
+  ThreadEvent,
+  JudgeVerdict,
+  Block,
+  MessageAttachment,
+  UsagePayload,
+  ToolKind,
+} from "@guild/wire/rest";
 
-export type { Block, MessageAttachment, ThreadEvent, UsagePayload };
+export type { Block, JudgeVerdict, MessageAttachment, ThreadEvent, UsagePayload };
 
 /** One persisted thread event as the store returns it. */
 export interface ThreadEventRow {
