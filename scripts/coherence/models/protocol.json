@@ -49,6 +49,36 @@
       ]
     },
     {
+      "id": "wire-schema",
+      "definition": "The JSON Schema of the member socket, with one fixture per frame variant.",
+      "canonical": "protocol/socket.schema.json",
+      "types": [],
+      "aliases": [],
+      "representations": [
+        {
+          "where": "protocol/socket.schema.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/socket.ServerFrame.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/socket.ClientFrame.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/check.mjs",
+          "role": "wire"
+        },
+        {
+          "where": "crates/protocol/tests/fixtures.rs",
+          "role": "wire"
+        }
+      ],
+      "translations": []
+    },
+    {
       "id": "rpc-envelope",
       "definition": "A JSON-RPC request, response or event on the engine's stdio and local daemon socket.",
       "canonical": "crates/protocol/src/rpc.rs",

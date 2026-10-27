@@ -15,7 +15,7 @@
 #   scripts/check.sh --only <name>   # one check
 #
 # Check names: cargo-test server-test desktop-test clippy windows bindings
-#              coherence
+#              protocol coherence
 set -u
 
 cd "$(dirname "$0")/.."
@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ALL_CHECKS="cargo-test server-test desktop-test clippy windows bindings coherence"
+ALL_CHECKS="cargo-test server-test desktop-test clippy windows bindings protocol coherence"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
 check_cargo_test() { cargo nextest run --workspace; }
@@ -51,6 +51,7 @@ check_desktop_test() { cd apps/desktop && npm test; }
 check_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
 check_windows() { ./scripts/check-windows.sh; }
 check_bindings() { ./scripts/check-bindings.sh; }
+check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }
 
 now_ns() { date +%s%N; }
@@ -128,7 +129,7 @@ else
   done
 
   RAN=$ALL_CHECKS
-  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows bindings coherence"
+  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows bindings protocol coherence"
 fi
 
 for name in $RAN; do

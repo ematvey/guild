@@ -9,5 +9,9 @@
   "scripts": {
     "coherence": "python3 scripts/coherence/check.py check",
     "coherence:report": "python3 scripts/coherence/check.py report"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
   }
 }
