@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guild.local/protocol/socket.schema.json",
+  "title": "Guild member socket",
+  "description": "The frame vocabulary of the member and machine socket. Derived from crates/protocol/src/ws.rs, which is what the wire actually is. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Json": {},
+
+    "ServerFrame": {
+      "oneOf": [
+        { "$ref": "#/$defs/Hello" },
+        { "$ref": "#/$defs/Displaced" },
+        { "$ref": "#/$defs/AuthRequired" },
+        { "$ref": "#/$defs/ToolDispatch" },
+        { "$ref": "#/$defs/ToolCancel" },
+        { "$ref": "#/$defs/ErrorFrame" },
+        { "$ref": "#/$defs/MachineRequest" },
+        { "$ref": "#/$defs/ThreadList" },
+        { "$ref": "#/$defs/ChatStatus" },
+        { "$ref": "#/$defs/ThreadEvents" },
+        { "$ref": "#/$defs/SyncBegin" },
+        { "$ref": "#/$defs/ThreadState" },
+        { "$ref": "#/$defs/SyncDone" },
+        { "$ref": "#/$defs/Pong" },
+        { "$ref": "#/$defs/LiveFrame" },
+        { "$ref": "#/$defs/OrgEvent" },
+        { "$ref": "#/$defs/SubagentTree" },
+        { "$ref": "#/$defs/MachineStatus" },
+        { "$ref": "#/$defs/ArchivedThreadList" },
+        { "$ref": "#/$defs/ProjectList" },
+        { "$ref": "#/$defs/MachineList" },
+        { "$ref": "#/$defs/WorkspaceIdentity" }
+      ]
+    },
+
+    "ClientFrame": {
+      "oneOf": [
+        { "$ref": "#/$defs/Ping" },
+        { "$ref": "#/$defs/Sync" },
+        { "$ref": "#/$defs/Read" },
+        { "$ref": "#/$defs/MachineResponse" },
+        { "$ref": "#/$defs/ToolResult" }
+      ]
+    },
+
+    "Hello": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "hello" } }
+    },
+    "Displaced": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "displaced" } }
+    },
+    "AuthRequired": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "auth_required" } }
+    },
+    "Pong": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "pong" } }
+    },
+    "Ping": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "ping" } }
+    },
+
+    "ToolDispatch": {
+      "type": "object",
+      "required": ["type", "chat_id", "call_id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_dispatch" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "string" },
+        "workdir": {
+          "type": "string",
+          "description": "The workspace folder to run in. Absent means no workspace."
+        }
+      }
+    },
+    "ToolCancel": {
+      "type": "object",
+      "required": ["type", "call_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_cancel" },
+        "call_id": { "type": "string" }
+      }
+    },
+    "ErrorFrame": {
+      "type": "object",
+      "required": ["type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "error" },
+        "message": { "type": "string" }
+      }
+    },
+    "MachineRequest": {
+      "type": "object",
+      "required": ["type", "request_id", "op", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "machine_request" },
+        "request_id": { "type": "string" },
+        "op": { "type": "string" },
+        "payload": { "$ref": "#/$defs/Json" }
+      }
+    },
+    "ThreadList": {
+      "type": "object",
+      "required": ["type", "chats"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "thread_list" },
+        "chats": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "ChatStatus": {
+      "type": "object",
+      "required": ["type", "chat_id", "generating"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "chat_status" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "generating": { "type": "boolean" }
+      }
+    },
+    "ThreadEvents": {
+      "type": "object",
+      "required": ["type", "chat_id", "seq", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "thread_events" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "seq": {
+          "type": "integer",
+          "description": "The newest `seq` carried by `events`; the client watermark guard."
+        },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "SyncBegin": {
+      "type": "object",
+      "required": ["type", "chat_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "sync_begin" },
+        "chat_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "SyncDone": {
+      "type": "object",
+      "required": ["type", "chat_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "sync_done" },
+        "chat_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "ThreadState": {
+      "type": "object",
+      "required": ["type", "chat_id", "seq", "events", "text", "thinking", "generating", "has_more_events"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "thread_state" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "seq": { "type": "integer" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/Json" } },
+        "text": { "type": "string" },
+        "thinking": { "type": "string" },
+        "generating": { "type": "boolean" },
+        "project_id": { "$ref": "#/$defs/Uuid" },
+        "project_name": { "type": "string" },
+        "project_machine_label": { "type": "string" },
+        "has_more_events": {
+          "type": "boolean",
+          "description": "Always serialized. True when `events` is only the newest page of the durable log."
+        }
+      }
+    },
+    "LiveFrame": {
+      "type": "object",
+      "required": ["type", "chat_id", "generation_id", "seq", "machine_id", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "live_frame" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "generation_id": { "$ref": "#/$defs/Uuid" },
+        "seq": { "type": "integer" },
+        "machine_id": {
+          "type": ["string", "null"],
+          "description": "Always serialized. null means the frame carries no machine."
+        },
+        "event": { "$ref": "#/$defs/StreamEvent" }
+      }
+    },
+    "OrgEvent": {
+      "type": "object",
+      "required": ["type", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "org_event" },
+        "event": { "$ref": "#/$defs/Json" }
+      }
+    },
+    "SubagentTree": {
+      "type": "object",
+      "required": ["type", "chat_id", "nodes"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "subagent_tree" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "MachineStatus": {
+      "type": "object",
+      "required": ["type", "machine_id", "online"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "machine_status" },
+        "machine_id": { "type": "string" },
+        "online": { "type": "boolean" }
+      }
+    },
+    "ArchivedThreadList": {
+      "type": "object",
+      "required": ["type", "chats"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "archived_thread_list" },
+        "chats": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "ProjectList": {
+      "type": "object",
+      "required": ["type", "projects", "archived_projects"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "project_list" },
+        "projects": { "type": "array", "items": { "$ref": "#/$defs/Json" } },
+        "archived_projects": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "MachineList": {
+      "type": "object",
+      "required": ["type", "machines"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "machine_list" },
+        "machines": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "WorkspaceIdentity": {
+      "type": "object",
+      "required": ["type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "workspace_identity" },
+        "name": { "type": "string" },
+        "logo_url": { "type": "string" }
+      }
+    },
+
+    "Sync": {
+      "type": "object",
+      "required": ["type", "chat_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "sync" },
+        "chat_id": {
+          "type": ["string", "null"],
+          "description": "Always serialized. null means no chat is open."
+        }
+      }
+    },
+    "Read": {
+      "type": "object",
+      "required": ["type", "chat_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "read" },
+        "chat_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "MachineResponse": {
+      "type": "object",
+      "required": ["type", "request_id", "ok"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "machine_response" },
+        "request_id": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "payload": { "$ref": "#/$defs/Json" },
+        "error": { "type": "string" }
+      }
+    },
+    "ToolResult": {
+      "type": "object",
+      "required": ["type", "chat_id", "call_id", "content", "is_error", "meta"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_result" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "call_id": { "type": "string" },
+        "content": { "type": "string" },
+        "is_error": { "type": "boolean" },
+        "meta": {
+          "description": "Always serialized. null means the tool reported no metadata.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/Json" }]
+        },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Omitted when empty."
+        }
+      }
+    },
+
+    "StreamEvent": {
+      "oneOf": [
+        { "$ref": "#/$defs/StreamDelta" },
+        { "$ref": "#/$defs/StreamIdle" },
+        { "$ref": "#/$defs/StreamDone" },
+        { "$ref": "#/$defs/StreamError" },
+        { "$ref": "#/$defs/StreamToolCallDelta" },
+        { "$ref": "#/$defs/StreamToolCallDone" },
+        { "$ref": "#/$defs/StreamToolStarted" },
+        { "$ref": "#/$defs/StreamToolCompleted" },
+        { "$ref": "#/$defs/StreamApprovalRequested" },
+        { "$ref": "#/$defs/StreamApprovalResolved" },
+        { "$ref": "#/$defs/StreamThinkingDelta" }
+      ]
+    },
+    "StreamDelta": {
+      "type": "object",
+      "required": ["type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "delta" },
+        "content": { "type": "string" }
+      }
+    },
+    "StreamThinkingDelta": {
+      "type": "object",
+      "required": ["type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "thinking_delta" },
+        "content": { "type": "string" }
+      }
+    },
+    "StreamIdle": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "idle" } }
+    },
+    "StreamDone": {
+      "type": "object",
+      "required": ["type", "message_id", "cost_usd", "tokens_in", "tokens_out"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "done" },
+        "message_id": { "$ref": "#/$defs/Uuid" },
+        "cost_usd": { "type": "number" },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "StreamError": {
+      "type": "object",
+      "required": ["type", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "StreamToolCallDelta": {
+      "type": "object",
+      "required": ["type", "index", "arguments_delta"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_call_delta" },
+        "index": { "type": "integer", "minimum": 0 },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments_delta": { "type": "string" }
+      }
+    },
+    "StreamToolCallDone": {
+      "type": "object",
+      "required": ["type", "call"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_call_done" },
+        "call": { "$ref": "#/$defs/ToolCall" }
+      }
+    },
+    "StreamToolStarted": {
+      "type": "object",
+      "required": ["type", "call_id", "name", "arguments", "executor"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_started" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "string" },
+        "executor": { "enum": ["client", "server"] },
+        "kind": { "enum": ["web_search", "web_browse", "generic"] }
+      }
+    },
+    "StreamToolCompleted": {
+      "type": "object",
+      "required": ["type", "call_id", "name", "content", "is_error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_completed" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "is_error": { "type": "boolean" }
+      }
+    },
+    "StreamApprovalRequested": {
+      "type": "object",
+      "required": ["type", "call_id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "approval_requested" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "string" }
+      }
+    },
+    "StreamApprovalResolved": {
+      "type": "object",
+      "required": ["type", "call_id", "approved"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "approval_resolved" },
+        "call_id": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "required": ["id", "name", "arguments"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "$ref": "#/$defs/Json" }
+      }
+    }
+  }
+}

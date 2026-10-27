@@ -1,0 +1,92 @@
+[
+  { "type": "hello" },
+  { "type": "displaced" },
+  { "type": "auth_required" },
+  { "type": "pong" },
+  {
+    "type": "tool_dispatch",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "call_id": "call-1",
+    "name": "read_file",
+    "arguments": "{\"path\":\"/tmp/a.txt\"}",
+    "workdir": "/workspace"
+  },
+  {
+    "type": "tool_dispatch",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "call_id": "call-1",
+    "name": "read_file",
+    "arguments": "{\"path\":\"/tmp/a.txt\"}"
+  },
+  { "type": "tool_cancel", "call_id": "call-1" },
+  { "type": "error", "message": "too many connections" },
+  {
+    "type": "machine_request",
+    "request_id": "req-1",
+    "op": "fs_home",
+    "payload": null
+  },
+  { "type": "thread_list", "chats": [] },
+  {
+    "type": "chat_status",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "generating": true
+  },
+  {
+    "type": "thread_events",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "seq": 42,
+    "events": []
+  },
+  {
+    "type": "sync_begin",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001"
+  },
+  {
+    "type": "thread_state",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "seq": 42,
+    "events": [],
+    "text": "hello",
+    "thinking": "",
+    "generating": false,
+    "has_more_events": false
+  },
+  {
+    "type": "thread_state",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "seq": 42,
+    "events": [],
+    "text": "hello",
+    "thinking": "",
+    "generating": true,
+    "project_id": "018f0b7c-0000-7000-8000-000000000002",
+    "project_name": "Guild",
+    "project_machine_label": "laptop",
+    "has_more_events": true
+  },
+  {
+    "type": "sync_done",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001"
+  },
+  {
+    "type": "live_frame",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "generation_id": "018f0b7c-0000-7000-8000-000000000003",
+    "seq": 7,
+    "machine_id": null,
+    "event": { "type": "delta", "content": "hi" }
+  },
+  { "type": "org_event", "event": { "kind": "member_added" } },
+  {
+    "type": "subagent_tree",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "nodes": []
+  },
+  { "type": "machine_status", "machine_id": "machine-1", "online": true },
+  { "type": "archived_thread_list", "chats": [] },
+  { "type": "project_list", "projects": [], "archived_projects": [] },
+  { "type": "machine_list", "machines": [] },
+  { "type": "workspace_identity", "name": "Guild" },
+  { "type": "workspace_identity", "name": "Guild", "logo_url": "https://example.com/logo.png" }
+]

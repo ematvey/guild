@@ -1,0 +1,37 @@
+[
+  { "type": "ping" },
+  { "type": "sync", "chat_id": null },
+  {
+    "type": "sync",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001"
+  },
+  {
+    "type": "read",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001"
+  },
+  { "type": "machine_response", "request_id": "req-1", "ok": true },
+  {
+    "type": "machine_response",
+    "request_id": "req-1",
+    "ok": false,
+    "payload": { "code": "EACCES" },
+    "error": "permission denied"
+  },
+  {
+    "type": "tool_result",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "call_id": "call-1",
+    "content": "ok",
+    "is_error": false,
+    "meta": null
+  },
+  {
+    "type": "tool_result",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+    "call_id": "call-1",
+    "content": "ok",
+    "is_error": false,
+    "meta": { "bytes": 2 },
+    "images": ["data:image/png;base64,eA=="]
+  }
+]
