@@ -13,6 +13,7 @@
   "dependencies": {
     "@grafana/faro-web-sdk": "^2.12.1",
     "@guild/ui": "file:../../packages/ui",
+    "@guild/wire": "file:../../packages/wire",
     "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.4.2",

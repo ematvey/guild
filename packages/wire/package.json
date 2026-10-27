@@ -1,0 +1,11 @@
+{
+  "name": "@guild/wire",
+  "private": true,
+  "version": "0.6.32",
+  "type": "module",
+  "description": "Hand-written TypeScript types for the Guild member and machine socket, shared by the server and the desktop.",
+  "exports": {
+    "./types": "./src/types.ts",
+    "./parse": "./src/parse.ts"
+  }
+}

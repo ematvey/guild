@@ -4,6 +4,7 @@
   "workspaces": [
     "apps/*",
     "packages/ui",
+    "packages/wire",
     "crates/protocol/bindings"
   ],
   "scripts": {
