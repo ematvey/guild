@@ -501,7 +501,7 @@ describe("eventsToBlocks", () => {
           { type: "tool_call", id: "c1", name: "read_file", arguments: JSON.stringify({ path: "a" }) },
         ],
       }),
-      row(1, { type: "user_message", content: "read a" }),
+      row(1, { type: "user_message", content: "read a", attachments: [] }),
       row(3, {
         type: "tool_result",
         turn: 1,
@@ -648,9 +648,9 @@ describe("eventsToBlocks", () => {
 
   it("carries compaction cards at their event position", () => {
     const blocks = eventsToBlocks([
-      row(1, { type: "user_message", content: "hi" }),
+      row(1, { type: "user_message", content: "hi", attachments: [] }),
       row(2, { type: "compaction", summary: "so far: hi" }),
-      row(3, { type: "user_message", content: "more" }),
+      row(3, { type: "user_message", content: "more", attachments: [] }),
     ]);
     expect(blocks.map((b) => b.kind)).toEqual(["user", "compaction", "user"]);
     expect(blocks[1].compaction!.summary).toBe("so far: hi");
@@ -698,11 +698,11 @@ describe("approval upsert/resolve", () => {
 
   it("history derivation drops resolved approvals, keeps pending", () => {
     const blocks = eventsToBlocks([
-      row(0, { type: "user_message", content: "go" }),
+      row(0, { type: "user_message", content: "go", attachments: [] }),
       row(1, { type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" }),
-      row(2, { type: "approval_decision", call_id: "c1", approved: true, reason: null }),
+      row(2, { type: "approval_decision", call_id: "c1", approved: true }),
       row(3, { type: "approval_request", call_id: "c2", name: "execute", arguments: "{}" }),
-      row(4, { type: "assistant_message", turn: 1, step: 0, blocks: [], usage, model: "m", interrupted: null }),
+      row(4, { type: "assistant_message", turn: 1, step: 0, blocks: [], usage, model: "m" }),
     ]);
     const approvals = blocks.filter((b) => b.kind === "approval");
     expect(approvals).toHaveLength(1);
@@ -712,7 +712,7 @@ describe("approval upsert/resolve", () => {
 
   it("history derivation keeps expired approvals — no tool result tells their story", () => {
     const blocks = eventsToBlocks([
-      row(0, { type: "user_message", content: "go" }),
+      row(0, { type: "user_message", content: "go", attachments: [] }),
       row(1, { type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" }),
       row(2, {
         type: "approval_decision",
@@ -729,7 +729,7 @@ describe("approval upsert/resolve", () => {
 
   it("interrupted assistant events mark the last text block, not earlier ones", () => {
     const blocks = eventsToBlocks([
-      row(0, { type: "user_message", content: "write a long essay" }),
+      row(0, { type: "user_message", content: "write a long essay", attachments: [] }),
       row(1, {
         type: "assistant_message",
         turn: 1,
@@ -756,7 +756,6 @@ describe("approval upsert/resolve", () => {
         step: 0,
         model: "m",
         usage,
-        interrupted: null,
         blocks: [{ type: "text", text: "done" }],
       }),
     ]);
@@ -769,10 +768,12 @@ describe("approval upsert/resolve", () => {
         type: "user_message",
         content:
           "run it\n\n---\nInvoked skills (follow their instructions):\n\n### Skill: deploy-check (/x/SKILL.md)\nbody…",
+        attachments: [],
       }),
       row(1, {
         type: "user_message",
         content: "see this\n\n[Attachment: notes.txt (text/plain, 5 bytes)]\nhello",
+        attachments: [],
       }),
     ]);
     expect(blocks.map((b) => (b as Block).text)).toEqual(["run it", "see this"]);
@@ -786,7 +787,7 @@ describe("authoritative socket state", () => {
     expect(threadStateBlocks({ ...state, seq: 3, text: "hello!" }).map(b => b.text)).toEqual(["hello!"]);
   });
   it("renders a cross-tab user echo with no optimistic local send", () => {
-    const state = { chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab" })], text: "", thinking: "", generating: true };
+    const state = { chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab", attachments: [] })], text: "", thinking: "", generating: true };
     expect(threadStateBlocks(state).map(b => b.text)).toEqual(["other tab"]);
   });
   it("keeps the in-flight thinking block's key stable across publishes", () => {
@@ -794,7 +795,7 @@ describe("authoritative socket state", () => {
     // streams; the reasoning block is not a durable event yet, so its key
     // must not change between publishes — a changing key remounts the
     // frame and snaps an expanded block shut mid-click.
-    const state = { chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go" })], text: "", thinking: "part one", generating: true };
+    const state = { chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go", attachments: [] })], text: "", thinking: "part one", generating: true };
     const first = threadStateBlocks(state).find(b => b.kind === "reasoning");
     const second = threadStateBlocks({ ...state, seq: 8, thinking: "part one part two" }).find(b => b.kind === "reasoning");
     expect(first?.key).toBeTruthy();
@@ -940,10 +941,10 @@ describe("pending send reconciliation", () => {
 
   it("settles only the matching server echo, independent of clock skew", () => {
     const pending = { chatId: "chat-1", text: "hello", key: "e1", sentAt: 9999999999999 };
-    const rows = [row(1, { type: "user_message", content: "hello" })];
+    const rows = [row(1, { type: "user_message", content: "hello", attachments: [] })];
     const result = reconcilePendingSend(rows, eventsToBlocks(rows), pending);
     expect(result.some((block) => block.pending)).toBe(false);
-    const otherTab = [row(2, { type: "user_message", content: "hello" })];
+    const otherTab = [row(2, { type: "user_message", content: "hello", attachments: [] })];
     expect(reconcilePendingSend(otherTab, eventsToBlocks(otherTab), pending).some(block => block.pending)).toBe(true);
   });
 });

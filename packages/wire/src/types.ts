@@ -3,20 +3,15 @@
 // it exactly: an optional field is `field?: T`; an always-serialized nullable
 // field is `field: T | null`; an always-serialized plain field is `field: T`.
 //
-// `Json` is any JSON value. It is `unknown` on purpose: the frame carries an
-// opaque payload, and the reader narrows it.
+// `Json`, `ToolCall` and `ToolKind` live in ./rest.ts with the other REST
+// types. They are re-exported here because the socket frames use them.
 
-export type Json = unknown;
+import type { Json, ToolCall, ToolKind } from "./rest.js";
+
+export type { Json, ToolCall, ToolKind };
 
 /** A JSON UUID string. */
 export type Uuid = string;
-
-/** One tool call, as `tool_call_done` carries it. */
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Json;
-}
 
 /** The 11 stream event variants. `live_frame.event` carries one. */
 export type StreamEvent =
@@ -45,7 +40,7 @@ export type StreamEvent =
       name: string;
       arguments: string;
       executor: "client" | "server";
-      kind?: "web_search" | "web_browse" | "generic";
+      kind?: ToolKind;
     }
   | {
       type: "tool_completed";
