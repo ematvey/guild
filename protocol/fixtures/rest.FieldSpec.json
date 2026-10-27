@@ -1,0 +1,29 @@
+[
+  {
+    "name": "api_key",
+    "kind": "secret",
+    "label": null,
+    "required": false,
+    "default": null,
+    "help": null,
+    "placeholder": null
+  },
+  {
+    "name": "region",
+    "kind": "string",
+    "label": "Region",
+    "required": true,
+    "default": "eu-west-1",
+    "help": "The data region.",
+    "placeholder": "eu-west-1"
+  },
+  {
+    "name": "dry_run",
+    "kind": "boolean",
+    "label": "Dry run",
+    "required": false,
+    "default": true,
+    "help": null,
+    "placeholder": null
+  }
+]

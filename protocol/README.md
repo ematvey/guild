@@ -9,6 +9,13 @@ The wire, in one place. Nothing outside this directory decides a frame shape.
 - `fixtures/socket.server.json`, `fixtures/socket.client.json` — one example
   per variant. They are the executable form of the schema: the Rust suite
   deserializes them, the TS suite parses them, and `check.mjs` validates them.
+- `rest.schema.json` — the data-transfer types that cross the TypeScript/Rust
+  boundary over HTTP: the thread event union, messages, tool specs, and the
+  registry bundle manifest. Derived from `crates/protocol/src/api.rs` and
+  `crates/protocol/src/registry.rs`.
+- `fixtures/rest.<Type>.json` — one example file per top-level type, named
+  after its `$defs` key. Each file is a JSON array. Every union variant has an
+  example, and every optional field appears once present and once absent.
 
 ## Presence is the contract
 

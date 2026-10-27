@@ -1,0 +1,17 @@
+[
+  {
+    "id": "call-1",
+    "name": "read_file",
+    "arguments": {
+      "path": "a.txt"
+    }
+  },
+  {
+    "id": "call-2",
+    "name": "execute",
+    "arguments": {
+      "command": "ls",
+      "cwd": "."
+    }
+  }
+]
