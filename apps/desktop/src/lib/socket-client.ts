@@ -1,7 +1,7 @@
 // The member socket client: connect with a one-use ticket, route server
 // frames to handlers, and resync the open thread on every reconnect.
 
-import type { WsServerMsg } from "../../../../crates/protocol/bindings/Ws";
+import type { ServerFrame as WsServerMsg } from "@guild/wire/types";
 
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
