@@ -12,6 +12,32 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The wire is a schema and fixtures, not a generator (2026-10-28).** The
+  TypeScript frame types came from `ts-rs`: `cargo test -p protocol --features
+  ts` wrote 72 `.ts` files into `crates/protocol/bindings`, a perl pass
+  rewrote their imports, an in-place `tsc` emitted `.js`/`.d.ts`, and
+  `scripts/check-bindings.sh` failed on drift. Fourteen import sites used it,
+  all `import type` — no runtime value ever crossed. The pipeline is gone.
+  The contract now lives in `protocol/`: `socket.schema.json` for the member
+  socket and `rest.schema.json` for the HTTP DTOs, each derived field by field
+  from `crates/protocol/src/`. The types are hand-written on both sides —
+  `packages/wire` (`@guild/wire`) for TypeScript, the Rust crates as before —
+  and `protocol/fixtures/<schema>.<Root>.json` holds one example per variant.
+  `protocol/check.mjs` validates every fixture against its schema and requires
+  a fixture for every variant; `crates/protocol/tests/fixtures.rs`
+  deserializes every one of them, so a schema that drifts from Rust fails the
+  Rust suite. No Rust generates TypeScript in any form.
+  - **Presence, not bytes.** The old golden test compared raw strings, so the
+    server hand-assembled JSON to reproduce serde's key order and float text.
+    The contract is presence: the same field is present or absent, and `null`
+    means null. Key order and number text are not load-bearing, so the
+    serializers are plain objects and `JSON.stringify`. The golden test parses
+    both sides and compares normalized values. This removed about 290 lines.
+  - **The cost.** `packages/wire` is 4 files where the generated tree was 72,
+    and the coherence counters moved by +4 files and +7 loc, because the
+    scanner already skipped generated files. Net loc against `develop` is
+    down.
+
 - **A read mark pushes the workspace lists (2026-10-27).** `markRead` wrote
   `chat_reads` and stopped there, so only the client that sent the mark hid
   its dot — the client did that optimistically. Every other open client of
