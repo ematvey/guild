@@ -1,7 +1,7 @@
 // Thread event shapes and the two thread reads that do not ride the member
 // socket: an older page of the durable log and the context-usage meter.
-// Shapes mirror crates/protocol/bindings/ThreadEvent.ts, tightened for the
-// client (the wire carries JsonValue).
+// Shapes mirror the REST ThreadEvent, tightened for the
+// client (the wire carries Json).
 
 import { apiUrl, getToken } from "./session";
 import type {

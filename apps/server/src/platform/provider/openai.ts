@@ -10,7 +10,7 @@ import {
   type ProviderRequest,
   type ToolCall,
 } from "./types.js";
-import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
+import type { Json } from "@guild/wire/rest";
 import { rustJsonText } from "./rust-json.js";
 import { sseDataStreams } from "./sse.js";
 
@@ -46,7 +46,7 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
       if (m.tool_call_id !== undefined && m.tool_call_id !== null)
       mv["tool_call_id"] = m.tool_call_id;
       messages.push(mv);
-      for (const uri of m.images) {
+      for (const uri of m.images ?? []) {
         pendingToolMedia.push({ type: "image_url", image_url: { url: uri } });
       }
       continue;
@@ -61,8 +61,8 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
     const content: unknown = hasMedia(m)
       ? [
           ...(m.content !== "" ? [{ type: "text", text: m.content }] : []),
-          ...m.images.map((uri) => ({ type: "image_url", image_url: { url: uri } })),
-          ...m.audio.map((a) => ({ type: "input_audio", input_audio: { data: a.data, format: a.format } })),
+          ...(m.images ?? []).map((uri) => ({ type: "image_url", image_url: { url: uri } })),
+          ...(m.audio ?? []).map((a) => ({ type: "input_audio", input_audio: { data: a.data, format: a.format } })),
         ]
       : m.content;
     const mv: Record<string, unknown> = { role: m.role, content };
@@ -288,7 +288,7 @@ async function* openAiStream(res: Response): AsyncIterable<ProviderChunk | Provi
           argumentsValue = p.arguments;
         }
       }
-      const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as JsonValue };
+      const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as Json };
       yield { kind: "toolCallDone", call };
     }
   }

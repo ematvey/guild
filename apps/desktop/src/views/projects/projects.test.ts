@@ -32,7 +32,7 @@ const chat = (id: string, project_id?: string, created_at = "t"): ChatSummary =>
   ({ id, title: id, created_at, project_id } as ChatSummary);
 
 const project = (id: string, name = id, machine_label?: string): Project =>
-  ({ id, name, folder: "C:\\x", machine_id: "m1", machine_label, created_at: "t" });
+  ({ id, name, folder: "C:\\x", machine_id: "m1", machine_label: machine_label ?? null, created_at: "t" });
 
 describe("sidebarGrouping", () => {
   const chats = [chat("c1", "p1"), chat("c2"), chat("c3", "p2"), chat("c4", "p1")];
