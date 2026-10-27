@@ -21,7 +21,7 @@ import type { ObjectStore } from "../s3.js";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { parseUuidParam, queryParam, requireJsonBody, requireUser } from "./error.js";
 import { uuidv7 } from "../time.js";
-import { threadEventRowWire, threadEventWire, type MessageAttachment, type ThreadEventRow } from "../domain/thread-events.js";
+import { threadEventObject, threadEventRowObject, type MessageAttachment, type ThreadEventRow } from "../domain/thread-events.js";
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
 import type { ChatRow } from "../store/chats.js";
@@ -143,7 +143,7 @@ function plainChatWire(chats: ChatsCtx, row: ChatRow): Record<string, unknown> {
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 
-/** GET /api/v1/chats/{id}/thread body: serde_json::json! → sorted keys. */
+/** GET /api/v1/chats/{id}/thread body. */
 async function threadBody(chats: ChatsCtx, gateway: GatewayCtx, user: UserRow, chatId: string): Promise<string> {
   const events = await chats.threads.listEvents(user.org_id, chatId);
   let tokens = 0;
@@ -160,17 +160,10 @@ async function threadBody(chats: ChatsCtx, gateway: GatewayCtx, user: UserRow, c
     model === null
       ? DEFAULT_CONTEXT_WINDOW
       : ((await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW);
-  // serde_json::json! renders the outer + context maps sorted (BTreeMap);
-  // each event row interpolates as a Value — sorted keys at every level.
-  const contextModel = model === null ? "null" : JSON.stringify(model);
-  return `{"context":{"max":${max},"model":${contextModel},"tokens":${tokens}},"events":[${events
-    .map(threadEventRowWire)
-    .join(",")}]}`;
-}
-
-/** Pre-rendered thread event rows (byte-exact ThreadEventRow serialization). */
-export function rawRows(events: readonly ThreadEventRow[]): { __raw: string }[] {
-  return events.map((row) => ({ __raw: threadEventRowWire(row) }));
+  return JSON.stringify({
+    context: { max, model, tokens },
+    events: events.map(threadEventRowObject),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +243,7 @@ export function registerChatsRoutes(
     }
     const page = await chats.threads.listEventPage(user.org_id, chatId, { beforeSeq, limit });
     return reply.status(200).type("application/json").send(
-      `{"events":[${page.rows.map(threadEventRowWire).join(",")}],"has_more":${page.hasMore}}`,
+      JSON.stringify({ events: page.rows.map(threadEventRowObject), has_more: page.hasMore }),
     );
   };
   app.get("/api/v1/threads/:id/events", threadEventsPage);
@@ -300,10 +293,9 @@ export function registerChatsRoutes(
       resolved = { ...event, turn: Math.max(1, turn) } as typeof event;
     }
     const row = await chats.threads.appendEvent(chatId, resolved);
-    // json! → sorted outer keys; the event keeps its serde variant order.
     return reply
       .status(200)
-      .send(`{"created_at":${JSON.stringify(row.created_at)},"event":${threadEventWire(row.event)},"id":${JSON.stringify(row.id)},"seq":${row.seq}}`);
+      .send(JSON.stringify({ created_at: row.created_at, event: threadEventObject(row.event), id: row.id, seq: row.seq }));
   };
   // Deprecated alias: POST /api/v1/chats/:id/thread (the engine-path append).
   app.post("/api/v1/chats/:id/thread", appendThreadEvent);

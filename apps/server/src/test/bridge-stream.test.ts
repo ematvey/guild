@@ -323,16 +323,23 @@ describe("bridge generation stream", () => {
     ]);
   });
 
-  it("renders the stream events byte-exactly (ryu floats, declaration order)", () => {
-    expect(streamEventWire({ type: "delta", content: 'he"llo' })).toBe('{"type":"delta","content":"he\\"llo"}');
-    expect(streamEventWire({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 })).toBe(
-      '{"type":"done","message_id":"abc","cost_usd":0.0,"tokens_in":3,"tokens_out":2}',
-    );
+  it("renders the stream events as their typed JSON shape", () => {
+    expect(JSON.parse(streamEventWire({ type: "delta", content: 'he"llo' }))).toEqual({
+      type: "delta",
+      content: 'he"llo',
+    });
     expect(
-      streamEventWire({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" }),
-    ).toBe('{"type":"tool_started","call_id":"c","name":"bash","arguments":"{}","executor":"server"}');
-    expect(streamEventWire({ type: "error", code: "provider", message: "x" })).toBe(
-      '{"type":"error","code":"provider","message":"x"}',
-    );
+      JSON.parse(streamEventWire({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 })),
+    ).toEqual({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 });
+    expect(
+      JSON.parse(
+        streamEventWire({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" }),
+      ),
+    ).toEqual({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" });
+    expect(JSON.parse(streamEventWire({ type: "error", code: "provider", message: "x" }))).toEqual({
+      type: "error",
+      code: "provider",
+      message: "x",
+    });
   });
 });
