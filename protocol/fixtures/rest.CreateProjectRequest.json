@@ -1,0 +1,12 @@
+[
+  {
+    "name": "web",
+    "folder": "C:\\work\\web",
+    "machine_id": "machine-1"
+  },
+  {
+    "name": null,
+    "folder": "\\\\wsl.localhost\\Ubuntu\\home\\me\\api",
+    "machine_id": "machine-2"
+  }
+]
