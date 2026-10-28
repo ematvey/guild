@@ -395,6 +395,59 @@ it needs no Xcode, no review, and no new client. Build the push service
 against a Home Screen web app first. If the notifications prove useful, the
 native client is a UX upgrade over a proven channel.
 
+### 8.7.1 Add to Home Screen — what ships
+
+The install is a server-side property, not a client feature. The web build
+already carries it:
+
+| Piece | Where |
+|---|---|
+| `manifest.webmanifest` — name, `start_url`, `scope: "/"`, `display: standalone`, 192/512/maskable icons | `apps/desktop/public/` |
+| `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | `apps/desktop/public/` |
+| `<link rel="manifest">`, the three `apple-mobile-web-app-*` metas, `theme-color` | `apps/desktop/index.html` |
+| `application/manifest+json` and `no-cache` on non-hashed files | `apps/server/src/http/web.ts` (`MIME`, `serveFile`) |
+
+No service worker ships. A previous build had one and it was retired on
+purpose: the browser gets pure-network loads, so a deploy can never leave a
+stale shell behind. The cost is that Android and desktop Chrome may not offer
+their own install prompt; their "Add to Home screen" menu item still works.
+Web Push is the one thing that will require a service worker later — when it
+lands, it must not cache the shell, only receive `push` events.
+
+**The steps are browser-specific, so the UI detects instead of assuming.**
+`installState()` in `apps/desktop/src/lib/session.ts` (the module that already
+answers "which host am I in" with `IS_TAURI`) is pure over an injected surface
+and answers one question with four answers:
+
+- `installed` — `navigator.standalone` or `(display-mode: standalone)`.
+- `ios-safari` — iOS/iPadOS, not installed: the Share-sheet steps apply.
+  iPadOS reports `MacIntel`, so the touch count decides.
+- `ios-browser` — Chrome, Firefox, Edge, Opera or DuckDuckGo on iOS. They wrap
+  WebKit but cannot install a web app, and their copy gets no push. The UI
+  says so instead of showing steps that cannot work.
+- `other` — desktop and Android: nothing to install, nothing to say.
+
+Three surfaces render the same `InstallSteps`:
+
+- **`/install`** — the guide as its own route (`InstallGuide` in
+  `apps/desktop/src/views/thread/ThreadOverlays.tsx`), so a help link or a
+  colleague can share the address. Chat-independent, like `/onboard`.
+- **The login card** — one dismissible line for a first-time mobile visitor
+  (`localStorage` key `guild.installHintDismissed`).
+- **The onboarding guide** — an "On your phone" section, added only when
+  `installOffered()` is true.
+
+`InstallSteps` itself lives in `apps/desktop/src/views/onboarding.tsx`: the
+steps are onboarding, and three surfaces render the same block.
+
+Each shows a "check again" button that re-reads the surface, because the
+`standalone` flag and the media query change only on a fresh launch — the
+honest check is a re-read, not an assumption.
+
+Still missing, and deliberately so: the service worker, a VAPID key pair per
+org origin, subscription storage, and the `push` handler. Those belong to the
+push model decision (§8.6), not to the install step.
+
 ### 8.8 Not doing: a remote UI bundle
 
 We considered and rejected shipping the client as a small shell that loads

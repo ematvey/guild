@@ -3,15 +3,27 @@
 // the running UI), it lives at /onboard for deep links, and it auto-shows
 // for users the server flags as not yet onboarded. Closing it from any
 // section completes the server-side onboarding flag.
+//
+// The same file owns the "Add to Home Screen" steps: they are onboarding
+// too, they render in the /install dialog and on the login card, and they
+// share one state model with the guide's "On your phone" section.
 
 import { useState } from "react";
-import { Bot, FolderKanban, KeyRound, MonitorSmartphone, MessagesSquare, Package } from "lucide-react";
+import { Bell, Bot, Check, FolderKanban, KeyRound, MessagesSquare, MonitorSmartphone, Package, Plus, Share, Smartphone, X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "@guild/ui/components/dialog";
+import {
+  dismissInstallHint,
+  installHintDismissed,
+  installOffered,
+  installState,
+  installSurface,
+  type InstallState,
+} from "../lib/session";
 
 /** Where the guide should land the user when it closes; null = the plain
  *  close (Done, skip, Esc, ✕). WebChat completes onboarding and pushes the
@@ -26,6 +38,152 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
       </span>
       {children}
     </p>
+  );
+}
+
+function InstallStep({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-2.5">
+      <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
+        {n}
+      </span>
+      <span>{children}</span>
+    </li>
+  );
+}
+
+/** The steps for one install state, plus the honest limit of each case.
+ *  Rendered by the /install dialog, the login card and this guide. */
+export function InstallSteps({
+  state,
+  onRecheck,
+}: {
+  state: InstallState;
+  onRecheck?: () => void;
+}) {
+  if (state === "installed") {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p className="flex items-start gap-2.5 text-foreground">
+          <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+          Guild is installed on this device.
+        </p>
+        <p className="flex items-start gap-2.5">
+          <Bell className="mt-0.5 size-4 shrink-0" />
+          Notifications reach this copy only. If you delete the icon, they
+          stop.
+        </p>
+      </div>
+    );
+  }
+
+  if (state === "other") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        This page already runs as an app in your browser. The Home Screen
+        install is for iPhone and iPad. On a Mac, Safari's File → Add to Dock
+        does the same job.
+      </p>
+    );
+  }
+
+  if (state === "ios-browser") {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p className="flex items-start gap-2.5 text-foreground">
+          <Smartphone className="mt-0.5 size-4 shrink-0" />
+          This browser cannot install Guild, and its copy cannot receive
+          notifications.
+        </p>
+        <p>
+          Open this address in <b>Safari</b>, then follow the steps there.
+        </p>
+        {onRecheck && (
+          <Button variant="outline" size="sm" onClick={onRecheck}>
+            Check again
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 text-sm text-muted-foreground">
+      <ol className="space-y-2.5">
+        <InstallStep n={1}>
+          Tap the <Share className="inline size-4 align-text-bottom" />{" "}
+          <b>Share</b> button in the toolbar. It is the square with an arrow
+          pointing up.
+        </InstallStep>
+        <InstallStep n={2}>
+          Scroll the list and tap{" "}
+          <b>
+            <Plus className="inline size-4 align-text-bottom" /> Add to Home
+            Screen
+          </b>
+          .
+        </InstallStep>
+        <InstallStep n={3}>
+          Tap <b>Add</b>, then open Guild from the new icon on your Home
+          Screen.
+        </InstallStep>
+      </ol>
+      <p className="flex items-start gap-2.5 border-t border-border pt-3">
+        <Bell className="mt-0.5 size-4 shrink-0" />
+        Only the installed copy can receive notifications. A tab in Safari
+        cannot.
+      </p>
+      {onRecheck && (
+        <Button variant="outline" size="sm" onClick={onRecheck}>
+          I did it — check again
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The login-card hint: one line, the steps behind it, dismissible. Shown
+ *  only where an install is possible and still missing — an installed copy
+ *  and a desktop browser get nothing. */
+export function InstallHint() {
+  const [surface] = useState(installSurface);
+  const [dismissed, setDismissed] = useState(installHintDismissed);
+  const [open, setOpen] = useState(false);
+  if (dismissed || !installOffered(surface)) return null;
+  const state = installState(surface);
+  return (
+    <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
+      <div className="flex items-start gap-2">
+        <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <button
+            className="text-left font-medium text-foreground outline-none hover:underline"
+            onClick={() => setOpen((o) => !o)}
+          >
+            Add Guild to your Home Screen
+          </button>
+          <p className="mt-0.5 text-muted-foreground">
+            It opens without the browser bars, and it is the copy that can
+            notify you.
+          </p>
+          {open && (
+            <div className="mt-2.5">
+              <InstallSteps state={state} />
+            </div>
+          )}
+        </div>
+        <button
+          aria-label="Dismiss"
+          className="shrink-0 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground"
+          onClick={() => {
+            dismissInstallHint();
+            setDismissed(true);
+          }}
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -171,6 +329,23 @@ function ProjectsSection() {
   );
 }
 
+function InstallSection() {
+  const [state, setState] = useState(() => installState(installSurface()));
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        On a phone or tablet, Guild works best from a Home Screen icon: it
+        opens without the browser bars, and that copy is the one that can
+        notify you later.
+      </p>
+      <InstallSteps
+        state={state}
+        onRecheck={() => setState(installState(installSurface()))}
+      />
+    </div>
+  );
+}
+
 const SECTIONS: {
   id: string;
   label: string;
@@ -203,6 +378,21 @@ const SECTIONS: {
   { id: "projects", label: "Projects", icon: FolderKanban, body: () => <ProjectsSection /> },
 ];
 
+/** The sections this device can use: the Home Screen steps exist only where
+ *  an install is possible and still missing. */
+function sectionsForThisDevice(): typeof SECTIONS {
+  if (!installOffered(installSurface())) return SECTIONS;
+  return [
+    ...SECTIONS,
+    {
+      id: "install",
+      label: "On your phone",
+      icon: Smartphone,
+      body: () => <InstallSection />,
+    },
+  ];
+}
+
 /** The guided tour — a big dialog floating over the running app: the
  *  selected section on the left, the section list on the right. */
 export function OnboardingGuide({
@@ -212,8 +402,9 @@ export function OnboardingGuide({
   onDone: (exit: OnboardingExit) => void;
 }) {
   const [step, setStep] = useState(0);
-  const section = SECTIONS[step]!;
-  const last = step === SECTIONS.length - 1;
+  const [sections] = useState(sectionsForThisDevice);
+  const section = sections[step]!;
+  const last = step === sections.length - 1;
   const Icon = section.icon;
 
   return (
@@ -231,12 +422,12 @@ export function OnboardingGuide({
             </div>
             <div className="flex-1">{section.body()}</div>
             <div className="mt-6 flex items-center justify-end gap-2">
-              {step === 1 && (
+              {section.id === "desktop" && (
                 <Button variant="outline" onClick={() => onDone("device")}>
                   Set it up now
                 </Button>
               )}
-              {step === 2 && (
+              {section.id === "gateway" && (
                 <Button variant="outline" onClick={() => onDone("gateway")}>
                   Create a key
                 </Button>
@@ -255,7 +446,7 @@ export function OnboardingGuide({
           </div>
           {/* section list */}
           <div className="flex flex-row gap-1 overflow-x-auto border-t border-border bg-muted/40 p-2 sm:flex-col sm:overflow-visible sm:border-l sm:border-t-0 sm:p-3">
-            {SECTIONS.map((s, i) => {
+            {sections.map((s, i) => {
               const SIcon = s.icon;
               return (
                 <button

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import Thread from "./views/thread/Thread";
+import { InstallHint } from "./views/onboarding";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
@@ -455,6 +456,7 @@ function DesktopApp() {
           {appVersion && (
             <p className="text-center text-xs text-muted-foreground/70">Guild v{appVersion}</p>
           )}
+          {!IS_TAURI && <InstallHint />}
           {addWorkspace && (
             <button
               className="text-xs text-muted-foreground outline-none hover:text-foreground"

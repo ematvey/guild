@@ -2245,6 +2245,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       <ThreadOverlays
         deviceOpen={overlay?.kind === "device"}
         onboardOpen={route.overlay?.kind === "onboard"}
+        installOpen={overlay?.kind === "install"}
         createProjectOpen={createProjectOpen}
         onCloseCreateProject={setCreateProjectOpen}
         onboarded={onboarded}

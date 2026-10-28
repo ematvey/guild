@@ -10,6 +10,9 @@
 //   /project/<id>              — sidebar filtered to one project (Work tab)
 //   /project/<id>/new          — scratch composer pre-picked to the project
 //   /project/<id>/thread/<cid> — open thread within its project view
+//   /install                   — the "Add to Home Screen" guide (the
+//                                steps differ per browser; chat-independent
+//                                top-level route)
 //   /device                    — device-setup dialog, optionally over a
 //                                thread: /thread/<id>/device
 //   /onboard                   — the onboarding guide dialog (the rail's
@@ -45,7 +48,11 @@ import {
   type UsageQuery,
 } from "../settings/usage-route";
 
-export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | null;
+export type ChatOverlay =
+  | { kind: "device" }
+  | { kind: "onboard" }
+  | { kind: "install" }
+  | null;
 export interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
@@ -190,6 +197,8 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
   if (parts[0] === "onboard" || parts[0] === "help")
     return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
+  if (parts[0] === "install")
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "install" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -352,6 +361,10 @@ export const chatRoutePath = (
     // Chat-independent top-level route: any thread/project prefix drops.
     // /help deep links share the address (the guide is the help page).
     return "/onboard";
+  }
+  if (overlay?.kind === "install") {
+    // Chat-independent like /onboard: any thread/project prefix drops.
+    return "/install";
   }
   if (overlay?.kind === "device") {
     // /settings/<seg> parses as a Settings-tab section, so a device dialog

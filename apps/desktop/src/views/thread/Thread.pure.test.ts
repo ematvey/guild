@@ -365,6 +365,23 @@ describe("parseChatRoute / chatRoutePath", () => {
       chatId: null,
       overlay: { kind: "onboard" },
     });
+    // install guide: chat-independent too, and its own address
+    expect(parseChatRoute("/install")).toEqual({
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      usage: DEFAULT_USAGE,
+      overlay: { kind: "install" },
+      skills: null,
+      agents: null,
+      newChat: false,
+    });
+    expect(parseChatRoute("/project/p1/thread/c1/install")).toMatchObject({
+      chatId: null,
+      overlay: { kind: "install" },
+    });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
@@ -476,6 +493,10 @@ describe("parseChatRoute / chatRoutePath", () => {
     expect(chatRoutePath("c1", "p1", { kind: "onboard" })).toBe("/onboard");
     expect(parseChatRoute(chatRoutePath("c1", "p1", { kind: "onboard" }))).toMatchObject({
       overlay: { kind: "onboard" },
+    });
+    expect(chatRoutePath("c1", "p1", { kind: "install" })).toBe("/install");
+    expect(parseChatRoute(chatRoutePath("c1", "p1", { kind: "install" }))).toMatchObject({
+      overlay: { kind: "install" },
     });
     // and never rides on the Settings tab
     expect(chatRoutePath(null, null, null, null, "settings", "models", null, true)).toBe("/settings/models");
