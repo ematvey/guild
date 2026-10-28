@@ -8,6 +8,7 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import type { ProjectRow } from "../store/projects.js";
+import type { Project } from "@guild/wire/rest";
 
 /** The display name for a folder: its last path segment (Windows or POSIX
  *  separators); a drive or share root names itself. */
@@ -20,14 +21,15 @@ export function folderBasename(folder: string): string {
 /** serde struct order for the protocol Project type (direct Json<Project>
  *  responses serialize in declaration order, not sorted). */
 function projectJson(p: ProjectRow): string {
-  return JSON.stringify({
+  const out: Project = {
     id: p.id,
     name: p.name,
     folder: p.folder,
     machine_id: p.machine_id,
     machine_label: p.machine_label,
     created_at: p.created_at,
-  });
+  };
+  return JSON.stringify(out);
 }
 
 /** serde's column position in deserialize rejections is the raw body

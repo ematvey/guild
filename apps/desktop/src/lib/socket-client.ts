@@ -6,7 +6,7 @@ import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
-import { StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
+import { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
 import { ChatSubagentNode, ChatSummary } from "./api/chats";
 import type { Project } from "./api/projects";
 import type { MachineInfo } from "./api/machines";
@@ -41,7 +41,7 @@ export interface SocketHandlers {
   /** One machine's socket presence flip (claimed or released). */
   onMachineStatus?: (machine_id: string, online: boolean) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
-  onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
+  onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamEvent }) => void;
   onSync: (chat_id: string, phase: "begin" | "done") => void;
   onDisplaced?: () => void;
   onAuthRequired?: () => void;

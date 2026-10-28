@@ -2,7 +2,7 @@
 // socket: an older page of the durable log and the context-usage meter.
 
 import { apiUrl, getToken } from "./session";
-import type { ServerFrame } from "@guild/wire/types";
+import type { ServerFrame, StreamEvent } from "@guild/wire/types";
 import type {
   ThreadEvent,
   ThreadEventRow,
@@ -12,6 +12,7 @@ import type {
 } from "@guild/wire/rest";
 
 export type {
+  StreamEvent,
   ThreadEvent,
   ThreadEventRow,
   UsagePayload,
@@ -68,23 +69,6 @@ export async function fetchThreadContext(chatId: string, model: string, signal: 
 // The REST shapes live in @guild/wire/rest, hand-written from
 // protocol/rest.schema.json. The local names stay for the view code.
 
-export type StreamFrame = {
-  type: string;
-  content?: string;
-  message?: string;
-  tokens_in?: number;
-  tokens_out?: number;
-  // tool frames
-  call_id?: string;
-  name?: string;
-  arguments?: string;
-  executor?: string;
-  is_error?: boolean;
-  kind?: string;
-  // approval frames
-  approved?: boolean;
-  reason?: string;
-};
 
 /** Uploads one file as a chat context attachment (POST raw bytes, metadata
  * in the query string per the server contract). */

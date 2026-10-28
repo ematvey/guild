@@ -8,7 +8,7 @@
 //! Boundary: visible blocks only. Sockets, transport and composer state
 //! stay in the component; this is a plain module, not a store.
 
-import type { MessageAttachmentMeta, StreamFrame, ThreadEventRow, ThreadState } from "./thread-events";
+import type { MessageAttachmentMeta, StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
 
 // ---------- block shapes ----------
 
@@ -564,7 +564,7 @@ export function upsertApproval(blocks: RenderBlock[], a: ApprovalBlock): RenderB
 /// in-flight step — the frames after the last tool_completed. Before the
 /// turn's first tool completes that is the whole frame list: the reload has
 /// none of the turn's text yet.
-export function replayFrom(frames: StreamFrame[]): StreamFrame[] {
+export function replayFrom<T extends { type: string }>(frames: T[]): T[] {
   for (let i = frames.length - 1; i >= 0; i--) {
     if (frames[i].type === "tool_completed") return frames.slice(i + 1);
   }
@@ -717,7 +717,7 @@ export interface ThreadReducer {
    * a non-replayable command-consumer stream), so the chat view does not
    * feed frames today; the transition exists for stream consumers built on
    * the same merge rules. */
-  applyFrame(frame: StreamFrame): ApplyResult;
+  applyFrame(frame: StreamEvent): ApplyResult;
   /** Prepends one older page of the durable log (the scroll-to-top loader):
    *  the view re-derives from the merged window, so cross-page tool results
    *  and approval decisions still join their blocks. */
@@ -1272,12 +1272,14 @@ export function createThreadReducer(): ThreadReducer {
           } else if (frame.call_id) {
             // A fast tool's completion frame can beat the anchor event's
             // notify fan-out: provision the finished row here — the durable
-            // assistant_message adopts it (no duplicate).
+            // assistant_message adopts it (no duplicate). The completion frame
+            // carries no executor; `tool_started` is its source. Default to
+            // the server, which is where every tool runs unless it is client.
             const fresh: ToolBlock = {
               callId: frame.call_id,
-              name: frame.name ?? "tool",
+              name: frame.name,
               args: "",
-              executor: frame.executor === "client" ? "client" : "server",
+              executor: "server",
               status: frame.is_error ? "error" : "done",
               content: frame.content,
               ts: nowIso(),

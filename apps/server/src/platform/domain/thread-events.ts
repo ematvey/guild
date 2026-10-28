@@ -143,7 +143,7 @@ export function turnErrorEvent(message: string): ThreadEvent {
 /** One ThreadEvent as a plain object. `undefined` fields stay absent in the
  *  JSON text; the shape is the closed typed variant, so extra input fields
  *  never reach the wire. */
-export function threadEventObject(event: ThreadEvent): Record<string, unknown> {
+export function threadEventObject(event: ThreadEvent): ThreadEvent {
   switch (event.type) {
     case "user_message":
       return {
@@ -244,7 +244,7 @@ export function threadEventWire(event: ThreadEvent): string {
 }
 
 /** One persisted row as a plain object. */
-export function threadEventRowObject(row: ThreadEventRow): Record<string, unknown> {
+export function threadEventRowObject(row: ThreadEventRow): ThreadEventRow {
   return {
     id: row.id,
     chat_id: row.chat_id,
