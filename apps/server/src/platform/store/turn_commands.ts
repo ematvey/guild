@@ -7,7 +7,7 @@
 
 import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
-import { jsonbText } from "../domain/text.js";
+import { jsonbText, jsonValue } from "../domain/text.js";
 
 export interface TurnCommand {
   id: string;
@@ -42,7 +42,12 @@ export class TurnCommandStore {
     );
     const row = res.rows[0];
     if (!row) return undefined;
-    if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, request)) {
+    if (
+      row.org_id !== org ||
+      row.user_id !== user ||
+      row.chat_id !== chat ||
+      !deepEq(row.request, jsonValue(request))
+    ) {
       throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
     }
     return row;
@@ -121,7 +126,9 @@ export class TurnCommandStore {
         [id],
       );
       const row = rowRes.rows[0]!;
-      if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, request)) {
+      // The stored row holds the sanitized form, so a retry compares against
+      // that form. A NUL must not turn a valid retry into a conflict.
+      if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, jsonValue(request))) {
         throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
       }
       if (inserted.rowCount === 1) {

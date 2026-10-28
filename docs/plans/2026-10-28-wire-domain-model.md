@@ -1,6 +1,7 @@
 # Wire domain model before the wide release
 
-Date: 2026-10-28. Status: **analysis not started**. Scope: the client↔server
+Date: 2026-10-28. Status: **in progress**. The decisions made so far are in
+`PLAN.md`; the questions below that remain open are still open. Scope: the client↔server
 wire — `protocol/`, `packages/wire`, `crates/protocol` — and the client code
 that consumes it.
 
@@ -92,7 +93,8 @@ an unknown variant, never fail a frame for what it does not know.
 ## Out of scope
 
 - The sandbox wire: a server implementation detail, both ends ship together.
-- The JSON-RPC envelope: the desktop and the engine release together.
+- The JSON-RPC envelope: the desktop and the engine release together, so its
+  schema records the shapes but is not a compatibility gate.
 - A compatibility gate: the rule is recorded; the mechanism comes after the
   model, not before it.
 

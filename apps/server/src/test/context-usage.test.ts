@@ -68,7 +68,7 @@ describe("composer context usage from committed provider measurements", () => {
     // text, so it is stored; the read path must not cast it to jsonb.
     await stack.env.db.query(
       "INSERT INTO entries(id,conversation_id,commit_seq,kind,record) VALUES(1006,1000,1,'pi.toolResult',$1)",
-      [JSON.stringify({ id: 1006, kind: "pi.toolResult", data: { text: "PK\\u0000binary" } })],
+      [JSON.stringify({ id: 1006, kind: "pi.toolResult", data: { text: "PK\u0000binary" } })],
     );
     await assistant(1007, 321);
     const response = await stack.env.app.inject({ url: url(), headers: headers() });

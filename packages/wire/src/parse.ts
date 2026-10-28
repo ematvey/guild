@@ -52,8 +52,9 @@ void _clientTagsExhaustive;
 const SERVER_TAGS: ReadonlySet<string> = new Set(SERVER_TAG_NAMES);
 const CLIENT_TAGS: ReadonlySet<string> = new Set(CLIENT_TAG_NAMES);
 
-/** Read the `type` tag from parsed JSON. Return null for a non-object. */
-function tagOf(text: string): string | null {
+/** Parse one frame text. Return the parsed object and its `type` tag, or
+ *  null for bad JSON or a non-object. */
+function frameOf(text: string): { raw: Record<string, unknown>; tag: string } | null {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -62,23 +63,23 @@ function tagOf(text: string): string | null {
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const tag = (raw as Record<string, unknown>)["type"];
-  return typeof tag === "string" ? tag : null;
+  return typeof tag === "string" ? { raw: raw as Record<string, unknown>, tag } : null;
 }
 
 /** Parse one server frame. Return null for bad JSON, a non-object, or an
  *  unknown `type` tag. */
 export function parseServerFrame(text: string): ServerFrame | null {
-  const tag = tagOf(text);
-  if (tag === null || !SERVER_TAGS.has(tag)) return null;
-  return JSON.parse(text) as ServerFrame;
+  const frame = frameOf(text);
+  if (frame === null || !SERVER_TAGS.has(frame.tag)) return null;
+  return frame.raw as ServerFrame;
 }
 
 /** Parse one client frame. Return null for bad JSON, a non-object, or an
  *  unknown `type` tag. */
 export function parseClientFrame(text: string): ClientFrame | null {
-  const tag = tagOf(text);
-  if (tag === null || !CLIENT_TAGS.has(tag)) return null;
-  return JSON.parse(text) as ClientFrame;
+  const frame = frameOf(text);
+  if (frame === null || !CLIENT_TAGS.has(frame.tag)) return null;
+  return frame.raw as ClientFrame;
 }
 
 /** Serialize one client frame to a JSON text frame. */

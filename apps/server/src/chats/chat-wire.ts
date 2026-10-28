@@ -11,12 +11,11 @@ export interface ChatWireHub {
   machineLabel(machineId: string): string | undefined;
 }
 
-/** protocol::api::Chat. Field order is wire-pinned: it follows the Rust
- *  struct serialization order. */
+/** protocol::api::Chat. */
 export function chatWire(hub: ChatWireHub, row: ChatListRow): Chat {
   const online = row.machine_id !== null && hub.machineOnline(row.machine_id);
-  // Old chats stored the raw machine id as their label; the live hub label
-  // (the machine's hostname) is the truth when the slot is up.
+  // The live hub label (the machine's hostname) is the truth when the slot is
+  // up; otherwise the stored label stands.
   const label =
     online && row.machine_id !== null ? (hub.machineLabel(row.machine_id) ?? row.machine_id) : row.machine_label;
   return {

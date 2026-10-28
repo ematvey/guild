@@ -12,6 +12,28 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A sanitizer cleans keys as well as values (2026-10-28).** `jsonbText`
+  and `recordJsonText` rebuilt their input with a JSON replacer, which never
+  visits a key. A property name with U+0000 or a lone surrogate reached
+  `jsonb` and failed the write. Both now rebuild every object through one
+  cleaner, so a key and a value take the same path. `encodeValue` is
+  lossless: the sandbox wire no longer replaces U+0000 in a call argument,
+  because the record encoder cleans at the durable boundary. The turn
+  command store compares a retry against the sanitized form, so a NUL no
+  longer turns a valid retry into `command_id_conflict`.
+
+- **A trace delta keeps the leaf's fields (2026-10-28).** A request row
+  stores only the new messages. The read path now takes every non-message
+  field (`tools`, `model`, the sampling settings) from the leaf, not from
+  the root, so a change to them survives the rebuild. A delta longer than
+  the body cap falls back to the capped full body, so a chain never holds
+  cut JSON.
+
+- **A request schema lists in `required` only what the reader needs
+  (2026-10-28).** `Sync.chat_id` and `ToolResult.meta` are optional: the
+  server reads an absent field as null. The fixtures still show the form
+  the current writers send.
+
 - **Older clients must keep working across core releases (2026-10-28).**
   The server and the desktop client release on different schedules, and a
   mobile client will release less often than either. A core release must

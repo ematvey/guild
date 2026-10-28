@@ -29,8 +29,9 @@ not carry. The read path rebuilds the full body.
   has at least as many messages and the parent's last message hashes the
   same. Then store the tail and the parent id. Otherwise store a full body.
 - Read path (`TraceStore.payloads`): walk `parent_request_id` to the root,
-  concatenate the tails in order, and return the same `{kind, body}` shape
-  the activity API already serves.
+  concatenate the tails in order, take every non-message field from the
+  leaf, and return the same `{kind, body}` shape the activity API already
+  serves.
 - The chain key is the run id, else the chat id, else the request id. It is
   passed by the gateway (`openai.ts`) and by the approval judge
   (`approvals.ts`).
@@ -54,6 +55,8 @@ not carry. The read path rebuilds the full body.
   correctness.
 - A request with no messages (or an unparsable body) is stored as a full
   body.
+- A delta longer than the body cap falls back to the capped full body, so
+  the chain never holds cut JSON.
 - Both tables keep the 14-day TTL, but the parent is older, so it can
   expire minutes before its child. A chain read in that window stops at a
   delta and shows a partial history. Fix if it matters: store the root's

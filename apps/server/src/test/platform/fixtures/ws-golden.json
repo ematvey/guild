@@ -166,7 +166,7 @@
         {
           "socket": 0,
           "kind": "text",
-          "data": "{\"type\":\"thread_list\",\"chats\":[{\"blocked\":false,\"created_at\":\"__TS__\",\"generating\":false,\"id\":\"__UUID__\",\"last_activity_at\":\"__TS__\",\"machine_online\":false,\"org_id\":\"__UUID__\",\"title\":\"capture\",\"unread\":false,\"user_id\":\"__UUID__\",\"working\":false}]}"
+          "data": "{\"type\":\"thread_list\",\"chats\":[{\"blocked\":false,\"created_at\":\"__TS__\",\"generating\":false,\"id\":\"__UUID__\",\"last_activity_at\":\"__TS__\",\"machine_online\":false,\"org_id\":\"__UUID__\",\"title\":\"capture\",\"unread\":false,\"user_id\":\"__UUID__\",\"working\":false,\"type\":\"user\",\"archived\":false,\"deleted\":false}]}"
         }
       ]
     }

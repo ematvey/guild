@@ -69,8 +69,7 @@ describe("chats CRUD wire", () => {
     });
     expect(created.statusCode).toBe(200);
     const chat = JSON.parse(created.body) as Record<string, unknown>;
-    // Live-captured Rust wire order (see fixtures/m3-live/chat.json):
-    // id, org_id, user_id, title, created_at, generating, unread, machine_online.
+    // The one chat row builder: the list row and the single-chat response.
     expect(Object.keys(chat)).toEqual([
       "id",
       "org_id",
@@ -79,7 +78,13 @@ describe("chats CRUD wire", () => {
       "created_at",
       "generating",
       "unread",
+      "working",
+      "blocked",
+      "last_activity_at",
       "machine_online",
+      "type",
+      "archived",
+      "deleted",
     ]);
     expect(chat.machine_online).toBe(false);
     expect(chat.generating).toBe(false);
@@ -833,5 +838,42 @@ describe("gateway/chat turn flow", () => {
     expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${otherId}/compactions/${taskId}`, headers })).statusCode).toBe(404);
     expect((await stack.env.app.inject({ method: "GET", url: path })).statusCode).toBe(401);
     expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}/compactions/NaN`, headers })).statusCode).toBe(400);
+  }, TEST_TIMEOUT);
+
+  it("a retry whose message holds U+0000 keeps its command id", async () => {
+    const headers = auth(stack.memberToken);
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers,
+      payload: { title: "nul retry" },
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+    const userMessageId = crypto.randomUUID();
+    const payload = {
+      chat_id: chat.id,
+      model: "GLM-Test-Model",
+      messages: [{ role: "user", content: "binary PK\u0000tail" }],
+      user_message_id: userMessageId,
+    };
+    const first = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers,
+      payload,
+    });
+    expect(first.statusCode).toBe(200);
+    // The store holds the sanitized request; a retry of the same raw command
+    // must match it instead of answering command_id_conflict.
+    const again = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers,
+      payload,
+    });
+    expect(again.statusCode).toBe(200);
+    const ack = JSON.parse(again.body) as { accepted: boolean; user_message_id: string };
+    expect(ack.accepted).toBe(true);
+    expect(ack.user_message_id).toBe(userMessageId);
   }, TEST_TIMEOUT);
 });

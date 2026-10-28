@@ -6,16 +6,10 @@ import type { PlatformContext } from "../platform/root-context.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type { MachineRow } from "../platform/store/machines.js";
 import type { ProjectRow } from "../platform/store/projects.js";
-import type { ChatListRow } from "../platform/store/chats.js";
 import type { Chat, MachineInfo } from "@guild/wire/rest";
 import { chatWire } from "../chats/chat-wire.js";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
-
-/** One chat row in the sidebar wire shape. */
-function chatRow(ctx: PlatformContext, chat: ChatListRow): Chat {
-  return chatWire(ctx.hub, chat);
-}
 
 /** The caller's active chats, newest activity first. */
 export async function threadListSnapshot(
@@ -23,7 +17,7 @@ export async function threadListSnapshot(
   user: Caller,
 ): Promise<Chat[]> {
   const rows = await ctx.chats.listChats(user.org_id, user.id);
-  return rows.map((chat) => chatRow(ctx, chat));
+  return rows.map((chat) => chatWire(ctx.hub, chat));
 }
 
 /** The caller's archived chats, same row shape as the active list. */
@@ -32,7 +26,7 @@ export async function archivedThreadListSnapshot(
   user: Caller,
 ): Promise<Chat[]> {
   const rows = await ctx.chats.listArchivedChats(user.org_id, user.id);
-  return rows.map((chat) => chatRow(ctx, chat));
+  return rows.map((chat) => chatWire(ctx.hub, chat));
 }
 
 /** Active and archived project rows. */
@@ -59,8 +53,7 @@ export async function workspaceIdentitySnapshot(
     : { name: org.name, logo_url: org.logo_url };
 }
 
-/** MachineInfo wire shape. Alphabetical key order, same reason as the chat
- *  rows. */
+/** MachineInfo wire shape. */
 export function machineInfo(row: MachineRow, connected: boolean): MachineInfo {
   return {
     ...(row.app_version !== null ? { app_version: row.app_version } : {}),
