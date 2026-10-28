@@ -43,11 +43,8 @@ describe("guild section current user", () => {
     const body = await renderGuild(extensionDeps(DMITRY));
     expect(body.startsWith(buildSystemPrompt(null))).toBe(true);
     expect(body).toContain(
-      '<current_user name="Dana Tester" email="dana@example.test">',
+      '\n\n<current_user name="Dana Tester" email="dana@example.test" />',
     );
-    expect(body).toContain("You are talking to Dana Tester <dana@example.test>");
-    expect(body).toContain("Jira currentUser()");
-    expect(body).toContain("</current_user>");
   });
 
   it("falls back to the email when the display name is blank", () => {
@@ -58,10 +55,9 @@ describe("guild section current user", () => {
 
   it("escapes attribute-breaking characters in the name", () => {
     const block = renderCurrentUser({ ...DMITRY, display_name: 'A "B" <c> & d' });
-    expect(block).toContain(
-      'name="A &quot;B&quot; &lt;c&gt; &amp; d"',
+    expect(block).toBe(
+      '<current_user name="A &quot;B&quot; &lt;c&gt; &amp; d" email="dana@example.test" />',
     );
-    expect(block).not.toContain('<current_user name="A "B"');
   });
 
   it("renders the persona alone when the conversation has no owner", async () => {
