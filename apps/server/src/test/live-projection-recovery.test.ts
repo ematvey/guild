@@ -88,7 +88,7 @@ describe("reconstructable live projection", () => {
       { id: 909, kind: "pi.tool", owner: 908, input: { kind: "nested", parent: 908, parentCallId: "call", key: "c1", call: { type: "toolCall", id: "call/c1", name: "bash", arguments: { command: "sleep 30" } } }, state: { status: "running", checkpoint: { phase: "execute", arguments: { command: "sleep 30" }, replay: "unsafe" } } },
     ];
     for (const row of taskRows) await pool.query("INSERT INTO tasks(id,conversation_id,kind,status,abort_requested,background,record) VALUES ($1,105,$2,$3,false,false,$4)", [row.id, row.kind, row.state.status, JSON.stringify({ ...row, conversationId: 105, version: 1, background: false, abortRequested: false })]);
-    await pool.query("INSERT INTO entries(id,conversation_id,commit_seq,record) VALUES (910,105,1,$1)", [JSON.stringify({ id: 910, conversationId: 105, kind: "pi.assistant", model: [{ role: "assistant", content: [{ type: "toolCall", id: "call", name: "codemode", arguments: {} }] }] })]);
+    await pool.query("INSERT INTO entries(id,conversation_id,commit_seq,kind,record) VALUES (910,105,1,'pi.assistant',$1)", [JSON.stringify({ id: 910, conversationId: 105, kind: "pi.assistant", model: [{ role: "assistant", content: [{ type: "toolCall", id: "call", name: "codemode", arguments: {} }] }] })]);
     await damage(id);
     await storage.repairLiveProjections(105 as never);
     const live = (await storage.document(id, "current", BACKGROUND_CONTEXT))!.value;

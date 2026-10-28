@@ -345,6 +345,23 @@
           "at": "apps/server/src/chats/turn-text.ts"
         }
       ]
+    },
+    {
+      "id": "storable-text",
+      "definition": "Text that crosses a durable boundary: U+0000 is replaced so the value can be stored and read again.",
+      "canonical": "apps/server/src/platform/domain/text.ts",
+      "types": [],
+      "aliases": [
+        "record-text",
+        "sanitized-text"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/platform/domain/text.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": []
     }
   ],
   "attaches": [

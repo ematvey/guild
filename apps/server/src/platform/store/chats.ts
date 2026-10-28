@@ -162,35 +162,40 @@ export class ChatStore {
 
   /** A manual compaction can finish successfully without appending a summary. */
   async compactionStatus(chatId: string, taskId: number): Promise<CompactionStatus | null> {
-    const result = await this.pool.query<{
-      status: string;
-      outcome: { status: string; result?: { entryId?: number; submissionId?: number }; error?: { message?: string }; reason?: string } | null;
-    }>(
-      `SELECT t.status,t.record::jsonb->'state'->'outcome' AS outcome FROM tasks t
+    // Records are JSON text; parse here instead of casting them to jsonb.
+    const result = await this.pool.query<{ status: string; record: string }>(
+      `SELECT t.status,t.record FROM tasks t
        JOIN chat_conversations c ON c.conversation_id=t.conversation_id
        WHERE c.chat_id=$1 AND t.id=$2 AND t.kind='"pi.compaction"'`,
       [chatId, taskId],
     );
     const row = result.rows[0];
     if (!row) return null;
+    const outcome = (JSON.parse(row.record) as {
+      state?: { outcome?: { status: string; result?: { entryId?: number; submissionId?: number }; error?: { message?: string }; reason?: string } };
+    }).state?.outcome ?? null;
     if (row.status !== "terminal") return { status: "running" };
-    if (row.outcome?.status === "completed") {
-      const submissionId = row.outcome.result?.submissionId;
+    if (outcome?.status === "completed") {
+      const submissionId = outcome.result?.submissionId;
       if (submissionId !== undefined) {
-        const placed = await this.pool.query<{ status: string; reason: string | null }>(
-          `SELECT s.status,s.record::jsonb->>'reason' AS reason FROM submissions s
+        const placed = await this.pool.query<{ status: string; record: string }>(
+          `SELECT s.status,s.record FROM submissions s
            JOIN chat_conversations c ON c.conversation_id=s.conversation_id
-           WHERE c.chat_id=$1 AND s.id=$2 AND s.record::jsonb->>'type'='write'`,
+           WHERE c.chat_id=$1 AND s.id=$2`,
           [chatId, submissionId],
         );
-        const write = placed.rows[0];
+        const placedRow = placed.rows[0];
+        const placedRecord = placedRow === undefined
+          ? undefined
+          : (JSON.parse(placedRow.record) as { type?: string; reason?: string });
+        const write = placedRecord?.type === "write" ? placedRow : undefined;
         if (write?.status === "queued") return { status: "running" };
         if (write?.status === "done") return { status: "completed", compacted: true };
-        return { status: "failed", error: write?.reason === "aborted" ? "Compaction was cancelled" : "Compaction summary was superseded or could not be applied" };
+        return { status: "failed", error: placedRecord?.reason === "aborted" ? "Compaction was cancelled" : "Compaction summary was superseded or could not be applied" };
       }
-      return { status: "completed", compacted: row.outcome.result?.entryId !== undefined };
+      return { status: "completed", compacted: outcome.result?.entryId !== undefined };
     }
-    return { status: "failed", error: row.outcome?.error?.message ?? row.outcome?.reason ?? "Compaction did not complete" };
+    return { status: "failed", error: outcome?.error?.message ?? outcome?.reason ?? "Compaction did not complete" };
   }
 
   /** The chat's org and owner (the agent tools' caller identity: the

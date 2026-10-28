@@ -53,21 +53,26 @@ export function safeFilename(name: string): string | null {
 export class AttachmentStore {
   constructor(readonly pool: PlatformPool) {}
 
+  /** Inserts a user upload: the author is known now, the event id stays null
+   *  until a message references the attachment. */
   async create(
     id: string,
     orgId: string,
     chatId: string,
+    authorId: string,
     filename: string,
     contentType: string,
     sizeBytes: number,
     objectKey: string,
   ): Promise<AttachmentRow> {
     const res = await this.pool.query<AttachmentDbRow>(
-      `INSERT INTO attachments (id, org_id, chat_id, filename, content_type, size_bytes, object_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO attachments
+         (id, org_id, chat_id, filename, content_type, size_bytes, object_key,
+          author_kind, author_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8)
        RETURNING ${ATTACHMENT_COLUMNS},
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
-      [id, orgId, chatId, filename, contentType, sizeBytes, objectKey],
+      [id, orgId, chatId, filename, contentType, sizeBytes, objectKey, authorId],
     );
     return toRow(res.rows[0]!);
   }

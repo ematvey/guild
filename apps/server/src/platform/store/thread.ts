@@ -49,6 +49,8 @@ export class ThreadStore {
    *  change (reset/compaction) invalidates measurements of the old prefix.
    *  Read immutable entries directly so this works without starting a worker. */
   async contextUsage(orgId: string, chatId: string): Promise<{ tokens: number; model: string } | null> {
+    // Records are JSON text and may carry characters JSONB rejects, so the
+    // filter uses the `kind` column and the parse happens here.
     const result = await this.pool.query<{ record: string }>(
       `SELECT e.record FROM entries e
        JOIN chat_conversations cc ON cc.conversation_id = e.conversation_id
@@ -56,13 +58,17 @@ export class ThreadStore {
        WHERE c.org_id = $1 AND c.id = $2
          AND e.id > COALESCE((SELECT h.id FROM entries h
            WHERE h.conversation_id = e.conversation_id AND h.head IS NOT NULL ORDER BY h.id DESC LIMIT 1), 0)
-         AND e.record::jsonb->>'kind' = 'pi.assistant'
-         AND e.record::jsonb->'model'->0->>'stopReason' NOT IN ('error', 'aborted')
-       ORDER BY e.id DESC LIMIT 1`,
+         AND e.kind = 'pi.assistant'
+       ORDER BY e.id DESC LIMIT 50`,
       [orgId, chatId],
     );
-    if (!result.rows[0]) return null;
-    const entry = JSON.parse(result.rows[0].record) as EntryRecord;
+    const row = result.rows.find((candidate) => {
+      const entry = JSON.parse(candidate.record) as EntryRecord;
+      const message = entry.model?.find(m => m.role === "assistant");
+      return message !== undefined && message.stopReason !== "error" && message.stopReason !== "aborted";
+    });
+    if (!row) return null;
+    const entry = JSON.parse(row.record) as EntryRecord;
     const message = entry.model?.find(m => m.role === "assistant");
     if (!message || message.role !== "assistant") return null;
     const tokens = calculateContextTokens(message.usage);
