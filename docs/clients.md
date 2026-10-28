@@ -256,3 +256,160 @@ the full list of places it must land), then run
 artifact (AppImage, NSIS setup.exe, DMGs, `.app.tar.gz` updater bundles) and
 publishes signatures alongside. Debug builds never self-update
 (`GUILD_UPDATER_FORCE=1` opts in for testing).
+
+---
+
+## 8. Mobile clients (iOS) — research and the first stage
+
+Status: not built. This section records the shape we chose and the facts that
+decide it, so the work starts from a decision and not from a survey.
+
+### 8.1 Shape: an engine-less client, not a second engine
+
+The iOS app is a **client to the server**, the same way web mode is
+(`docs/clients.md` §2). It runs no engine, executes no tools, and hosts no
+machine link. It bundles its own UI and talks to the paired server over the
+same HTTP API and member WebSocket the desktop webview and the browser use.
+The local executor stays where the project is.
+
+The product question this shape must answer: what does the app do that Safari
+does not? Guideline 4.2 rejects an app that is a repackaged website, and the
+guidelines say so directly ("we provide Safari for a great web experience
+too"). Push, offline history, Keychain session, and universal links are the
+honest answers. Without at least one of them there is no reason to ship.
+
+### 8.2 Stage 1: foreground only — restore state, reconnect the socket
+
+The first stage does no push and no background work. On launch and on every
+return to the foreground the client:
+
+1. restores the session (Keychain), and
+2. reconnects the member socket and runs the normal `sync` bracket.
+
+That is enough for a usable client. The socket is the source of truth and the
+sync bracket already covers everything missed while the app was suspended.
+Nothing else in the client changes.
+
+### 8.3 The one code change: split `IS_TAURI` from "has an engine"
+
+`IS_TAURI` (`apps/desktop/src/lib/session.ts`) is read in 58 places across 23
+files, and it carries two different meanings today:
+
+- "this host is a Tauri shell", and
+- "this host runs a local engine".
+
+An iOS build is Tauri and has no engine, so the second meaning breaks: the
+app would call `start_engine`, report a machine identity, and offer
+`list_dir`/`wsl_home`. Before any mobile target, split it:
+
+- `IS_TAURI` — the shell exists.
+- `HAS_ENGINE` — a local engine exists (desktop only; resolved once at start).
+
+Desktop-only surfaces follow `HAS_ENGINE`: engine attach, machine identity,
+local file picker, window title, tray, updater, `opener`. One flag, one
+meaning.
+
+### 8.4 iOS constraints that change the deployment, not the client
+
+- **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The dev
+  and prod stacks serve `http://…:18080` / `:18081`; an iOS client needs a
+  public hostname with a valid certificate in front of them.
+- **No iOS build on the Linux host.** `tauri ios build` needs Xcode,
+  CocoaPods, and a provisioning profile. The whole release story in §4 is
+  "no Mac required" — that stops at iOS. A Mac or a cloud Mac is a new
+  requirement for this target only.
+- **No OTA UI.** Guideline 2.5.2 requires a self-contained bundle, so iOS
+  does not get the fast UI fix loop the desktop has. Every UI change is a
+  review cycle.
+
+### 8.5 App Store rules that apply to this client
+
+| Rule | Applies because | What to do |
+|---|---|---|
+| 4.2 Minimum Functionality | Client to our own service | Add native value: push, offline, Keychain, links |
+| 2.5.2 | UI must be self-contained | Bundle the UI. No downloaded UI bundle |
+| 4.8 | SSO/OIDC login buttons exist | Add Sign in with Apple, or ship password login only |
+| 5.1.1(v) | The app creates accounts | Provide in-app account deletion |
+| 3.1.1 | Any digital purchase inside the app | Use IAP, or keep purchases out of the app |
+| 1.2 | Agent output and multi-user chat are user content | Report, block, and filter mechanisms |
+| 5.1 | Data collection | `PrivacyInfo.xcprivacy` + required-reason APIs |
+| 2.1 | Review needs a live backend | Keep a demo account alive during review |
+
+4.8 is the one that surprises teams: one third-party login button pulls in
+Sign in with Apple.
+
+### 8.6 Push: APNs is the only path
+
+Every remote wake-up on iOS ends at APNs — alert push, silent push, Web Push
+(Safari, Home Screen web app), PushKit, Live Activity updates. There is no
+second network. Background fetch and background `URLSession` are not delivery
+paths: the OS decides when they run, and the user can disable them.
+
+The socket cannot substitute. A backgrounded app is suspended after about 30
+seconds; TCP connections do not survive it. Declaring `voip` or `audio` to
+keep a socket alive violates 2.5.4 and loses the entitlement.
+
+So when push arrives, the server gains a second transport beside the socket,
+not a second event system:
+
+```
+thread event -> notify(event)
+                  |- WS connected? -> frame (as today)
+                  '- not connected -> prefs, mute, quiet hours -> APNs
+```
+
+Server work this implies:
+
+- **Device registry** — `user_id`, `device_id`, `apns_token`, `platform`,
+  `last_seen`. Register on every launch; delete the row on `410 Unregistered`.
+- **APNs auth** — token-based (`.p8`, ES256, key id + team id), rotatable
+  without a client release.
+- **Preference model** — per category, per-thread mute, quiet hours. Without
+  it an agent that emits 40 events sends 40 pushes and Apple throttles the
+  app.
+- **Presence gate** — a live WS on any device means frame, not push.
+- **Coalescing** — one push per thread per window,
+  `apns-collapse-id = thread:<id>`.
+- **Badge** — unread count computed server-side, matching the sidebar count.
+- **Payload policy** — content or a generic nudge, per user, default generic
+  for agent output.
+
+Push event set stays small: mention, approval waiting, run finished, run
+failed, subagent failed, new message in a thread you are in. Skill and
+release events stay in the inbox.
+
+APNs facts to design around: 4 KB payload, priority 10 requires a visible
+alert, silent pushes are budgeted (a few per hour, unpublished) and may be
+dropped, no delivery guarantee and no ordering, a limited offline queue.
+Push is a hint; the app syncs on open.
+
+Traps that cost days: sandbox vs production endpoint (`BadDeviceToken` from a
+debug token), `apns-push-type` missing or wrong, `410` never handled so stale
+tokens pile up, and carrying state in a push that the app cannot re-fetch.
+
+### 8.7 The cheaper experiment
+
+iOS 16.4+ supports Web Push for web apps added to the Home Screen. It runs
+through APNs, so it needs the same device registry and APNs credentials, and
+it needs no Xcode, no review, and no new client. Build the push service
+against a Home Screen web app first. If the notifications prove useful, the
+native client is a UX upgrade over a proven channel.
+
+### 8.8 Not doing: a remote UI bundle
+
+We considered and rejected shipping the client as a small shell that loads
+the UI from the server (Tauri supports it: `frontendDist` may be a URL). It
+moves the trust boundary — remote JavaScript plus the `invoke` bridge reaches
+`list_dir`, `wsl_home`, `rpc_request`, and `install_update` — and it collides
+with Apple's rules: 2.5.2 forbids downloaded code that changes features, 4.2
+rejects a thin shell, and 2.4.5(iv) forbids it on the Mac App Store outright.
+A signed, locally cached bundle would be defensible, but it is still a
+downloaded UI with no review. Keep the UI in the bundle.
+
+### 8.9 Sources
+
+- Apple, App Review Guidelines — <https://developer.apple.com/app-store/review/guidelines/>
+- Tauri, capabilities and remote API access — <https://v2.tauri.app/security/capabilities/>
+- Tauri, config reference (`frontendDist`) — <https://v2.tauri.app/reference/config/>
+- Expo, EAS Update (accepted OTA practice) — <https://docs.expo.dev/eas-update/introduction/>
+- Google Play, Spam policy — <https://support.google.com/googleplay/android-developer/answer/9899034>

@@ -12,6 +12,19 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The mobile client is an engine-less client (2026-10-28).** iOS runs no
+  engine, no tools, and no machine link: it bundles its own UI and uses the
+  same HTTP API and member socket as web mode. The first stage is foreground
+  only — restore the session, reconnect the socket, run the normal sync
+  bracket. Push comes later, and push on iOS means APNs and nothing else, so
+  the server will gain a second transport beside the socket with one decision
+  point, a device registry, and per-thread coalescing. Two consequences land
+  before any mobile code: `IS_TAURI` must split into "the shell exists" and
+  "a local engine exists", and iOS forces a TLS endpoint and a Mac build
+  host. A remote UI bundle stays rejected — it moves the trust boundary and
+  breaks 2.5.2/4.2. Research and the App Store rule table are in
+  `docs/clients.md` §8.
+
 - **An agent file rides its message to the client (2026-10-28).** `send_file`
   wrote the attachment row and bound it to the assistant event, but no read
   path ever used that binding: the client showed the model's "the file is
