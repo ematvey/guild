@@ -35,6 +35,7 @@ describe("loadConfig", () => {
       clientToolTimeoutMs: 300_000,
       retryBaseDelayMs: 2_000,
       execPolicyRulesPath: null,
+      tracePayloads: true,
       workerMode: "off",
       agentsScheduler: false,
       agentMaxDepth: 3,
@@ -54,6 +55,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, NODE_ENV: "production", GUILD_SANDBOX: "inprocess-unsafe" })).toThrow(/refused/);
     expect(() => loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1" })).toThrow(/TOKEN/);
     expect(() => loadConfig({ ...base, GUILD_SANDBOX: "yolo" })).toThrow(/GUILD_SANDBOX/);
+  });
+
+  it("captures trace payloads unless GUILD_TRACE_PAYLOADS=0", () => {
+    const base = { GUILD_MASTER_KEY_HEX: "11".repeat(32), GUILD_JWT_SECRET: "s" };
+    expect(loadConfig(base).tracePayloads).toBe(true);
+    expect(loadConfig({ ...base, GUILD_TRACE_PAYLOADS: "0" }).tracePayloads).toBe(false);
+    expect(loadConfig({ ...base, GUILD_TRACE_PAYLOADS: "1" }).tracePayloads).toBe(true);
   });
 
   it("reads GUILD_BIND_ADDR and GUILD_LOG_LEVEL", () => {
