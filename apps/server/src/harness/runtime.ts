@@ -332,8 +332,7 @@ export class GuildRuntime {
       chatOwner: async (chatId) => {
         const owner = await this.chats.ownerOf(chatId);
         if (owner === null) return null;
-        const res = await this.pool.query<{ role: string }>("SELECT role FROM users WHERE id = $1", [owner.user_id]);
-        return { orgId: owner.org_id, userId: owner.user_id, role: res.rows[0]?.role ?? "member" };
+        return { orgId: owner.org_id, userId: owner.user_id, role: owner.role };
       },
       executorKind: (conversationId) => this.executorKind(conversationId),
       conversationEnv: (conversationId, orgId) => this.envForConversation(conversationId, orgId),
@@ -442,7 +441,9 @@ export class GuildRuntime {
         const chatId = await this.chatOfConversation(conversationId);
         if (chatId === null) return null;
         const owner = await this.chats.ownerOf(chatId);
-        return owner === null ? null : { id: owner.user_id };
+        return owner === null
+          ? null
+          : { id: owner.user_id, email: owner.email, display_name: owner.display_name, role: owner.role };
       },
       // The approval gate (M4): exec policy + approvals over the chat
       // mapping and the executor resolution below.

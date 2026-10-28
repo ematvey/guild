@@ -19,6 +19,35 @@ export { ASSISTANT_PROMPT_KEY };
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
 
+/** The Guild user a thread belongs to (the chat owner). */
+export interface CurrentUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
+/** The current-user block: the Guild account this thread belongs to. Tools
+ *  that resolve "me" through their own account (Jira `currentUser()`, a
+ *  mailbox, a calendar) act as whoever owns that account's credentials, so
+ *  the prompt names the Guild user explicitly. */
+export function renderCurrentUser(user: CurrentUser): string {
+  const named = user.display_name !== null && user.display_name.trim() !== "";
+  const name = named ? user.display_name!.trim() : user.email;
+  const attrs = `name="${escapeAttr(name)}" email="${escapeAttr(user.email)}"`;
+  return [
+    `<current_user ${attrs}>`,
+    `You are talking to ${name} <${user.email}>, the Guild user this thread belongs to.`,
+    "A tool that resolves the current user through its own account (Jira currentUser(), a mailbox, a calendar) " +
+      "answers for whoever owns that account. Check the name it returns before you report a result as this user's.",
+    "</current_user>",
+  ].join("\n");
+}
+
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Renders the request's system prompt body: the persona (org override wins
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
@@ -47,8 +76,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** conversationId → org id (the chat mapping). */
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
   /** conversationId → the chat owner's user (the skills index's install
-   *  pins resolve against them) — the same chat→row lookup. */
-  userOfConversation(conversationId: ConversationId): Promise<{ id: string } | null>;
+   *  pins resolve against them, and the prompt's current-user block names
+   *  them) — the same chat→row lookup. */
+  userOfConversation(conversationId: ConversationId): Promise<CurrentUser | null>;
   /** The thread-history tools (thread_history/thread_search), built by the
    *  runtime over its pool; absent in tests without one. */
   threadTools?: readonly ToolRegistration[];
@@ -76,7 +106,9 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
     async render(input) {
       const orgId = await deps.orgOfConversation(input.conversationId);
       const prompt = orgId === null ? null : await deps.orgPrompt(orgId);
-      return buildSystemPrompt(prompt);
+      const user = await deps.userOfConversation(input.conversationId);
+      const body = buildSystemPrompt(prompt);
+      return user === null ? body : `${body}\n\n${renderCurrentUser(user)}`;
     },
   };
   const skillsSection: PromptSection<ToolRegistration> = {
