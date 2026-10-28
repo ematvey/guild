@@ -137,6 +137,43 @@ export const DURABLE_POSTGRES_MIGRATIONS = [
           AND record::jsonb->'state'->'outcome'->>'status' IN ('failed','faulted','orphaned')`,
     ],
   },
+  {
+    version: 6,
+    statements: [
+      // Records are JSON text: JSONB rejects U+0000 and lone surrogates, so a
+      // cast on a stored record fails on tool output that carried binary.
+      // The fields queries filter on become real columns, written from the
+      // same record in the same statement. Old rows are backfilled with a
+      // guarded cast; a row that cannot be cast keeps a sentinel (entries)
+      // or stays null (tasks), and no read path parses it.
+      "ALTER TABLE entries ADD COLUMN kind TEXT",
+      "ALTER TABLE tasks ADD COLUMN outcome_status TEXT",
+      `DO $$
+      DECLARE r RECORD;
+      BEGIN
+        FOR r IN SELECT id, record FROM entries WHERE kind IS NULL LOOP
+          BEGIN
+            UPDATE entries SET kind = COALESCE((r.record::jsonb)->>'kind', 'pi.unknown') WHERE id = r.id;
+          EXCEPTION WHEN others THEN
+            UPDATE entries SET kind = 'pi.unknown' WHERE id = r.id;
+          END;
+        END LOOP;
+        FOR r IN SELECT id, record FROM tasks WHERE outcome_status IS NULL LOOP
+          BEGIN
+            UPDATE tasks SET outcome_status = (r.record::jsonb)->'state'->'outcome'->>'status' WHERE id = r.id;
+          EXCEPTION WHEN others THEN
+            NULL;
+          END;
+        END LOOP;
+      END $$`,
+      "ALTER TABLE entries ALTER COLUMN kind SET NOT NULL",
+      "CREATE INDEX entries_assistant ON entries (conversation_id, id DESC) WHERE kind = 'pi.assistant'",
+      "DROP INDEX IF EXISTS tasks_generation_failures",
+      `CREATE INDEX tasks_generation_failures ON tasks(conversation_id,id)
+        WHERE kind='"pi.generation"' AND status='terminal'
+          AND outcome_status IN ('failed','faulted','orphaned')`,
+    ],
+  },
 ];
 
 export const CURRENT_POSTGRES_SCHEMA_VERSION = DURABLE_POSTGRES_MIGRATIONS.at(-1)?.version ?? 0;
