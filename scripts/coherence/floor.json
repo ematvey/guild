@@ -2,8 +2,8 @@
   "comment": "Coherence floor. Counters may go down, never up. See README.md.",
   "updated": "2026-10-28",
   "counts": {
-    "files": 549,
-    "loc": 120716,
+    "files": 550,
+    "loc": 120777,
     "seams": 11,
     "shims": 19,
     "duplicate_files": 0,
