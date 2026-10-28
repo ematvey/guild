@@ -452,6 +452,28 @@ Still missing, and deliberately so: the service worker, a VAPID key pair per
 org origin, subscription storage, and the `push` handler. Those belong to the
 push model decision (§8.6), not to the install step.
 
+#### Viewport: no `viewport-fit=cover`
+
+The installed app does **not** ask for full-bleed. `apps/desktop/index.html`
+carries a plain viewport (`width=device-width, initial-scale=1.0,
+maximum-scale=1, user-scalable=no`) and the status bar style is `black`, not
+`black-translucent`.
+
+Measured on iOS 26, iPhone 16 Pro Max (440×956, insets 62/34): with `cover`
+the first launch is correct (`innerHeight` 956), but after the Google SSO
+sheet is presented and dismissed the page keeps a height of 894 while still
+being drawn from y=0 — the 62pt status-bar inset is subtracted twice. The
+strip below the page cannot be laid out from CSS, so the composer and the
+drawer sit 62pt too high. A document reload does not repair it; only killing
+the app does. `apple-mobile-web-app-status-bar-style` does not help either: iOS
+takes that value at install time, and a meta change alone is ignored.
+
+Without `cover` the page is inset from the bars, `env()` reports 0, and the
+strip cannot appear. The `max()` paddings on the header, drawer and composer
+already reduce to their minimum when `env()` is 0, so nothing else changes.
+`viewport-fit` is read from the document on every load, which is why it wins
+where the status-bar style does not.
+
 ### 8.8 Not doing: a remote UI bundle
 
 We considered and rejected shipping the client as a small shell that loads
