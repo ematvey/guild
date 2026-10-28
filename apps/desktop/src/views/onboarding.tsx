@@ -49,7 +49,7 @@ function DesktopSection() {
       <Step n={3}>
         Open the app on your computer and enter the one-time code from that
         same dialog — that links it to your account. After that, your computer
-        shows up under Settings → Machine.
+        shows up under Settings → Machines.
       </Step>
     </div>
   );
@@ -64,9 +64,9 @@ function GatewaySection() {
         yours to Guild — normal chatting never needs a key.
       </p>
       <Step n={1}>
-        Open <b>Settings → Gateway</b> and click <b>Create key</b>. Copy the
-        key it gives you — it starts with <code>gk_</code> and is shown only
-        once.
+        Open <b>Settings → Gateway</b> and click <b>New API key</b>. Copy
+        the key it gives you — it starts with <code>gk_</code> and is shown
+        only once.
       </Step>
       <Step n={2}>
         The same page shows the exact address and ready-made examples to paste
@@ -91,7 +91,8 @@ function ChatSection() {
       <p>
         When it needs to do something important — edit files, run commands —
         Guild checks with you first. How much it may do on its own is set per
-        chat, right next to the message box (the small shield button):
+        chat, with the approval button next to the message box (it shows
+        the chat's current mode):
       </p>
       <Step n={1}>
         <b>Ask for approval</b> — Guild asks you before anything potentially
@@ -106,13 +107,14 @@ function ChatSection() {
         organization's rules.
       </Step>
       <p>
-        The setting applies to that chat only. Your overall default lives in{" "}
-        <b>Settings → Approvals</b>.
+        The setting applies to that chat only. A chat you never set follows
+        your organization's default policy.
       </p>
       <p>
         Two handy extras: type <code>/</code> in the message box for{" "}
         <b>skills</b> and built-in <b>commands</b> (see the Skills topic), and
-        use the paperclip to attach files.
+        click the <b>+</b> button next to the message box to attach images,
+        audio, or other files.
       </p>
     </div>
   );
@@ -153,8 +155,8 @@ function ProjectsSection() {
         assistant one place to keep its files.
       </p>
       <Step n={1}>
-        Click <b>Work</b> in the left bar, then <b>New project</b>. Give it a
-        name and a folder on one of your computers.
+        Click <b>Projects</b> in the left bar, then <b>New project</b>. Give
+        it a name and a folder on one of your computers.
       </Step>
       <Step n={2}>
         Start chats inside the project — they automatically work with that
