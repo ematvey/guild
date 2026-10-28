@@ -12,6 +12,30 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A user upload records its author and stays pending (2026-10-28).**
+  Migration `0088` set `attachments.event_id`, `author_kind` and
+  `author_id` to `NOT NULL` once the backfill left no gaps. The user upload
+  path inserts none of the three, so every upload answered 500 with
+  `23502` on any database that reached that state (prod did; dev did not,
+  because its table was empty at migration time). Only an agent file gets an
+  `event_id`, bound when the turn's assistant event lands. A user upload is
+  pending until a message references it. Migration `0099` drops `NOT NULL`
+  on `event_id` again, backfills old authors from the chat owner, and keeps
+  `author_kind`/`author_id` required; `AttachmentStore.create` writes
+  `author_kind='user'` and the uploader's id.
+
+- **The prompt names the Guild user of the thread (2026-10-28).** A routine
+  reported "no new Jira tasks" while five were assigned to the user. The
+  prompt carried no identity: the model learned who it talks to from
+  whatever a tool answered, and Jira's `currentUser()` answers for the API
+  token's account — here another person's. The guild prompt section now
+  appends one line built from the chat owner:
+  `<current_user name="…" email="…" />`. `ChatStore.ownerOf` joins `users`
+  and returns the owner's account fields (email, display name, role); the
+  skills runtime deps read the role from it instead of a second query.
+  Identity reaches the prompt only — usage and trace rows keep their
+  `user_id`.
+
 - **A read mark pushes the workspace lists (2026-10-27).** `markRead` wrote
   `chat_reads` and stopped there, so only the client that sent the mark hid
   its dot — the client did that optimistically. Every other open client of
