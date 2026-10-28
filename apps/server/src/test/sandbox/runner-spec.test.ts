@@ -259,6 +259,13 @@ describe("wire codec", () => {
     expect(decoded.execError.spillPath).toBe("/tmp/s");
   });
 
+  it("keeps U+0000 in a call argument, so a binary write is lossless", () => {
+    const value = { path: "/tmp/x", content: "PK\u0000tail", "a\u0000b": 1 };
+    const decoded = decodeValue(JSON.parse(JSON.stringify(encodeValue(value)))) as typeof value;
+    expect(decoded.content).toBe("PK\u0000tail");
+    expect(decoded["a\u0000b"]).toBe(1);
+  });
+
   it("splits frames across chunk boundaries and multibyte characters", () => {
     const lines: string[] = [];
     const splitter = new LineSplitter();

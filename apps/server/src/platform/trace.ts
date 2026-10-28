@@ -43,14 +43,17 @@ function requestMessages(body: string): unknown[] | null {
 
 /** Rebuilds one request body from its delta chain (leaf first, root last).
  *  The root carries the whole history; each descendant carries only the
- *  messages appended since its parent. */
+ *  messages appended since its parent. Every other field comes from the
+ *  leaf, because the leaf is the request that ran. */
 function rebuildRequest(chain: Record<string, unknown>[]): string {
   const ordered = [...chain].reverse();
   const root = ordered[0];
-  if (root === undefined) return "";
+  const leaf = chain[0];
+  if (root === undefined || leaf === undefined) return "";
   try {
-    const base = JSON.parse(String(root["body"])) as Record<string, unknown>;
-    const messages = Array.isArray(base["messages"]) ? [...(base["messages"] as unknown[])] : [];
+    const base = JSON.parse(String(leaf["body"])) as Record<string, unknown>;
+    const rootBody = JSON.parse(String(root["body"])) as Record<string, unknown>;
+    const messages = Array.isArray(rootBody["messages"]) ? [...(rootBody["messages"] as unknown[])] : [];
     for (const row of ordered.slice(1)) {
       const delta = JSON.parse(String(row["body"])) as Record<string, unknown>;
       if (Array.isArray(delta["messages"])) messages.push(...(delta["messages"] as unknown[]));
@@ -58,7 +61,7 @@ function rebuildRequest(chain: Record<string, unknown>[]): string {
     base["messages"] = messages;
     return JSON.stringify(base);
   } catch {
-    return String(chain[0]?.["body"] ?? "");
+    return String(leaf["body"] ?? "");
   }
 }
 
@@ -445,9 +448,14 @@ export class TraceStore {
       if (prefix > 0 && parent !== null) {
         const parsed = JSON.parse(body) as Record<string, unknown>;
         parsed["messages"] = messages.slice(prefix);
-        row["body"] = JSON.stringify(parsed).slice(0, MAX_PAYLOAD_CHARS);
-        row["parent_request_id"] = parent.requestId;
-        row["prefix_count"] = prefix;
+        const delta = JSON.stringify(parsed);
+        // A delta longer than the cap would cut JSON mid-value and break the
+        // chain. Fall back to the capped full body, which reads as before.
+        if (delta.length <= MAX_PAYLOAD_CHARS) {
+          row["body"] = delta;
+          row["parent_request_id"] = parent.requestId;
+          row["prefix_count"] = prefix;
+        }
       }
       await this.client.insert("llm_payloads", [row]);
       await this.client.insert("llm_payload_chains", [

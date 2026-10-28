@@ -1,7 +1,7 @@
 // Wire envelopes for the per-client WebSocket connection (crates/protocol/
 // src/ws.rs). Every message is a JSON text frame tagged by `type`.
 
-import type { ClientFrame, ServerFrame, StreamEvent } from "@guild/wire/types";
+import type { ClientFrame, Json, ServerFrame, StreamEvent } from "@guild/wire/types";
 import { threadEventRowObject, type ThreadEventRow } from "../platform/domain/thread-events.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -14,7 +14,7 @@ export type WsServerMsg = ServerFrame;
 export type StreamWireEvent = StreamEvent;
 
 /** Stream events ride the frame as their typed JSON shape. */
-export function streamEventWire(event: StreamWireEvent | unknown): string {
+export function streamEventWire(event: StreamWireEvent): string {
   return JSON.stringify(event);
 }
 
@@ -43,11 +43,13 @@ export function serializeServerMsg(msg: WsServerMsg): string {
  *  reader without closing the socket. */
 export type WsClientMsg = ClientFrame;
 
-/** A parsed client frame. `tool_result` always carries the normalized
- *  `images` array (serde default), so consumers see it as required. */
+/** A parsed client frame. `sync` always carries `chat_id` and `tool_result`
+ *  always carries `meta` and `images` after normalization, so consumers see
+ *  them as required. */
 export type ParsedClientMsg =
-  | Exclude<WsClientMsg, { type: "tool_result" }>
-  | (WsClientMsg & { type: "tool_result"; images: string[] });
+  | Exclude<WsClientMsg, { type: "tool_result" | "sync" }>
+  | (WsClientMsg & { type: "sync"; chat_id: string | null })
+  | (WsClientMsg & { type: "tool_result"; images: string[]; meta: Json | null });
 
 export function parseClientMsg(text: string): ParsedClientMsg | null {
   let raw: Record<string, unknown>;

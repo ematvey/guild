@@ -267,8 +267,8 @@ function reconcileQueuedSends(
     if (row.event.type !== "user_message") return [b];
     // Identity-preserving: untouched blocks keep their object so the
     // applyEvent dedupe and React memoization keep working.
-    const queued = row.event.type === "user_message" ? queuedFieldsOf(row.event) : {};
-    if (!!b.queued === (row.event.type === "user_message" && row.event.queued === true) && (!b.queued || b.queuedMode === queued.queuedMode)) return [b];
+    const queued = queuedFieldsOf(row.event);
+    if (!!b.queued === (row.event.queued === true) && (!b.queued || b.queuedMode === queued.queuedMode)) return [b];
     return [{ ...b, ...clearedQueuedFields(), ...queued }];
   });
 }

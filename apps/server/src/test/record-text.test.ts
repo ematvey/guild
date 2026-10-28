@@ -46,6 +46,12 @@ describe("record text", () => {
     expect(sanitizeText("emoji 🦷 and \u0000")).toBe("emoji 🦷 and \uFFFD");
   });
 
+  it("replaces U+0000 in a property name as well as in a value", () => {
+    const out = recordJsonText({ "a\u0000b": 1 });
+    expect(out).toContain("a\uFFFDb");
+    expect(out).not.toContain("a\u0000b");
+  });
+
   it("keeps a lone surrogate in a record and removes it for jsonb", () => {
     const value = { text: "a\ud83db" };
     expect(recordJsonText(value)).toContain("\\ud83d");

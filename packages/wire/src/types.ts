@@ -151,7 +151,7 @@ export type ServerFrame =
 /** Client → server. */
 export type ClientFrame =
   | { type: "ping" }
-  | { type: "sync"; chat_id: string | null }
+  | { type: "sync"; chat_id?: string | null }
   | { type: "read"; chat_id: Uuid }
   | {
       type: "machine_response";
@@ -166,7 +166,7 @@ export type ClientFrame =
       call_id: string;
       content: string;
       is_error: boolean;
-      meta: Json | null;
+      meta?: Json | null;
       images?: string[];
     };
 

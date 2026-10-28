@@ -76,12 +76,12 @@ export const HANDLE_RETURNING_METHODS: Record<string, HandleKind> = {
 };
 
 /** Encodes a value for JSON: bytes, undefined, and the env error classes
- *  survive the round trip. U+0000 never crosses the wire: a tool result can
- *  be binary, and a record that carries U+0000 fails every later jsonb
- *  parse. The producer replaces it with the Unicode replacement character. */
+ *  survive the round trip. The encoding is lossless: a string keeps its
+ *  bytes, so a `write` argument arrives in the sandbox unchanged. A value
+ *  that later enters a record is cleaned by the record encoder, not here. */
 export function encodeValue(value: unknown): unknown {
   if (value === undefined) return { $u: 1 };
-  if (typeof value === "string") return sanitizeText(value);
+  if (typeof value === "string") return value;
   if (value === null || typeof value !== "object") return value;
   if (value instanceof Uint8Array) return { $b64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64") };
   if (value instanceof FileError) {

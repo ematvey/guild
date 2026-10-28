@@ -21,6 +21,12 @@ describe("jsonbText", () => {
   it("replaces U+0000 with U+FFFD", () => {
     expect(jsonbText({ text: "a\u0000b" })).toContain("\ufffd");
   });
+
+  it("replaces U+0000 in a property name", () => {
+    const out = jsonbText({ "a\u0000b": 1 });
+    expect(out).toContain("a\uFFFDb");
+    expect(out).not.toContain("a\u0000b");
+  });
 });
 
 const ADMIN_URL =
@@ -64,5 +70,17 @@ describe("jsonbText against Postgres", () => {
     await db.query("INSERT INTO probe (v) VALUES ($1::jsonb)", [text]);
     const back = await db.query<{ text: string }>("SELECT v->>'text' AS text FROM probe");
     expect(back.rows[0]!.text).toBe("a\ufffdb");
+  });
+
+  it("accepts a property name that held U+0000 only after jsonbText", async () => {
+    await expect(
+      db.query("SELECT $1::jsonb", [JSON.stringify({ "a\u0000b": 1 })]),
+    ).rejects.toThrow();
+
+    await db.query("INSERT INTO probe (v) VALUES ($1::jsonb)", [jsonbText({ "a\u0000b": 1 })]);
+    const back = await db.query<{ v: Record<string, number> }>(
+      "SELECT v FROM probe WHERE v ? 'a\uFFFDb' LIMIT 1",
+    );
+    expect(Object.keys(back.rows[0]!.v)).toEqual(["a\uFFFDb"]);
   });
 });

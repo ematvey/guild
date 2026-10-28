@@ -186,7 +186,7 @@ describe("trace sink", () => {
       for (let step = 0; step < 3; step += 1) {
         messages.push({ role: "assistant", content: `step ${step} ${filler}` });
         const requestId = crypto.randomUUID();
-        const body = JSON.stringify({ model: "m", messages: [...messages] });
+        const body = JSON.stringify({ model: "m", temperature: step, messages: [...messages] });
         ids.push(requestId);
         sizes.push(body.length);
         await sink.recordPayload(requestId, stack.orgId, "request", body, traceId);
@@ -209,9 +209,11 @@ describe("trace sink", () => {
       // The API shape is unchanged: the leaf payload is the whole request.
       const rebuilt = (await sink.payloads(stack.orgId, ids[2]!)).find((row) => row["kind"] === "request");
       expect(rebuilt).toBeDefined();
-      const parsed = JSON.parse(String(rebuilt!["body"])) as { messages: { content: string }[] };
+      const parsed = JSON.parse(String(rebuilt!["body"])) as { temperature: number; messages: { content: string }[] };
       expect(parsed.messages).toHaveLength(messages.length);
       expect(parsed.messages.map((m) => m.content)).toEqual(messages.map((m) => String(m["content"])));
+      // Every non-message field comes from the leaf, not from the root.
+      expect(parsed.temperature).toBe(2);
 
       // A request that does not extend the parent falls back to a full body.
       const diverged = crypto.randomUUID();

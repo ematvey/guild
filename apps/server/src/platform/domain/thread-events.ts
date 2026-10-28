@@ -7,8 +7,8 @@
 //  2. The wire form of a persisted row ({id, chat_id, seq, event,
 //     created_at}) as plain objects.
 //
-// Events written by the OLD Rust server carry the same shapes; the renderer
-// normalizes both eras to one wire form.
+// The renderer turns a stored row into one wire form. A row that carries a
+// field the current shape does not know is normalized to that shape.
 
 export { uuidv7 } from "../time.js";
 

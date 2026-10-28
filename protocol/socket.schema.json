@@ -335,13 +335,13 @@
 
     "Sync": {
       "type": "object",
-      "required": ["type", "chat_id"],
+      "required": ["type"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "sync" },
         "chat_id": {
           "type": ["string", "null"],
-          "description": "Always serialized. null means no chat is open."
+          "description": "Optional. Omitted or null means no chat is open."
         }
       }
     },
@@ -368,7 +368,7 @@
     },
     "ToolResult": {
       "type": "object",
-      "required": ["type", "chat_id", "call_id", "content", "is_error", "meta"],
+      "required": ["type", "chat_id", "call_id", "content", "is_error"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "tool_result" },
@@ -377,7 +377,7 @@
         "content": { "type": "string" },
         "is_error": { "type": "boolean" },
         "meta": {
-          "description": "Always serialized. null means the tool reported no metadata.",
+          "description": "Optional. Omitted or null means the tool reported no metadata.",
           "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/Json" }]
         },
         "images": {
