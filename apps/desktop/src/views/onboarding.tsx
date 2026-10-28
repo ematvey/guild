@@ -207,10 +207,9 @@ function InstallSheet({
 }
 
 /** The floating prompt: one line on any screen, the steps behind it,
- *  dismissible. Shown only where an install is possible and still missing —
- *  an installed copy and a desktop browser get nothing. It sits at the top
- *  on a phone (the composer owns the bottom) and bottom-right on a wide
- *  screen, the same corner the update toast uses. */
+ *  dismissible. A phone that is not installed always gets it, signed in or
+ *  not; an installed copy and a desktop browser get nothing. The wide-screen
+ *  card sits bottom-right, the same corner the update toast uses. */
 export function InstallPrompt() {
   const [surface] = useState(installSurface);
   // Dismissal lasts until the next page load: the offer returns every time
@@ -218,12 +217,22 @@ export function InstallPrompt() {
   const [dismissed, setDismissed] = useState(false);
   const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
-  if (dismissed || !installOffered(surface)) return null;
+  if (dismissed) return null;
   const state = installState(surface);
   const close = () => setDismissed(true);
-  // A phone gets the whole screen: the steps are the first thing the app
-  // asks for, and a corner card is too easy to scroll past.
-  if (isMobile) return <InstallSheet state={state} onDismiss={close} />;
+  // A phone gets the whole screen, before or after sign-in: the steps are
+  // the first thing the app asks for, and a corner card is too easy to
+  // scroll past. A browser we cannot name still gets the menu steps.
+  if (isMobile) {
+    if (state === "installed") return null;
+    return (
+      <InstallSheet
+        state={state === "other" ? "android" : state}
+        onDismiss={close}
+      />
+    );
+  }
+  if (!installOffered(surface)) return null;
   return (
     <div className="fixed inset-x-3 top-3 z-50 rounded-lg border border-border bg-card p-3 text-xs shadow-lg sm:inset-x-auto sm:bottom-4 sm:right-4 sm:top-auto sm:w-80">
       <div className="flex items-start gap-2">
