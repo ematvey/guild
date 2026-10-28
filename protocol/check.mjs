@@ -138,6 +138,24 @@ async function main() {
     fail(`${problems.length} fixture frame(s) do not match the schema`);
   }
 
+  // The root is an index for schema viewers: it must list every definition,
+  // so a new type cannot be invisible to a reader that opens the file.
+  const indexProblems = [];
+  for (const [schemaName, schema] of schemas) {
+    const listed = Object.keys(schema.properties ?? {}).sort();
+    const defined = Object.keys(schema.$defs ?? {}).sort();
+    for (const name of defined) {
+      if (!listed.includes(name)) indexProblems.push(`${schemaName}: $defs.${name} is not in the root index`);
+    }
+    for (const name of listed) {
+      if (!defined.includes(name)) indexProblems.push(`${schemaName}: root index lists ${name}, which $defs lacks`);
+    }
+  }
+  if (indexProblems.length > 0) {
+    for (const item of indexProblems) console.error(item);
+    fail(`${indexProblems.length} root index mismatch(es)`);
+  }
+
   // Coverage: every declared variant needs at least one fixture frame.
   const missing = [];
   for (const [schemaName, schemaRoots] of roots) {
