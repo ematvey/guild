@@ -721,6 +721,9 @@ export class GuildRuntime {
       await this.pool.query(
         "INSERT INTO chat_recovery_metadata(singleton,legacy_task_id) SELECT true,COALESCE(max(id),0) FROM tasks ON CONFLICT DO NOTHING",
       );
+      // A send interrupted by the previous shutdown left its chat flagged as
+      // generating with nothing behind it; the journal decides the truth.
+      await this.chats.reconcileAllGenerating();
     }
     // The skill_reads ClickHouse DDL: ensured once at startup (spec §3's
     // detail-page stats read the table; record() also awaits it). ClickHouse

@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { Bell, Bot, Check, FolderKanban, KeyRound, MessagesSquare, MonitorSmartphone, Package, Plus, Share, Smartphone, X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
+import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import {
   Dialog,
   DialogContent,
@@ -57,13 +58,17 @@ function InstallStep({ n, children }: { n: number; children: React.ReactNode }) 
 export function InstallSteps({
   state,
   onRecheck,
+  large = false,
 }: {
   state: InstallState;
   onRecheck?: () => void;
+  /** Full-screen sheet: one step larger, so the steps read at arm's length. */
+  large?: boolean;
 }) {
+  const text = large ? "text-base" : "text-sm";
   if (state === "installed") {
     return (
-      <div className="space-y-3 text-sm text-muted-foreground">
+      <div className={`space-y-3 text-muted-foreground ${text}`}>
         <p className="flex items-start gap-2.5 text-foreground">
           <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
           Guild is installed on this device.
@@ -79,7 +84,7 @@ export function InstallSteps({
 
   if (state === "other") {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className={`text-muted-foreground ${text}`}>
         This page already runs as an app in your browser. The Home Screen
         install is for iPhone and iPad. On a Mac, Safari's File → Add to Dock
         does the same job.
@@ -89,7 +94,7 @@ export function InstallSteps({
 
   if (state === "ios-browser") {
     return (
-      <div className="space-y-3 text-sm text-muted-foreground">
+      <div className={`space-y-3 text-muted-foreground ${text}`}>
         <p className="flex items-start gap-2.5 text-foreground">
           <Smartphone className="mt-0.5 size-4 shrink-0" />
           This browser cannot install Guild, and its copy cannot receive
@@ -109,7 +114,7 @@ export function InstallSteps({
 
   if (state === "android") {
     return (
-      <div className="space-y-3 text-sm text-muted-foreground">
+      <div className={`space-y-3 text-muted-foreground ${text}`}>
         <ol className="space-y-2.5">
           <InstallStep n={1}>
             Tap the browser menu — the three dots in the top corner.
@@ -136,7 +141,7 @@ export function InstallSteps({
   }
 
   return (
-    <div className="space-y-3 text-sm text-muted-foreground">
+    <div className={`space-y-3 text-muted-foreground ${text}`}>
       <ol className="space-y-2.5">
         <InstallStep n={1}>
           Tap the <Share className="inline size-4 align-text-bottom" />{" "}
@@ -170,17 +175,77 @@ export function InstallSteps({
   );
 }
 
+/** The full-screen install offer: a phone that is not installed gets the
+ *  steps on their own screen, at reading size, with one large action. */
+function InstallSheet({
+  state,
+  onRecheck,
+  onDismiss,
+}: {
+  state: InstallState;
+  onRecheck: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
+      <div className="mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col">
+        <div className="flex shrink-0 justify-end">
+          <button
+            aria-label="Not now"
+            className="-mr-2 rounded-full p-2 text-muted-foreground outline-none active:bg-muted"
+            onClick={onDismiss}
+          >
+            <X className="size-6" />
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col justify-center gap-7 overflow-y-auto py-6">
+          <div className="space-y-3">
+            <Smartphone className="size-12 text-muted-foreground" />
+            <h1 className="text-2xl font-semibold leading-tight">Install Guild</h1>
+            <p className="text-base text-muted-foreground">
+              It opens full screen, without browser bars, and it is the copy
+              that can notify you.
+            </p>
+          </div>
+          <InstallSteps state={state} large />
+        </div>
+        <div className="shrink-0 space-y-2 pt-2">
+          <Button className="h-12 w-full text-base" onClick={onRecheck}>
+            I did it — check again
+          </Button>
+          <Button variant="ghost" className="h-11 w-full text-sm text-muted-foreground" onClick={onDismiss}>
+            Not now
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The floating prompt: one line on any screen, the steps behind it,
  *  dismissible. Shown only where an install is possible and still missing —
  *  an installed copy and a desktop browser get nothing. It sits at the top
  *  on a phone (the composer owns the bottom) and bottom-right on a wide
  *  screen, the same corner the update toast uses. */
 export function InstallPrompt() {
-  const [surface] = useState(installSurface);
+  const [surface, setSurface] = useState(installSurface);
   const [dismissed, setDismissed] = useState(installHintDismissed);
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
   if (dismissed || !installOffered(surface)) return null;
   const state = installState(surface);
+  const close = () => {
+    dismissInstallHint();
+    setDismissed(true);
+  };
+  const recheck = () => {
+    const next = installSurface();
+    setSurface(next);
+    if (!installOffered(next)) close();
+  };
+  // A phone gets the whole screen: the steps are the first thing the app
+  // asks for, and a corner card is too easy to scroll past.
+  if (isMobile) return <InstallSheet state={state} onRecheck={recheck} onDismiss={close} />;
   return (
     <div className="fixed inset-x-3 top-3 z-50 rounded-lg border border-border bg-card p-3 text-xs shadow-lg sm:inset-x-auto sm:bottom-4 sm:right-4 sm:top-auto sm:w-80">
       <div className="flex items-start gap-2">
@@ -205,10 +270,7 @@ export function InstallPrompt() {
         <button
           aria-label="Dismiss"
           className="shrink-0 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground"
-          onClick={() => {
-            dismissInstallHint();
-            setDismissed(true);
-          }}
+          onClick={close}
         >
           <X className="size-3.5" />
         </button>

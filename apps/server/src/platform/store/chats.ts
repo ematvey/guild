@@ -626,6 +626,26 @@ export class ChatStore {
     if (res.rows[0]) await this.notifyChatStatus(orgId, res.rows[0].user_id, chatId, res.rows[0].generating);
   }
 
+  /** Boot repair: a send that was in flight when the process stopped left
+   *  the flag set with no durable work behind it, and nothing would ever
+   *  clear it — the chat spins forever. Recompute every set flag against the
+   *  journal once, so a restart cannot leave one behind. */
+  async reconcileAllGenerating(): Promise<void> {
+    const res = await this.pool.query<{ org_id: string; user_id: string; id: string; generating: boolean }>(
+      `WITH work AS (
+        SELECT ch.id, EXISTS (
+          SELECT 1 FROM chat_conversations c WHERE c.chat_id = ch.id AND (${generationWorkSql})
+        ) AS generating
+        FROM chats ch WHERE ch.generating
+      ) UPDATE chats c SET generating = work.generating FROM work
+        WHERE c.id = work.id AND c.generating IS DISTINCT FROM work.generating
+        RETURNING c.org_id, c.user_id, c.id, c.generating`,
+    );
+    for (const row of res.rows) {
+      await this.notifyChatStatus(row.org_id, row.user_id, row.id, row.generating);
+    }
+  }
+
   private async notifyChatStatus(orgId: string, userId: string, chatId: string, generating: boolean): Promise<void> {
     // Same channel and payload the Rust notify_chat_status sends (the member
     // socket's listener flips the sidebar spinner): "generating:<bool>".

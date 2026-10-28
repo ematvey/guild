@@ -113,9 +113,9 @@ export const ChatsPanel = memo(function ChatsPanel({
             >
               <span>Archived</span>
               {archivedOpen ? (
-                <ChevronUp className="size-3.5" />
+                <ChevronUp className="size-4" />
               ) : (
-                <ChevronDown className="size-3.5" />
+                <ChevronDown className="size-4" />
               )}
             </button>
             {archivedOpen && (

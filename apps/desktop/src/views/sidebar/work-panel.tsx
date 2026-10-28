@@ -121,7 +121,7 @@ export const WorkPanel = memo(function WorkPanel({
                 }
                 className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
               >
-                <ChevronDown className="size-3" />
+                <ChevronDown className="size-3.5" />
                 Show {Math.min(PROJECT_PAGE_STEP, chats.length - limit)} more
               </button>
             )}
@@ -172,9 +172,9 @@ export const WorkPanel = memo(function WorkPanel({
             >
               <span>Archived</span>
               {archivedOpen ? (
-                <ChevronUp className="size-3.5" />
+                <ChevronUp className="size-4" />
               ) : (
-                <ChevronDown className="size-3.5" />
+                <ChevronDown className="size-4" />
               )}
             </button>
             {archivedOpen && (

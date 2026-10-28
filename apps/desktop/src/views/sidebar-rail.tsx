@@ -61,7 +61,7 @@ function RailButton({
             : "text-muted-foreground hover:text-foreground"
         }`}
       >
-        <Icon className="size-5" />
+        <Icon className="size-6" />
         {badge !== undefined && badge > 0 && (
           <span
             aria-label={`${badge} unread`}

@@ -91,16 +91,16 @@ function RowActions({
       <DropdownMenuContent align="end" className="min-w-32">
         {onRename && (
           <DropdownMenuItem onSelect={() => onRename()}>
-            <Pencil className="size-3.5" />
+            <Pencil className="size-4" />
             Rename
           </DropdownMenuItem>
         )}
         {onArchive && (
           <DropdownMenuItem onSelect={() => onArchive()}>
             {archiveLabel === "Unarchive" ? (
-              <ArchiveRestore className="size-3.5" />
+              <ArchiveRestore className="size-4" />
             ) : (
-              <Archive className="size-3.5" />
+              <Archive className="size-4" />
             )}
             {archiveLabel ?? "Archive"}
           </DropdownMenuItem>
@@ -112,7 +112,7 @@ function RowActions({
               className="text-destructive focus:text-destructive"
               onSelect={() => onDelete()}
             >
-              <Trash2 className="size-3.5" />
+              <Trash2 className="size-4" />
               Delete
             </DropdownMenuItem>
           </>
@@ -138,21 +138,21 @@ function RowStatus({ status }: { status: RowState }) {
     case "blocked":
       return (
         <span
-          className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_4px_1px_rgba(239,68,68,0.6)]"
+          className="size-2.5 shrink-0 rounded-full bg-red-500 shadow-[0_0_4px_1px_rgba(239,68,68,0.6)]"
           title="waiting for approval"
         />
       );
     case "working":
       return (
         <Loader2
-          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+          className="size-4 shrink-0 animate-spin text-muted-foreground"
           aria-label={status.generating ? "Generating" : "Working"}
         />
       );
     case "unread":
       return (
         <span
-          className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
+          className="size-2.5 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]"
           title="unseen replies"
         />
       );
@@ -295,16 +295,16 @@ export function ProjectHeader({
       title={folder}
     >
       <ChevronRight
-        className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+        className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
       />
       <FadeTitle text={name} />
       {machine?.name && (
         <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
           {machine.online !== undefined &&
             (machine.online ? (
-              <span className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500" />
+              <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
             ) : (
-              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+              <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
             ))}
           <span className="max-w-20 truncate">{machine.name}</span>
         </span>
