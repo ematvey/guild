@@ -469,6 +469,20 @@
         "name": { "type": "string" },
         "arguments": { "$ref": "#/$defs/Json" }
       }
+    },
+    "MachineContext": {
+      "description": "Executor-owned context returned by the versioned `context.prepare_v1` machine operation. `MachineContext` in ws.rs.",
+      "type": "object",
+      "required": ["instructions", "skills_index", "skill_expansions"],
+      "additionalProperties": false,
+      "properties": {
+        "instructions": {
+          "description": "Always serialized. null when unset.",
+          "type": ["string", "null"]
+        },
+        "skills_index": { "type": "string" },
+        "skill_expansions": { "type": "string" }
+      }
     }
   }
 }

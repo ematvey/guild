@@ -113,6 +113,26 @@
         {
           "where": "apps/desktop/src/lib/machine-rpc.ts",
           "role": "ui"
+        },
+        {
+          "where": "packages/wire/src/rpc.ts",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/rpc.schema.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rpc.Request.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rpc.Response.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rpc.Event.json",
+          "role": "wire"
         }
       ],
       "translations": [
@@ -120,6 +140,11 @@
           "from": "wire",
           "to": "domain",
           "at": "crates/app-server/src/jsonrpc_loop.rs"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "packages/wire/src/rpc.ts"
         }
       ]
     },
@@ -297,7 +322,7 @@
     },
     {
       "id": "rest-dto",
-      "definition": "The data-transfer types that cross the TS/Rust boundary over HTTP, described once in protocol/rest.schema.json.",
+      "definition": "The HTTP data-transfer types: sidebar rows, account and pairing shapes, the machine registry, turn submission, thread events and registry manifests. The schema is the contract; the fixtures are its executable form.",
       "canonical": "protocol/rest.schema.json",
       "types": [
         "ThreadEvent",
@@ -319,6 +344,22 @@
         },
         {
           "where": "crates/protocol/src/api.rs",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rest.Chat.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rest.MachineInfo.json",
+          "role": "wire"
+        },
+        {
+          "where": "protocol/fixtures/rest.ChatCompletionRequest.json",
+          "role": "wire"
+        },
+        {
+          "where": "crates/protocol/tests/fixtures.rs",
           "role": "wire"
         }
       ],

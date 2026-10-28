@@ -4,31 +4,12 @@
 import { IS_TAURI, apiUrl, getToken } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta, StreamFrame } from "../thread-events";
+import type { Chat } from "@guild/wire/rest";
 
-export interface ChatSummary {
-  id: string;
+/** One sidebar row: the wire `Chat` plus the fields the thread endpoints add.
+ *  `title` is required here because the sidebar always renders it. */
+export interface ChatSummary extends Chat {
   title: string;
-  created_at: string;
-  machine_id?: string;
-  machine_label?: string;
-  /** A generation is in flight (Stop, queue mode, "Stopping"). */
-  generating?: boolean;
-  /** This chat or any descendant thread has a queued/running run. */
-  working?: boolean;
-  /** Unseen assistant turn (sidebar dot). */
-  unread?: boolean;
-  /** A tool call in this chat waits for the user's approval (red dot,
-   *  supersedes unread). */
-  blocked?: boolean;
-  /** The project (named workspace folder) the chat runs in; absent =
-   * folderless. */
-  project_id?: string;
-  project_name?: string;
-  project_machine_label?: string;
-  /** The chat's latest thread event (RFC3339), falling back to created_at —
-   *  the sidebar's recent-activity sort key. List rows carry it; the live
-   *  thread-event fan-out moves it forward as turns land. */
-  last_activity_at?: string;
   /** What the chat's thread is. A chat with no thread row is a user chat. */
   type?: ThreadType;
   /** The user hid the chat from the sidebar; it still resolves. */

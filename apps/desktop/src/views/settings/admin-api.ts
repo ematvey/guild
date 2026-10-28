@@ -3,6 +3,8 @@
 // URL inside the Tauri webview (whose origin is tauri://localhost).
 
 import { apiUrl, clearToken, getToken, setToken } from "../../lib/session";
+import type { UserInfo } from "@guild/wire/rest";
+export type { UserInfo };
 
 export { clearToken, getToken, setToken };
 
@@ -38,14 +40,6 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   return text ? JSON.parse(text) : (undefined as T);
 }
 
-export interface UserInfo {
-  id: string;
-  email: string;
-  org_id: string;
-  role: string;
-  display_name?: string;
-  avatar_url?: string;
-}
 
 export async function me(): Promise<UserInfo> {
   return api<UserInfo>("GET", "/api/v1/auth/me");

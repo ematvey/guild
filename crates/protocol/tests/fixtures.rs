@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use protocol::ws::{WsClientMsg, WsServerMsg};
+use protocol::ws::{MachineContext, WsClientMsg, WsServerMsg};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -39,6 +39,32 @@ where
             "{file}[{index}]: round trip changed the value\njson: {json}"
         );
         out.push(value);
+    }
+    out
+}
+
+// The same round trip for a type that does not implement PartialEq. The
+// re-serialized JSON must equal the fixture frame, so an added, dropped or
+// renamed field fails here even when the type itself has no equality.
+fn round_trip_json<T>(file: &str, frames: Vec<serde_json::Value>) -> Vec<T>
+where
+    T: DeserializeOwned + Serialize + std::fmt::Debug,
+{
+    let mut out = Vec::with_capacity(frames.len());
+    for (index, frame) in frames.into_iter().enumerate() {
+        let value: T = serde_json::from_value(frame.clone()).unwrap_or_else(|e| {
+            panic!("{file}[{index}]: Rust rejects this frame: {e}\nframe: {frame}")
+        });
+        let json = serde_json::to_value(&value)
+            .unwrap_or_else(|e| panic!("{file}[{index}]: serialize: {e}"));
+        assert_eq!(
+            json, frame,
+            "{file}[{index}]: serialize does not reproduce the fixture frame"
+        );
+        let again: T = serde_json::from_value(json.clone()).unwrap_or_else(|e| {
+            panic!("{file}[{index}]: round-trip deserialize: {e}\njson: {json}")
+        });
+        out.push(again);
     }
     out
 }
@@ -121,6 +147,50 @@ fn check_rest_root(root: &str) {
         "UsagePayload" => {
             round_trip::<protocol::api::UsagePayload>(&file, frames);
         }
+        // The HTTP DTOs. These types carry no PartialEq, so the round trip
+        // compares JSON instead.
+        "Chat" => {
+            round_trip_json::<protocol::api::Chat>(&file, frames);
+        }
+        "ChatCompletionRequest" => {
+            round_trip_json::<protocol::api::ChatCompletionRequest>(&file, frames);
+        }
+        "CreateChatRequest" => {
+            round_trip_json::<protocol::api::CreateChatRequest>(&file, frames);
+        }
+        "CreatePairingTokenRequest" => {
+            round_trip_json::<protocol::api::CreatePairingTokenRequest>(&file, frames);
+        }
+        "LoginRequest" => {
+            round_trip_json::<protocol::api::LoginRequest>(&file, frames);
+        }
+        "LoginResponse" => {
+            round_trip::<protocol::api::LoginResponse>(&file, frames);
+        }
+        "MachineInfo" => {
+            round_trip::<protocol::api::MachineInfo>(&file, frames);
+        }
+        "PairRequest" => {
+            round_trip::<protocol::api::PairRequest>(&file, frames);
+        }
+        "PairResponse" => {
+            round_trip::<protocol::api::PairResponse>(&file, frames);
+        }
+        "PairingTokenInfo" => {
+            round_trip::<protocol::api::PairingTokenInfo>(&file, frames);
+        }
+        "PairingTokenResponse" => {
+            round_trip::<protocol::api::PairingTokenResponse>(&file, frames);
+        }
+        "UpdateChatRequest" => {
+            round_trip_json::<protocol::api::UpdateChatRequest>(&file, frames);
+        }
+        "UpdateProjectRequest" => {
+            round_trip_json::<protocol::api::UpdateProjectRequest>(&file, frames);
+        }
+        "UserInfo" => {
+            round_trip::<protocol::api::UserInfo>(&file, frames);
+        }
         other => panic!("no Rust type is mapped for rest fixture root {other}"),
     }
 }
@@ -140,5 +210,48 @@ fn rest_fixtures_match_the_schema() {
     assert!(!roots.is_empty(), "the rest fixtures must not be empty");
     for root in roots {
         check_rest_root(&root);
+    }
+}
+
+#[test]
+fn machine_context_matches_the_schema_fixtures() {
+    let frames = fixture("socket.MachineContext.json");
+    let parsed: Vec<MachineContext> = round_trip("socket.MachineContext.json", frames);
+    assert!(!parsed.is_empty(), "the machine-context fixture must not be empty");
+}
+
+// The JSON-RPC envelope fixtures, one file per root: rpc.<Root>.json.
+fn check_rpc_root(root: &str) {
+    let file = format!("rpc.{root}.json");
+    let frames = fixture(&file);
+    match root {
+        "Event" => {
+            round_trip_json::<protocol::rpc::Event>(&file, frames);
+        }
+        "Request" => {
+            round_trip_json::<protocol::rpc::Request>(&file, frames);
+        }
+        "Response" => {
+            round_trip_json::<protocol::rpc::Response>(&file, frames);
+        }
+        other => panic!("no Rust type is mapped for rpc fixture root {other}"),
+    }
+}
+
+#[test]
+fn rpc_fixtures_match_the_schema() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../protocol/fixtures");
+    let mut roots = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
+        let path = entry.expect("read fixture dir entry").path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(root) = name.strip_prefix("rpc.").and_then(|n| n.strip_suffix(".json")) {
+            roots.push(root.to_string());
+        }
+    }
+    roots.sort();
+    assert!(!roots.is_empty(), "the rpc fixtures must not be empty");
+    for root in roots {
+        check_rpc_root(&root);
     }
 }

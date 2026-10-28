@@ -247,3 +247,156 @@ export interface TriggerSpec {
   model: string;
   allowed_tools: string[] | null;
 }
+
+// ---------------------------------------------------------------------------
+// HTTP data-transfer types (protocol/rest.schema.json, from api.rs)
+// ---------------------------------------------------------------------------
+
+/** One chat row in the sidebar list. */
+export interface Chat {
+  id: string;
+  org_id: string;
+  user_id: string;
+  /** Omitted when unset. */
+  title?: string;
+  created_at: string;
+  /** Bound executor machine. Omitted when unset. */
+  machine_id?: string;
+  machine_label?: string;
+  /** A generation is in flight. */
+  generating: boolean;
+  /** An unseen assistant turn exists. */
+  unread: boolean;
+  /** This chat or a descendant thread has a queued or running run. */
+  working: boolean;
+  /** A tool call waits for the user's approval. */
+  blocked: boolean;
+  /** The latest thread event, falling back to created_at. */
+  last_activity_at: string;
+  /** Omitted when the chat is folderless. */
+  project_id?: string;
+  project_name?: string;
+  project_machine_label?: string;
+  /** The bound machine's socket is live now. */
+  machine_online: boolean;
+}
+
+/** The signed-in account. */
+export interface UserInfo {
+  id: string;
+  email: string;
+  org_id: string;
+  role: string;
+  /** Always present. null when unset. */
+  display_name: string | null;
+  /** Always present. null when unset. */
+  avatar_url: string | null;
+  /** The first-run guide was dismissed. */
+  onboarded: boolean;
+}
+
+/** `POST /api/v1/auth/login` body. */
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+/** `POST /api/v1/auth/login` answer. */
+export interface LoginResponse {
+  token: string;
+  user: UserInfo;
+}
+
+/** Desktop pairing: the one-time code redeemed for a session. */
+export interface PairRequest {
+  code: string;
+}
+
+/** Desktop pairing answer. */
+export interface PairResponse {
+  token: string;
+  user: UserInfo;
+}
+
+/** Mint a pairing code. */
+export interface CreatePairingTokenRequest {
+  /** Omitted when unset. Default 30, capped server-side. */
+  ttl_minutes?: number;
+}
+
+/** A freshly minted pairing code. The secret is returned once. */
+export interface PairingTokenResponse {
+  id: string;
+  secret: string;
+  expires_at: string;
+}
+
+/** A live pairing code, without its secret. */
+export interface PairingTokenInfo {
+  id: string;
+  created_at: string;
+  expires_at: string;
+}
+
+/** `POST /api/v1/chats` body. */
+export interface CreateChatRequest {
+  title?: string;
+  project_id?: string;
+}
+
+/** `PATCH /api/v1/chats/{id}` body. Only present fields change. */
+export interface UpdateChatRequest {
+  title?: string;
+  archived?: boolean;
+}
+
+/** `PATCH /api/v1/projects/{id}` body. Only present fields change. */
+export interface UpdateProjectRequest {
+  name?: string;
+  folder?: string;
+  machine_id?: string;
+  /** `false` unarchives. */
+  archived?: boolean;
+}
+
+/** One machine-registry row joined with the hub's live socket state. */
+export interface MachineInfo {
+  machine_id: string;
+  /** Hostname label; falls back to machine_id. */
+  name: string;
+  os?: string;
+  os_version?: string;
+  app_version?: string;
+  /** Peer address of the last connect. */
+  last_ip?: string;
+  first_connected_at: string;
+  last_connected_at: string;
+  last_seen_at: string;
+  /** The machine's singleton socket is live now. */
+  connected: boolean;
+}
+
+/** `POST /api/v1/gateway/chat` body: the in-app turn submission. */
+export interface ChatCompletionRequest {
+  /** Stable identity for the committed user-message echo. */
+  user_message_id?: string;
+  chat_id: string;
+  model: string;
+  messages: Message[];
+  /** Declared tools for this turn. */
+  tools?: ToolSpec[];
+  system?: string;
+  /** The caller can execute machine tools. */
+  client_tools: boolean;
+  project_id?: string;
+  /** Context attachments uploaded beforehand. Omitted when empty. */
+  attachment_ids?: string[];
+  /** Org workspace directory name for server-side execution. */
+  server_workspace?: string;
+  /** Client-discovered local-skills index. */
+  skills_index?: string;
+  /** Client-discovered AGENTS.md chain. */
+  agents_md?: string;
+  /** `queue` (default) or `steer`. */
+  send_mode?: string;
+}

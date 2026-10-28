@@ -622,6 +622,298 @@
           ]
         }
       }
+    },
+    "Chat": {
+      "description": "One chat row in the sidebar list. `Chat` in api.rs.",
+      "type": "object",
+      "required": [
+        "id",
+        "org_id",
+        "user_id",
+        "created_at",
+        "generating",
+        "unread",
+        "working",
+        "blocked",
+        "last_activity_at",
+        "machine_online"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "user_id": { "$ref": "#/$defs/Uuid" },
+        "title": {
+          "type": "string",
+          "description": "Omitted when unset."
+        },
+        "created_at": { "$ref": "#/$defs/DateTime" },
+        "machine_id": {
+          "type": "string",
+          "description": "Bound executor machine. Omitted when unset."
+        },
+        "machine_label": {
+          "type": "string",
+          "description": "Omitted when unset."
+        },
+        "generating": {
+          "type": "boolean",
+          "description": "A generation is in flight. Always serialized; `#[serde(default)]`."
+        },
+        "unread": {
+          "type": "boolean",
+          "description": "An unseen assistant turn exists. Always serialized; `#[serde(default)]`."
+        },
+        "working": {
+          "type": "boolean",
+          "description": "This chat or a descendant thread has a queued or running run. Always serialized; `#[serde(default)]`."
+        },
+        "blocked": {
+          "type": "boolean",
+          "description": "A tool call waits for the user's approval. Always serialized; `#[serde(default)]`."
+        },
+        "last_activity_at": {
+          "$ref": "#/$defs/DateTime",
+          "description": "The latest thread event, falling back to created_at: the sidebar's sort key."
+        },
+        "project_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Omitted when the chat is folderless."
+        },
+        "project_name": {
+          "type": "string",
+          "description": "Omitted when the chat is folderless."
+        },
+        "project_machine_label": {
+          "type": "string",
+          "description": "Omitted when the chat is folderless."
+        },
+        "machine_online": {
+          "type": "boolean",
+          "description": "The bound machine's socket is live now. Always serialized."
+        }
+      }
+    },
+    "UserInfo": {
+      "description": "The signed-in account. `UserInfo` in api.rs.",
+      "type": "object",
+      "required": [
+        "id",
+        "email",
+        "org_id",
+        "role",
+        "display_name",
+        "avatar_url",
+        "onboarded"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "email": { "type": "string" },
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "role": { "type": "string" },
+        "display_name": {
+          "description": "Always serialized. null when unset.",
+          "type": ["string", "null"]
+        },
+        "avatar_url": {
+          "description": "Always serialized. null when unset.",
+          "type": ["string", "null"]
+        },
+        "onboarded": {
+          "type": "boolean",
+          "description": "The first-run guide was dismissed. Always serialized; `#[serde(default)]`."
+        }
+      }
+    },
+    "LoginRequest": {
+      "description": "`POST /api/v1/auth/login` body.",
+      "type": "object",
+      "required": ["email", "password"],
+      "additionalProperties": false,
+      "properties": {
+        "email": { "type": "string" },
+        "password": { "type": "string" }
+      }
+    },
+    "LoginResponse": {
+      "description": "`POST /api/v1/auth/login` answer.",
+      "type": "object",
+      "required": ["token", "user"],
+      "additionalProperties": false,
+      "properties": {
+        "token": { "type": "string" },
+        "user": { "$ref": "#/$defs/UserInfo" }
+      }
+    },
+    "PairRequest": {
+      "description": "Desktop pairing: the one-time code redeemed for a session.",
+      "type": "object",
+      "required": ["code"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" }
+      }
+    },
+    "PairResponse": {
+      "description": "Desktop pairing answer.",
+      "type": "object",
+      "required": ["token", "user"],
+      "additionalProperties": false,
+      "properties": {
+        "token": { "type": "string" },
+        "user": { "$ref": "#/$defs/UserInfo" }
+      }
+    },
+    "CreatePairingTokenRequest": {
+      "description": "Mint a pairing code. `POST /api/v1/auth/pairing-tokens` body.",
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "ttl_minutes": {
+          "type": "integer",
+          "description": "Omitted when unset. Default 30, capped server-side."
+        }
+      }
+    },
+    "PairingTokenResponse": {
+      "description": "A freshly minted pairing code. The secret is returned once.",
+      "type": "object",
+      "required": ["id", "secret", "expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "secret": { "type": "string" },
+        "expires_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
+    "PairingTokenInfo": {
+      "description": "A live pairing code, without its secret.",
+      "type": "object",
+      "required": ["id", "created_at", "expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "created_at": { "$ref": "#/$defs/DateTime" },
+        "expires_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
+    "CreateChatRequest": {
+      "description": "`POST /api/v1/chats` body.",
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "description": "Omitted when unset." },
+        "project_id": { "$ref": "#/$defs/Uuid", "description": "Omitted when unset." }
+      }
+    },
+    "UpdateChatRequest": {
+      "description": "`PATCH /api/v1/chats/{id}` body. Only present fields change.",
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "description": "Omitted when unchanged." },
+        "archived": { "type": "boolean", "description": "Omitted when unchanged." }
+      }
+    },
+    "UpdateProjectRequest": {
+      "description": "`PATCH /api/v1/projects/{id}` body. Only present fields change.",
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Omitted when unchanged." },
+        "folder": { "type": "string", "description": "Omitted when unchanged." },
+        "machine_id": { "type": "string", "description": "Omitted when unchanged." },
+        "archived": {
+          "type": "boolean",
+          "description": "Omitted when unchanged. `false` unarchives."
+        }
+      }
+    },
+    "MachineInfo": {
+      "description": "One machine-registry row joined with the hub's live socket state.",
+      "type": "object",
+      "required": [
+        "machine_id",
+        "name",
+        "first_connected_at",
+        "last_connected_at",
+        "last_seen_at",
+        "connected"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": { "type": "string" },
+        "name": {
+          "type": "string",
+          "description": "Hostname label; falls back to machine_id."
+        },
+        "os": { "type": "string", "description": "Omitted when unset." },
+        "os_version": { "type": "string", "description": "Omitted when unset." },
+        "app_version": { "type": "string", "description": "Omitted when unset." },
+        "last_ip": {
+          "type": "string",
+          "description": "Peer address of the last connect. Omitted when unset."
+        },
+        "first_connected_at": { "$ref": "#/$defs/DateTime" },
+        "last_connected_at": { "$ref": "#/$defs/DateTime" },
+        "last_seen_at": { "$ref": "#/$defs/DateTime" },
+        "connected": {
+          "type": "boolean",
+          "description": "The machine's singleton socket is live now."
+        }
+      }
+    },
+    "ChatCompletionRequest": {
+      "description": "`POST /api/v1/gateway/chat` body. The in-app turn submission.",
+      "type": "object",
+      "required": ["chat_id", "model", "messages", "client_tools"],
+      "additionalProperties": false,
+      "properties": {
+        "user_message_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Stable identity for the committed user-message echo. Omitted when unset."
+        },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "model": { "type": "string" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/Message" } },
+        "tools": {
+          "description": "Declared tools for this turn. Omitted when unset.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolSpec" }
+        },
+        "system": { "type": "string", "description": "Omitted when unset." },
+        "client_tools": {
+          "type": "boolean",
+          "description": "The caller can execute machine tools. Always serialized; `#[serde(default)]`."
+        },
+        "project_id": { "$ref": "#/$defs/Uuid", "description": "Omitted when unset." },
+        "attachment_ids": {
+          "description": "Context attachments uploaded beforehand. Omitted when empty.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Uuid" }
+        },
+        "server_workspace": {
+          "type": "string",
+          "description": "Org workspace directory name for server-side execution. Omitted when unset."
+        },
+        "skills_index": {
+          "type": "string",
+          "description": "Client-discovered local-skills index. Omitted when unset."
+        },
+        "agents_md": {
+          "type": "string",
+          "description": "Client-discovered AGENTS.md chain. Omitted when unset."
+        },
+        "send_mode": {
+          "type": "string",
+          "description": "`queue` (default) or `steer`. Omitted when unset."
+        }
+      }
     }
   }
 }
