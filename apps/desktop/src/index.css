@@ -34,3 +34,14 @@ body {
   inset: 0;
   overflow: hidden;
 }
+
+/* The keyboard's pan cannot be matched frame for frame, so the header is
+   hidden while the geometry catches up: 180ms, then it returns to a shell
+   that is already in the right place. */
+[data-shell] header {
+  transition: opacity 80ms linear;
+}
+
+[data-shell][data-vp-moving] header {
+  opacity: 0;
+}
