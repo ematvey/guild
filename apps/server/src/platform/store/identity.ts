@@ -3,7 +3,7 @@
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 
 /** Minimal org-event capability injected by the composition root — the
@@ -138,7 +138,7 @@ export class IdentityStore {
   async setApproval(userId: string, approval: unknown): Promise<void> {
     await this.pool.query(
       "UPDATE users SET approval = $2 WHERE id = $1",
-      [userId, approval],
+      [userId, approval === null ? null : jsonbText(approval)],
     );
   }
 

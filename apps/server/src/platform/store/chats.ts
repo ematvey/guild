@@ -6,7 +6,7 @@ import { generationWorkSql } from "./work.js";
 // its same-transaction `guild_chat_status` notify.
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { UserRow } from "./identity.js";
@@ -548,7 +548,7 @@ export class ChatStore {
   async setApproval(orgId: string, userId: string, chatId: string, policy: Record<string, unknown> | null): Promise<void> {
     const res = await this.pool.query(
       "UPDATE chats SET approval = $4::jsonb WHERE org_id = $1 AND id = $2 AND user_id = $3",
-      [orgId, chatId, userId, policy === null ? null : JSON.stringify(policy)],
+      [orgId, chatId, userId, policy === null ? null : jsonbText(policy)],
     );
     if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
   }

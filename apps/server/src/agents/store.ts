@@ -4,7 +4,7 @@
 // here so routes and the runtime share one authorization path.
 
 import { ApiError } from "../platform/errors.js";
-import type { PlatformPool } from "../platform/db.js";
+import { jsonbText, type PlatformPool } from "../platform/db.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
 import { ChatStore } from "../platform/store/chats.js";
 import type { UserRow } from "../platform/store/identity.js";
@@ -397,10 +397,10 @@ export class AgentStore {
           input.name,
           input.description ?? "",
           input.model,
-          JSON.stringify(input.tools ?? DEFAULT_AGENT_TOOLS),
+          jsonbText(input.tools ?? DEFAULT_AGENT_TOOLS),
           input.tools_mode ?? "selected",
           input.visibility ?? "private",
-          JSON.stringify(
+          jsonbText(
             input.resources === undefined || Object.keys(input.resources).length === 0
               ? DEFAULT_AGENT_RESOURCES
               : input.resources,
@@ -474,8 +474,8 @@ export class AgentStore {
           orgId,
           userId,
           model,
-          JSON.stringify(DEFAULT_AGENT_TOOLS),
-          JSON.stringify(DEFAULT_AGENT_RESOURCES),
+          jsonbText(DEFAULT_AGENT_TOOLS),
+          jsonbText(DEFAULT_AGENT_RESOURCES),
         ],
       );
     } catch (error) {
@@ -562,14 +562,14 @@ export class AgentStore {
     if (patch.description !== undefined) add("description", patch.description);
     if (patch.tools_mode !== undefined) add("tools_mode", patch.tools_mode);
     if (patch.model !== undefined) add("model", patch.model);
-    if (patch.tools !== undefined) add("tools", JSON.stringify(patch.tools), "::jsonb");
+    if (patch.tools !== undefined) add("tools", jsonbText(patch.tools), "::jsonb");
     if (patch.visibility !== undefined) {
       if (agent.is_personal && patch.visibility !== "private") {
         throw ApiError.badRequest("the personal agent is always private");
       }
       add("visibility", patch.visibility);
     }
-    if (patch.resources !== undefined) add("resources", JSON.stringify(patch.resources), "::jsonb");
+    if (patch.resources !== undefined) add("resources", jsonbText(patch.resources), "::jsonb");
     if (sets.length === 0 && patch.team_ids === undefined) return agent;
     if (sets.length > 0) {
       sets.push("updated_at = now()");
@@ -1601,7 +1601,7 @@ export class AgentStore {
         input.agent_id ?? null,
         input.user_id ?? null,
         input.kind,
-        JSON.stringify(input.payload ?? {}),
+        jsonbText(input.payload ?? {}),
       ],
     );
     return toNotice(res.rows[0]!);

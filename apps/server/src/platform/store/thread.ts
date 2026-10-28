@@ -6,7 +6,7 @@
 // exact contracts.
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
 import type { EntryRecord } from "@earendil-works/pi-durable";
@@ -92,11 +92,7 @@ export class ThreadStore {
     const adoptLegacy = input.source?.adoptLegacy ?? false;
     const table = input.source?.kind === "task" ? "chat_task_projections" : "chat_entry_projections";
     const column = input.source?.kind === "task" ? "task_id" : "entry_id";
-    // Postgres jsonb cannot hold U+0000 (tool output can: binary files,
-    // /proc/*/environ); every NUL becomes U+FFFD.
-    const payload = JSON.stringify(event, (_key, value: unknown) =>
-      typeof value === "string" && value.includes("\u0000") ? value.replaceAll("\u0000", "\ufffd") : value,
-    );
+    const payload = jsonbText(event);
     const eventType = event.type;
     const eventId = id ?? uuidv7();
     const client = await this.pool.connect();
@@ -324,7 +320,7 @@ export class ThreadStore {
         // a raw RETURNING hands the pg driver's Date to
         // pgTimestampToRfc3339, which expects the microsecond text shape.
         "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at",
-        [id, chatId, row.type, JSON.stringify(payload), row.created_at],
+        [id, chatId, row.type, jsonbText(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
       await client.query("COMMIT");

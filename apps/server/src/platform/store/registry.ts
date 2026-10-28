@@ -4,7 +4,7 @@
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 
 export interface RegistryItemRow {
   slug: string;
@@ -223,12 +223,12 @@ export class RegistryStore {
           uuidv7(),
           itemId,
           version,
-          JSON.stringify(manifest),
+          jsonbText(manifest),
           objectKey,
           bundleSha256,
           publisher,
           skill?.md_text ?? null,
-          skill === null ? null : JSON.stringify(skill.files),
+          skill === null ? null : jsonbText(skill.files),
         ],
       );
       await client.query("COMMIT");

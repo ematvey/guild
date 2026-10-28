@@ -6,7 +6,7 @@
 // admission is synchronous and durable).
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 
 export interface TurnCommand {
   id: string;
@@ -113,7 +113,7 @@ export class TurnCommandStore {
       }
       const inserted = await client.query(
         "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) ON CONFLICT (id) DO NOTHING",
-        [id, org, user, chat, JSON.stringify(request), JSON.stringify(payload)],
+        [id, org, user, chat, jsonbText(request), jsonbText(payload)],
       );
       const rowRes = await client.query<TurnCommand>(
         "SELECT id, org_id, user_id, chat_id, request, payload, status, invocation_id FROM turn_commands WHERE id = $1",
@@ -136,7 +136,7 @@ export class TurnCommandStore {
             await client.query("UPDATE chats SET project_id=$2 WHERE id=$1", [chat, binding.project]);
           }
         }
-        const eventPayload = JSON.stringify({
+        const eventPayload = jsonbText({
           type: "user_message",
           content: userEvent.content,
           attachments: userEvent.attachments,
