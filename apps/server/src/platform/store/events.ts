@@ -2,7 +2,7 @@
 // NOTIFY the guild_events
 // channel; the WebSocket feed (M5) delivers the fan-out.
 
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 
 export const NOTIFY_CHANNEL = "guild_events";
@@ -27,7 +27,7 @@ export class EventStore {
       const inserted = await client.query<EventRow>(
         `INSERT INTO events (id, org_id, kind, payload) VALUES ($1, $2, $3, $4)
          RETURNING id, org_id, kind, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
-        [id, orgId, kind, JSON.stringify(payload ?? null)],
+        [id, orgId, kind, jsonbText(payload ?? null)],
       );
       const notifyPayload = JSON.stringify({ org_id: orgId, event_id: id, kind });
       await client.query("SELECT pg_notify($1, $2)", [NOTIFY_CHANNEL, notifyPayload]);

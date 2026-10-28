@@ -5,7 +5,7 @@
 import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339 } from "../time.js";
-import type { PlatformPool } from "../db.js";
+import { jsonbText, type PlatformPool } from "../db.js";
 
 /** IntegrationRow declaration order (serde). */
 export interface IntegrationRow {
@@ -48,7 +48,7 @@ export class IntegrationStore {
       "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
       "enabled = $4, updated_at = now() " +
       "RETURNING id",
-      [orgId, name, JSON.stringify(config), enabled],
+      [orgId, name, jsonbText(config), enabled],
     );
     return res.rows[0]!.id as string;
   }
@@ -88,7 +88,7 @@ export class IntegrationStore {
       config["tools"] = tools;
       await client.query(
         "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
-        [orgId, JSON.stringify(config), id],
+        [orgId, jsonbText(config), id],
       );
       await client.query("COMMIT");
       return name;

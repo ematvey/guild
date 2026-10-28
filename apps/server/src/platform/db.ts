@@ -15,6 +15,15 @@ function installBigintNumberParser(): void {
 export type PlatformPool = pg.Pool;
 export type PoolClient = pg.PoolClient;
 
+/** JSON text for a jsonb column or a ::jsonb parameter. Postgres jsonb
+ *  rejects U+0000 and a lone surrogate. JSON.stringify escapes a lone
+ *  surrogate as \udXXX and leaves U+0000 in the text, so every string is
+ *  made well-formed first. Clean input passes through byte-identical. */
+export function jsonbText(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    typeof item === "string" ? item.replaceAll("\u0000", "\ufffd").toWellFormed() : item);
+}
+
 export function createPlatformPool(databaseUrl: string, poolMax = 10): pg.Pool {
   installBigintNumberParser();
   // Short idle timeout: suites (and redeploys) must release their slots
