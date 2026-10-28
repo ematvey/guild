@@ -16,6 +16,10 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
     let frame = 0;
     const apply = () => {
       frame = 0;
+      // A fixed shell is anchored to the layout viewport, so a document pan
+      // has to be cancelled here or the header leaves the screen.
+      const top = Math.round(Math.max(vv.offsetTop, window.scrollY));
+      el.style.top = top ? `${top}px` : "";
       el.style.height = `${Math.round(vv.height)}px`;
     };
     // The viewport fires many times during the keyboard animation; one write

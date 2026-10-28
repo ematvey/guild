@@ -23,8 +23,14 @@ body {
 
 /* The document never scrolls: the shell is fixed and owns its own panes. A
    scrollable document is what iOS pans when the keyboard opens, and a page
-   that pans while a fixed shell tries to follow it is a page that jitters. */
-html,
+   that pans while a fixed shell tries to follow it is a page that jitters.
+   overflow alone does not stop it — the body has to be the fixed box. */
+html {
+  overflow: hidden;
+}
+
 body {
+  position: fixed;
+  inset: 0;
   overflow: hidden;
 }
