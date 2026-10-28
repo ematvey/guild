@@ -1795,7 +1795,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           ) : (
           <div
-            className={`pointer-events-auto mx-auto w-full rounded-[1.75rem] border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
+            className={`pointer-events-auto mx-auto w-full rounded-[var(--radius-composer)] border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ maxWidth: chatWidth }}
