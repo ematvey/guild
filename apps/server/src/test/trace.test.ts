@@ -176,6 +176,59 @@ describe("trace sink", () => {
     },
     TEST_TIMEOUT,
   );
+
+  it(
+    "a request stores only its new messages and the read path rebuilds the history",
+    async () => {
+      const client = chClient();
+      const sink = new TraceStore(client, true);
+      await sink.ensureOnce();
+      const traceId = crypto.randomUUID();
+      const filler = "x".repeat(500);
+      const messages: Record<string, unknown>[] = [{ role: "user", content: `start ${filler}` }];
+      const ids: string[] = [];
+      const sizes: number[] = [];
+      for (let step = 0; step < 3; step += 1) {
+        messages.push({ role: "assistant", content: `step ${step} ${filler}` });
+        const requestId = crypto.randomUUID();
+        const body = JSON.stringify({ model: "m", messages: [...messages] });
+        ids.push(requestId);
+        sizes.push(body.length);
+        await sink.recordPayload(requestId, stack.orgId, "request", body, traceId);
+      }
+
+      const stored = await client.query(
+        `SELECT request_id, length(body) AS size, prefix_count, parent_request_id FROM llm_payloads ` +
+          `WHERE org_id = toUUID('${stack.orgId}') AND kind = 'request' AND request_id IN (${ids.map((id) => `toUUID('${id}')`).join(", ")}) ` +
+          "ORDER BY ts",
+      );
+      expect(stored).toHaveLength(3);
+      // The first request is the root; the two later ones carry one message each.
+      const byId = new Map(stored.map((row) => [String(row["request_id"]), row]));
+      expect(Number(byId.get(ids[0]!)!["prefix_count"])).toBe(0);
+      expect(Number(byId.get(ids[1]!)!["prefix_count"])).toBe(2);
+      expect(Number(byId.get(ids[2]!)!["prefix_count"])).toBe(3);
+      expect(Number(byId.get(ids[2]!)!["size"])).toBeLessThan(sizes[2]! / 2);
+      expect(String(byId.get(ids[2]!)!["parent_request_id"])).toBe(ids[1]);
+
+      // The API shape is unchanged: the leaf payload is the whole request.
+      const rebuilt = (await sink.payloads(stack.orgId, ids[2]!)).find((row) => row["kind"] === "request");
+      expect(rebuilt).toBeDefined();
+      const parsed = JSON.parse(String(rebuilt!["body"])) as { messages: { content: string }[] };
+      expect(parsed.messages).toHaveLength(messages.length);
+      expect(parsed.messages.map((m) => m.content)).toEqual(messages.map((m) => String(m["content"])));
+
+      // A request that does not extend the parent falls back to a full body.
+      const diverged = crypto.randomUUID();
+      const body = JSON.stringify({ model: "m", messages: [{ role: "user", content: "different" }] });
+      await sink.recordPayload(diverged, stack.orgId, "request", body, traceId);
+      const full = await sink.payloads(stack.orgId, diverged);
+      const fullRow = full.find((row) => row["kind"] === "request");
+      expect(Number(fullRow!["prefix_count"])).toBe(0);
+      expect(JSON.parse(String(fullRow!["body"]))).toEqual(JSON.parse(body));
+    },
+    TEST_TIMEOUT,
+  );
 });
 
 describe("gateway emission + activity API", () => {
