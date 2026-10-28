@@ -558,8 +558,8 @@ function AppInner() {
 }
 
 /// Temporary readout for the keyboard animation: the four numbers that
-/// decide where the header and the composer sit. Armed by the stored
-/// `guild.diag` flag, which `?diag` sets from Safari.
+/// decide where the header and the composer sit. On every surface until the
+/// jitter is understood.
 function KeyDiag() {
   const [rows, setRows] = useState<string[]>([]);
   useEffect(() => {
@@ -597,17 +597,10 @@ function KeyDiag() {
 }
 
 export default function App() {
-  const [diag] = useState(() => {
-    try {
-      return localStorage.getItem("guild.diag") === "1";
-    } catch {
-      return false;
-    }
-  });
   return (
     <ThemeProvider>
       <AppInner />
-      {diag && <KeyDiag />}
+      <KeyDiag />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
       {!IS_TAURI && <InstallPrompt />}
