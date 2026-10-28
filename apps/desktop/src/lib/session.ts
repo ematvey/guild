@@ -174,9 +174,6 @@ export interface InstallSurface {
   displayStandalone: boolean;
 }
 
-/** localStorage key: the login-card hint was dismissed. */
-export const INSTALL_HINT_KEY = "guild.installHintDismissed";
-
 const IOS_UA = /iPad|iPhone|iPod/;
 /** Every other iOS browser wraps WebKit but cannot install a web app. */
 const IOS_NOT_SAFARI = /CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/;
@@ -216,20 +213,4 @@ export function installSurface(): InstallSurface {
     standalone,
     displayStandalone,
   };
-}
-
-export function installHintDismissed(): boolean {
-  try {
-    return localStorage.getItem(INSTALL_HINT_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function dismissInstallHint(): void {
-  try {
-    localStorage.setItem(INSTALL_HINT_KEY, "1");
-  } catch {
-    /* private mode: the hint just shows again next launch */
-  }
 }

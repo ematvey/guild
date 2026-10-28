@@ -18,8 +18,6 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import {
-  dismissInstallHint,
-  installHintDismissed,
   installOffered,
   installState,
   installSurface,
@@ -229,15 +227,14 @@ function InstallSheet({
  *  screen, the same corner the update toast uses. */
 export function InstallPrompt() {
   const [surface, setSurface] = useState(installSurface);
-  const [dismissed, setDismissed] = useState(installHintDismissed);
+  // Dismissal lasts until the next page load: the offer returns every time
+  // the app is opened, so a phone cannot lose it by tapping once.
+  const [dismissed, setDismissed] = useState(false);
   const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
   if (dismissed || !installOffered(surface)) return null;
   const state = installState(surface);
-  const close = () => {
-    dismissInstallHint();
-    setDismissed(true);
-  };
+  const close = () => setDismissed(true);
   const recheck = () => {
     const next = installSurface();
     setSurface(next);
