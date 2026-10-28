@@ -361,6 +361,33 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // composer picks which, and the choice binds the chat.
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
+  // A drag that starts at the left border opens the drawer, the way the
+  // platform does it. The drawer only exists on a phone, so the listener
+  // does too.
+  useEffect(() => {
+    if (!isMobile) return;
+    let startX = 0;
+    let startY = 0;
+    let armed = false;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      armed = t.clientX <= 24;
+      startX = t.clientX;
+      startY = t.clientY;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!armed) return;
+      armed = false;
+      const t = e.changedTouches[0];
+      if (t.clientX - startX > 60 && Math.abs(t.clientY - startY) < 40) setOpen(true);
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchend", onEnd);
+    };
+  }, [isMobile]);
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
   const [width, setWidth] = useState<number>(() => storedSidebarWidth());
   // settings may resize the shared width while this sidebar stays mounted
@@ -1768,7 +1795,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           ) : (
           <div
-            className={`pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
+            className={`pointer-events-auto mx-auto w-full rounded-[1.75rem] border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ maxWidth: chatWidth }}
