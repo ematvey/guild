@@ -51,14 +51,14 @@
    them without touching a view. */
 @media (max-width: 640px) {
   :root {
-    --text-3xs: 12px;
-    --text-2xs: 14px;
-    --text-xs: 15px;
-    --text-sm: 16px;
-    --text-base: 18px;
-    --text-lg: 20px;
-    --text-xl: 23px;
-    --text-2xl: 27px;
+    --text-3xs: 13px;
+    --text-2xs: 15px;
+    --text-xs: 16px;
+    --text-sm: 17px;
+    --text-base: 19px;
+    --text-lg: 21px;
+    --text-xl: 25px;
+    --text-2xl: 29px;
   }
 }
 
