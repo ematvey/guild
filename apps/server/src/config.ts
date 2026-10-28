@@ -87,9 +87,9 @@ export interface Config {
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
-  /** Trace payload capture (GUILD_TRACE_PAYLOADS=1, default off): the
-   *  llm_payloads request/response bodies are a deliberate choice — the
-   *  span metadata (agent_spans) is always on. */
+  /** Trace payload capture (GUILD_TRACE_PAYLOADS, default on): the
+   *  llm_payloads request/response bodies. Set GUILD_TRACE_PAYLOADS=0 to
+   *  keep the span metadata (agent_spans) without the bodies. */
   tracePayloads: boolean;
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
@@ -229,7 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // server process's cwd (pi-durable re-resolves tool cwds against it).
   const poolMax = Number(env.GUILD_POOL_MAX ?? 10);
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
-  const tracePayloads = env.GUILD_TRACE_PAYLOADS === "1";
+  const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
     faroUrl,
     webDistDir,
