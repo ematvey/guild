@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The protocol branch merges with develop (2026-10-28).** `develop` brought
+  the record-text sanitizer (`platform/domain/text.ts`) and the attachment
+  author fix. Two merge points needed a decision. `jsonbText` now builds on
+  `sanitizeText`, so one function owns the U+0000 rule and `jsonbText` owns
+  only the JSON-text part. The sandbox image copies `text.js` to the path
+  `sandbox/protocol.js` imports; the agent would not start without it. The
+  new `text.ts` gets a `storable-text` concept in the model, and the floor is
+  raised by the two files and 153 lines `develop` adds.
+
 - **Every wire type has a schema, a fixture and a TypeScript declaration
   (2026-10-28).** The hand-written contract replaced the generator with
   `protocol/*.schema.json`, but it covered only the types that had a fixture:
@@ -33,6 +42,29 @@ first. Code comments describe only the present.
   gone: `ChatSummary` extends `Chat`. The coherence floor rose by 2 files and
   394 loc; the duplicated declarations paid about 20 lines of it, and the
   rest is the contract itself.
+- **Records are JSON text; queries parse them in code (2026-10-28).** A
+  `codemode` tool result carried an `.xlsx` dumped as text, so the record
+  contained a `\u0000` escape. `ThreadStore.contextUsage` cast
+  `entries.record::jsonb`, and JSONB rejects U+0000: the context meter
+  answered 500 with `22P05` on that thread. The storage contract already
+  says record columns are text, not JSONB. The fields queries filter on are
+  now real columns — `entries.kind` and `tasks.outcome_status` — written
+  from the same record in the same statement. The read paths parse the one
+  row in code. U+0000 cannot enter a record: the sandbox wire and the
+  durable encoder replace it with U+FFFD. A source test keeps
+  `record::jsonb` out of the server.
+
+- **A user upload records its author and stays pending (2026-10-28).**
+  Migration `0088` set `attachments.event_id`, `author_kind` and
+  `author_id` to `NOT NULL` once the backfill left no gaps. The user upload
+  path inserts none of the three, so every upload answered 500 with
+  `23502` on any database that reached that state (prod did; dev did not,
+  because its table was empty at migration time). Only an agent file gets an
+  `event_id`, bound when the turn's assistant event lands. A user upload is
+  pending until a message references it. Migration `0099` drops `NOT NULL`
+  on `event_id` again, backfills old authors from the chat owner, and keeps
+  `author_kind`/`author_id` required; `AttachmentStore.create` writes
+  `author_kind='user'` and the uploader's id.
 
 - **The prompt names the Guild user of the thread (2026-10-28).** A routine
   reported "no new Jira tasks" while five were assigned to the user. The

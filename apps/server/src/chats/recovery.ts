@@ -66,7 +66,7 @@ export class ConversationRecovery {
     const result = await this.pool.query<{ id: number; record: string }>(
       `SELECT t.id,t.record FROM tasks t
       WHERE t.conversation_id=$1 AND t.kind='"pi.generation"' AND t.status='terminal'
-        AND t.record::jsonb->'state'->'outcome'->>'status' IN ('failed','faulted','orphaned')
+        AND t.outcome_status IN ('failed','faulted','orphaned')
         AND NOT EXISTS(SELECT 1 FROM chat_task_projections p WHERE p.task_id=t.id) ORDER BY t.id`,
       [conversationId],
     );

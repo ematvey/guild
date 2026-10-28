@@ -22,7 +22,7 @@ afterAll(async () => { await stack?.close(); }, 30000);
 
 async function assistant(id: number, totalTokens: number, stopReason = "stop") {
   await stack.env.db.query(
-    "INSERT INTO entries(id,conversation_id,commit_seq,record) VALUES($1,1000,1,$2)",
+    "INSERT INTO entries(id,conversation_id,commit_seq,kind,record) VALUES($1,1000,1,'pi.assistant',$2)",
     [id, JSON.stringify({ id, conversationId: 1000, kind: "pi.assistant", model: [{
       role: "assistant", model: "Context-Test", stopReason,
       usage: { input: 100, output: 20, cacheRead: 1000, cacheWrite: 300, totalTokens },
@@ -52,7 +52,7 @@ describe("composer context usage from committed provider measurements", () => {
 
   it("invalidates the old measurement after a head change and resumes on the next response", async () => {
     await stack.env.db.query(
-      "INSERT INTO entries(id,conversation_id,head,commit_seq,record) VALUES(1003,1000,1001,1,$1)",
+      "INSERT INTO entries(id,conversation_id,head,commit_seq,kind,record) VALUES(1003,1000,1001,1,'pi.compaction',$1)",
       [JSON.stringify({ id: 1003, kind: "pi.compaction", head: 1001, model: [] })],
     );
     expect((await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens).toBeNull();
@@ -61,6 +61,19 @@ describe("composer context usage from committed provider measurements", () => {
     await assistant(1005, 0);
     // Some providers omit the aggregate; cached reads/writes must still count.
     expect((await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens).toBe(1420);
+  });
+
+  it("survives a record whose text JSONB cannot cast", async () => {
+    // A tool result can carry U+0000 (an .xlsx dumped as text). The record is
+    // text, so it is stored; the read path must not cast it to jsonb.
+    await stack.env.db.query(
+      "INSERT INTO entries(id,conversation_id,commit_seq,kind,record) VALUES(1006,1000,1,'pi.toolResult',$1)",
+      [JSON.stringify({ id: 1006, kind: "pi.toolResult", data: { text: "PK\\u0000binary" } })],
+    );
+    await assistant(1007, 321);
+    const response = await stack.env.app.inject({ url: url(), headers: headers() });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().tokens).toBe(321);
   });
 
   it("requires authentication and thread ownership", async () => {

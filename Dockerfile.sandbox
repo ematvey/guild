@@ -37,6 +37,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=agent-deps /opt/guild /opt/guild
 COPY --from=build /app/apps/server/dist/sandbox/agent.js /app/apps/server/dist/sandbox/serve.js /app/apps/server/dist/sandbox/protocol.js /opt/guild/
+# protocol.js imports the text sanitizer by its server path; keep that path
+# under /opt so the agent resolves it.
+COPY --from=build /app/apps/server/dist/platform/domain/text.js /opt/platform/domain/text.js
 # uid 1000 is the image's `node` user; the runner runs every sandbox
 # process as 1000:1000.
 USER 1000:1000
