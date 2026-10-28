@@ -173,6 +173,16 @@ export function InstallSteps({
   );
 }
 
+/** True on a touch screen. Read at render: the pointer type does not change
+ *  while the page is open, and the sheet is decided once. */
+function coarsePointer(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+
 /** The full-screen install offer: a phone that is not installed gets the
  *  steps on their own screen, at reading size, with one large action. */
 function InstallSheet({
@@ -225,6 +235,9 @@ export function InstallPrompt() {
   // scroll past. A browser we cannot name still gets the menu steps.
   if (isMobile) {
     if (state === "installed") return null;
+    // A narrow desktop window is not a phone; only a touch pointer makes an
+    // unnamed browser worth the sheet.
+    if (state === "other" && !coarsePointer()) return null;
     return (
       <InstallSheet
         state={state === "other" ? "android" : state}
