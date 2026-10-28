@@ -134,14 +134,15 @@ describe("install state", () => {
     expect(installOffered(mac)).toBe(false);
   });
 
-  it("leaves an Android browser alone", async () => {
-    const { installState } = await import("./session");
+  it("offers Android Chrome its menu steps", async () => {
+    const { installOffered, installState } = await import("./session");
     const android = surface({
       userAgent:
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
       platform: "Linux armv8l",
       maxTouchPoints: 5,
     });
-    expect(installState(android)).toBe("other");
+    expect(installState(android)).toBe("android");
+    expect(installOffered(android)).toBe(true);
   });
 });

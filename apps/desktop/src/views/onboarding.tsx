@@ -107,6 +107,34 @@ export function InstallSteps({
     );
   }
 
+  if (state === "android") {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <ol className="space-y-2.5">
+          <InstallStep n={1}>
+            Tap the browser menu — the three dots in the top corner.
+          </InstallStep>
+          <InstallStep n={2}>
+            Tap <b>Install app</b> (older versions say{" "}
+            <b>Add to Home screen</b>).
+          </InstallStep>
+          <InstallStep n={3}>
+            Confirm, then open Guild from the new icon.
+          </InstallStep>
+        </ol>
+        <p className="flex items-start gap-2.5 border-t border-border pt-3">
+          <Bell className="mt-0.5 size-4 shrink-0" />
+          Only the installed copy can receive notifications.
+        </p>
+        {onRecheck && (
+          <Button variant="outline" size="sm" onClick={onRecheck}>
+            I did it — check again
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3 text-sm text-muted-foreground">
       <ol className="space-y-2.5">
@@ -142,17 +170,19 @@ export function InstallSteps({
   );
 }
 
-/** The login-card hint: one line, the steps behind it, dismissible. Shown
- *  only where an install is possible and still missing — an installed copy
- *  and a desktop browser get nothing. */
-export function InstallHint() {
+/** The floating prompt: one line on any screen, the steps behind it,
+ *  dismissible. Shown only where an install is possible and still missing —
+ *  an installed copy and a desktop browser get nothing. It sits at the top
+ *  on a phone (the composer owns the bottom) and bottom-right on a wide
+ *  screen, the same corner the update toast uses. */
+export function InstallPrompt() {
   const [surface] = useState(installSurface);
   const [dismissed, setDismissed] = useState(installHintDismissed);
   const [open, setOpen] = useState(false);
   if (dismissed || !installOffered(surface)) return null;
   const state = installState(surface);
   return (
-    <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
+    <div className="fixed inset-x-3 top-3 z-50 rounded-lg border border-border bg-card p-3 text-xs shadow-lg sm:inset-x-auto sm:bottom-4 sm:right-4 sm:top-auto sm:w-80">
       <div className="flex items-start gap-2">
         <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">

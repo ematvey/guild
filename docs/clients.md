@@ -417,7 +417,7 @@ lands, it must not cache the shell, only receive `push` events.
 **The steps are browser-specific, so the UI detects instead of assuming.**
 `installState()` in `apps/desktop/src/lib/session.ts` (the module that already
 answers "which host am I in" with `IS_TAURI`) is pure over an injected surface
-and answers one question with four answers:
+and answers one question with five answers:
 
 - `installed` — `navigator.standalone` or `(display-mode: standalone)`.
 - `ios-safari` — iOS/iPadOS, not installed: the Share-sheet steps apply.
@@ -425,15 +425,19 @@ and answers one question with four answers:
 - `ios-browser` — Chrome, Firefox, Edge, Opera or DuckDuckGo on iOS. They wrap
   WebKit but cannot install a web app, and their copy gets no push. The UI
   says so instead of showing steps that cannot work.
-- `other` — desktop and Android: nothing to install, nothing to say.
+- `android` — Chrome on Android: installable from the browser menu.
+- `other` — desktop: nothing to install, nothing to say.
 
 Three surfaces render the same `InstallSteps`:
 
 - **`/install`** — the guide as its own route (`InstallGuide` in
   `apps/desktop/src/views/thread/ThreadOverlays.tsx`), so a help link or a
   colleague can share the address. Chat-independent, like `/onboard`.
-- **The login card** — one dismissible line for a first-time mobile visitor
-  (`localStorage` key `guild.installHintDismissed`).
+- **A floating prompt** — one dismissible line on any screen, signed in or
+  not, at the top on a phone and bottom-right on a wide screen
+  (`localStorage` key `guild.installHintDismissed`). A signed-in user never
+  sees the login card, so this is the only place the offer reaches them
+  without opening Help.
 - **The onboarding guide** — an "On your phone" section, added only when
   `installOffered()` is true.
 

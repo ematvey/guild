@@ -158,7 +158,9 @@ export type InstallState =
   | "ios-safari"
   /** iOS, another browser: it cannot install, and its copy gets no push. */
   | "ios-browser"
-  /** Desktop or Android browser: no steps to show. */
+  /** Android Chrome: installable from the browser menu. */
+  | "android"
+  /** Desktop browser: no steps to show. */
   | "other";
 
 export interface InstallSurface {
@@ -186,14 +188,15 @@ export function isIOS(s: InstallSurface): boolean {
 
 export function installState(s: InstallSurface): InstallState {
   if (s.standalone || s.displayStandalone) return "installed";
-  if (!isIOS(s)) return "other";
-  return IOS_NOT_SAFARI.test(s.userAgent) ? "ios-browser" : "ios-safari";
+  if (isIOS(s)) return IOS_NOT_SAFARI.test(s.userAgent) ? "ios-browser" : "ios-safari";
+  if (/Android/.test(s.userAgent)) return "android";
+  return "other";
 }
 
 /** True when the page should offer the install steps. */
 export function installOffered(s: InstallSurface): boolean {
   const state = installState(s);
-  return state === "ios-safari" || state === "ios-browser";
+  return state === "ios-safari" || state === "ios-browser" || state === "android";
 }
 
 /** Reads the live surface. Call on mount and after the user says they
