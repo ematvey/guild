@@ -18,6 +18,7 @@ import {
   StreamUsageCounters,
   ProxyError,
   clientTemperature,
+  GATEWAY_BODY_LIMIT_BYTES,
   type GatewayContext,
   type GatewayCredential,
   type GatewayTraceEmission,
@@ -255,7 +256,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx):
     }
   });
 
-  app.post("/openai/v1/chat/completions", async (req, reply) => {
+  app.post("/openai/v1/chat/completions", { bodyLimit: GATEWAY_BODY_LIMIT_BYTES }, async (req, reply) => {
     let credential: GatewayCredential;
     try {
       credential = await gateway.gatewayCredential(req);

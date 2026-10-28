@@ -19,6 +19,7 @@ import {
   StreamUsageCounters,
   ProxyError,
   clientTemperature,
+  GATEWAY_BODY_LIMIT_BYTES,
   type GatewayContext,
   type GatewayCredential,
   type RoutedCall,
@@ -287,7 +288,7 @@ function contentBlocks(reasoning: string, text: string, calls: ToolCall[]): unkn
 }
 
 export function registerAnthropicRoutes(app: FastifyInstance, gateway: GatewayCtx): void {
-  app.post("/anthropic/v1/messages", async (req, reply) => {
+  app.post("/anthropic/v1/messages", { bodyLimit: GATEWAY_BODY_LIMIT_BYTES }, async (req, reply) => {
     let credential: GatewayCredential;
     try {
       credential = await anthropicCredential(gateway, req);
