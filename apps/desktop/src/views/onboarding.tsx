@@ -177,25 +177,14 @@ export function InstallSteps({
  *  steps on their own screen, at reading size, with one large action. */
 function InstallSheet({
   state,
-  onRecheck,
   onDismiss,
 }: {
   state: InstallState;
-  onRecheck: () => void;
   onDismiss: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
       <div className="mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col">
-        <div className="flex shrink-0 justify-end">
-          <button
-            aria-label="Not now"
-            className="-mr-2 rounded-full p-2 text-muted-foreground outline-none active:bg-muted"
-            onClick={onDismiss}
-          >
-            <X className="size-6" />
-          </button>
-        </div>
         <div className="flex min-h-0 flex-1 flex-col justify-center gap-7 overflow-y-auto py-6">
           <div className="space-y-3">
             <Smartphone className="size-12 text-muted-foreground" />
@@ -207,11 +196,8 @@ function InstallSheet({
           </div>
           <InstallSteps state={state} large />
         </div>
-        <div className="shrink-0 space-y-2 pt-2">
-          <Button className="h-12 w-full text-base" onClick={onRecheck}>
-            I did it — check again
-          </Button>
-          <Button variant="ghost" className="h-11 w-full text-sm text-muted-foreground" onClick={onDismiss}>
+        <div className="shrink-0 pt-2">
+          <Button className="h-12 w-full text-base" onClick={onDismiss}>
             Not now
           </Button>
         </div>
@@ -226,7 +212,7 @@ function InstallSheet({
  *  on a phone (the composer owns the bottom) and bottom-right on a wide
  *  screen, the same corner the update toast uses. */
 export function InstallPrompt() {
-  const [surface, setSurface] = useState(installSurface);
+  const [surface] = useState(installSurface);
   // Dismissal lasts until the next page load: the offer returns every time
   // the app is opened, so a phone cannot lose it by tapping once.
   const [dismissed, setDismissed] = useState(false);
@@ -235,14 +221,9 @@ export function InstallPrompt() {
   if (dismissed || !installOffered(surface)) return null;
   const state = installState(surface);
   const close = () => setDismissed(true);
-  const recheck = () => {
-    const next = installSurface();
-    setSurface(next);
-    if (!installOffered(next)) close();
-  };
   // A phone gets the whole screen: the steps are the first thing the app
   // asks for, and a corner card is too easy to scroll past.
-  if (isMobile) return <InstallSheet state={state} onRecheck={recheck} onDismiss={close} />;
+  if (isMobile) return <InstallSheet state={state} onDismiss={close} />;
   return (
     <div className="fixed inset-x-3 top-3 z-50 rounded-lg border border-border bg-card p-3 text-xs shadow-lg sm:inset-x-auto sm:bottom-4 sm:right-4 sm:top-auto sm:w-80">
       <div className="flex items-start gap-2">
