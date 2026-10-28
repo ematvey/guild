@@ -24,6 +24,11 @@ implementation detail of the server and both ends ship together.
   fixture for every variant of a tagged union, and compares every named
   object and union with its TypeScript declaration.
 
+Each file has a root index: an object whose properties are the `$defs`
+names. A payload is validated against a `$defs` entry, never against the
+root. The index exists so a schema viewer, which draws the root, can list
+every type. The check fails when the index and `$defs` disagree.
+
 The fixtures are the executable form of the schema. The Rust suite
 deserializes every one of them and re-serializes it back to the same JSON;
 the TypeScript suite parses them. A field renamed on one side fails that

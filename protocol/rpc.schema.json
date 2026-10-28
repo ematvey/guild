@@ -2,7 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://guild.local/protocol/rpc.schema.json",
   "title": "Guild JSON-RPC envelope",
-  "description": "The line-delimited JSON-RPC 2.0 envelope between the desktop UI and the engine, and over the local CLI socket. Derived from crates/protocol/src/rpc.rs, which is what the wire actually is. Every message carries `protocol` so the UI and the engine can negotiate. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise.",
+  "description": "The line-delimited JSON-RPC 2.0 envelope between the desktop UI and the engine, and over the local CLI socket. Derived from crates/protocol/src/rpc.rs, which is what the wire actually is. Every message carries `protocol` so the UI and the engine can negotiate. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
+  "type": "object",
+  "properties": {
+    "Json": { "$ref": "#/$defs/Json" },
+    "Request": { "$ref": "#/$defs/Request" },
+    "RpcError": { "$ref": "#/$defs/RpcError" },
+    "Response": { "$ref": "#/$defs/Response" },
+    "Event": { "$ref": "#/$defs/Event" }
+  },
+  "additionalProperties": false,
   "$defs": {
     "Json": {
       "description": "Any JSON value. serde_json::Value in Rust, Json in TypeScript."
