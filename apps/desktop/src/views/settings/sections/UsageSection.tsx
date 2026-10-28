@@ -259,7 +259,6 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
                   width={150}
                   tickLine={false}
                   axisLine={false}
-                  tick={{ fontSize: 11 }}
                 />
                 <ChartTooltip
                   cursor={false}

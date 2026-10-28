@@ -23,11 +23,3 @@ body {
 html {
   overflow-x: clip;
 }
-
-/* Touch devices: iOS Safari auto-zooms onto any focused input whose font
-   is under 16px — force the floor without touching desktop sizing. */
-@media (pointer: coarse) {
-  input, textarea, select {
-    font-size: max(16px, 1em) !important;
-  }
-}
