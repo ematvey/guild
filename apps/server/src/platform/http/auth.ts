@@ -11,9 +11,10 @@ import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } fro
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
 import type { UserRow } from "../store/identity.js";
+import type { UserInfo } from "@guild/wire/rest";
 
 /** UserInfo in protocol::api field order (direct struct serialization). */
-export function userInfo(u: UserRow): Record<string, unknown> {
+export function userInfo(u: UserRow): UserInfo {
   return {
     id: u.id,
     email: u.email,

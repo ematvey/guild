@@ -7,13 +7,14 @@ import type { UserRow } from "../platform/store/identity.js";
 import type { MachineRow } from "../platform/store/machines.js";
 import type { ProjectRow } from "../platform/store/projects.js";
 import type { ChatListRow } from "../platform/store/chats.js";
+import type { Chat, MachineInfo } from "@guild/wire/rest";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
 
 /** One chat row in the sidebar wire shape. Key order is alphabetical: the
  *  Rust feed built rows through serde_json::Value (BTreeMap), and the
  *  golden capture pins that order. */
-function chatRow(ctx: PlatformContext, chat: ChatListRow): Record<string, unknown> {
+function chatRow(ctx: PlatformContext, chat: ChatListRow): Chat {
   const online = chat.machine_id !== null && ctx.hub.machineOnline(chat.machine_id);
   // Old chats stored the raw machine id as their label; the live hub label
   // (the machine's hostname) is the truth when the slot is up.
@@ -87,7 +88,7 @@ export async function workspaceIdentitySnapshot(
 
 /** MachineInfo wire shape. Alphabetical key order, same reason as the chat
  *  rows. */
-export function machineInfo(row: MachineRow, connected: boolean): Record<string, unknown> {
+export function machineInfo(row: MachineRow, connected: boolean): MachineInfo {
   return {
     ...(row.app_version !== null ? { app_version: row.app_version } : {}),
     connected,

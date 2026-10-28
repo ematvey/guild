@@ -1,0 +1,9 @@
+[
+  {
+    "protocol": 1,
+    "event": "chat.delta",
+    "payload": {
+      "content": "hi"
+    }
+  }
+]

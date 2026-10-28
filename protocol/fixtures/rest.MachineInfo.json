@@ -1,0 +1,22 @@
+[
+  {
+    "machine_id": "m-1",
+    "name": "citadel",
+    "os": "linux",
+    "os_version": "6.8",
+    "app_version": "0.6.35",
+    "last_ip": "10.0.0.5",
+    "first_connected_at": "2026-10-28T09:00:00Z",
+    "last_connected_at": "2026-10-28T10:30:00Z",
+    "last_seen_at": "2026-10-28T10:30:00Z",
+    "connected": true
+  },
+  {
+    "machine_id": "m-2",
+    "name": "m-2",
+    "first_connected_at": "2026-10-28T09:00:00Z",
+    "last_connected_at": "2026-10-28T09:00:00Z",
+    "last_seen_at": "2026-10-28T09:00:00Z",
+    "connected": false
+  }
+]

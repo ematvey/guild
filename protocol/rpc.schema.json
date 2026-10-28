@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guild.local/protocol/rpc.schema.json",
+  "title": "Guild JSON-RPC envelope",
+  "description": "The line-delimited JSON-RPC 2.0 envelope between the desktop UI and the engine, and over the local CLI socket. Derived from crates/protocol/src/rpc.rs, which is what the wire actually is. Every message carries `protocol` so the UI and the engine can negotiate. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise.",
+  "$defs": {
+    "Json": {
+      "description": "Any JSON value. serde_json::Value in Rust, Json in TypeScript."
+    },
+
+    "Request": {
+      "description": "A request from client to server. Either side can be the client.",
+      "type": "object",
+      "required": ["jsonrpc", "id", "protocol", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "type": "string", "const": "2.0" },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "A JSON number, not a bigint. u64 in Rust."
+        },
+        "protocol": { "type": "integer", "minimum": 0 },
+        "method": { "type": "string" },
+        "params": {
+          "$ref": "#/$defs/Json",
+          "description": "Always serialized; `#[serde(default)]`."
+        }
+      }
+    },
+
+    "RpcError": {
+      "description": "The error arm of a Response.",
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "integer",
+          "description": "A JSON number. i64 in Rust; the base is -32000."
+        },
+        "message": { "type": "string" },
+        "data": {
+          "$ref": "#/$defs/Json",
+          "description": "Omitted when unset."
+        }
+      }
+    },
+
+    "Response": {
+      "description": "A reply to a Request. Exactly one of result and error is present.",
+      "type": "object",
+      "required": ["jsonrpc", "id", "protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "type": "string", "const": "2.0" },
+        "id": { "type": "integer", "minimum": 0 },
+        "protocol": { "type": "integer", "minimum": 0 },
+        "result": {
+          "$ref": "#/$defs/Json",
+          "description": "Omitted on the error arm."
+        },
+        "error": {
+          "$ref": "#/$defs/RpcError",
+          "description": "Omitted on the success arm."
+        }
+      }
+    },
+
+    "Event": {
+      "description": "An unsolicited server push: streaming deltas and status.",
+      "type": "object",
+      "required": ["protocol", "event", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": { "type": "integer", "minimum": 0 },
+        "event": { "type": "string" },
+        "payload": {
+          "$ref": "#/$defs/Json",
+          "description": "Always serialized; `#[serde(default)]`."
+        }
+      }
+    }
+  }
+}

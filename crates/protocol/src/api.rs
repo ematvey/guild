@@ -18,6 +18,9 @@ pub struct UserInfo {
     pub role: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    /// The first-run guide was dismissed. Always serialized.
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -137,6 +140,15 @@ pub struct Chat {
     /// The reader has an unseen assistant turn (sidebar dot).
     #[serde(default)]
     pub unread: bool,
+    /// This chat or any descendant thread has a queued or running run.
+    #[serde(default)]
+    pub working: bool,
+    /// A tool call in this chat waits for the user's approval.
+    #[serde(default)]
+    pub blocked: bool,
+    /// The chat's latest thread event, falling back to created_at for a chat
+    /// with no events: the sidebar's recent-activity sort key.
+    pub last_activity_at: DateTime<Utc>,
     /// The project (named workspace folder) the chat runs in; None =
     /// folderless. Defaults for old clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -814,6 +826,7 @@ mod tests {
                 role: "admin".into(),
                 display_name: Some("Admin".into()),
                 avatar_url: None,
+                onboarded: true,
             },
         };
         let s = serde_json::to_string(&r).unwrap();

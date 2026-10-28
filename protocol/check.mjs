@@ -155,6 +155,29 @@ async function main() {
     fail(`${missing.length} variant(s) have no fixture`);
   }
 
+  // TypeScript coverage: every fixture root of the @guild/wire schemas must
+  // have a declaration in packages/wire, or the hand-written side is missing
+  // a type the wire carries. The sandbox schema is exempt: its types live
+  // beside the runner in apps/server/src/sandbox.
+  const WIRE_SCHEMAS = new Set(['rest', 'socket', 'rpc']);
+  const wireDir = join(DIR, '..', 'packages', 'wire', 'src');
+  let wireSource = '';
+  for (const name of await readdir(wireDir)) {
+    if (name.endsWith('.ts')) wireSource += await readFile(join(wireDir, name), 'utf8');
+  }
+  const untyped = [];
+  for (const [schemaName, schemaRoots] of roots) {
+    if (!WIRE_SCHEMAS.has(schemaName)) continue;
+    for (const root of schemaRoots) {
+      const declared = new RegExp(`export (?:interface|type) ${root}\\b`).test(wireSource);
+      if (!declared) untyped.push(`${schemaName}.${root}`);
+    }
+  }
+  if (untyped.length > 0) {
+    for (const item of untyped) console.error(`missing TypeScript declaration: ${item}`);
+    fail(`${untyped.length} fixture root(s) have no @guild/wire declaration`);
+  }
+
   console.log(
     `protocol: ${schemas.size} schema(s), ${fixtureNames.length} fixture file(s), ` +
       `${seen.size} frame root(s), ${frames} frame(s), coverage complete`,

@@ -131,6 +131,7 @@ async fn engine_stdio_pair_flow() {
         role: "member".into(),
         display_name: None,
         avatar_url: None,
+        onboarded: true,
     };
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))

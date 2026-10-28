@@ -1,0 +1,14 @@
+[
+  {
+    "token": "tok_2",
+    "user": {
+      "id": "01a09217-74f3-7441-8ddd-0efe8534b275",
+      "email": "matvey@diagnocat.com",
+      "org_id": "01a085ff-4ccd-7e91-809b-52eaf0eccad6",
+      "role": "admin",
+      "display_name": "Matvey Ezhov",
+      "avatar_url": "https://example.invalid/a.png",
+      "onboarded": true
+    }
+  }
+]

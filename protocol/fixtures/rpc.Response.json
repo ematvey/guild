@@ -1,0 +1,31 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "protocol": 1,
+    "result": {
+      "build_id": "abc"
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "protocol": 1,
+    "error": {
+      "code": -32601,
+      "message": "no such method",
+      "data": {
+        "method": "x"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "protocol": 1,
+    "error": {
+      "code": -32000,
+      "message": "app error"
+    }
+  }
+]

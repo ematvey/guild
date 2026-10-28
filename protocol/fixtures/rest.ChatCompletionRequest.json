@@ -1,0 +1,39 @@
+[
+  {
+    "user_message_id": "01a0b1c2-1111-7abc-8def-0123456789ab",
+    "chat_id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",
+    "model": "deepseek-v4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "give me an overview of this project"
+      }
+    ],
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "read a file",
+        "parameters": {
+          "type": "object"
+        },
+        "kind": "generic"
+      }
+    ],
+    "system": "you are guild",
+    "client_tools": true,
+    "project_id": "01a0b1c2-1111-7abc-8def-0123456789ab",
+    "attachment_ids": [
+      "01a0b1c2-1111-7abc-8def-0123456789ab"
+    ],
+    "server_workspace": "ws",
+    "skills_index": "- skill",
+    "agents_md": "# notes",
+    "send_mode": "queue"
+  },
+  {
+    "chat_id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",
+    "model": "deepseek-v4",
+    "messages": [],
+    "client_tools": false
+  }
+]

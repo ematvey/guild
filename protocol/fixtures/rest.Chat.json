@@ -1,0 +1,32 @@
+[
+  {
+    "id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",
+    "org_id": "01a085ff-4ccd-7e91-809b-52eaf0eccad6",
+    "user_id": "01a09217-74f3-7441-8ddd-0efe8534b275",
+    "title": "Patents overview",
+    "created_at": "2026-10-28T09:00:00Z",
+    "machine_id": "m-1",
+    "machine_label": "citadel",
+    "generating": false,
+    "unread": true,
+    "project_id": "01a0b1c2-1111-7abc-8def-0123456789ab",
+    "project_name": "Patents",
+    "project_machine_label": "citadel",
+    "machine_online": true,
+    "working": false,
+    "blocked": false,
+    "last_activity_at": "2026-10-28T09:00:00Z"
+  },
+  {
+    "id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",
+    "org_id": "01a085ff-4ccd-7e91-809b-52eaf0eccad6",
+    "user_id": "01a09217-74f3-7441-8ddd-0efe8534b275",
+    "created_at": "2026-10-28T09:00:00Z",
+    "generating": false,
+    "unread": false,
+    "machine_online": false,
+    "working": false,
+    "blocked": false,
+    "last_activity_at": "2026-10-28T09:00:00Z"
+  }
+]

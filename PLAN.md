@@ -12,6 +12,28 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Every wire type has a schema, a fixture and a TypeScript declaration
+  (2026-10-28).** The hand-written contract replaced the generator with
+  `protocol/*.schema.json`, but it covered only the types that had a fixture:
+  nineteen shapes the old bindings described had no schema entry — `Chat`,
+  `UserInfo`, the login and pairing shapes, `MachineInfo`, the chat and
+  project request bodies, `ChatCompletionRequest`, `MachineContext`, and the
+  JSON-RPC envelope. Those rows were `Record<string, unknown>` on the server
+  and private copies on the client (`ChatSummary`, `UserInfo`), so nothing
+  checked them against Rust. All nineteen are now schema definitions with
+  fixtures: `rest.schema.json` for the HTTP DTOs, `socket.schema.json` for
+  `MachineContext`, and a new `rpc.schema.json` for the stdio envelope. The
+  Rust suite round-trips each fixture back to the same JSON (a second helper
+  for the types without `PartialEq`), and `check.mjs` now fails when a
+  fixture root has no `@guild/wire` declaration. Two Rust structs had drifted
+  from what the server sends: `Chat` lacked `working`, `blocked` and
+  `last_activity_at`, and `UserInfo` lacked `onboarded`. Both now carry them,
+  and `chatRow`, `machineInfo` and `userInfo` return the shared types. The
+  client's private `UserInfo` and its duplicate `ChatSummary` fields are
+  gone: `ChatSummary` extends `Chat`. The coherence floor rose by 2 files and
+  394 loc; the duplicated declarations paid about 20 lines of it, and the
+  rest is the contract itself.
+
 - **The prompt names the Guild user of the thread (2026-10-28).** A routine
   reported "no new Jira tasks" while five were assigned to the user. The
   prompt carried no identity: the model learned who it talks to from

@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.6.32",
   "type": "module",
-  "description": "Hand-written TypeScript types for the Guild member and machine socket, shared by the server and the desktop.",
+  "description": "Hand-written TypeScript types for the Guild wire: the member and machine socket, the JSON-RPC envelope, and the REST data-transfer types. Shared by the server and the desktop.",
   "exports": {
     "./types": "./src/types.ts",
     "./rest": "./src/rest.ts",
-    "./parse": "./src/parse.ts"
+    "./parse": "./src/parse.ts",
+    "./rpc": "./src/rpc.ts"
   }
 }
