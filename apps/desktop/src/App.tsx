@@ -8,7 +8,7 @@ import { InstallPrompt } from "./views/onboarding";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
-import { IS_TAURI, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
+import { IS_TAURI, SERVER_URL_KEY, clearToken, repairViewport, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
@@ -511,7 +511,7 @@ function LayoutDiag() {
         `shell top+h ${rect(shell)}`,
         `composer top+h ${rect(composer)} pb ${composer ? getComputedStyle(composer).paddingBottom : "-"}`,
         `card top+h ${rect(card)}`,
-        `scrollY ${Math.round(window.scrollY)}`,
+        `scrollY ${Math.round(window.scrollY)} reload ${sessionStorage.getItem("guild.viewportRepair") ?? "-"}`
       ]);
     };
     read();
@@ -636,6 +636,22 @@ export default function App() {
       return false;
     }
   });
+  // The viewport repair watches the page for the iOS status-bar loss; a
+  // sheet dismissal changes innerHeight without a navigation.
+  useEffect(() => {
+    const check = () => repairViewport();
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("pageshow", check);
+    document.addEventListener("visibilitychange", check);
+    const t = window.setTimeout(check, 800);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("resize", check);
+      window.removeEventListener("pageshow", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
   return (
     <ThemeProvider>
       <AppInner />
