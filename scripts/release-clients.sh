@@ -169,8 +169,8 @@ build_dmg() { # arch
   # refuses to start a process whose load commands name the same dylib twice,
   # so the linker wrapper drops the repeated flags.
   local zig_target="${arch}-macos-none"
-  GUILD_ZIG_TARGET="$zig_target" \
-  CARGO_TARGET_$(echo "$arch" | tr 'a-z-' 'A-Z_')_APPLE_DARWIN_LINKER="$PWD/scripts/zig-link-dedup.sh" \
+  local linker_var="CARGO_TARGET_$(echo "$arch" | tr 'a-z-' 'A-Z_')_APPLE_DARWIN_LINKER"
+  env "$linker_var=$PWD/scripts/zig-link-dedup.sh" GUILD_ZIG_TARGET="$zig_target" \
     cargo zigbuild --release -p guild-desktop --features tauri/custom-protocol --target "$arch-apple-darwin" >/dev/null
   local APP="$STAGE/Guild.app"
   rm -rf "$APP"
