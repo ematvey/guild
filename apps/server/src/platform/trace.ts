@@ -2,8 +2,8 @@
 // plain chat turn when no run exists); spans are the LLM calls, tool calls
 // and delegated runs inside it. Sessions group traces by chat. The run
 // lifecycle mirrors agent_runs into agent_traces; the gateway and the tool
-// hook append spans. Payload bodies land in llm_payloads only when payload
-// tracing is enabled (GUILD_TRACE_PAYLOADS=1). Same degradation rules as
+// hook append spans. Payload bodies land in llm_payloads unless payload
+// tracing is disabled (GUILD_TRACE_PAYLOADS=0). Same degradation rules as
 // the usage sink: an unreachable ClickHouse never breaks a model call, a
 // tool call or the approval gate — failures are logged and dropped. The
 // tables are TS-owned (idempotent DDL on first use).
@@ -158,7 +158,8 @@ export class TraceStore {
 
   constructor(
     readonly client: ClickhouseClient,
-    /** Request/response payload capture (opt-in via GUILD_TRACE_PAYLOADS=1). */
+    /** Request/response payload capture (GUILD_TRACE_PAYLOADS, default on;
+     *  "0" turns the bodies off). */
     private readonly tracePayloads: boolean,
   ) {}
 
