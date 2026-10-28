@@ -12,6 +12,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The prompt names the Guild user of the thread (2026-10-28).** A routine
+  reported "no new Jira tasks" while five were assigned to the user. The
+  prompt carried no identity: the model learned who it talks to from
+  whatever a tool answered, and Jira's `currentUser()` answers for the API
+  token's account — here another person's. The guild prompt section now
+  appends a `<current_user name="…" email="…">` block built from the chat
+  owner and says that a tool resolving "me" through its own account
+  answers for whoever owns that account, so the returned name must be
+  checked before a result is reported as this user's. `ChatStore.ownerOf`
+  joins `users` and returns the owner's account fields (email, display
+  name, role); the skills runtime deps read the role from it instead of a
+  second query. Identity reaches the prompt only — usage and trace rows
+  keep their `user_id`.
+
 - **Integrations are plugins in a shop, and traits carry Guild-provided names
   (2026-10-27).** The catalog was one 979-line switch in
   `platform/integration-catalog.ts`: adding a connector meant editing the

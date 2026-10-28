@@ -730,13 +730,19 @@ describe("store surfaces", () => {
     expect(meta?.published_at).toBe("2026-05-12T09:00:00Z");
   });
 
-  it("ownerOf resolves the chat's org and owner, null when absent", async () => {
+  it("ownerOf resolves the chat's org and owner account, null when absent", async () => {
     const c = await env!.db.query<{ id: string }>(
       `INSERT INTO chats (id, org_id, user_id, title) VALUES (gen_random_uuid(), $1, $2, 't') RETURNING id`,
       [orgId, userId],
     );
     const owner = await chats.ownerOf(c.rows[0]!.id);
-    expect(owner).toEqual({ org_id: orgId, user_id: userId });
+    expect(owner).toEqual({
+      org_id: orgId,
+      user_id: userId,
+      email: "skill-tools@example.test",
+      display_name: null,
+      role: "member",
+    });
     expect(await chats.ownerOf("00000000-0000-0000-0000-000000000000")).toBeNull();
   });
 });
