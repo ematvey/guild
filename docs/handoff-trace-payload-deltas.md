@@ -54,7 +54,16 @@ not carry. The read path rebuilds the full body.
   correctness.
 - A request with no messages (or an unparsable body) is stored as a full
   body.
-- Both tables keep the 14-day TTL.
+- Both tables keep the 14-day TTL, but the parent is older, so it can
+  expire minutes before its child. A chain read in that window stops at a
+  delta and shows a partial history. Fix if it matters: store the root's
+  expiry on every row of the chain and TTL by that value.
+- Rollback is not safe. An older server reads a delta row as if it were a
+  full body and shows only the tail. Deploy forward only, or clear the
+  traces tables before a rollback.
+- Rows written before this change have `prefix_count = 0` and read exactly
+  as before. The first request of a trace after the deploy is a new root,
+  because the chain table has no row for it.
 - `llm_payload_chains` is new, so no migration is needed. The two
   `llm_payloads` columns are added by `ALTER TABLE ... ADD COLUMN IF NOT
   EXISTS` on first use.
