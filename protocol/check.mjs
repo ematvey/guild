@@ -27,6 +27,18 @@ function resolveVariant(schema, variant) {
   return schema.$defs?.[name] ?? variant;
 }
 
+// The tag key a schema uses. The member socket tags with `type`; the sandbox
+// RPC wire tags with `t`.
+const TAG_KEYS = ['type', 't'];
+
+function variantTag(resolved) {
+  for (const key of TAG_KEYS) {
+    const tag = resolved.properties?.[key]?.const;
+    if (typeof tag === 'string') return tag;
+  }
+  return null;
+}
+
 // The tag values a tagged union declares. A plain struct has no tags, so it
 // has no coverage rule: validation alone is the check for those roots.
 function variantTypes(schema, root) {
@@ -37,8 +49,8 @@ function variantTypes(schema, root) {
   const types = [];
   for (const variant of variants) {
     const resolved = resolveVariant(schema, variant);
-    const tag = resolved.properties?.type?.const;
-    if (typeof tag !== 'string') return null;
+    const tag = variantTag(resolved);
+    if (tag === null) return null;
     types.push(tag);
   }
   return types;
@@ -114,7 +126,8 @@ async function main() {
       frames += 1;
       const key = `${schemaName}.${root}`;
       if (!seen.has(key)) seen.set(key, new Set());
-      seen.get(key).add(frame.type);
+      const tag = typeof frame.type === 'string' ? frame.type : frame.t;
+      if (typeof tag === 'string') seen.get(key).add(tag);
     });
   }
 

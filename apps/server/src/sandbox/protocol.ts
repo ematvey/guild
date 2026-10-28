@@ -11,12 +11,12 @@
 import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
 
 /** Client → agent. */
-export type ClientFrame =
+export type SandboxClientFrame =
   | { t: "call"; id: number; m: string; a: unknown[] }
   | { t: "cancel"; id: number };
 
 /** Agent → client. */
-export type AgentFrame =
+export type SandboxAgentFrame =
   | { t: "result"; id: number; r: unknown }
   | { t: "throw"; id: number; message: string }
   | { t: "output"; id: number; text: string; info: unknown }

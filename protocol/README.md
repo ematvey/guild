@@ -9,6 +9,9 @@ The wire, in one place. Nothing outside this directory decides a frame shape.
 - `rest.schema.json` — the data-transfer types that cross the TS/Rust
   boundary over HTTP. Derived from `crates/protocol/src/api.rs` and
   `crates/protocol/src/registry.rs`.
+- `sandbox.schema.json` — the sandbox RPC wire between the server's
+  `SandboxExecutionEnv` and the in-sandbox agent: one JSON frame per line,
+  tagged by `t`. Derived from `apps/server/src/sandbox/protocol.ts`.
 - `fixtures/<schema>.<Root>.json` — one example per variant of `$defs.<Root>`
   in `<schema>.schema.json`. Each file is a JSON array.
 - `check.mjs` — validates every fixture against its schema and requires a
