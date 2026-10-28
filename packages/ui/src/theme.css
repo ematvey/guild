@@ -58,10 +58,10 @@
     --text-lg: 25px;
     --text-xl: 29px;
     --text-2xl: 34px;
-    /* Every padding, gap and control size is a multiple of this step, so it
-       scales the boxes with the type instead of leaving text in a desktop
-       sized shell. */
-    --spacing: 0.3rem;
+    /* Every padding, gap and control size is a multiple of this step. The
+       type above is 1.3x its desktop value, so the boxes take the same
+       factor: one scale for the whole interface, not two. */
+    --spacing: 0.325rem;
   }
 }
 
