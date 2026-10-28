@@ -12,6 +12,17 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **An agent file rides its message to the client (2026-10-28).** `send_file`
+  wrote the attachment row and bound it to the assistant event, but no read
+  path ever used that binding: the client showed the model's "the file is
+  attached" and no file. The terminal assistant message now carries the
+  turn's pending agent files as `attachments` chips — the same shape a user
+  message uses. The transcript projection reads the pending rows before the
+  row is appended, the wire event gains the optional field (schema, Rust,
+  TS), and the desktop stamps the chips onto the message's last text block.
+  The event-id binding stays: it is what a child result reads to hand the
+  file to its parent.
+
 - **A sanitizer cleans keys as well as values (2026-10-28).** `jsonbText`
   and `recordJsonText` rebuilt their input with a JSON replacer, which never
   visits a key. A property name with U+0000 or a lone surrogate reached
