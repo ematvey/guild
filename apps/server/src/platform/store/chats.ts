@@ -158,6 +158,19 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
   };
 }
 
+/** A new chat is a new sidebar row: the workspace push is what puts it in
+ *  every open tab before the first message names it. */
+async function notifyChatCreated(
+  client: { query: (text: string, values?: unknown[]) => Promise<unknown> },
+  orgId: string,
+  userId: string,
+  chatId: string,
+): Promise<void> {
+  await client.query("SELECT pg_notify('guild_workspace', $1)", [
+    JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId }),
+  ]);
+}
+
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
 
@@ -229,6 +242,7 @@ export class ChatStore {
          machine_id, machine_label, generating, project_id`,
       [id, orgId, userId, title, projectId, null, null],
     );
+    await notifyChatCreated(client, orgId, userId, id);
     return rowToChat(res.rows[0]!);
   }
 
@@ -241,6 +255,7 @@ export class ChatStore {
          machine_id, machine_label, generating, project_id`,
       [id, orgId, userId, title, projectId, null, null],
     );
+    await notifyChatCreated(this.pool, orgId, userId, id);
     return rowToChat(res.rows[0]!);
   }
 
@@ -268,6 +283,7 @@ export class ChatStore {
            machine_id, machine_label, generating, project_id`,
         [id, orgId, userId, title, projectId, row.machine_id, row.label],
       );
+      await notifyChatCreated(client, orgId, userId, id);
       await client.query("COMMIT");
       return rowToChat(res.rows[0]!);
     } catch (error) {

@@ -218,10 +218,9 @@ export function ChatListItem({
         {title === "" ? (
           <span
             data-title-placeholder
-            aria-hidden="true"
-            className="block min-w-0 flex-1 whitespace-nowrap"
+            className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground"
           >
-            &nbsp;
+            New thread
           </span>
         ) : (
           <FadeTitle text={title} />

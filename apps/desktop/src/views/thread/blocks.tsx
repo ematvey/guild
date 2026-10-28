@@ -49,10 +49,20 @@ export function ThreadTitle({
   title: string;
   loading: boolean;
 }) {
-  if (chatId !== null && (loading || title === "")) {
+  if (chatId !== null && loading) {
     return (
       <span className="min-w-0 flex-1">
         <Skeleton className="h-4 w-28 rounded-md" aria-label="Loading title" />
+      </span>
+    );
+  }
+  // An empty title is a chat that has not been named yet — a fresh thread
+  // stays that way until its first message, so it says so instead of
+  // holding a skeleton open forever.
+  if (title === "") {
+    return (
+      <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+        New thread
       </span>
     );
   }

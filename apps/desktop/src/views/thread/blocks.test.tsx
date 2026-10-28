@@ -59,8 +59,14 @@ describe("ThreadProgress", () => {
 });
 
 describe("ThreadTitle", () => {
-  it("renders a fixed-size placeholder while a chat id has no title yet", () => {
+  it("names an unnamed chat instead of holding a skeleton open", () => {
     const html = renderToStaticMarkup(<ThreadTitle chatId="c1" title="" loading={false} />);
+    expect(html).toContain("New thread");
+    expect(html).not.toContain("Loading title");
+  });
+
+  it("shows a fixed-size placeholder while the chat is still loading", () => {
+    const html = renderToStaticMarkup(<ThreadTitle chatId="c1" title="" loading />);
     expect(html).toContain('aria-label="Loading title"');
     expect(html).toContain("w-28");
   });
