@@ -193,28 +193,6 @@ export function installState(s: InstallSurface): InstallState {
   return "other";
 }
 
-/** sessionStorage key: the one reload that tries to repair the viewport. */
-const VIEWPORT_REPAIR_KEY = "guild.viewportRepair";
-
-/// An installed web app on iOS loses the status-bar inset from its viewport
-/// after a Safari sheet closes: the page is still drawn from the top, but it
-/// is 62pt shorter, and the strip below it cannot be laid out from CSS. A
-/// document load gives the correct viewport back, so reload once per session
-/// when the loss is seen. The band is bounded on both sides: a shorter page
-/// for another reason (split view, external display) is left alone.
-export function repairViewport(): void {
-  try {
-    const band = window.screen.height - window.innerHeight;
-    if (!installSurface().standalone) return;
-    if (band < 40 || band > 120) return;
-    if (sessionStorage.getItem(VIEWPORT_REPAIR_KEY)) return;
-    sessionStorage.setItem(VIEWPORT_REPAIR_KEY, "1");
-    window.location.reload();
-  } catch {
-    /* storage blocked: leave the page alone */
-  }
-}
-
 /** True when the page should offer the install steps. */
 export function installOffered(s: InstallSurface): boolean {
   const state = installState(s);
