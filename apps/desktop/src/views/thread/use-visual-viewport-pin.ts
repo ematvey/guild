@@ -1,10 +1,11 @@
-// iOS Safari does not shrink the layout viewport when the keyboard opens —
-// it overlays it and pans the page to reveal the focused input, dragging
-// the fixed app shell (header included) off-screen. Pin the shell to the
-// visual viewport for as long as one exists: same top offset, same visible
-// height, tracked on every resize and scroll. With no keyboard the two
-// viewports agree, so the pin is a no-op and there is no threshold to cross
-// mid-animation — a threshold is what makes the header jump when it flips.
+// The keyboard does not shrink the layout viewport; it shrinks the visual
+// viewport, and iOS pans the document to reveal the focused input. A fixed
+// shell is anchored to the visual viewport (measured: with scrollY 386 the
+// header's rect top is still 0), so the pan needs no correction — but the
+// shell still has to take the visible height, or the composer sits under the
+// keyboard. Only the height is written. Writing `top` from offsetTop made
+// the shell jump between screen 0 and screen offsetTop, because the two
+// events disagree about the pan.
 import { useEffect, type RefObject } from "react";
 
 export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
@@ -15,15 +16,10 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
     let frame = 0;
     const apply = () => {
       frame = 0;
-      // The document cannot scroll, so the pan is always zero and only the
-      // height moves. A top offset is still honoured for the browsers that
-      // pan the visual viewport without a document scroll.
-      const top = Math.round(vv.offsetTop);
-      el.style.top = top ? `${top}px` : "";
       el.style.height = `${Math.round(vv.height)}px`;
     };
     // The viewport fires many times during the keyboard animation; one write
-    // per frame keeps the shell from thrashing between two offsets.
+    // per frame keeps the shell from thrashing between two heights.
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(apply);
     };
@@ -36,7 +32,6 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
       vv.removeEventListener("resize", schedule);
       vv.removeEventListener("scroll", schedule);
       window.removeEventListener("orientationchange", schedule);
-      el.style.top = "";
       el.style.height = "";
     };
   }, [ref]);
