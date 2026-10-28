@@ -11,8 +11,8 @@ import {
   PLAIN_METHODS,
   decodeValue,
   encodeValue,
-  type AgentFrame,
-  type ClientFrame,
+  type SandboxAgentFrame,
+  type SandboxClientFrame,
   type HandleKind,
   type HandleRef,
   type Wire,
@@ -31,7 +31,7 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
   let nextHandle = 1;
   const plain = new Set<string>(PLAIN_METHODS);
 
-  const send = (frame: AgentFrame) => wire.send(JSON.stringify(frame));
+  const send = (frame: SandboxAgentFrame) => wire.send(JSON.stringify(frame));
 
   const contextFor = (id: number): Context => {
     const controller = new AbortController();
@@ -100,9 +100,9 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
   };
 
   wire.onFrame((raw) => {
-    let frame: ClientFrame;
+    let frame: SandboxClientFrame;
     try {
-      frame = JSON.parse(raw) as ClientFrame;
+      frame = JSON.parse(raw) as SandboxClientFrame;
     } catch {
       return;
     }

@@ -1,0 +1,11 @@
+[
+  { "t": "call", "id": 1, "m": "readTextFile", "a": ["/workspace/notes.txt"] },
+  {
+    "t": "call",
+    "id": 2,
+    "m": "h.readLine",
+    "a": [{ "$h": 1, "kind": "textLineReader" }]
+  },
+  { "t": "call", "id": 0, "m": "setCwd", "a": ["/workspace"] },
+  { "t": "cancel", "id": 2 }
+]

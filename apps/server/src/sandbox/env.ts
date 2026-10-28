@@ -25,7 +25,7 @@ import {
   type WatchChange,
   type WatchTarget,
 } from "@earendil-works/pi-durable/env";
-import { decodeValue, encodeValue, type AgentFrame, type ClientFrame, type HandleRef, type Wire } from "./protocol.js";
+import { decodeValue, encodeValue, type SandboxAgentFrame, type SandboxClientFrame, type HandleRef, type Wire } from "./protocol.js";
 
 type Lost = "file" | "exec" | "void";
 
@@ -63,9 +63,9 @@ class Connection {
   }
 
   private onFrame(raw: string): void {
-    let frame: AgentFrame;
+    let frame: SandboxAgentFrame;
     try {
-      frame = JSON.parse(raw) as AgentFrame;
+      frame = JSON.parse(raw) as SandboxAgentFrame;
     } catch {
       return;
     }
@@ -130,7 +130,7 @@ class Connection {
     });
   }
 
-  send(frame: ClientFrame): void {
+  send(frame: SandboxClientFrame): void {
     if (!this.closed) this.wire.send(JSON.stringify(frame));
   }
 }
