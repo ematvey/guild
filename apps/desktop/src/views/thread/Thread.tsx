@@ -2022,7 +2022,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   return (
                     currentProject && (
                       <span
-                        className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
+                        className="flex h-8 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground pointer-coarse:h-10"
                         title={
                           showMachine
                             ? `${currentProject.name} — Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
@@ -2034,8 +2034,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                             className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                           />
                         )}
-                        <span className="flex h-7 items-center gap-1 px-2">
-                          <FolderOpen className="size-3.5 shrink-0" />
+                        <span className="flex min-w-0 items-center gap-1 px-2">
+                          <FolderOpen className="size-4 shrink-0" />
                           <span className="hidden min-w-0 sm:block sm:flex-1">
                             <FadeTitle text={projectChipLabel(currentProject)} />
                           </span>
@@ -2049,7 +2049,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                     <Button
                       size="sm"
                       variant="ghost"
-                      className={`h-7 gap-1 rounded-full px-2 ${
+                      className={`h-8 gap-1 rounded-full px-2 pointer-coarse:h-10 ${
                         approvalMode === "full_access"
                           ? "text-orange-500 hover:text-orange-400"
                           : "text-muted-foreground hover:text-foreground"
@@ -2060,7 +2060,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                         // Icon-only on narrow screens: the icon must say
                         // which mode is active, not always the shield.
                         const ActiveIcon = approvalMode === "default" ? ShieldCheck : APPROVAL_MODES[approvalMode].icon;
-                        return <ActiveIcon className="size-3.5 shrink-0" />;
+                        return <ActiveIcon className="size-4 shrink-0" />;
                       })()}
                       <span className="hidden sm:inline">
                         {approvalMode === "default" ? accountDefault : APPROVAL_MODES[approvalMode].label}
@@ -2102,7 +2102,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   // An agent thread, or a chat whose thread belongs to a
                   // shared agent, names its agent and keeps it.
                   <span
-                    className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                    className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-xs text-secondary-foreground pointer-coarse:h-10"
                     title={
                       chipAgent?.visibility === "private"
                         ? "Your private agent"
@@ -2111,7 +2111,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   >
                     <span className="truncate">{chipAgent?.name ?? "Assistant"}</span>
                     {chipAgent !== null && chipAgent !== undefined && chipAgent.visibility !== "private" && (
-                      <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                      <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
                     )}
                   </span>
                 ) : (
@@ -2119,14 +2119,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
-                        className="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                        className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-xs text-secondary-foreground pointer-coarse:h-10"
                         title="Choose the agent for this chat"
                       >
                         <span className="truncate">{pickedAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
                         {pickedAgent !== null && pickedAgent.visibility !== "private" && (
-                          <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                          <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
                         )}
-                        <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+                        <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
@@ -2148,7 +2148,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                             <span className="flex min-w-0 items-center gap-1.5">
                               <span className="truncate">{agent.name}</span>
                               {agent.visibility !== "private" && (
-                                <Users className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                                <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
                               )}
                             </span>
                             {agent.description ? (

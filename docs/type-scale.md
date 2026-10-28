@@ -22,7 +22,7 @@ the scale.
 | Role | Box | Glyph | Where |
 |---|---|---|---|
 | Toolbar | `size-9` (36) | `size-4` | Header, sidebar chrome, dialog rows, list row actions |
-| Composer | `size-8` (32) | `size-4` | Attach, send, mode chip |
+| Composer | `size-8` (32) | `size-4` | Attach, send, approval mode, project chip, agent chip, context ring — one height for the whole row |
 | Touch | `pointer-coarse:size-10` (40) | `size-4` | Added to both of the above |
 
 Apple's minimum touch target is 44. The touch step closes most of that gap
