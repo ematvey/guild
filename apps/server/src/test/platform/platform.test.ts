@@ -526,6 +526,14 @@ describe("attachments + object storage", () => {
     expect(row.size_bytes).toBe(9);
     expect(row.content_type).toBe("application/pdf");
 
+    // A user upload records its author now and stays pending (no event) until
+    // a message references it.
+    const stored = await ctx.pool.query<{ author_kind: string; author_id: string; event_id: string | null }>(
+      "SELECT author_kind, author_id, event_id FROM attachments WHERE id = $1",
+      [row.id],
+    );
+    expect(stored.rows[0]).toEqual({ author_kind: "user", author_id: adminId, event_id: null });
+
     const list = await env.app.inject({
       method: "GET",
       url: `/api/v1/chats/${chatId}/attachments`,
