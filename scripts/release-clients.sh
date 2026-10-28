@@ -127,9 +127,9 @@ publish linux-x86_64 "$STAGE/Guild-${VERSION}-x86_64.AppImage" "Guild-${VERSION}
 
 # ---- macos: .app + drag-and-drop DMG (hfsprogs + libdmg-hfsplus) ----
 echo "==> macos: .app + DMG"
-# The zigbuild binary ships with a valid linker-generated ad-hoc signature.
-# Without a Developer ID signature macOS Gatekeeper reports a quarantined
-# download as "damaged"; the user-side workaround is
+# The zigbuild binary is ad-hoc signed by the linker. Without a Developer ID
+# signature macOS Gatekeeper reports a quarantined download as "damaged"; the
+# user-side workaround is
 #   xattr -dr com.apple.quarantine /Applications/Guild.app
 # With GUILD_APPLE_CERT_P12 set (Developer ID Application certificate) the
 # artifacts are Developer ID-signed and the DMG is notarized + stapled via
@@ -164,7 +164,14 @@ EOF
 build_dmg() { # arch
   local arch="$1"
   local bin="target/$arch-apple-darwin/release/guild-desktop"
-  cargo zigbuild --release -p guild-desktop --features tauri/custom-protocol --target "$arch-apple-darwin" >/dev/null
+  # rustc passes one `-framework X` per crate that links the framework, and
+  # the zig Mach-O linker writes one LC_LOAD_DYLIB per flag. dyld on macOS 26
+  # refuses to start a process whose load commands name the same dylib twice,
+  # so the linker wrapper drops the repeated flags.
+  local zig_target="${arch}-macos-none"
+  local linker_var="CARGO_TARGET_$(echo "$arch" | tr 'a-z-' 'A-Z_')_APPLE_DARWIN_LINKER"
+  env "$linker_var=$PWD/scripts/zig-link-dedup.sh" GUILD_ZIG_TARGET="$zig_target" \
+    cargo zigbuild --release -p guild-desktop --features tauri/custom-protocol --target "$arch-apple-darwin" >/dev/null
   local APP="$STAGE/Guild.app"
   rm -rf "$APP"
   make_app "$bin" "$APP"

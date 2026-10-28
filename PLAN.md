@@ -12,6 +12,17 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The prompt names the Guild user of the thread (2026-10-28).** A routine
+  reported "no new Jira tasks" while five were assigned to the user. The
+  prompt carried no identity: the model learned who it talks to from
+  whatever a tool answered, and Jira's `currentUser()` answers for the API
+  token's account — here another person's. The guild prompt section now
+  appends one line built from the chat owner:
+  `<current_user name="…" email="…" />`. `ChatStore.ownerOf` joins `users`
+  and returns the owner's account fields (email, display name, role); the
+  skills runtime deps read the role from it instead of a second query.
+  Identity reaches the prompt only — usage and trace rows keep their
+  `user_id`.
 - **The wire is a schema and fixtures, not a generator (2026-10-28).** The
   TypeScript frame types came from `ts-rs`: `cargo test -p protocol --features
   ts` wrote 72 `.ts` files into `crates/protocol/bindings`, a perl pass
