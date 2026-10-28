@@ -19,7 +19,9 @@ fn fixture(name: &str) -> Vec<serde_json::Value> {
 }
 
 // Deserialize one fixture array into T, then re-serialize and deserialize
-// again. A mismatch between the two values is a round-trip failure.
+// again. The serialized JSON must equal the fixture frame, so a field that
+// exists in the fixture but not in T fails here instead of being dropped by
+// serde. The second deserialize proves the emitted JSON is still accepted.
 fn round_trip<T>(file: &str, frames: Vec<serde_json::Value>) -> Vec<T>
 where
     T: DeserializeOwned + Serialize + PartialEq + std::fmt::Debug,
@@ -31,6 +33,10 @@ where
         });
         let json = serde_json::to_value(&value)
             .unwrap_or_else(|e| panic!("{file}[{index}]: serialize: {e}"));
+        assert_eq!(
+            json, frame,
+            "{file}[{index}]: serialize does not reproduce the fixture frame"
+        );
         let again: T = serde_json::from_value(json.clone()).unwrap_or_else(|e| {
             panic!("{file}[{index}]: round-trip deserialize: {e}\njson: {json}")
         });

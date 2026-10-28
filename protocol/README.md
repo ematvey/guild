@@ -25,9 +25,10 @@ The wire, in one place. Nothing outside this directory decides a frame shape.
 The fixtures are the executable form of the schema. The Rust suite
 deserializes every one of them and re-serializes it back to the same JSON;
 the TypeScript suite parses them. A field renamed on one side fails that
-side's test. `check.mjs` also requires an `@guild/wire` declaration for every
-fixture root of the three `@guild/wire` schemas, so a type cannot exist on
-the wire and be missing from the TypeScript side.
+side's test. `check.mjs` reads the TypeScript declarations with the compiler
+and fails when a fixture root has no declaration, when a property name
+differs, or when a required field is optional on one side and required on
+the other.
 
 ## Presence is the contract
 

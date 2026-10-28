@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
+import ts from 'typescript';
 
 const DIR = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES = join(DIR, 'fixtures');
@@ -155,33 +156,167 @@ async function main() {
     fail(`${missing.length} variant(s) have no fixture`);
   }
 
-  // TypeScript coverage: every fixture root of the @guild/wire schemas must
-  // have a declaration in packages/wire, or the hand-written side is missing
-  // a type the wire carries. The sandbox schema is exempt: its types live
-  // beside the runner in apps/server/src/sandbox.
+  // TypeScript conformance: every fixture root of the @guild/wire schemas
+  // must have a declaration in packages/wire, and that declaration must carry
+  // the same property names and presence rules as the schema. The sandbox
+  // schema is exempt: its types live beside the runner in
+  // apps/server/src/sandbox.
   const WIRE_SCHEMAS = new Set(['rest', 'socket', 'rpc']);
   const wireDir = join(DIR, '..', 'packages', 'wire', 'src');
-  let wireSource = '';
-  for (const name of await readdir(wireDir)) {
-    if (name.endsWith('.ts')) wireSource += await readFile(join(wireDir, name), 'utf8');
-  }
-  const untyped = [];
+  const declarations = await loadDeclarations(wireDir);
+  const typeProblems = [];
   for (const [schemaName, schemaRoots] of roots) {
     if (!WIRE_SCHEMAS.has(schemaName)) continue;
+    const schema = schemas.get(schemaName);
     for (const root of schemaRoots) {
-      const declared = new RegExp(`export (?:interface|type) ${root}\\b`).test(wireSource);
-      if (!declared) untyped.push(`${schemaName}.${root}`);
+      compareRoot(`${schemaName}.${root}`, schema, schema.$defs?.[root], declarations.get(root), typeProblems);
     }
   }
-  if (untyped.length > 0) {
-    for (const item of untyped) console.error(`missing TypeScript declaration: ${item}`);
-    fail(`${untyped.length} fixture root(s) have no @guild/wire declaration`);
+  if (typeProblems.length > 0) {
+    for (const item of typeProblems) console.error(item);
+    fail(`${typeProblems.length} TypeScript declaration mismatch(es)`);
   }
 
   console.log(
     `protocol: ${schemas.size} schema(s), ${fixtureNames.length} fixture file(s), ` +
       `${seen.size} frame root(s), ${frames} frame(s), coverage complete`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// TypeScript declarations, read with the compiler's own parser. Each export is
+// an object (interface or type literal), a tagged union (one member per wire
+// variant), or a string union (an enum).
+// ---------------------------------------------------------------------------
+
+async function loadDeclarations(dir) {
+  const out = new Map();
+  for (const name of (await readdir(dir)).filter((n) => n.endsWith('.ts')).sort()) {
+    const file = join(dir, name);
+    const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    for (const statement of source.statements) {
+      if (ts.isInterfaceDeclaration(statement)) {
+        out.set(statement.name.text, { kind: 'object', props: propsOf(source, statement.members) });
+      } else if (ts.isTypeAliasDeclaration(statement)) {
+        const type = statement.type;
+        if (ts.isUnionTypeNode(type)) {
+          const variants = new Map();
+          const strings = [];
+          for (const member of type.types) {
+            if (ts.isTypeLiteralNode(member)) {
+              const tag = tagOf(source, member.members);
+              if (tag === null) { variants.clear(); strings.length = 0; break; }
+              variants.set(tag, propsOf(source, member.members));
+            } else if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) {
+              strings.push(member.literal.text);
+            } else {
+              variants.clear();
+              strings.length = 0;
+              break;
+            }
+          }
+          if (variants.size > 0) out.set(statement.name.text, { kind: 'union', variants });
+          else if (strings.length > 0) out.set(statement.name.text, { kind: 'strings', values: strings });
+          else out.set(statement.name.text, { kind: 'other' });
+        } else if (ts.isTypeLiteralNode(type)) {
+          out.set(statement.name.text, { kind: 'object', props: propsOf(source, type.members) });
+        } else {
+          out.set(statement.name.text, { kind: 'other' });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function propsOf(source, members) {
+  const out = new Map();
+  for (const member of members) {
+    if (!ts.isPropertySignature(member) || member.name === undefined) continue;
+    const name = member.name.getText(source).replace(/^['"]|['"]$/g, '');
+    out.set(name, member.questionToken !== undefined);
+  }
+  return out;
+}
+
+function tagOf(source, members) {
+  for (const member of members) {
+    if (!ts.isPropertySignature(member) || member.name?.getText(source) !== 'type') continue;
+    if (member.type && ts.isLiteralTypeNode(member.type) && ts.isStringLiteral(member.type.literal)) {
+      return member.type.literal.text;
+    }
+  }
+  return null;
+}
+
+function compareRoot(name, schema, def, declaration, problems) {
+  if (def === undefined) {
+    problems.push(`${name}: the schema has no such $defs entry`);
+    return;
+  }
+  if (declaration === undefined) {
+    problems.push(`missing TypeScript declaration: ${name}`);
+    return;
+  }
+  if (def.oneOf !== undefined) {
+    if (declaration.kind !== 'union') {
+      problems.push(`${name}: schema is a union, TypeScript is ${declaration.kind}`);
+      return;
+    }
+    const tags = [];
+    for (const variant of def.oneOf) {
+      const resolved = resolveVariant(schema, variant);
+      const tag = resolved.properties?.type?.const;
+      if (typeof tag !== 'string') continue;
+      tags.push(tag);
+      const tsProps = declaration.variants.get(tag);
+      if (tsProps === undefined) {
+        problems.push(`${name}.${tag}: the schema has this variant, TypeScript does not`);
+        continue;
+      }
+      compareProps(`${name}.${tag}`, resolved, tsProps, problems);
+    }
+    for (const tag of declaration.variants.keys()) {
+      if (!tags.includes(tag)) problems.push(`${name}.${tag}: TypeScript has this variant, the schema does not`);
+    }
+    return;
+  }
+  if (def.enum !== undefined) {
+    if (declaration.kind !== 'strings') {
+      problems.push(`${name}: schema is an enum, TypeScript is ${declaration.kind}`);
+      return;
+    }
+    const tsValues = [...declaration.values].sort().join(',');
+    const schemaValues = [...def.enum].sort().join(',');
+    if (tsValues !== schemaValues) problems.push(`${name}: TypeScript enum ${tsValues}, schema ${schemaValues}`);
+    return;
+  }
+  if (declaration.kind !== 'object') {
+    problems.push(`${name}: schema is an object, TypeScript is ${declaration.kind}`);
+    return;
+  }
+  compareProps(name, def, declaration.props, problems);
+}
+
+function compareProps(name, def, tsProps, problems) {
+  const schemaProps = Object.keys(def.properties ?? {});
+  const required = new Set(def.required ?? []);
+  for (const key of schemaProps) {
+    if (!tsProps.has(key)) {
+      problems.push(`${name}.${key}: in the schema, missing in TypeScript`);
+      continue;
+    }
+    const tsOptional = tsProps.get(key);
+    if (required.has(key) === tsOptional) {
+      problems.push(
+        `${name}.${key}: TypeScript is ${tsOptional ? 'optional' : 'required'}, ` +
+          `the schema is ${required.has(key) ? 'required' : 'optional'}`,
+      );
+    }
+  }
+  for (const key of tsProps.keys()) {
+    if (!schemaProps.includes(key)) problems.push(`${name}.${key}: in TypeScript, missing in the schema`);
+  }
 }
 
 main().catch((err) => fail(err.stack ?? String(err)));
