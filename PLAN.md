@@ -34,9 +34,17 @@ first. Code comments describe only the present.
     serializers are plain objects and `JSON.stringify`. The golden test parses
     both sides and compares normalized values. This removed about 290 lines.
   - **The cost.** `packages/wire` is 4 files where the generated tree was 72,
-    and the coherence counters moved by +4 files and +7 loc, because the
-    scanner already skipped generated files. Net loc against `develop` is
-    down.
+    and the coherence counters moved by +4 files and +24 loc, because the
+    scanner already skipped generated files. Net against `develop` is down
+    5 loc, and the +24 is the fixture test that makes the TypeScript side of
+    the contract real.
+  - **The same idea elsewhere.** `rustJsonText` re-implemented serde_json for
+    HTTP responses — sorted keys, ryu floats, a marker that kept a `.0` tail.
+    It served 61 call sites in 17 files and it is gone; those responses are
+    `JSON.stringify` too. The sandbox RPC wire (`server` to the in-sandbox
+    agent) is now described in `protocol/sandbox.schema.json` with fixtures,
+    and its `ClientFrame`/`AgentFrame` are `SandboxClientFrame`/
+    `SandboxAgentFrame` so the name is not shared with the member socket.
 
 - **A read mark pushes the workspace lists (2026-10-27).** `markRead` wrote
   `chat_reads` and stopped there, so only the client that sent the mark hid
