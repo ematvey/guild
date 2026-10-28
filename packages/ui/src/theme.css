@@ -45,20 +45,23 @@
 }
 
 /* A phone holds the same layout in ~440pt that a desktop window holds in
-   ~1400px, so the same step reads smaller at arm's length. Every step gains
-   one or two pixels on a narrow screen; the ratios above stay the ratios.
-   The steps are custom properties, so this reaches every utility that uses
-   them without touching a view. */
+   ~1400px, so the same step reads smaller at arm's length. Both scales are
+   custom properties, so this raises type and spacing together for every
+   utility that uses them, without touching a view. */
 @media (max-width: 640px) {
   :root {
-    --text-3xs: 13px;
-    --text-2xs: 15px;
-    --text-xs: 16px;
-    --text-sm: 17px;
-    --text-base: 19px;
-    --text-lg: 21px;
-    --text-xl: 25px;
-    --text-2xl: 29px;
+    --text-3xs: 14px;
+    --text-2xs: 17px;
+    --text-xs: 18px;
+    --text-sm: 19px;
+    --text-base: 22px;
+    --text-lg: 25px;
+    --text-xl: 29px;
+    --text-2xl: 34px;
+    /* Every padding, gap and control size is a multiple of this step, so it
+       scales the boxes with the type instead of leaving text in a desktop
+       sized shell. */
+    --spacing: 0.3rem;
   }
 }
 
