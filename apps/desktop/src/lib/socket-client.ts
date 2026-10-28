@@ -1,7 +1,8 @@
 // The member socket client: connect with a one-use ticket, route server
 // frames to handlers, and resync the open thread on every reconnect.
 
-import type { ServerFrame as WsServerMsg } from "@guild/wire/types";
+import type { ServerFrame } from "@guild/wire/types";
+import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
@@ -65,7 +66,7 @@ function reportError(error: unknown, handlers: SocketHandlers): void {
 
 /** Pure protocol router. It has no browser or socket dependencies. */
 
-export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): void {
+export function routeMessage(message: ServerFrame, handlers: SocketHandlers): void {
   switch (message.type) {
     case "hello":
     case "tool_dispatch":
@@ -166,7 +167,7 @@ export function startSocket(
     pingsTimer = setInterval(() => {
       if (stopped) return;
       if (socket?.readyState === 1) {
-        try { socket.send(JSON.stringify({ type: "ping" })); } catch { /* closing */ }
+        try { socket.send(serializeClientFrame({ type: "ping" })); } catch { /* closing */ }
       }
     }, PING_INTERVAL_MS);
     watchdogTimer = setInterval(() => {
@@ -184,7 +185,7 @@ export function startSocket(
 
   const sendSync = () => {
     if (socket?.readyState !== 1) return;
-    socket.send(JSON.stringify({ type: "sync", chat_id: opts.getOpenChatId() }));
+    socket.send(serializeClientFrame({ type: "sync", chat_id: opts.getOpenChatId() }));
   };
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null || connecting) return;
@@ -214,7 +215,10 @@ export function startSocket(
         if (socket !== current || stopped || typeof event.data !== "string") return;
         noteFrame();
         try {
-          const message = JSON.parse(event.data) as WsServerMsg;
+          // An unknown frame tag is a newer server, not a broken one: ignore
+          // it and keep the connection.
+          const message = parseServerFrame(event.data);
+          if (message === null) return;
           if (message.type === "auth_required") {
             connecting = true;
             needsRefresh = true;
@@ -301,7 +305,7 @@ export function startSocket(
     markRead: (chatId: string): boolean => {
       if (socket?.readyState !== 1) return false;
       try {
-        socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+        socket.send(serializeClientFrame({ type: "read", chat_id: chatId }));
         return true;
       } catch {
         return false;

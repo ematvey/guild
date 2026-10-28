@@ -1,10 +1,10 @@
 import { memo, useEffect, useState } from "react";
 import { Frame } from "./frame";
-import type { Block } from "../lib/thread-reducer";
+import type { RenderBlock } from "../lib/thread-reducer";
 
 export type ViewEntry =
-  | { kind: "plain"; b: Block; i: number }
-  | { kind: "work"; run: Block[]; turnStart?: string };
+  | { kind: "plain"; b: RenderBlock; i: number }
+  | { kind: "work"; run: RenderBlock[]; turnStart?: string };
 
 /// Transcript entries. Each CONTIGUOUS agent-work run — thinking, tool
 /// calls and subagent lifecycle records — collapses into one work entry;
@@ -19,9 +19,9 @@ export type ViewEntry =
 /// the next step's buffer can arrive before the previous step's commit,
 /// making the new live block inherit the old open-time). Settled runs keep
 /// their own per-run duration.
-export function viewEntries(blocks: Block[]): ViewEntry[] {
+export function viewEntries(blocks: RenderBlock[]): ViewEntry[] {
   const entries: ViewEntry[] = [];
-  let run: Block[] = [];
+  let run: RenderBlock[] = [];
   let turnStart: string | undefined;
   const flush = () => {
     if (run.length) entries.push({ kind: "work", run, turnStart });
@@ -42,7 +42,7 @@ export function viewEntries(blocks: Block[]): ViewEntry[] {
 
 /** The blocks that belong to the agent's work row: its thinking, tool calls,
  *  and subagent lifecycle records. */
-function isWorkBlock(b: Block): boolean {
+function isWorkBlock(b: RenderBlock): boolean {
   return (
     b.kind === "reasoning" ||
     b.kind === "tool" ||
@@ -53,7 +53,7 @@ function isWorkBlock(b: Block): boolean {
 }
 
 export function workRunLabel(
-  run: Block[],
+  run: RenderBlock[],
   active: boolean,
   stopping: boolean,
   nowMs: number,
@@ -83,7 +83,7 @@ export function workRunLabel(
 }
 
 export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stopping, turnStart, children }: {
-  run: Block[];
+  run: RenderBlock[];
   active: boolean;
   stopping: boolean;
   turnStart?: string;

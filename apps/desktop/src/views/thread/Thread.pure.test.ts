@@ -28,7 +28,7 @@ import {
   resolveApproval,
   threadStateBlocks,
   upsertApproval,
-  type Block,
+  type RenderBlock,
 } from "../../lib/thread-reducer";
 import type { ChatRoute } from "./route";
 import type { ApprovalPolicy } from "../../lib/api/approvals";
@@ -676,7 +676,7 @@ describe("approval upsert/resolve", () => {
   });
 
   it("upsert is idempotent per call", () => {
-    let blocks: Block[] = [];
+    let blocks: RenderBlock[] = [];
     blocks = upsertApproval(blocks, card("c1"));
     blocks = upsertApproval(blocks, card("c1"));
     blocks = upsertApproval(blocks, card("c2"));
@@ -686,7 +686,7 @@ describe("approval upsert/resolve", () => {
   });
 
   it("resolve removes the matching card entirely", () => {
-    let blocks: Block[] = [upsertApproval([], card("c1"))[0], upsertApproval([], card("c2"))[0]];
+    let blocks: RenderBlock[] = [upsertApproval([], card("c1"))[0], upsertApproval([], card("c2"))[0]];
     blocks = resolveApproval(blocks, "c1", false, "no");
     // a decided approval is not conversation content — the card is gone;
     // the denial story lives on in the tool-result frame
@@ -776,7 +776,7 @@ describe("approval upsert/resolve", () => {
         attachments: [],
       }),
     ]);
-    expect(blocks.map((b) => (b as Block).text)).toEqual(["run it", "see this"]);
+    expect(blocks.map((b) => (b as RenderBlock).text)).toEqual(["run it", "see this"]);
   });
 });
 
@@ -1125,15 +1125,15 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
 });
 
 describe("viewEntries (collapsed work runs)", () => {
-  const tool = (n: number): Block => ({
+  const tool = (n: number): RenderBlock => ({
     kind: "tool",
     text: "",
     key: `t${n}`,
     tool: { callId: `c${n}`, name: "sh", args: "", executor: "server", status: "done" },
   });
-  const text = (n: number): Block => ({ kind: "text", text: `text${n}`, key: `x${n}` });
-  const user: Block = { kind: "user", text: "go", key: "u", ts: "2026-10-15T12:00:00.000Z" };
-  const shape = (blocks: Block[]) =>
+  const text = (n: number): RenderBlock => ({ kind: "text", text: `text${n}`, key: `x${n}` });
+  const user: RenderBlock = { kind: "user", text: "go", key: "u", ts: "2026-10-15T12:00:00.000Z" };
+  const shape = (blocks: RenderBlock[]) =>
     viewEntries(blocks).map((e) =>
       e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key,
     );
@@ -1159,7 +1159,7 @@ describe("viewEntries (collapsed work runs)", () => {
   });
 
   it("puts a subagent record inside the work run", () => {
-    const child: Block = {
+    const child: RenderBlock = {
       kind: "child_spawn",
       text: "",
       key: "c1",
@@ -1176,7 +1176,7 @@ describe("viewEntries (collapsed work runs)", () => {
 });
 
 describe("workRunLabel (worked-for entry)", () => {
-  const run = (start?: string, end?: string): Block[] => [
+  const run = (start?: string, end?: string): RenderBlock[] => [
     {
       kind: "tool",
       text: "",

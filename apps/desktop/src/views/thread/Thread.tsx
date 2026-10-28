@@ -112,7 +112,7 @@ import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
 import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
-import type { Block } from "../../lib/thread-reducer";
+import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
@@ -171,7 +171,7 @@ const TextBlock = memo(function TextBlock({
   origin,
   onOpenOrigin,
 }: {
-  b: Block;
+  b: RenderBlock;
   showStamp: boolean;
   showInterrupted: boolean;
   /** The run this message was delivered from. Rendered in the body so the

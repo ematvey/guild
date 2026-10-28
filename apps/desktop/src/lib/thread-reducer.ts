@@ -162,7 +162,7 @@ export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | nul
   };
 }
 
-export interface Block {
+export interface RenderBlock {
   kind:
     | "user"
     | "text"
@@ -246,13 +246,13 @@ function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
  *  authoritative ThreadState carries the full log, so this runs on every
  *  state application; the fan-out lane cannot see deletions. */
 function reconcileQueuedSends(
-  blocks: Block[],
+  blocks: RenderBlock[],
   rows: ThreadEventRow[],
   /// Seq of the authoritative window's oldest row: a block older than this
   /// came from a loaded earlier page, and a queued row can never be that
   /// old, so it is neither withdrawn nor re-stamped.
   windowOldest = Number.NEGATIVE_INFINITY,
-): Block[] {
+): RenderBlock[] {
   const byId = new Map<string, ThreadEventRow>();
   for (const r of rows) {
     const prev = byId.get(r.id);
@@ -296,7 +296,7 @@ const CLIENT_TOOL_NAMES = [
 /** A result or close event may carry no label of its own; the spawn record
  *  already in the transcript names the thread and holds its chat id. */
 function spawnLabel(
-  blocks: readonly Block[],
+  blocks: readonly RenderBlock[],
   threadId: string,
 ): { chatId: string | null; agentName: string; title: string | null } {
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -309,7 +309,7 @@ function spawnLabel(
 }
 
 interface DerivedThread {
-  blocks: Block[];
+  blocks: RenderBlock[];
   toolsByCall: Map<string, ToolBlock>;
   approvalsByCall: Map<string, ApprovalBlock>;
 }
@@ -321,7 +321,7 @@ interface DerivedThread {
 /// maps the incremental reducer needs to join later events.
 export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
-  let blocks: Block[] = [];
+  let blocks: RenderBlock[] = [];
   const toolsByCall = new Map<string, ToolBlock>();
   const approvalsByCall = new Map<string, ApprovalBlock>();
   for (const row of sorted) {
@@ -527,20 +527,20 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
 /// older errors, including earlier failed attempts of the same turn, never
 /// render. Applied wherever blocks are finalized: full derivation, and
 /// after every incrementally applied event.
-export function pruneStaleErrors(blocks: Block[]): Block[] {
+export function pruneStaleErrors(blocks: RenderBlock[]): RenderBlock[] {
   const last = blocks[blocks.length - 1];
   if (last?.kind !== "error") return blocks.filter((b) => b.kind !== "error");
   return blocks.filter((b, i) => i === blocks.length - 1 || b.kind !== "error");
 }
 
-export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
+export function eventsToBlocks(rows: ThreadEventRow[]): RenderBlock[] {
   return deriveThread(rows).blocks;
 }
 
 /// Full-view derivation of one sequenced ThreadState: the durable log plus
 /// the authoritative in-flight model buffers. The reducer's first state for
 /// a view takes this path; later publishes apply incrementally.
-export function threadStateBlocks(state: ThreadState): Block[] {
+export function threadStateBlocks(state: ThreadState): RenderBlock[] {
   let blocks = eventsToBlocks(state.events);
   if (state.thinking)
     blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${state.chat_id}`);
@@ -551,7 +551,7 @@ export function threadStateBlocks(state: ThreadState): Block[] {
 /// ApprovalRequested inserts a pending card into the current blocks;
 /// re-attach replays may fire it again for a card we already render, so
 /// this is an upsert, not a blind append.
-export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
+export function upsertApproval(blocks: RenderBlock[], a: ApprovalBlock): RenderBlock[] {
   const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
   if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a, key: `approval-${a.callId}` }];
   return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
@@ -575,11 +575,11 @@ export function replayFrom(frames: StreamFrame[]): StreamFrame[] {
 /// conversation content (no-op when it is absent, e.g. the stream resolved
 /// before we rendered the request).
 export function resolveApproval(
-  blocks: Block[],
+  blocks: RenderBlock[],
   callId: string,
   _approved: boolean,
   _reason?: string,
-): Block[] {
+): RenderBlock[] {
   return blocks.filter((x) => !(x.kind === "approval" && x.approval?.callId === callId));
 }
 
@@ -588,12 +588,12 @@ export function resolveApproval(
 /// the durable reload — the in-flight step has no block yet, so the seed
 /// starts one; later deltas append to the trailing reasoning block.
 function upsertThinking(
-  blocks: Block[],
+  blocks: RenderBlock[],
   content: string,
   seed: boolean,
   seedKey?: string,
   ts?: string,
-): Block[] {
+): RenderBlock[] {
   const last = blocks[blocks.length - 1];
   // A stable key keeps the Frame instance (and its open/collapsed state)
   // alive across views: seed views carry the full buffer, live views
@@ -621,9 +621,9 @@ function upsertThinking(
 /** Keeps a pending command visible while a sync races its HTTP request. */
 export function reconcilePendingSend(
   rows: ThreadEventRow[],
-  blocks: Block[],
+  blocks: RenderBlock[],
   pending: PendingSend | null,
-): Block[] {
+): RenderBlock[] {
   if (!pending) return blocks;
   const durable = rows.some(row => row.event.type === "user_message" && row.id === pending.key);
   if (durable) return blocks;
@@ -646,7 +646,7 @@ export function reconcilePendingSend(
 // ---------- the reducer ----------
 
 export interface ApplyResult {
-  blocks: Block[];
+  blocks: RenderBlock[];
   /// False when the state's seq was not newer than the view's watermark —
   /// nothing was applied and the caller must not render from it.
   stale: boolean;
@@ -678,7 +678,7 @@ export interface ApplyResult {
 /// `events` is the loaded window of the durable log (ascending): the state's
 /// tail plus any older pages the reader scrolled up to load.
 interface ChatView {
-  blocks: Block[];
+  blocks: RenderBlock[];
   watermark: number;
   /// Whether an authoritative ThreadState has built this view. A live
   /// thread_events delta can create a view before its first sync (a
@@ -807,7 +807,7 @@ export function createThreadReducer(): ThreadReducer {
    *  buffers (no durable row yet) and optimistic sends across the rebuild. */
   function rebuild(v: ChatView): void {
     const d = deriveThread(v.events);
-    const live: Block[] = [];
+    const live: RenderBlock[] = [];
     for (const b of v.blocks) {
       if (b.key.startsWith("unpersisted-") || b.key.startsWith("live-")) {
         live.push(b);

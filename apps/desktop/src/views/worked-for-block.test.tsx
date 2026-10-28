@@ -3,10 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Block } from "../lib/thread-reducer";
+import type { RenderBlock } from "../lib/thread-reducer";
 import { WorkedForBlock } from "./worked-for-block";
 
-const tool = (n: number, start: string, end: string): Block => ({
+const tool = (n: number, start: string, end: string): RenderBlock => ({
   kind: "tool",
   text: "",
   key: `t${n}`,
