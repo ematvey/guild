@@ -44,6 +44,24 @@
   --text-2xl--line-height: 1.3333;
 }
 
+/* A phone holds the same layout in ~440pt that a desktop window holds in
+   ~1400px, so the same step reads smaller at arm's length. Every step gains
+   one or two pixels on a narrow screen; the ratios above stay the ratios.
+   The steps are custom properties, so this reaches every utility that uses
+   them without touching a view. */
+@media (max-width: 640px) {
+  :root {
+    --text-3xs: 12px;
+    --text-2xs: 14px;
+    --text-xs: 15px;
+    --text-sm: 16px;
+    --text-base: 18px;
+    --text-lg: 20px;
+    --text-xl: 23px;
+    --text-2xl: 27px;
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
