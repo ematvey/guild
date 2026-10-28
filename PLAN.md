@@ -12,6 +12,18 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Records are JSON text; queries parse them in code (2026-10-28).** A
+  `codemode` tool result carried an `.xlsx` dumped as text, so the record
+  contained a `\u0000` escape. `ThreadStore.contextUsage` cast
+  `entries.record::jsonb`, and JSONB rejects U+0000: the context meter
+  answered 500 with `22P05` on that thread. The storage contract already
+  says record columns are text, not JSONB. The fields queries filter on are
+  now real columns — `entries.kind` and `tasks.outcome_status` — written
+  from the same record in the same statement. The read paths parse the one
+  row in code. U+0000 cannot enter a record: the sandbox wire and the
+  durable encoder replace it with U+FFFD. A source test keeps
+  `record::jsonb` out of the server.
+
 - **A user upload records its author and stays pending (2026-10-28).**
   Migration `0088` set `attachments.event_id`, `author_kind` and
   `author_id` to `NOT NULL` once the backfill left no gaps. The user upload
