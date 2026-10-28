@@ -269,8 +269,8 @@ describe("M2 LLM gateway endpoints", () => {
     expect(tc["id"]).toBe("call_x");
     expect(tc["type"]).toBe("function");
     expect(tc["function"]["name"]).toBe("get_weather");
-    // Folded partial arguments parse into a sorted-key object string.
-    expect(tc["function"]["arguments"]).toBe('{"city":"oslo"}');
+    // Folded partial arguments parse into an object string.
+    expect(JSON.parse(tc["function"]["arguments"])).toEqual({ city: "oslo" });
     expect(b1["usage"]["total_tokens"]).toBe(0);
     const up1 = scripted.requests[0]!;
     // The limit rides the dialect field for the model name ("m-tools" is
@@ -544,7 +544,13 @@ describe("M2 LLM gateway endpoints", () => {
     });
     expect(res.statusCode).toBe(200);
     // The upstream failure surfaces with the ProviderError Display prefix.
-    expect(res.body).toContain('"error":{"message":"provider error: mid-stream failure","type":"provider_error"}');
+    const frames = res.body
+      .split("\n\n")
+      .filter((f) => f.startsWith("data: ") && f.slice(6) !== "[DONE]")
+      .map((f) => JSON.parse(f.slice(6)) as Record<string, unknown>);
+    expect(frames).toContainEqual({
+      error: { message: "provider error: mid-stream failure", type: "provider_error" },
+    });
     await stack.drain();
     const rows = await stack.usageRows();
     expect(rows).toHaveLength(before + 1);

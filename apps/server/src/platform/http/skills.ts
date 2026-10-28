@@ -12,7 +12,6 @@ import type { UserRow } from "../store/identity.js";
 import type { SkillRuntime } from "../../harness/skills.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../registry-manifest.js";
 import { packBundle, parseBundle, type ParsedBundle } from "../bundle.js";
 import { nextVersion } from "../store/registry.js";
@@ -28,7 +27,7 @@ export interface SkillRouteOptions {
 }
 
 function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(rustJsonText(value));
+  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 function param(req: FastifyRequest, name: string): string {

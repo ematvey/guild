@@ -10,7 +10,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { callPlugin } from "../integrations/execute.js";
 import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../integrations/plugins.js";
 import { resolveActingAs, toolAllowed, toolCurate } from "../integrations/policy.js";
@@ -59,7 +58,7 @@ async function integrationCaller(auth: IdentityCtx, req: FastifyRequest): Promis
 }
 
 function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(rustJsonText(value));
+  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTurn[]> {

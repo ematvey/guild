@@ -100,7 +100,7 @@ describe("M2 gateway: api keys + admin + quota + internal key", () => {
       payload: { model: "m-crud", provider: "mock-openai", price_in: 1.5, price_out: 3, quota_monthly_usd: 12.5 },
     });
     expect(put.statusCode).toBe(200);
-    expect(put.body).toBe("{}");
+    expect(JSON.parse(put.body)).toEqual({});
 
     const list = await stack.env.app.inject({
       method: "GET",

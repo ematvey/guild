@@ -9,7 +9,6 @@ import { queryParam, requireUser } from "./error.js";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { InfraContext } from "../route-contexts.js";
 import { errorText, startOfDayUtc, startOfMonthUtc } from "../usage.js";
-import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 import { isUuid } from "../time.js";
 
 interface UsageQuery {
@@ -135,10 +134,9 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infr
       }
     }
     rows = await resolveGroupNames(infra, user.org_id, kind, rows);
-    // cost_usd is an f64 column: serde renders integral floats with a
-    // ".0" tail.
-    rows = rows.map((r) => ({ ...r, cost_usd: rustFloat(Number(r["cost_usd"] ?? 0)) }));
-    return rustJsonText({ rows });
+    // cost_usd is an f64 column; an integral value renders as an integer.
+    rows = rows.map((r) => ({ ...r, cost_usd: Number(r["cost_usd"] ?? 0) }));
+    return JSON.stringify({ rows });
   });
 
   app.get("/api/v1/usage/series", async (req) => {
@@ -202,11 +200,11 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infr
       group: r["group"] ?? "",
       tokens_in: r["tokens_in"],
       tokens_out: r["tokens_out"],
-      cost_usd: rustFloat(Number(r["cost_usd"] ?? 0)),
+      cost_usd: Number(r["cost_usd"] ?? 0),
       requests: r["requests"],
     }));
     rows = await resolveGroupNames(infra, user.org_id, kind, rows);
-    return rustJsonText({ rows });
+    return JSON.stringify({ rows });
   });
 
   app.get("/api/v1/usage/summary", async (req) => {
@@ -242,9 +240,9 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infr
     };
     const today = totals(await sumSql(Math.floor(startOfDay.getTime() / 1000)));
     const month = totals(await sumSql(Math.floor(startOfMonth.getTime() / 1000)));
-    return rustJsonText({
-      today_cost_usd: rustFloat(today.cost),
-      month_cost_usd: rustFloat(month.cost),
+    return JSON.stringify({
+      today_cost_usd: today.cost,
+      month_cost_usd: month.cost,
       today_tokens: today.tokens,
       month_tokens: month.tokens,
     });

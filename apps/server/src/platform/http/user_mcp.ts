@@ -17,7 +17,6 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { lookup } from "node:dns/promises";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import { userMcpToolName } from "../domain/mcp.js";
@@ -33,7 +32,7 @@ const RESERVED_NAMES = new Set([
 ]);
 
 function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(rustJsonText(value));
+  void reply.type("application/json").send(JSON.stringify(value));
 }
 /** The server-name rule: identifier-safe slug, 1–64 chars. The chat runtime
  *  wires tools as mcp<length>_<name>_<tool>, so the name must stay slug-safe. */
