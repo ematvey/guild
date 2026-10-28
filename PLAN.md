@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Older clients must keep working across core releases (2026-10-28).**
+  The server and the desktop client release on different schedules, and a
+  mobile client will release less often than either. A core release must
+  therefore keep an installed client working. New fields are additive. A
+  field or a variant is never renamed or removed without a version step. A
+  reader ignores what it does not know instead of failing the frame. The
+  schemas and the fixtures are the record of that promise. No gate enforces
+  it yet; this entry is the rule a gate will enforce.
+
 - **One chat row, one builder (2026-10-28).** `Chat` is now the list row and
   the body of every chat read and write: `type`, `archived` and `deleted` are
   required. The single-chat responses carried a reduced row, because they
