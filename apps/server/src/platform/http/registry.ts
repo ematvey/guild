@@ -10,7 +10,6 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
@@ -49,10 +48,9 @@ function rawBody(req: FastifyRequest): Buffer {
   return Buffer.alloc(0);
 }
 
-/** json!/to_value-built responses carry serde_json's BTreeMap order — every
- *  object key sorted — and serde's number rendering. */
+/** Sends a JSON response body. */
 function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(rustJsonText(value));
+  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 /** The shared publish body (the registry route and the skills editor both

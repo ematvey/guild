@@ -1,8 +1,8 @@
 // Public OpenAI-compatible chat completions endpoint:
 // `POST /openai/v1/chat/completions` with `gk_…`
 // API-key auth. No chat persistence; usage is attributed to the key's
-// owner. Streaming frames are byte-compatible with the Rust server
-// (serde_json BTreeMap key order, `data: …\n\n` frames, `[DONE]` end).
+// owner. Streaming frames follow the Rust server's sequence
+// (`data: …\n\n` frames, `[DONE]` end).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, missingFieldError } from "../errors.js";
@@ -23,7 +23,6 @@ import {
   type GatewayTraceEmission,
 } from "./llm.js";
 import type { GatewayCtx } from "../route-contexts.js";
-import { rustJsonText, serializeRustJson } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import type { Json } from "@guild/wire/rest";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
@@ -34,7 +33,7 @@ import type { UsageSink } from "../usage.js";
  *  class maps to an error `type` (quota stays named, everything else is an
  *  invalid_request_error — the Rust ProxyError::openai_type mapping). */
 export function openaiError(status: number, errType: string, message: string): { status: number; body: string } {
-  return { status, body: rustJsonText({ error: { message, type: errType } }) };
+  return { status, body: JSON.stringify({ error: { message, type: errType } }) };
 }
 
 /** Renders a caught error in the OpenAI wire shape. */
@@ -210,7 +209,7 @@ function toOpenAiToolCalls(calls: ToolCall[]): unknown {
     type: "function",
     function: {
       name: c.name,
-      arguments: typeof c.arguments === "string" ? c.arguments : serializeRustJson(c.arguments),
+      arguments: typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments ?? null),
     },
   }));
 }
@@ -244,7 +243,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx):
       const credential = await gateway.gatewayCredential(req);
       const models = await gateway.gatewayStore.listModels(credential.orgId);
       return reply.type("application/json").send(
-        rustJsonText({
+        JSON.stringify({
           object: "list",
           data: models.map((m) => ({ id: m.model, object: "model", owned_by: "organization_owner" })),
         }),
@@ -263,7 +262,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx):
       // Auth rejections carry the error `code` field (OpenAiAuthError).
       const apiError = error as ApiError;
       return reply.status(apiError.status).type("application/json").send(
-        rustJsonText({
+        JSON.stringify({
           error: { message: apiError.message, type: "invalid_request_error", code: apiError.code },
         }),
       );
@@ -385,7 +384,7 @@ async function handleChatCompletions(
   const message: Record<string, unknown> = { role: "assistant", content: acc.text };
   if (acc.calls.length > 0) message["tool_calls"] = toOpenAiToolCalls(acc.calls);
   if (acc.reasoning !== "") message["reasoning_content"] = acc.reasoning;
-  const responseBody = rustJsonText({
+  const responseBody = JSON.stringify({
     id: completionId,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
@@ -416,7 +415,7 @@ interface StreamMeta {
   requestId: string;
   /** stream_options.include_usage (OpenAI semantics): the final usage chunk
    *  (empty choices) rides before [DONE]. Only clients that ask for it see
-   *  the extra frame — the default stream stays byte-identical to the Rust
+   *  the extra frame — the default stream stays the same as the Rust
    *  gateway's. The internal agent always asks (pi-ai sends
    *  stream_options.include_usage), so usage reaches the durable thread
    *  events through the loopback gateway (decision 7). */
@@ -436,7 +435,7 @@ function streamChunks(
   const counters = new StreamUsageCounters();
   const created = Math.floor(Date.now() / 1000);
   const chunk = (delta: Record<string, unknown>, finish: string | null): string =>
-    rustJsonText({
+    JSON.stringify({
       id: meta.completionId,
       object: "chat.completion.chunk",
       created,
@@ -464,7 +463,7 @@ function streamChunks(
       for await (const item of provStream) {
         if (item instanceof ProviderError) {
           streamError = item.message;
-          yield sseDataFrame(rustJsonText({ error: { message: item.message, type: "provider_error" } }));
+          yield sseDataFrame(JSON.stringify({ error: { message: item.message, type: "provider_error" } }));
           return;
         }
         // Only Ok items count as served frames: an in-stream provider error
@@ -494,7 +493,7 @@ function streamChunks(
                     arguments:
                       typeof item.call.arguments === "string"
                         ? item.call.arguments
-                        : serializeRustJson(item.call.arguments),
+                        : JSON.stringify(item.call.arguments ?? null),
                   },
                 },
               ],
@@ -540,7 +539,7 @@ function streamChunks(
       yield sseDataFrame(chunk({}, finish));
       if (meta.includeUsage) {
         yield sseDataFrame(
-          rustJsonText({
+          JSON.stringify({
             id: meta.completionId,
             object: "chat.completion.chunk",
             created,

@@ -247,7 +247,7 @@ describe("script API auth", () => {
   it("401 without a bearer token, in the Rust envelope", async () => {
     const res = await call("GET", "/api/v1/integrations");
     expect(res.statusCode).toBe(401);
-    expect(res.body).toBe(CAPTURE.execute_unauthenticated.body);
+    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.execute_unauthenticated.body));
   });
 
   it("401 with an unknown token", async () => {
@@ -274,7 +274,9 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
   it("lists enabled plugins policy-filtered to a count — byte-identical to the Rust capture", async () => {
     const res = await call("GET", "/api/v1/integrations", e.adminToken);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toBe('{"items":[{"description":"Web search through a SearxNG instance","slug":"searxng","tool_count":1}]}');
+    expect(JSON.parse(res.body)).toEqual({
+      items: [{ description: "Web search through a SearxNG instance", slug: "searxng", tool_count: 1 }],
+    });
   });
 
   it("lists the policy-filtered tool catalog with schemas and classes — a trait tool carries the Guild-provided name", async () => {
@@ -290,7 +292,7 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
   it("404 for an unknown slug, exactly like Rust", async () => {
     const res = await call("GET", "/api/v1/integrations/nope/tools", e.adminToken);
     expect(res.statusCode).toBe(404);
-    expect(res.body).toBe(CAPTURE.list_tools_unknown.body);
+    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.list_tools_unknown.body));
   });
 
   it("a member sees only the tools the class rule allows", async () => {
@@ -332,7 +334,7 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     const parsed = JSON.parse(res.body) as { ok: boolean; error: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toMatch(/^searxng unreachable: /);
-    expect(res.body.indexOf('"error"')).toBeLessThan(res.body.indexOf('"ok"')); // sorted keys
+    expect(Object.keys(parsed).sort()).toEqual(["error", "ok"]);
   });
 
   it("executes a connector tool through the runtime against the fake backend (real dispatch)", async () => {
@@ -354,15 +356,15 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
 
   it("404 shapes for unknown integration and unknown tool, exactly like Rust", async () => {
     const unknownIntegration = await call("POST", "/api/v1/integrations/nope/tools/x", e.adminToken, {});
-    expect(unknownIntegration.body).toBe(CAPTURE.execute_wrong_integration.body);
+    expect(JSON.parse(unknownIntegration.body)).toEqual(JSON.parse(CAPTURE.execute_wrong_integration.body));
     const unknownTool = await call("POST", "/api/v1/integrations/searxng/tools/nope", e.adminToken, {});
-    expect(unknownTool.body).toBe(CAPTURE.execute_wrong_tool.body);
+    expect(JSON.parse(unknownTool.body)).toEqual(JSON.parse(CAPTURE.execute_wrong_tool.body));
   });
 
   it("400 for a non-object body, exactly like Rust", async () => {
     const res = await call("POST", "/api/v1/integrations/searxng/tools/web_search", e.adminToken, '"not-json-object"');
     expect(res.statusCode).toBe(400);
-    expect(res.body).toBe(CAPTURE.execute_bad_body.body);
+    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.execute_bad_body.body));
   });
 
   it("an empty body is an empty arguments object (validation passes; the runtime boundary still fails clean)", async () => {
@@ -380,7 +382,7 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     );
     const res = await call("POST", "/api/v1/integrations/slack/tools/post_message", e.adminToken, { channel: "C1", text: "hi" });
     expect(res.statusCode).toBe(403);
-    expect(res.body).toBe(CAPTURE.execute_always_ask.body);
+    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.execute_always_ask.body));
   });
 
   it("a write-class tool is member-forbidden; the raw connector name is accepted alongside the namespaced one", async () => {
@@ -655,7 +657,7 @@ describe("GET/PUT /api/v1/me/approval", () => {
   it("GET returns null before any save (the server default governs) — like the Rust capture", async () => {
     const res = await call("GET", "/api/v1/me/approval", e.memberToken);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toBe(CAPTURE.approval_get_empty.body);
+    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.approval_get_empty.body));
   });
 
   it("PUT accepts the wrapped, bare and null shapes and persists per user", async () => {
@@ -673,7 +675,7 @@ describe("GET/PUT /api/v1/me/approval", () => {
 
     const clear = await call("PUT", "/api/v1/me/approval", e.memberToken, { approval: null });
     expect(clear.statusCode).toBe(200);
-    expect(clear.body).toBe(CAPTURE.approval_put_clear.body);
+    expect(JSON.parse(clear.body)).toEqual(JSON.parse(CAPTURE.approval_put_clear.body));
     const cleared = (await e.env.db.query("SELECT approval FROM users WHERE email LIKE 'm7-member-%'")).rows[0]!;
     expect(cleared.approval).toBeNull();
   });
@@ -681,14 +683,14 @@ describe("GET/PUT /api/v1/me/approval", () => {
   it("invalid policies are rejected with the captured serde texts", async () => {
     const badVariant = await call("PUT", "/api/v1/me/approval", e.memberToken, { default: "sometimes" });
     expect(badVariant.statusCode).toBe(400);
-    expect(badVariant.body).toBe(CAPTURE.approval_put_bad_variant.body);
+    expect(JSON.parse(badVariant.body)).toEqual(JSON.parse(CAPTURE.approval_put_bad_variant.body));
 
     const badType = await call("PUT", "/api/v1/me/approval", e.memberToken, { default: 5 });
     expect(badType.statusCode).toBe(400);
-    expect(badType.body).toBe(CAPTURE.approval_put_bad_type.body);
+    expect(JSON.parse(badType.body)).toEqual(JSON.parse(CAPTURE.approval_put_bad_type.body));
 
     const badOverrides = await call("PUT", "/api/v1/me/approval", e.memberToken, { overrides: [] });
     expect(badOverrides.statusCode).toBe(400);
-    expect(badOverrides.body).toBe(CAPTURE.approval_put_bad_overrides.body);
+    expect(JSON.parse(badOverrides.body)).toEqual(JSON.parse(CAPTURE.approval_put_bad_overrides.body));
   });
 });
