@@ -385,14 +385,12 @@ function DesktopApp() {
           onAddWorkspace={openAddWorkspace}
         />
         <UpdateToast />
-        {!IS_TAURI && <InstallPrompt />}
       </>
     );
   }
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
       <UpdateToast />
-      {!IS_TAURI && <InstallPrompt />}
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">{addWorkspace ? "Add workspace" : "Guild"}</CardTitle>
@@ -563,6 +561,9 @@ export default function App() {
   return (
     <ThemeProvider>
       <AppInner />
+      {/* One prompt for every web screen — signed out, thread, guide. The
+          desktop app has no install step, so it never renders it. */}
+      {!IS_TAURI && <InstallPrompt />}
       <ThemedToaster />
     </ThemeProvider>
   );
