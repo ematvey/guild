@@ -47,7 +47,6 @@ const config = {
   clickhouseDatabase: "d",
   clickhouseUser: "u",
   clickhousePassword: "p",
-  tracePayloads: false,
 } as unknown as Config;
 
 const log = { warn: () => {}, error: () => {}, info: () => {} } as unknown as Logger;

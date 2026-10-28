@@ -50,7 +50,7 @@ const clickhouse = new ClickhouseClient({
   user: config.clickhouseUser,
   password: config.clickhousePassword,
 });
-const trace = new TraceStore(clickhouse, config.tracePayloads);
+const trace = new TraceStore(clickhouse);
 const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, trace, undefined, {
   chatId,
   dispatch: ipcDispatch,

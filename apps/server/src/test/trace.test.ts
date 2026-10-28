@@ -14,10 +14,6 @@ import { AgentStore } from "../agents/store.js";
 
 const TEST_TIMEOUT = 120_000;
 
-// Payload tracing on for the whole suite (the sink no-ops when off; a
-// separate opt-out test covers that path with its own sink instance).
-const PAYLOADS_ON = { GUILD_TRACE_PAYLOADS: "1" };
-
 let stack: M2Stack;
 let port: number;
 const orgAuth = (token: string): Record<string, string> => ({
@@ -36,7 +32,6 @@ beforeAll(async () => {
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_ALLOW_SHELL_TOOLS: "1",
-      ...PAYLOADS_ON,
     },
     { dbPrefix: "guild_trace_test" },
   );
@@ -80,7 +75,7 @@ describe("trace sink", () => {
     "DDL is idempotent; a trace, a span and a payload round-trip",
     async () => {
       const client = chClient();
-      const sink = new TraceStore(client, true);
+      const sink = new TraceStore(client);
       await sink.ensureOnce();
       await sink.ensureOnce(); // second run: CREATE IF NOT EXISTS is a no-op
       const traceId = crypto.randomUUID();
@@ -166,10 +161,6 @@ describe("trace sink", () => {
       expect(llm).toBeDefined();
       expect(Number(llm!["reasoning_tokens"])).toBe(5);
 
-      // A trace-payloads-off sink records the call but no payload rows.
-      const sinkOff = new TraceStore(client, false);
-      await sinkOff.recordPayload(String(llm!["request_id"]), stack.orgId, "request", "should not land");
-      await new Promise((resolve) => setTimeout(resolve, 300));
       const payloads = await sink.payloads(stack.orgId, String(llm!["request_id"]));
       expect(payloads).toHaveLength(1);
       expect(payloads[0]?.["body"]).toBe("x");
@@ -181,7 +172,7 @@ describe("trace sink", () => {
     "a request stores only its new messages and the read path rebuilds the history",
     async () => {
       const client = chClient();
-      const sink = new TraceStore(client, true);
+      const sink = new TraceStore(client);
       await sink.ensureOnce();
       const traceId = crypto.randomUUID();
       const filler = "x".repeat(500);
@@ -274,7 +265,7 @@ describe("gateway emission + activity API", () => {
       const usage = await stack.usageRows();
       expect(usage.some((row) => row["request_id"] === span!["request_id"])).toBe(true);
 
-      // Payloads landed (GUILD_TRACE_PAYLOADS=1 on this stack).
+      // Payloads landed.
       const payloads = await chClient().query(
         `SELECT kind FROM llm_payloads WHERE request_id = toUUID('${span!["request_id"]}') ORDER BY kind`,
       );
@@ -331,7 +322,7 @@ describe("gateway emission + activity API", () => {
   it(
     "member scoping: members see only their own spans; payloads stay admin-only",
     async () => {
-      const sink = new TraceStore(chClient(), true);
+      const sink = new TraceStore(chClient());
       const foreign = crypto.randomUUID();
       await sink.recordSpan({
         span_id: foreign,

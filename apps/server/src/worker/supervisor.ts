@@ -109,7 +109,6 @@ function workerEnv(config: Config, chatId: string): NodeJS.ProcessEnv {
     GUILD_CLICKHOUSE_USER: config.clickhouseUser,
     GUILD_CLICKHOUSE_PASSWORD: config.clickhousePassword,
     GUILD_POOL_MAX: "4",
-    ...(config.tracePayloads ? { GUILD_TRACE_PAYLOADS: "1" } : {}),
   };
 }
 
