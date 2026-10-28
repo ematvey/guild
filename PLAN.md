@@ -921,6 +921,12 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   aarch64 and x86_64 DMG plus their updater bundles), minisign-signed.
   Installed clients pick it up on relaunch. Releases stay dev-controlled and
   deliberate.
+- **Wire:** the client↔server contract is typed end to end, and the schemas
+  are the record of it. The model itself still carries migration history:
+  dead stream variants, one event mapped twice, `Json` where a shape exists.
+  A refactor defines the domain model before the wide release; the plan is
+  `docs/plans/2026-10-28-wire-domain-model.md`. The wide release waits for
+  it, because after the release every change costs a version step.
 - **Product surface:** private threads and shared persistent agents; org
   skills with provenance; projects, machines and agent routines. Admin
   sections live inside Settings (`/settings/<section>`); there is no
