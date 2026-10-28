@@ -557,10 +557,57 @@ function AppInner() {
   return <DesktopApp />;
 }
 
+/// Temporary readout for the keyboard animation: the four numbers that
+/// decide where the header and the composer sit. Armed by the stored
+/// `guild.diag` flag, which `?diag` sets from Safari.
+function KeyDiag() {
+  const [rows, setRows] = useState<string[]>([]);
+  useEffect(() => {
+    const read = () => {
+      const vv = window.visualViewport;
+      const shell = document.querySelector<HTMLElement>("[data-shell]");
+      const header = document.querySelector<HTMLElement>("header");
+      const r = (el: HTMLElement | null) =>
+        el ? `${Math.round(el.getBoundingClientRect().top)}/${Math.round(el.getBoundingClientRect().height)}` : "-";
+      setRows([
+        `vv ${vv ? Math.round(vv.height) : "-"} off ${vv ? Math.round(vv.offsetTop) : "-"} lay ${document.documentElement.clientHeight}`,
+        `scrollY ${Math.round(window.scrollY)}`,
+        `shell ${r(shell)}`,
+        `header ${r(header)}`,
+      ]);
+    };
+    read();
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", read);
+    vv?.addEventListener("scroll", read);
+    window.addEventListener("scroll", read);
+    const t = window.setInterval(read, 250);
+    return () => {
+      window.clearInterval(t);
+      vv?.removeEventListener("resize", read);
+      vv?.removeEventListener("scroll", read);
+      window.removeEventListener("scroll", read);
+    };
+  }, []);
+  return (
+    <div className="fixed bottom-2 left-2 z-[100] rounded-md border border-border bg-card/95 p-2 font-mono text-[10px] leading-tight text-foreground shadow-lg">
+      {rows.map((r) => <div key={r}>{r}</div>)}
+    </div>
+  );
+}
+
 export default function App() {
+  const [diag] = useState(() => {
+    try {
+      return localStorage.getItem("guild.diag") === "1";
+    } catch {
+      return false;
+    }
+  });
   return (
     <ThemeProvider>
       <AppInner />
+      {diag && <KeyDiag />}
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
       {!IS_TAURI && <InstallPrompt />}
