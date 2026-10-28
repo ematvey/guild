@@ -50,7 +50,11 @@ first. Code comments describe only the present.
   compares every named object and union, not only the fixture roots, so
   `StreamEvent` is checked without a fixture of its own. The desktop
   `ChatSummary` no longer widens `title` to a required field: the wire omits
-  it when the chat has none.
+  it when the chat has none. The builders return the type they build:
+  `threadEventObject`, `threadEventRowObject` and `projectJson` no longer
+  return a bare record. The desktop's `onFrame` takes `StreamEvent`, not a
+  loose frame bag; that removed a dead read, `tool_completed` has no
+  `executor` field.
 
 - **The sandbox wire is not part of the protocol contract (2026-10-28).**
   The sandbox is an implementation detail of the server: both ends ship in

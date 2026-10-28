@@ -3,7 +3,7 @@
 
 import { IS_TAURI, apiUrl, getToken } from "../session";
 import { clientId, machineId } from "../machine-rpc";
-import type { MessageAttachmentMeta, StreamFrame } from "../thread-events";
+import type { MessageAttachmentMeta, StreamEvent } from "../thread-events";
 import type { Chat, SubagentNode, ThreadType } from "@guild/wire/rest";
 
 /** One sidebar row: the wire `Chat`. The wire omits `title` when the chat
@@ -336,7 +336,7 @@ export async function compactChat(chatId: string): Promise<boolean> {
 export interface ChatSnapshot {
   running: boolean;
   seq: number;
-  frames: StreamFrame[];
+  frames: StreamEvent[];
 }
 
 
