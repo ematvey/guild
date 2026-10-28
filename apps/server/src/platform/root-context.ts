@@ -173,7 +173,7 @@ export class PlatformContext {
     this.wsTickets = new TicketStore();
     this.clickhouse = this.createClickhouse();
     this.usage = new UsageSink(this.clickhouse);
-    this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
+    this.trace = new TraceStore(this.clickhouse);
     this.skillReads = new SkillReadSink(this.clickhouse);
     this.skillReads.attachPool(this.pool);
     this.chats = new ChatStore(this.pool);

@@ -1,7 +1,8 @@
 # Handoff — trace payload deltas
 
 Status: implemented on `develop`, not deployed. Prod runs the full-body
-version.
+version. Payload capture is unconditional — there is no switch to turn the
+bodies off.
 
 ## Why
 

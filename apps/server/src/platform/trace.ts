@@ -2,10 +2,9 @@
 // plain chat turn when no run exists); spans are the LLM calls, tool calls
 // and delegated runs inside it. Sessions group traces by chat. The run
 // lifecycle mirrors agent_runs into agent_traces; the gateway and the tool
-// hook append spans. Payload bodies land in llm_payloads unless payload
-// tracing is disabled (GUILD_TRACE_PAYLOADS=0); a request stores only the
-// messages its predecessor in the trace did not carry, and the read path
-// rebuilds the full body from that chain. Same degradation rules as
+// hook append spans. Every payload body lands in llm_payloads; a request
+// stores only the messages its predecessor in the trace did not carry, and
+// the read path rebuilds the full body from that chain. Same degradation rules as
 // the usage sink: an unreachable ClickHouse never breaks a model call, a
 // tool call or the approval gate — failures are logged and dropped. The
 // tables are TS-owned (idempotent DDL on first use).
@@ -207,12 +206,7 @@ const TRACE_COLUMNS =
 export class TraceStore {
   private ready: Promise<void> | null = null;
 
-  constructor(
-    readonly client: ClickhouseClient,
-    /** Request/response payload capture (GUILD_TRACE_PAYLOADS, default on;
-     *  "0" turns the bodies off). */
-    private readonly tracePayloads: boolean,
-  ) {}
+  constructor(readonly client: ClickhouseClient) {}
 
   /** Idempotent DDL for the trace tables; runs once per sink. */
   ensureOnce(): Promise<void> {
@@ -403,8 +397,7 @@ export class TraceStore {
     });
   }
 
-  /** Records one payload row; a no-op (not an error) when payload tracing
-   *  is disabled. A request stores the whole body only when no earlier
+  /** Records one payload row. A request stores the whole body only when no earlier
    *  request of the same trace is its prefix; otherwise it stores the new
    *  messages and points at its parent (`traceId` is the run id, else the
    *  chat id, else the request id). Failures are logged and dropped. */
@@ -415,7 +408,6 @@ export class TraceStore {
     body: string,
     traceId: string = requestId,
   ): Promise<void> {
-    if (!this.tracePayloads) return;
     try {
       await this.ensureOnce();
       const ts = clickhouseDateTime64(new Date());
