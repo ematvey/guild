@@ -623,7 +623,14 @@ export default function App() {
         localStorage.setItem("guild.diag", "1");
         return true;
       }
-      return localStorage.getItem("guild.diag") === "1";
+      if (localStorage.getItem("guild.diag") === "1") return true;
+      // An installed copy can resume from memory without re-reading storage,
+      // and on some iOS versions its data store is not the tab's. So the
+      // readout also arms itself in an installed app.
+      const standalone =
+        (navigator as Navigator & { standalone?: boolean }).standalone === true ||
+        window.matchMedia("(display-mode: standalone)").matches;
+      return standalone;
     } catch {
       return false;
     }
