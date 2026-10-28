@@ -5,7 +5,8 @@
 import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339 } from "../time.js";
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 
 /** IntegrationRow declaration order (serde). */
 export interface IntegrationRow {

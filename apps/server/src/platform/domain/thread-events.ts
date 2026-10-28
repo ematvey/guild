@@ -162,7 +162,7 @@ export function threadEventObject(event: ThreadEvent): Record<string, unknown> {
         turn: event.turn,
         step: event.step,
         blocks: event.blocks,
-        usage: event.usage,
+        usage: event.usage ?? {},
         model: event.model,
         interrupted: event.interrupted,
         error: event.error ?? undefined,
@@ -191,7 +191,13 @@ export function threadEventObject(event: ThreadEvent): Record<string, unknown> {
         usage: event.usage,
       };
     case "approval_request":
-      return { type: "approval_request", call_id: event.call_id, name: event.name, arguments: event.arguments };
+      return {
+        type: "approval_request",
+        call_id: event.call_id,
+        name: event.name,
+        arguments: event.arguments,
+        ...(event.judge ? { judge: event.judge } : {}),
+      };
     case "approval_decision":
       return {
         type: "approval_decision",
@@ -308,6 +314,9 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         call_id: String(payload["call_id"] ?? ""),
         name: String(payload["name"] ?? ""),
         arguments: String(payload["arguments"] ?? ""),
+        ...(payload["judge"] === undefined || payload["judge"] === null
+          ? {}
+          : { judge: payload["judge"] as JudgeVerdict }),
       };
     case "approval_decision":
       return {

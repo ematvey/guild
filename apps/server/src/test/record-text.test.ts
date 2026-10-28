@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { sanitizeText } from "../platform/domain/text.js";
+import { jsonbText, recordJsonText, sanitizeText } from "../platform/domain/text.js";
 
 const SRC = path.resolve(process.cwd(), "src");
 
@@ -44,5 +44,11 @@ describe("record text", () => {
     expect(sanitizeText("PK\u0000binary")).toBe("PK\uFFFDbinary");
     expect(sanitizeText("plain")).toBe("plain");
     expect(sanitizeText("emoji 🦷 and \u0000")).toBe("emoji 🦷 and \uFFFD");
+  });
+
+  it("keeps a lone surrogate in a record and removes it for jsonb", () => {
+    const value = { text: "a\ud83db" };
+    expect(recordJsonText(value)).toContain("\\ud83d");
+    expect(jsonbText(value)).toContain("\ufffd");
   });
 });

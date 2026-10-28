@@ -37,7 +37,7 @@ import type { PostgresDatabase, PostgresExecutor } from "./executor.js";
 import { rebuildLiveProjection } from "./live-projection.js";
 import { applyPostgresMigrations } from "./migrations.js";
 import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
-import { sanitizeText } from "../../platform/domain/text.js";
+import { recordJsonText } from "../../platform/domain/text.js";
 
 // Pi Durable does not export its branding helpers from the package entry;
 // the erased brands are phantom types, so trusted numeric boundaries brand with casts.
@@ -46,10 +46,6 @@ const asEntryId = (value: number) => value as EntryId;
 const asDocumentId = (value: number) => value as DocumentId;
 const asSeq = (value: number) => value as Seq;
 
-const encodeJson = (value: unknown): string =>
-  JSON.stringify(value, (_key, item) =>
-    typeof item === "string" ? sanitizeText(item) : item,
-  );
 const parseJson = (value: unknown): unknown => JSON.parse(value as string);
 // Postgres TEXT holds valid UTF-8 only, so indexed string identities (kind, key,
 // request ID) are stored JSON-escaped to keep lone surrogates lossless.
@@ -273,12 +269,12 @@ export class PostgresDurableStorage implements Storage {
           const repairSeq = revisions.reduce((next, revision) => Math.max(next, Number(revision.seq) + 1), seq);
           await tx.query(
             "INSERT INTO live_projection_repairs(document_id,repaired_at_seq,conversation_id,reason,revisions) VALUES ($1,$2,$3,$4,$5)",
-            [id, repairSeq, row.owner_id, error.message, encodeJson(revisions)],
+            [id, repairSeq, row.owner_id, error.message, recordJsonText(revisions)],
           );
           await tx.query("DELETE FROM document_revisions WHERE document_id=$1", [id]);
           await tx.query(
             "INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',1,$3)",
-            [id, repairSeq, encodeJson(value)],
+            [id, repairSeq, recordJsonText(value)],
           );
           seq = repairSeq + 1;
           this.liveRevisions.delete(id);
@@ -968,7 +964,7 @@ export class PostgresDurableStorage implements Storage {
             write.value.id,
             write.value.owner?.conversationId ?? null,
             write.value.owner?.taskId ?? null,
-            encodeJson(write.value),
+            recordJsonText(write.value),
           ],
         );
         break;
@@ -982,7 +978,7 @@ export class PostgresDurableStorage implements Storage {
             write.value.head ?? null,
             seq,
             write.value.kind,
-            encodeJson(write.value),
+            recordJsonText(write.value),
           ],
         );
         break;
@@ -1006,7 +1002,7 @@ export class PostgresDurableStorage implements Storage {
             write.value.abortRequested,
             write.value.background,
             outcomeStatus,
-            encodeJson(write.value),
+            recordJsonText(write.value),
           ],
         );
         break;
@@ -1022,7 +1018,7 @@ export class PostgresDurableStorage implements Storage {
             write.value.conversationId,
             write.value.requestId === undefined ? null : encodeIndexedString(write.value.requestId),
             write.value.status,
-            encodeJson(write.value),
+            recordJsonText(write.value),
           ],
         );
         break;
@@ -1086,7 +1082,7 @@ export class PostgresDurableStorage implements Storage {
             parts.ownerId,
             seq,
             action.retire ? seq : null,
-            encodeJson(record),
+            recordJsonText(record),
           ],
         );
       } else {
@@ -1099,7 +1095,7 @@ export class PostgresDurableStorage implements Storage {
         }
         await tx.query(
           "INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES ($1, $2, $3, $4, $5)",
-          [id, seq, content.kind, content.version, encodeJson(content.kind === "base" ? content.value : content.ops)],
+          [id, seq, content.kind, content.version, recordJsonText(content.kind === "base" ? content.value : content.ops)],
         );
       }
       if (action.retire) {
@@ -1107,7 +1103,7 @@ export class PostgresDurableStorage implements Storage {
           record = { ...record, retiredAt: seq };
           await tx.query("UPDATE documents SET retired_at = $1, record = $2 WHERE id = $3", [
             seq,
-            encodeJson(record),
+            recordJsonText(record),
             id,
           ]);
         }

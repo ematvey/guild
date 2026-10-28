@@ -6,7 +6,8 @@
 // admission is synchronous and durable).
 
 import { ApiError } from "../errors.js";
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 
 export interface TurnCommand {
   id: string;

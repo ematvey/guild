@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
-import { jsonbText } from "../platform/db.js";
+import { jsonbText } from "../platform/domain/text.js";
 
 describe("jsonbText", () => {
   it("replaces a lone surrogate with U+FFFD", () => {
