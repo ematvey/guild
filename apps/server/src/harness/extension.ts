@@ -27,21 +27,14 @@ export interface CurrentUser {
   role: string;
 }
 
-/** The current-user block: the Guild account this thread belongs to. Tools
+/** The current-user line: the Guild account this thread belongs to. Tools
  *  that resolve "me" through their own account (Jira `currentUser()`, a
- *  mailbox, a calendar) act as whoever owns that account's credentials, so
- *  the prompt names the Guild user explicitly. */
+ *  mailbox) answer for that account's owner, so the prompt names the Guild
+ *  user. */
 export function renderCurrentUser(user: CurrentUser): string {
   const named = user.display_name !== null && user.display_name.trim() !== "";
   const name = named ? user.display_name!.trim() : user.email;
-  const attrs = `name="${escapeAttr(name)}" email="${escapeAttr(user.email)}"`;
-  return [
-    `<current_user ${attrs}>`,
-    `You are talking to ${name} <${user.email}>, the Guild user this thread belongs to.`,
-    "A tool that resolves the current user through its own account (Jira currentUser(), a mailbox, a calendar) " +
-      "answers for whoever owns that account. Check the name it returns before you report a result as this user's.",
-    "</current_user>",
-  ].join("\n");
+  return `<current_user name="${escapeAttr(name)}" email="${escapeAttr(user.email)}" />`;
 }
 
 function escapeAttr(value: string): string {
