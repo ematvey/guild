@@ -162,6 +162,15 @@ pub struct Chat {
     /// for unbound chats.
     #[serde(default)]
     pub machine_online: bool,
+    /// What the chat's thread is. A chat with no thread row is a user chat.
+    #[serde(rename = "type")]
+    pub thread_type: String,
+    /// The user hid the chat from the sidebar; it still resolves.
+    #[serde(default)]
+    pub archived: bool,
+    /// The user removed the chat; it drops out of every list.
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 /// One persisted thread event as the store returns it: the durable log row

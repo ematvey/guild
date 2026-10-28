@@ -4,21 +4,14 @@
 import { IS_TAURI, apiUrl, getToken } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta, StreamFrame } from "../thread-events";
-import type { Chat, SubagentNode } from "@guild/wire/rest";
+import type { Chat, SubagentNode, ThreadType } from "@guild/wire/rest";
 
-/** One sidebar row: the wire `Chat` plus the flags the thread endpoints add.
- *  The wire omits `title` when the chat has none; render it with a fallback. */
-export interface ChatSummary extends Chat {
-  /** What the chat's thread is. A chat with no thread row is a user chat. */
-  type?: ThreadType;
-  /** The user hid the chat from the sidebar; it still resolves. */
-  archived?: boolean;
-  /** The user removed the chat; it drops out of every list. */
-  deleted?: boolean;
-}
+/** One sidebar row: the wire `Chat`. The wire omits `title` when the chat
+ *  has none; render it with a fallback. */
+export type ChatSummary = Chat;
 
 /** The three kinds of thread. Archiving and deletion are flags, not types. */
-export type ThreadType = "user" | "subagent" | "routine";
+export type { ThreadType };
 
 /** One node of the thread tree: the open chat, its type, flags, status and
  *  parent. */

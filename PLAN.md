@@ -12,6 +12,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **One chat row, one builder (2026-10-28).** `Chat` is now the list row and
+  the body of every chat read and write: `type`, `archived` and `deleted` are
+  required. The single-chat responses carried a reduced row, because they
+  read one `ChatRow` and that row has no `working`, `blocked` or
+  `last_activity_at`. That split cost a second shape and a hardcoded
+  `unread: false`. It is gone: create, set-project, patch and delete read the
+  list row back through `ChatStore.getChatListRow` and return it. The two row
+  builders, `chatWire` in `platform/http/chats.ts` and `chatRow` in
+  `hub/workspace.ts`, are one function in `chats/chat-wire.ts`. The desktop
+  `ChatSummary` is the wire `Chat`, not an extension of it. The change only
+  adds keys on the wire, so a running client keeps working; against the
+  schema it is a contract change, because three properties join a closed
+  object's `required` list.
+
 - **`Json` is only for a value the protocol does not fix (2026-10-28).**
   Every frame payload that has a fixed shape now has a `$def` and a typed
   field. `thread_list.chats`, `archived_thread_list.chats`,

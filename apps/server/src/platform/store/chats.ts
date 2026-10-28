@@ -325,6 +325,18 @@ export class ChatStore {
     return res.rows.map(rowToList);
   }
 
+  /** One sidebar row by id: the shape every chat response carries. The
+   *  archived and deleted filters do not apply — a write that archives or
+   *  deletes a chat must return the row it changed. */
+  async getChatListRow(orgId: string, userId: string, chatId: string): Promise<ChatListRow | null> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.id = $3`,
+      [orgId, userId, chatId],
+    );
+    const row = res.rows[0];
+    return row ? rowToList(row) : null;
+  }
+
   /** Org-scoped fetch with the owner/admin gate (members must not read
    *  other members' threads, forge events, or spend the org's tokens). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {

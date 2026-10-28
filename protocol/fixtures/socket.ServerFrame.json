@@ -59,7 +59,10 @@
         "project_id": "018f0b7c-0000-7000-8000-000000000001",
         "project_name": "web",
         "project_machine_label": "citadel",
-        "machine_online": true
+        "machine_online": true,
+        "type": "user",
+        "archived": false,
+        "deleted": false
       }
     ]
   },
@@ -183,7 +186,10 @@
         "working": false,
         "blocked": false,
         "last_activity_at": "2026-10-27T09:00:00Z",
-        "machine_online": false
+        "machine_online": false,
+        "type": "user",
+        "archived": false,
+        "deleted": false
       }
     ]
   },

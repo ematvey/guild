@@ -6,7 +6,7 @@ import type { ThreadEvent } from "./thread-events";
 const chat = {
   id: "chat-1", org_id: "o1", user_id: "u1", title: "Chat", created_at: "now",
   generating: false, unread: false, working: false, blocked: false,
-  last_activity_at: "now", machine_online: false,
+  last_activity_at: "now", machine_online: false, type: "user" as const, archived: false, deleted: false,
 };
 const delta = { type: "delta" as const, content: "hello" };
 
