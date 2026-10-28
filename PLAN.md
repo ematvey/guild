@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The sandbox runner is a migration target, not the end state
+  (2026-10-28).** The server-side sandbox is our own `sandbox-runner` (the
+  only holder of the Docker socket) plus an in-sandbox agent
+  (`agent.js`/`serve.js`/`protocol.js`). It works, but we own the daemon and
+  the frame protocol. The direction is an off-the-shelf sandbox platform;
+  NVIDIA OpenShell is the leading candidate. The platform supplies the
+  gateway, the supervisor and the policy. We keep one server-side adapter
+  from `ExecutionEnv` to the platform API. What we want from a platform:
+  filesystem, process and network policy, credential brokering, and drivers
+  for Kubernetes and GPU. What it does not give for free: handles, watchers,
+  streamed output and cancel; the adapter must map them. The in-sandbox code
+  moves from us to the vendor, it does not disappear. No change is made now:
+  the current runner stays until the adapter reaches parity with
+  `ExecutionEnv`.
+
 - **The protocol branch merges with develop (2026-10-28).** `develop` brought
   the record-text sanitizer (`platform/domain/text.ts`) and the attachment
   author fix. Two merge points needed a decision. `jsonbText` now builds on
