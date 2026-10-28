@@ -480,6 +480,59 @@ function BootBackground() {
 }
 
 
+/// Layout readout for an installed web app: the numbers that decide where
+/// the shell, the composer and the safe areas land. An installed web app has
+/// no address bar, so the switch is a stored flag: `?diag` turns it on (and
+/// shows it here), `?diag=off` turns it off. Safari and the installed copy
+/// share the same storage, so one visit in a tab arms the readout inside the
+/// installed app.
+function LayoutDiag() {
+  const [rows, setRows] = useState<string[]>([]);
+  useEffect(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:fixed;left:-9999px;top:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)";
+    document.body.appendChild(probe);
+    const read = () => {
+      const cs = getComputedStyle(probe);
+      const vv = window.visualViewport;
+      const shell = document.querySelector<HTMLElement>("[data-shell]");
+      const composer = document.querySelector<HTMLElement>("[data-composer]");
+      const card = composer?.firstElementChild as HTMLElement | null;
+      const rect = (el: HTMLElement | null | undefined) =>
+        el ? `${Math.round(el.getBoundingClientRect().top)}+${Math.round(el.getBoundingClientRect().height)}` : "none";
+      setRows([
+        `ua ${navigator.userAgent.includes("Safari") ? "safari" : "other"} standalone ${String((navigator as Navigator & { standalone?: boolean }).standalone)}`,
+        `inner ${window.innerWidth}x${window.innerHeight} dpr ${window.devicePixelRatio}`,
+        `docEl.client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
+        `vv ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} off ${Math.round(vv.offsetTop)} scale ${vv.scale}` : "none"}`,
+        `env top ${cs.paddingTop} bottom ${cs.paddingBottom}`,
+        `shell top+h ${rect(shell)}`,
+        `composer top+h ${rect(composer)} pb ${composer ? getComputedStyle(composer).paddingBottom : "-"}`,
+        `card top+h ${rect(card)}`,
+        `scrollY ${Math.round(window.scrollY)}`,
+      ]);
+    };
+    read();
+    const t = window.setInterval(read, 1000);
+    window.addEventListener("resize", read);
+    window.addEventListener("orientationchange", read);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("resize", read);
+      window.removeEventListener("orientationchange", read);
+      probe.remove();
+    };
+  }, []);
+  return (
+    <div className="fixed bottom-2 left-2 z-[100] max-w-[92vw] rounded-md border border-border bg-card/95 p-2 font-mono text-[10px] leading-tight text-foreground shadow-lg">
+      {rows.map((r) => (
+        <div key={r}>{r}</div>
+      ))}
+    </div>
+  );
+}
+
 function AppInner() {
   const [email, setEmail] = useState<string | null>(null);
   const [role, setRole] = useState<string>("member");
@@ -559,12 +612,36 @@ function AppInner() {
 }
 
 export default function App() {
+  const [diag] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("diag");
+      if (q === "off") {
+        localStorage.removeItem("guild.diag");
+        return false;
+      }
+      if (q !== null) {
+        localStorage.setItem("guild.diag", "1");
+        return true;
+      }
+      if (localStorage.getItem("guild.diag") === "1") return true;
+      // An installed copy can resume from memory without re-reading storage,
+      // and on some iOS versions its data store is not the tab's. So the
+      // readout also arms itself in an installed app.
+      const standalone =
+        (navigator as Navigator & { standalone?: boolean }).standalone === true ||
+        window.matchMedia("(display-mode: standalone)").matches;
+      return standalone;
+    } catch {
+      return false;
+    }
+  });
   return (
     <ThemeProvider>
       <AppInner />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
       {!IS_TAURI && <InstallPrompt />}
+      {diag && <LayoutDiag />}
       <ThemedToaster />
     </ThemeProvider>
   );
