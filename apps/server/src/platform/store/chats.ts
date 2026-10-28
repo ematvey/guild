@@ -28,6 +28,15 @@ export interface ChatRow {
   deleted: boolean;
 }
 
+/** The chat's tenant and owner account (ownerOf). */
+export interface ChatOwner {
+  org_id: string;
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
 export type CompactionStatus =
   | { status: "running" }
   | { status: "completed"; compacted: boolean }
@@ -185,14 +194,15 @@ export class ChatStore {
   }
 
   /** The chat's org and owner (the agent tools' caller identity: the
-   *  conversation → chat → owner mapping). null when the chat is gone. */
-  async ownerOf(chatId: string): Promise<{ org_id: string; user_id: string } | null> {
-    const res = await this.pool.query<{ org_id: string; user_id: string }>(
-      "SELECT org_id, user_id FROM chats WHERE id = $1",
+   *  conversation → chat → owner mapping), with the owner's account fields.
+   *  null when the chat is gone. */
+  async ownerOf(chatId: string): Promise<ChatOwner | null> {
+    const res = await this.pool.query<ChatOwner>(
+      "SELECT c.org_id, c.user_id, u.email, u.display_name, u.role " +
+        "FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
       [chatId],
     );
-    const row = res.rows[0];
-    return row === undefined ? null : { org_id: row.org_id, user_id: row.user_id };
+    return res.rows[0] ?? null;
   }
 
   /** Creates a chat on a caller-supplied executor (the agent-session create

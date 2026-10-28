@@ -162,7 +162,10 @@ Official Tauri NSIS installer, cross-built:
 ### macOS → `Guild-<VERSION>-macos-{aarch64,x86_64}.dmg`
 1. `cargo zigbuild --release -p guild-desktop --target <arch>-apple-darwin`
    (WKWebView/AppKit link against the SDK; no Mac needed to *build*) — the
-   binary carries a valid linker-generated ad-hoc signature
+   binary carries a valid linker-generated ad-hoc signature. The link runs
+   through `scripts/zig-link-dedup.sh`, which drops repeated `-framework`
+   flags: rustc passes one per crate, the zig linker writes one LC_LOAD_DYLIB
+   per flag, and dyld on macOS 26 aborts on a dylib named twice
 2. Hand-assemble `Guild.app` (`Contents/MacOS/Guild`, `Info.plist`,
    `Resources/icon.icns`) — Tauri's bundler refuses to bundle off-host. With
    `GUILD_APPLE_CERT_P12` (+ `GUILD_APPLE_CERT_PASSWORD`) set, the bundle is
@@ -210,7 +213,7 @@ the server-computed sha256 matches the local file before declaring success.
 |---|---|
 | linux-x86_64 (GUI + engine) | **executed**: GUI runs under xvfb (webkit alive); engine login/chat over stdio |
 | windows-x86_64 | installer produced by the official bundler; portable exe launches under wine (WebView2 cannot render in wine — full GUI session needs a real Windows box) |
-| darwin-aarch64 / darwin-x86_64 | build + Mach-O format + .app/DMG structure verified (fsck, plist, dmg2img); ad-hoc signature page hashes verified; **never executed** — needs a Mac |
+| darwin-aarch64 / darwin-x86_64 | build + Mach-O format + .app/DMG structure verified (fsck, plist, dmg2img); ad-hoc signature page hashes verified; aarch64 launches on macOS 26.1 (arm64 host); x86_64 not executed |
 | macOS signing | ad-hoc (linker-generated, valid); Developer ID + notarization via `rcodesign` when `GUILD_APPLE_CERT_P12`/`GUILD_APPLE_API_KEY` are provided; quarantined ad-hoc downloads still hit Gatekeeper — user workaround `xattr -dr com.apple.quarantine <path to Guild.app>` |
 
 ## 7. Release scripts

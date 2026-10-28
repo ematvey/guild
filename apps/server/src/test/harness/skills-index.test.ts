@@ -223,7 +223,7 @@ function extensionDeps(skillRuntime: SkillRuntime | undefined, orgId: string | n
     currentModel: async () => null,
     orgPrompt: async () => null,
     orgOfConversation: async () => orgId,
-    userOfConversation: async () => ({ id: USER }),
+    userOfConversation: async () => ({ id: USER, email: "user-1@example.test", display_name: null, role: "member" }),
     skillRuntime,
   } as unknown as GuildExtensionDeps;
 }

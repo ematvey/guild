@@ -19,6 +19,28 @@ export { ASSISTANT_PROMPT_KEY };
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
 
+/** The Guild user a thread belongs to (the chat owner). */
+export interface CurrentUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
+/** The current-user line: the Guild account this thread belongs to. Tools
+ *  that resolve "me" through their own account (Jira `currentUser()`, a
+ *  mailbox) answer for that account's owner, so the prompt names the Guild
+ *  user. */
+export function renderCurrentUser(user: CurrentUser): string {
+  const named = user.display_name !== null && user.display_name.trim() !== "";
+  const name = named ? user.display_name!.trim() : user.email;
+  return `<current_user name="${escapeAttr(name)}" email="${escapeAttr(user.email)}" />`;
+}
+
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Renders the request's system prompt body: the persona (org override wins
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
@@ -47,8 +69,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** conversationId → org id (the chat mapping). */
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
   /** conversationId → the chat owner's user (the skills index's install
-   *  pins resolve against them) — the same chat→row lookup. */
-  userOfConversation(conversationId: ConversationId): Promise<{ id: string } | null>;
+   *  pins resolve against them, and the prompt's current-user block names
+   *  them) — the same chat→row lookup. */
+  userOfConversation(conversationId: ConversationId): Promise<CurrentUser | null>;
   /** The thread-history tools (thread_history/thread_search), built by the
    *  runtime over its pool; absent in tests without one. */
   threadTools?: readonly ToolRegistration[];
@@ -76,7 +99,9 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
     async render(input) {
       const orgId = await deps.orgOfConversation(input.conversationId);
       const prompt = orgId === null ? null : await deps.orgPrompt(orgId);
-      return buildSystemPrompt(prompt);
+      const user = await deps.userOfConversation(input.conversationId);
+      const body = buildSystemPrompt(prompt);
+      return user === null ? body : `${body}\n\n${renderCurrentUser(user)}`;
     },
   };
   const skillsSection: PromptSection<ToolRegistration> = {
