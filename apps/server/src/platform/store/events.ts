@@ -2,7 +2,8 @@
 // NOTIFY the guild_events
 // channel; the WebSocket feed (M5) delivers the fan-out.
 
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 
 export const NOTIFY_CHANNEL = "guild_events";

@@ -4,7 +4,10 @@
 
 import type { ClientFrame, ServerFrame } from "./types.js";
 
-const SERVER_TAGS: ReadonlySet<string> = new Set([
+// The tag lists are the runtime form of the frame unions. The type-level
+// assertions below fail the build when a frame is added to a union and not
+// to the list, or the other way round.
+const SERVER_TAG_NAMES = [
   "hello",
   "displaced",
   "auth_required",
@@ -27,15 +30,27 @@ const SERVER_TAGS: ReadonlySet<string> = new Set([
   "project_list",
   "machine_list",
   "workspace_identity",
-]);
+] as const satisfies readonly ServerFrame["type"][];
 
-const CLIENT_TAGS: ReadonlySet<string> = new Set([
+const CLIENT_TAG_NAMES = [
   "ping",
   "sync",
   "read",
   "machine_response",
   "tool_result",
-]);
+] as const satisfies readonly ClientFrame["type"][];
+
+const _serverTagsExhaustive: Exclude<ServerFrame["type"], (typeof SERVER_TAG_NAMES)[number]> extends never
+  ? true
+  : never = true;
+const _clientTagsExhaustive: Exclude<ClientFrame["type"], (typeof CLIENT_TAG_NAMES)[number]> extends never
+  ? true
+  : never = true;
+void _serverTagsExhaustive;
+void _clientTagsExhaustive;
+
+const SERVER_TAGS: ReadonlySet<string> = new Set(SERVER_TAG_NAMES);
+const CLIENT_TAGS: ReadonlySet<string> = new Set(CLIENT_TAG_NAMES);
 
 /** Read the `type` tag from parsed JSON. Return null for a non-object. */
 function tagOf(text: string): string | null {

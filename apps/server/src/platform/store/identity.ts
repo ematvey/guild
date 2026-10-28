@@ -3,7 +3,8 @@
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../errors.js";
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 
 /** Minimal org-event capability injected by the composition root — the

@@ -6,7 +6,8 @@ import { generationWorkSql } from "./work.js";
 // its same-transaction `guild_chat_status` notify.
 
 import { ApiError } from "../errors.js";
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { UserRow } from "./identity.js";

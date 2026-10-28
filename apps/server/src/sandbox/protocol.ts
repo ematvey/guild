@@ -9,6 +9,9 @@
 // the originating call id.
 
 import { ExecutionError, FileError } from "@earendil-works/pi-durable/env";
+import { sanitizeText } from "../platform/domain/text.js";
+
+export { sanitizeText };
 
 /** Client → agent. */
 export type SandboxClientFrame =
@@ -73,13 +76,9 @@ export const HANDLE_RETURNING_METHODS: Record<string, HandleKind> = {
 };
 
 /** Encodes a value for JSON: bytes, undefined, and the env error classes
- *  survive the round trip. */
-/** U+0000 never crosses the sandbox wire: JSONB rejects it, and a record
- *  that carries it fails every later parse. Tool output can be binary, so
- *  the producer replaces it with the Unicode replacement character. */
-import { sanitizeText } from "../platform/domain/text.js";
-export { sanitizeText };
-
+ *  survive the round trip. U+0000 never crosses the wire: a tool result can
+ *  be binary, and a record that carries U+0000 fails every later jsonb
+ *  parse. The producer replaces it with the Unicode replacement character. */
 export function encodeValue(value: unknown): unknown {
   if (value === undefined) return { $u: 1 };
   if (typeof value === "string") return sanitizeText(value);

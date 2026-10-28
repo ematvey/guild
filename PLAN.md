@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The wire check reads the TypeScript declarations (2026-10-28).**
+  `protocol/check.mjs` now parses `packages/wire/src/*.ts` with the
+  TypeScript compiler and compares each fixture root against its schema:
+  property names, and required versus optional. Before, it only checked that
+  a declaration with the right name existed, so a renamed or weakened field
+  on the TypeScript side passed. The Rust fixture round trip now compares
+  the serialized JSON with the fixture frame for every root, not only the
+  types without `PartialEq`; an unknown field in a fixture can no longer be
+  dropped silently. Two fields the schema already declared now reach the
+  wire: `approval_request.judge` (the renderer and the legacy normalizer
+  dropped it) and `assistant_message.usage` (always emitted, empty when
+  absent). `recordJsonText` and `jsonbText` live together in
+  `platform/domain/text.ts`, so the U+0000 rule and the lone-surrogate rule
+  are stated once.
+
 - **The sandbox runner is a migration target, not the end state
   (2026-10-28).** The server-side sandbox is our own `sandbox-runner` (the
   only holder of the Docker socket) plus an in-sandbox agent

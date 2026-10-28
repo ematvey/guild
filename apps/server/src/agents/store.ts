@@ -4,7 +4,8 @@
 // here so routes and the runtime share one authorization path.
 
 import { ApiError } from "../platform/errors.js";
-import { jsonbText, type PlatformPool } from "../platform/db.js";
+import type { PlatformPool } from "../platform/db.js";
+import { jsonbText } from "../platform/domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
 import { ChatStore } from "../platform/store/chats.js";
 import type { UserRow } from "../platform/store/identity.js";

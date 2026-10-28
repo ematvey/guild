@@ -4,7 +4,8 @@
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
-import { jsonbText, type PlatformPool } from "../db.js";
+import type { PlatformPool } from "../db.js";
+import { jsonbText } from "../domain/text.js";
 
 export interface RegistryItemRow {
   slug: string;

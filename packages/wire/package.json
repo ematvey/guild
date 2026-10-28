@@ -1,7 +1,7 @@
 {
   "name": "@guild/wire",
   "private": true,
-  "version": "0.6.32",
+  "version": "0.6.35",
   "type": "module",
   "description": "Hand-written TypeScript types for the Guild wire: the member and machine socket, the JSON-RPC envelope, and the REST data-transfer types. Shared by the server and the desktop.",
   "exports": {
