@@ -116,19 +116,6 @@
   --chat-foreground: oklch(0.872 0.01 258.338);
 }
 
-/* The composer's corner. iOS draws its sheets and fields rounder than the
-   web, and a phone composer sits at the bottom edge where the rounder corner
-   reads as the platform's own. */
-:root {
-  --radius-composer: 1.75rem;
-}
-
-@supports (-webkit-touch-callout: none) {
-  :root {
-    --radius-composer: 2.75rem;
-  }
-}
-
 /* Body text sits below the standard regular weight: Inter 400 reads heavier
    than the reference typography this theme targets; the variable wght axis
    makes 375 a real weight, and utilities override where emphasis is set. */
