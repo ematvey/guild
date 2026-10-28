@@ -1718,10 +1718,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         )}
 
         {/* composer: floats over the chat content; the scroll pane runs
-            full-height behind it and offsets it by its measured height */}
+            full-height behind it and offsets it by its measured height.
+            The home-indicator inset is padding under the card, not a gap
+            below it: the card sits one short step above the bottom edge
+            (a full inset there reads as a dead strip in an installed app)
+            and keeps its distance from the keyboard the same way. */}
         <div
           ref={setComposerEl}
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.5rem,calc(env(safe-area-inset-bottom)-1.5rem))] pt-6 sm:px-4"
         >
           {readOnlyThread ? (
             <div
