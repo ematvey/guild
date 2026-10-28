@@ -310,7 +310,9 @@ async function judgeVerdict(
           prompt_chars: requestPayload?.length ?? 0,
           completion_chars: responsePayload?.length ?? 0,
         });
-        if (requestPayload !== null) await sink.recordPayload(requestId, orgId, "request", requestPayload);
+        if (requestPayload !== null) {
+          await sink.recordPayload(requestId, orgId, "request", requestPayload, run?.rows[0]?.id ?? chatId);
+        }
         if (responsePayload !== null) await sink.recordPayload(requestId, orgId, "response", responsePayload);
       })();
     }

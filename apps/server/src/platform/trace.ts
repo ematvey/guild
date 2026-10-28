@@ -3,13 +3,64 @@
 // and delegated runs inside it. Sessions group traces by chat. The run
 // lifecycle mirrors agent_runs into agent_traces; the gateway and the tool
 // hook append spans. Payload bodies land in llm_payloads unless payload
-// tracing is disabled (GUILD_TRACE_PAYLOADS=0). Same degradation rules as
+// tracing is disabled (GUILD_TRACE_PAYLOADS=0); a request stores only the
+// messages its predecessor in the trace did not carry, and the read path
+// rebuilds the full body from that chain. Same degradation rules as
 // the usage sink: an unreachable ClickHouse never breaks a model call, a
 // tool call or the approval gate — failures are logged and dropped. The
 // tables are TS-owned (idempotent DDL on first use).
 
+import { createHash } from "node:crypto";
 import { clickhouseDateTime64, ClickhouseClient } from "./clickhouse.js";
 import { errorText } from "./usage.js";
+
+/** The zero uuid: "no parent" on a payload row and "no chain row yet". */
+const NO_PARENT = "00000000-0000-0000-0000-000000000000";
+
+/** The stored body cap; a longer request is cut like before. */
+const MAX_PAYLOAD_CHARS = 2_000_000;
+
+/** Guard for a corrupt or cyclic parent chain on the read path. */
+const MAX_CHAIN_DEPTH = 128;
+
+/** sha256 hex of one JSON value — a chat message, used to prove that the
+ *  parent's history is a prefix of the new request. */
+function hashJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+/** The `messages` array of a raw OpenAI request body, or null when the body
+ *  is not JSON or carries no array. */
+function requestMessages(body: string): unknown[] | null {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const messages = parsed["messages"];
+    return Array.isArray(messages) ? messages : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Rebuilds one request body from its delta chain (leaf first, root last).
+ *  The root carries the whole history; each descendant carries only the
+ *  messages appended since its parent. */
+function rebuildRequest(chain: Record<string, unknown>[]): string {
+  const ordered = [...chain].reverse();
+  const root = ordered[0];
+  if (root === undefined) return "";
+  try {
+    const base = JSON.parse(String(root["body"])) as Record<string, unknown>;
+    const messages = Array.isArray(base["messages"]) ? [...(base["messages"] as unknown[])] : [];
+    for (const row of ordered.slice(1)) {
+      const delta = JSON.parse(String(row["body"])) as Record<string, unknown>;
+      if (Array.isArray(delta["messages"])) messages.push(...(delta["messages"] as unknown[]));
+    }
+    base["messages"] = messages;
+    return JSON.stringify(base);
+  } catch {
+    return String(chain[0]?.["body"] ?? "");
+  }
+}
 
 export type SpanType = "llm" | "tool" | "run";
 export type SpanStatus = "ok" | "error" | "running";
@@ -199,8 +250,30 @@ export class TraceStore {
           this.client.execute(
             "CREATE TABLE IF NOT EXISTS llm_payloads (" +
               "ts DateTime, request_id UUID, org_id UUID, " +
-              "kind LowCardinality(String), body String CODEC(ZSTD(3))" +
+              "kind LowCardinality(String), body String CODEC(ZSTD(3)), " +
+              `parent_request_id UUID DEFAULT '${NO_PARENT}', prefix_count UInt32 DEFAULT 0` +
               ") ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY (request_id, kind) " +
+              "TTL toDateTime(ts) + INTERVAL 14 DAY",
+          ),
+        )
+        // Columns added after the table shipped: an existing table keeps its
+        // rows and gets them with defaults (prefix_count 0 = a full body).
+        .then(() =>
+          this.client.execute(
+            "ALTER TABLE llm_payloads " +
+              `ADD COLUMN IF NOT EXISTS parent_request_id UUID DEFAULT '${NO_PARENT}', ` +
+              "ADD COLUMN IF NOT EXISTS prefix_count UInt32 DEFAULT 0",
+          ),
+        )
+        // The write-path index: the newest request of one trace, by trace.
+        // The payload table is ordered by request id, so a parent lookup
+        // there would scan the whole table on every model call.
+        .then(() =>
+          this.client.execute(
+            "CREATE TABLE IF NOT EXISTS llm_payload_chains (" +
+              "ts DateTime64(3), org_id UUID, trace_id UUID, request_id UUID, " +
+              "message_count UInt32 DEFAULT 0, last_hash String DEFAULT ''" +
+              ") ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY (org_id, trace_id, ts, request_id) " +
               "TTL toDateTime(ts) + INTERVAL 14 DAY",
           ),
         )
@@ -331,23 +404,85 @@ export class TraceStore {
   }
 
   /** Records one payload row; a no-op (not an error) when payload tracing
-   *  is disabled. Failures are logged and dropped. */
-  async recordPayload(requestId: string, orgId: string, kind: "request" | "response", body: string): Promise<void> {
+   *  is disabled. A request stores the whole body only when no earlier
+   *  request of the same trace is its prefix; otherwise it stores the new
+   *  messages and points at its parent (`traceId` is the run id, else the
+   *  chat id, else the request id). Failures are logged and dropped. */
+  async recordPayload(
+    requestId: string,
+    orgId: string,
+    kind: "request" | "response",
+    body: string,
+    traceId: string = requestId,
+  ): Promise<void> {
     if (!this.tracePayloads) return;
     try {
       await this.ensureOnce();
-      await this.client.insert("llm_payloads", [
+      const ts = clickhouseDateTime64(new Date());
+      const row: Record<string, unknown> = {
+        ts,
+        request_id: requestId,
+        org_id: orgId,
+        kind,
+        body: body.slice(0, MAX_PAYLOAD_CHARS),
+        parent_request_id: NO_PARENT,
+        prefix_count: 0,
+      };
+      const messages = kind === "request" ? requestMessages(body) : null;
+      if (messages === null || messages.length === 0) {
+        await this.client.insert("llm_payloads", [row]);
+        return;
+      }
+      const parent = await this.chainParent(orgId, traceId);
+      const last = messages[messages.length - 1];
+      const prefix =
+        parent !== null &&
+        parent.messageCount > 0 &&
+        parent.messageCount <= messages.length &&
+        hashJson(messages[parent.messageCount - 1]) === parent.lastHash
+          ? parent.messageCount
+          : 0;
+      if (prefix > 0 && parent !== null) {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        parsed["messages"] = messages.slice(prefix);
+        row["body"] = JSON.stringify(parsed).slice(0, MAX_PAYLOAD_CHARS);
+        row["parent_request_id"] = parent.requestId;
+        row["prefix_count"] = prefix;
+      }
+      await this.client.insert("llm_payloads", [row]);
+      await this.client.insert("llm_payload_chains", [
         {
-          ts: clickhouseDateTime64(new Date()),
-          request_id: requestId,
+          ts,
           org_id: orgId,
-          kind,
-          body: body.slice(0, 2_000_000),
+          trace_id: traceId,
+          request_id: requestId,
+          message_count: messages.length,
+          last_hash: hashJson(last),
         },
       ]);
     } catch (error) {
       console.warn(`llm trace payload dropped: ${errorText(error)}`);
     }
+  }
+
+  /** The newest request of one trace, as the write path needs it: the row to
+   *  point at and the proof that a new request extends it. */
+  private async chainParent(
+    orgId: string,
+    traceId: string,
+  ): Promise<{ requestId: string; messageCount: number; lastHash: string } | null> {
+    const rows = await this.client.query(
+      "SELECT request_id, message_count, last_hash FROM llm_payload_chains " +
+        "WHERE org_id = toUUID(?) AND trace_id = toUUID(?) ORDER BY ts DESC, request_id DESC LIMIT 1",
+      [orgId, traceId],
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      requestId: String(row["request_id"]),
+      messageCount: Number(row["message_count"]),
+      lastHash: String(row["last_hash"]),
+    };
   }
 
   /** Trace rows (newest first) with their span aggregates. */
@@ -593,10 +728,29 @@ export class TraceStore {
   /** The stored request/response bodies for one span (admin only). */
   async payloads(orgId: string, spanId: string): Promise<Record<string, unknown>[]> {
     await this.ensureOnce();
-    return this.client.query(
-      "SELECT kind, body FROM llm_payloads WHERE org_id = toUUID(?) AND request_id = toUUID(?) ORDER BY kind",
+    const rows = await this.client.query(
+      "SELECT kind, body, parent_request_id, prefix_count FROM llm_payloads " +
+        "WHERE org_id = toUUID(?) AND request_id = toUUID(?) ORDER BY kind",
       [orgId, spanId],
     );
+    const request = rows.find((row) => row["kind"] === "request");
+    if (request === undefined || Number(request["prefix_count"]) === 0) return rows;
+    const chain: Record<string, unknown>[] = [request];
+    let parentId = String(request["parent_request_id"]);
+    while (parentId !== NO_PARENT && chain.length < MAX_CHAIN_DEPTH) {
+      const parent = (
+        await this.client.query(
+          "SELECT kind, body, parent_request_id, prefix_count FROM llm_payloads " +
+            "WHERE org_id = toUUID(?) AND request_id = toUUID(?) AND kind = 'request' LIMIT 1",
+          [orgId, parentId],
+        )
+      )[0];
+      if (parent === undefined) break;
+      chain.push(parent);
+      parentId = String(parent["parent_request_id"]);
+    }
+    const body = rebuildRequest(chain);
+    return rows.map((row) => (row === request ? { ...row, body } : row));
   }
 
   /** Per-trace span totals for the listed trace ids. */

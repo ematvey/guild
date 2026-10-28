@@ -318,7 +318,8 @@ async function handleChatCompletions(
   const promptChars = (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0;
   // Internal callers (the judge) self-report their own llm_calls rows — the
   // gateway records none (it cannot know the verdict it hasn't parsed).
-  const trace: GatewayTraceEmission | undefined = traceHeaders.internalCaller
+  // The payload chain key: the run, else the chat, else this call alone.
+  const payloadTraceId = traceHeaders.runId ?? traceHeaders.chatId ?? requestId;  const trace: GatewayTraceEmission | undefined = traceHeaders.internalCaller
     ? undefined
     : {
         sink: gateway.trace,
@@ -342,7 +343,7 @@ async function handleChatCompletions(
     // Payload capture rides the trace emission: internal callers (the
     // judge) self-report their payloads, so the gateway records none.
     if (trace !== undefined) {
-      void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "");
+      void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "", payloadTraceId);
     }
     streamChunks(gateway, credential, reply, call.stream, {
       includeUsage: req0.stream_options?.include_usage === true,
@@ -358,7 +359,7 @@ async function handleChatCompletions(
     return;
   }
   if (trace !== undefined) {
-    void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "");
+    void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "", payloadTraceId);
   }
   const counters = new StreamUsageCounters();
   let acc;
