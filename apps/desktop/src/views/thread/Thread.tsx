@@ -361,9 +361,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // composer picks which, and the choice binds the chat.
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
-  // A drag that starts at the left border opens the drawer, the way the
-  // platform does it. The drawer only exists on a phone, so the listener
-  // does too.
+  // A drag from the left opens the drawer. iOS owns the first ~20px of that
+  // edge with its own back gesture and a page cannot cancel it, so the drag
+  // must start past that band: the system keeps the edge, the drawer takes
+  // the rest, and one swipe never does both.
   useEffect(() => {
     if (!isMobile) return;
     let startX = 0;
@@ -371,7 +372,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     let armed = false;
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      armed = t.clientX <= 24;
+      armed = t.clientX > 24 && t.clientX <= 96;
       startX = t.clientX;
       startY = t.clientY;
     };
@@ -388,6 +389,19 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       window.removeEventListener("touchend", onEnd);
     };
   }, [isMobile]);
+  // While the drawer is open, a back gesture closes it instead of leaving
+  // the thread: the drawer owns one history entry for as long as it is up.
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    const marker = `drawer-${Date.now()}`;
+    history.pushState({ guildDrawer: marker }, "");
+    const onPop = () => setOpen(false);
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (history.state?.guildDrawer === marker) history.back();
+    };
+  }, [isMobile, open]);
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
   const [width, setWidth] = useState<number>(() => storedSidebarWidth());
   // settings may resize the shared width while this sidebar stays mounted
