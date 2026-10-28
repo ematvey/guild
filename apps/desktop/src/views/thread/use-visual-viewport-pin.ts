@@ -15,10 +15,12 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
     let frame = 0;
     const apply = () => {
       frame = 0;
+      // The document cannot scroll, so the pan is always zero and only the
+      // height moves. A top offset is still honoured for the browsers that
+      // pan the visual viewport without a document scroll.
       const top = Math.round(vv.offsetTop);
-      const height = Math.round(vv.height);
-      el.style.top = top ? `${top}px` : "0px";
-      el.style.height = `${height}px`;
+      el.style.top = top ? `${top}px` : "";
+      el.style.height = `${Math.round(vv.height)}px`;
     };
     // The viewport fires many times during the keyboard animation; one write
     // per frame keeps the shell from thrashing between two offsets.
