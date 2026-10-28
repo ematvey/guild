@@ -5,25 +5,9 @@
 // height, tracked live on every viewport resize/scroll. Android browsers
 // either resize the layout viewport natively (interactive-widget=
 // resizes-content) or report a shrunk visual viewport — both land here
-// correctly; when no keyboard is up the shell keeps plain `fixed inset-0`
-// (empty inline styles), so normal browsing is untouched.
-//
-// A shorter visual viewport alone is not proof of a keyboard: an installed
-// web app can report one while the screen is fully visible, and pinning
-// there leaves a dead strip at the bottom. So the pin also requires a
-// focused editable element — the only thing that can raise the keyboard.
+// correctly; when no keyboard is detected the shell falls back to plain
+// `fixed inset-0` (empty inline styles), so normal browsing is untouched.
 import { useEffect, type RefObject } from "react";
-
-function editableFocused(): boolean {
-  const el = document.activeElement;
-  if (!(el instanceof HTMLElement)) return false;
-  return (
-    el.isContentEditable ||
-    el.tagName === "INPUT" ||
-    el.tagName === "TEXTAREA" ||
-    el.tagName === "SELECT"
-  );
-}
 
 export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -32,8 +16,7 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
     if (!vv || !el) return;
     const apply = () => {
       const layoutH = document.documentElement.clientHeight;
-      const pinned =
-        editableFocused() && (vv.height < layoutH - 60 || vv.offsetTop > 0);
+      const pinned = vv.height < layoutH - 60 || vv.offsetTop > 0;
       if (!pinned) {
         el.style.top = "";
         el.style.height = "";
@@ -46,14 +29,10 @@ export function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
     window.addEventListener("orientationchange", apply);
-    document.addEventListener("focusin", apply);
-    document.addEventListener("focusout", apply);
     return () => {
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
       window.removeEventListener("orientationchange", apply);
-      document.removeEventListener("focusin", apply);
-      document.removeEventListener("focusout", apply);
       el.style.top = "";
       el.style.height = "";
     };

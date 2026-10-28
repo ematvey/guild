@@ -1313,7 +1313,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, []);
 
   return (
-    <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
+    <div ref={shell} data-shell className="fixed inset-0 flex bg-background text-foreground">
       {/* icon rail: desktop only, always visible — it switches the sidebar
           panel between chats / work / skills / settings and carries the
           account menu */}
@@ -1338,7 +1338,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent side="left" className="w-72 p-0" hideClose>
+          <SheetContent
+            side="left"
+            className="w-72 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            hideClose
+          >
             <SheetTitle className="sr-only">Sidebar</SheetTitle>
             <div className="flex min-h-0 flex-1">
               <SidebarRail
@@ -1718,14 +1722,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         )}
 
         {/* composer: floats over the chat content; the scroll pane runs
-            full-height behind it and offsets it by its measured height.
-            The home-indicator inset is padding under the card, not a gap
-            below it: the card sits one short step above the bottom edge
-            (a full inset there reads as a dead strip in an installed app)
-            and keeps its distance from the keyboard the same way. */}
+            full-height behind it and offsets it by its measured height */}
         <div
           ref={setComposerEl}
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.5rem,calc(env(safe-area-inset-bottom)-1.5rem))] pt-6 sm:px-4"
+          data-composer
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
           {readOnlyThread ? (
             <div
