@@ -11,6 +11,11 @@ import { serializeRustJson } from "../provider/rust-json.js";
 import type { TraceStore } from "../trace.js";
 import type { GatewayStore } from "../store/gateway.js";
 
+/** Request body ceiling for the gateway surfaces. A chat-completions call
+ *  carries the whole conversation on every step, including base64 images
+ *  from tool results, so the default 1 MiB API limit rejects long turns. */
+export const GATEWAY_BODY_LIMIT_BYTES = 50 * 1024 * 1024;
+
 /** The gateway pipeline's slice of the platform context. */
 export interface GatewayContext {
   masterKey(): Buffer;
