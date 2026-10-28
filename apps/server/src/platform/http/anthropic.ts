@@ -5,7 +5,7 @@
 // internal message format, resolves the org route for the model, and
 // renders provider output back in Anthropic shape — both non-streaming and
 // as Anthropic SSE events (`message_start` / `content_block_delta` /
-// `message_stop`), byte-compatible with the Rust server.
+// `message_stop`), the same sequence as the Rust server.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, RAW_BODY, missingFieldError } from "../errors.js";
@@ -23,7 +23,6 @@ import {
   type GatewayCredential,
   type RoutedCall,
 } from "./llm.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { ProviderError, type InternalMessage, type ToolSpec, type ToolCall } from "../provider/types.js";
 import { sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";
@@ -35,7 +34,7 @@ function anthropicCredential(gateway: GatewayCtx, req: FastifyRequest): Promise<
 }
 
 function anthropicErrorShape(errorType: string, message: string): string {
-  return rustJsonText({ type: "error", error: { type: errorType, message } });
+  return JSON.stringify({ type: "error", error: { type: errorType, message } });
 }
 
 /** Renders a caught error in the Anthropic wire shape (the Rust
@@ -278,7 +277,7 @@ function contentBlocks(reasoning: string, text: string, calls: ToolCall[]): unkn
     blocks.push({ type: "text", text });
   }
   for (const c of calls) {
-    blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.arguments });
+    blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.arguments ?? null });
   }
   if (blocks.length === 0) {
     blocks.push({ type: "text", text: "" });
@@ -354,7 +353,7 @@ async function handleMessages(
   // vocabulary; without one the shape decides (today's fallback).
   const stop = mapStopReason(acc.finishReason, acc.calls.length === 0);
   reply.type("application/json").send(
-    rustJsonText({
+    JSON.stringify({
       id: `msg_${uuidv7()}`,
       type: "message",
       role: "assistant",
@@ -394,7 +393,7 @@ function streamEvents(
   const counters = new StreamUsageCounters();
   const msgId = `msg_${uuidv7()}`;
   const model = call.model;
-  const send = (event: string, data: unknown): string => `event: ${event}\ndata: ${rustJsonText(data)}\n\n`;
+  const send = (event: string, data: unknown): string => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
   let nextBlock = -1;
   let currentBlock: number | null = null;
@@ -526,7 +525,7 @@ function streamEvents(
               index: opened.idx,
               delta: {
                 type: "input_json_delta",
-                partial_json: rustJsonText(item.call.arguments),
+                partial_json: JSON.stringify(item.call.arguments ?? null),
               },
             });
             const closed = closeCurrent();

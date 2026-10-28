@@ -11,7 +11,6 @@ import {
   type ToolCall,
 } from "./types.js";
 import type { Json } from "@guild/wire/rest";
-import { rustJsonText } from "./rust-json.js";
 import { sseDataStreams } from "./sse.js";
 
 /** The output-token-limit dialect for a model name: OpenAI reasoning
@@ -75,7 +74,7 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
           arguments:
             typeof c.arguments === "string"
               ? c.arguments
-              : rustJsonText(c.arguments),
+              : JSON.stringify(c.arguments ?? null),
         },
       }));
     }

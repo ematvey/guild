@@ -7,7 +7,6 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import type { ProjectRow } from "../store/projects.js";
 
 /** The display name for a folder: its last path segment (Windows or POSIX
@@ -68,8 +67,7 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
     const rows = archived
       ? await gateway.projects.listArchived(user.org_id, user.id)
       : await gateway.projects.list(user.org_id, user.id);
-    // json!-built body: sorted keys.
-    reply.type("application/json").send(rustJsonText({ projects: rows }));
+    reply.type("application/json").send(JSON.stringify({ projects: rows }));
     return reply;
   });
 
@@ -103,8 +101,7 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
     const user = await requireUser(ctx, req);
     const projectId = parseUuidParam(req, "id");
     await gateway.projects.delete(user.org_id, projectId, user.id);
-    // json!-built body: sorted keys.
-    reply.type("application/json").send(rustJsonText({ ok: true }));
+    reply.type("application/json").send(JSON.stringify({ ok: true }));
     return reply;
   });
 }

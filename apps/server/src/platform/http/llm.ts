@@ -7,7 +7,6 @@
 import { ApiError } from "../errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
-import { serializeRustJson } from "../provider/rust-json.js";
 import type { TraceStore } from "../trace.js";
 import type { GatewayStore } from "../store/gateway.js";
 
@@ -288,7 +287,7 @@ export async function accumulate(
 
 /** The accumulated stream's visible completion size (trace completion_chars). */
 export function completionChars(acc: { text: string; reasoning: string; calls: NonNullable<InternalMessage["tool_calls"]> }): number {
-  return acc.text.length + acc.reasoning.length + acc.calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : serializeRustJson(c.arguments).length), 0);
+  return acc.text.length + acc.reasoning.length + acc.calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : JSON.stringify(c.arguments ?? null).length), 0);
 }
 
 /** Renders the provider's canonical finish reason (or the shape-derived

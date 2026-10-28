@@ -83,7 +83,8 @@
         "ProviderError",
         "ChatChunk",
         "InternalMessage",
-        "RoutedCall"
+        "RoutedCall",
+        "SseDecoder"
       ],
       "aliases": [
         "wire-protocol",
@@ -282,35 +283,6 @@
           "from": "db",
           "to": "wire",
           "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
-    },
-    {
-      "id": "rust-json",
-      "definition": "The serde_json-compatible text rendering of a JSON value, with sorted keys and ryu float form.",
-      "canonical": "apps/server/src/platform/provider/rust-json.ts",
-      "types": [
-        "RustFloat",
-        "SseDecoder"
-      ],
-      "aliases": [
-        "serde-json-text"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/provider/rust-json.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/provider/sse.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/activity.ts"
         }
       ]
     },
