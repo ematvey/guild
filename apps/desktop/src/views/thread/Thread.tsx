@@ -1167,7 +1167,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const mobileNavBar = (title?: string) =>
     isMobile ? (
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
-        <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
+        <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)}>
           <Menu />
         </Button>
         {title !== undefined && <span className="min-w-0 flex-1 truncate font-medium">{title}</span>}
@@ -1439,7 +1439,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           <>
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
           {isMobile ? (
-            <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
+            <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)}>
               <Menu />
             </Button>
           ) : (
@@ -1450,7 +1450,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="-ml-1.5 size-8 text-muted-foreground"
+                  className="-ml-1.5 size-9 pointer-coarse:size-10 text-muted-foreground"
                   onClick={() => setCollapsed(false)}
                   aria-label="Toggle sidebar"
                 >
@@ -1485,7 +1485,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="-mr-1.5 size-8 shrink-0 text-muted-foreground"
+                  className="-mr-1.5 size-9 shrink-0 pointer-coarse:size-10 text-muted-foreground"
                   title="Chat options"
                 >
                   <EllipsisVertical />
@@ -1711,7 +1711,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                     onClick={scrollToBottom}
                     aria-label="Scroll to the bottom"
                     title="Scroll to the bottom"
-                    className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:bg-muted hover:text-foreground"
+                    className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:bg-muted hover:text-foreground pointer-coarse:size-10"
                   >
                     <ArrowDown className="size-4" />
                   </button>
@@ -1983,7 +1983,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="size-7 rounded-full text-muted-foreground hover:text-foreground"
+                  className="size-8 rounded-full text-muted-foreground hover:text-foreground pointer-coarse:size-10"
                   onClick={() => fileInput.current?.click()}
                   disabled={busy || navigating}
                   title="Attach images, audio, or files"
@@ -2206,7 +2206,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   return (
                     <Button
                       size="icon"
-                      className="size-7 rounded-full"
+                      className="size-8 rounded-full pointer-coarse:size-10"
                       onClick={() =>
                         mode === "stop" || mode === "stopping"
                           ? void requestStop()

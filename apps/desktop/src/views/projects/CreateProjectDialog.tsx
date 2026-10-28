@@ -148,7 +148,7 @@ export function CreateProjectDialog({
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="size-7 text-muted-foreground"
+                  className="size-9 text-muted-foreground pointer-coarse:size-10"
                   onClick={() => setView({ kind: "sources" })}
                   title="Back to sources"
                 >
@@ -170,7 +170,7 @@ export function CreateProjectDialog({
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="size-7 text-muted-foreground"
+                  className="size-9 text-muted-foreground pointer-coarse:size-10"
                   onClick={() => setView({ kind: "sources" })}
                   title="Back to sources"
                 >

@@ -162,7 +162,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground"
+                  className="size-9 text-muted-foreground pointer-coarse:size-10"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <Ellipsis className="size-4" />

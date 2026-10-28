@@ -41,7 +41,7 @@ export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
       <Button
         variant="ghost"
         size="icon"
-        className="size-7 text-muted-foreground"
+        className="size-9 text-muted-foreground pointer-coarse:size-10"
         onClick={onCollapse}
         aria-label="Toggle sidebar"
       >
@@ -59,7 +59,7 @@ export function CloseSidebarButton({ onClose }: { onClose: () => void }) {
     <Button
       variant="ghost"
       size="icon"
-      className="size-7 text-muted-foreground"
+      className="size-9 text-muted-foreground pointer-coarse:size-10"
       onClick={onClose}
       aria-label="Close sidebar"
     >

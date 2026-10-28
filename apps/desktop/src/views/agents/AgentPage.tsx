@@ -406,7 +406,7 @@ function AgentActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Agent actions" disabled={busy}>
+        <Button variant="ghost" size="icon" className="pointer-coarse:size-10" aria-label="Agent actions" disabled={busy}>
           {busy ? <Loader2 className="animate-spin" /> : <MoreHorizontal />}
         </Button>
       </DropdownMenuTrigger>

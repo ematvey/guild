@@ -17,6 +17,17 @@ the scale.
 | Dense data | `text-2xs` | `size-3` | Trace and log tables, token and cost figures, rail captions, attachment chips |
 | Micro | `text-3xs` | `size-2.5` | Keyboard hints, counters, the sidebar rail |
 
+### Icon buttons
+
+| Role | Box | Glyph | Where |
+|---|---|---|---|
+| Toolbar | `size-9` (36) | `size-4` | Header, sidebar chrome, dialog rows, list row actions |
+| Composer | `size-8` (32) | `size-4` | Attach, send, mode chip |
+| Touch | `pointer-coarse:size-10` (40) | `size-4` | Added to both of the above |
+
+Apple's minimum touch target is 44. The touch step closes most of that gap
+without changing desktop density; the composer stays compact on a mouse.
+
 ## Rules
 
 - **Prose is reading, chrome is chrome.** A paragraph the user reads for
