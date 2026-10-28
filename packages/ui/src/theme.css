@@ -45,23 +45,20 @@
 }
 
 /* A phone holds the same layout in ~440pt that a desktop window holds in
-   ~1400px, so the same step reads smaller at arm's length. Both scales are
-   custom properties, so this raises type and spacing together for every
-   utility that uses them, without touching a view. */
+   ~1400px, so the same step reads smaller at arm's length. The steps shift
+   up by two pixels on a narrow screen: a shift keeps the band the scale
+   already has, while a multiplier would widen every gap and break the
+   relationship between body, chrome and labels. Spacing is unchanged. */
 @media (max-width: 640px) {
   :root {
-    --text-3xs: 14px;
-    --text-2xs: 17px;
-    --text-xs: 18px;
-    --text-sm: 19px;
-    --text-base: 22px;
-    --text-lg: 25px;
-    --text-xl: 29px;
-    --text-2xl: 34px;
-    /* Every padding, gap and control size is a multiple of this step. The
-       type above is 1.3x its desktop value, so the boxes take the same
-       factor: one scale for the whole interface, not two. */
-    --spacing: 0.325rem;
+    --text-3xs: 13px;
+    --text-2xs: 15px;
+    --text-xs: 16px;
+    --text-sm: 17px;
+    --text-base: 19px;
+    --text-lg: 21px;
+    --text-xl: 24px;
+    --text-2xl: 28px;
   }
 }
 
