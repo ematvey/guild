@@ -24,7 +24,9 @@ import { uuidv7 } from "../time.js";
 import { threadEventObject, threadEventRowObject, type MessageAttachment, type ThreadEventRow } from "../domain/thread-events.js";
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
+import type { Chat } from "@guild/wire/rest";
 import type { ChatRow } from "../store/chats.js";
+import { chatWire } from "../../chats/chat-wire.js";
 import { modalityOf } from "../domain/mime.js";
 import { ThreadAgentLocked } from "../../harness/runtime.js";
 
@@ -32,113 +34,19 @@ import { ThreadAgentLocked } from "../../harness/runtime.js";
 // Wire shapes (serde field order / skip rules)
 // ---------------------------------------------------------------------------
 
-/** The hub-aware online flag for a chat row's bound machine — the same
- *  truth the workspace push and GET /api/v1/machines use. Null
- *  binding → false (the flag is hub-coupled only when a machine exists). */
-export function machineOnlineOf(chats: ChatsCtx, row: { machine_id: string | null }): boolean {
-  return row.machine_id !== null && chats.hub.machineOnline(row.machine_id);
-}
-
-/** protocol::api::Chat (struct serialization). */
-export function chatWire(row: {
-  id: string;
-  org_id: string;
-  user_id: string;
-  title: string | null;
-  created_at: string;
-  machine_id: string | null;
-  machine_label: string | null;
-  generating: boolean;
-  /** List rows only: this chat or a descendant has a queued/running run. */
-  working?: boolean;
-  unread?: boolean;
-  blocked?: boolean;
-  project_id: string | null;
-  project_name?: string | null;
-  project_machine_label?: string | null;
-  /** List rows only: the chat's latest thread event (RFC3339), falling back
-   *  to created_at — the sidebar's recent-activity sort key. Single-chat
-   *  responses omit it (their key order is wire-pinned). */
-  last_activity_at?: string;
-  /** List rows only: what the chat's thread is. */
-  type?: string;
-  archived?: boolean;
-  deleted?: boolean;
-  /** Hub-computed liveness of the bound machine; callers must pass it —
-   *  a hardcoded false desyncs this surface from the ws push and the
-   *  machines list (the "offline" banner vs green pin mismatch). */
-  machine_online?: boolean;
-}): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    id: row.id,
-    org_id: row.org_id,
-    user_id: row.user_id,
-  };
-  if (row.title !== null) out.title = row.title;
-  out.created_at = row.created_at;
-  if (row.machine_id !== null) out.machine_id = row.machine_id;
-  if (row.machine_label !== null) out.machine_label = row.machine_label;
-  out.generating = row.generating;
-  if (row.working !== undefined) out.working = row.working;
-  out.unread = row.unread ?? false;
-  if (row.blocked !== undefined) out.blocked = row.blocked;
-  if (row.last_activity_at !== undefined) out.last_activity_at = row.last_activity_at;
-  if (row.type !== undefined) out.type = row.type;
-  if (row.archived !== undefined) out.archived = row.archived;
-  if (row.deleted !== undefined) out.deleted = row.deleted;
-  if (row.project_id !== null) out.project_id = row.project_id;
-  if (row.project_name) out.project_name = row.project_name;
-  if (row.project_machine_label) out.project_machine_label = row.project_machine_label;
-  out.machine_online = row.machine_online ?? false;
-  return out;
-}
-
 /** The thread list rows (http/feed.rs thread_list) — hub-aware online
  *  flags, identical to the workspace push's chat rows. */
-async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
+async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<Chat[]> {
   const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
-  return rows.map((row) =>
-    chatWire({
-      id: row.id,
-      org_id: row.org_id,
-      user_id: row.user_id,
-      title: row.title,
-      created_at: row.created_at,
-      machine_id: row.machine_id,
-      machine_label: row.machine_label,
-      generating: row.generating,
-      working: row.working,
-      unread: row.unread,
-      blocked: row.blocked,
-      project_id: row.project_id,
-      project_name: row.project_name,
-      project_machine_label: row.project_machine_label,
-      last_activity_at: row.last_activity_at,
-      type: row.type,
-      archived: row.archived,
-      deleted: row.deleted,
-      machine_online: machineOnlineOf(chats, row),
-    }),
-  );
+  return rows.map((row) => chatWire(chats.hub, row));
 }
 
-/** A single-chat response keeps the pinned Chat wire: type, archive and
- *  deletion are thread facts that the tree endpoint and the list rows carry,
- *  not fields of this object. */
-function plainChatWire(chats: ChatsCtx, row: ChatRow): Record<string, unknown> {
-  return chatWire({
-    id: row.id,
-    org_id: row.org_id,
-    user_id: row.user_id,
-    title: row.title,
-    created_at: row.created_at,
-    machine_id: row.machine_id,
-    machine_label: row.machine_label,
-    generating: row.generating,
-    unread: false,
-    project_id: row.project_id,
-    machine_online: machineOnlineOf(chats, row),
-  });
+/** The row one chat response carries: the same list row the sidebar gets,
+ *  so every chat read and write answers one shape. */
+async function chatResponse(chats: ChatsCtx, orgId: string, userId: string, chatId: string): Promise<Chat> {
+  const row = await chats.chats.getChatListRow(orgId, userId, chatId);
+  if (!row) throw new ApiError(404, "not_found", "no such chat");
+  return chatWire(chats.hub, row);
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -189,10 +97,10 @@ export function registerChatsRoutes(
     }
     const title = typeof rawTitle === "string" && rawTitle.trim() !== "" ? rawTitle.trim() : null;
     const projectId = optionalUuidField(body, "project_id");
-    const chat = projectId
+    const created = projectId
       ? await chats.chats.createChatForProject(user.org_id, user.id, title, projectId)
       : await chats.chats.createChat(user.org_id, user.id, title, null);
-    return reply.status(200).send(plainChatWire(chats, chat));
+    return reply.status(200).send(await chatResponse(chats, user.org_id, user.id, created.id));
   };
   // Deprecated alias (the desktop transport lags releases): POST /api/v1/chats.
   app.post("/api/v1/chats", createThread);
@@ -307,8 +215,8 @@ export function registerChatsRoutes(
     const body = requireJsonBody(req);
     const raw = body["project_id"];
     const projectId = typeof raw === "string" && raw !== "" ? validateUuid(raw) : null;
-    const chat = await chats.chats.setProject(user.org_id, chatId, user, projectId);
-    return reply.status(200).send(plainChatWire(chats, chat));
+    await chats.chats.setProject(user.org_id, chatId, user, projectId);
+    return reply.status(200).send(await chatResponse(chats, user.org_id, user.id, chatId));
   };
   // Deprecated alias: POST /api/v1/chats/:id/project.
   app.post("/api/v1/chats/:id/project", setThreadProject);
@@ -371,7 +279,7 @@ export function registerChatsRoutes(
     const title = typeof rawTitle === "string" ? rawTitle.trim() : undefined;
     const effectiveTitle = title !== undefined && title !== "" ? title : title === "" ? null : undefined;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
-    const chat = await chats.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
+    await chats.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
     if (archived === true) {
       // Archiving closes the agent-thread subtree first: descendants stop
       // and deliveries stop. Then the in-flight generation is ended, or an
@@ -380,7 +288,7 @@ export function registerChatsRoutes(
       await chats.runtime.stopChat(chatId).catch(() => {});
       await chats.turnCommands.cancelAllWaiting(chatId);
     }
-    return reply.status(200).send(plainChatWire(chats, chat));
+    return reply.status(200).send(await chatResponse(chats, user.org_id, user.id, chatId));
   };
   // Deprecated alias: PATCH /api/v1/chats/:id (rename/archive).
   app.patch("/api/v1/chats/:id", patchThread);
@@ -391,26 +299,10 @@ export function registerChatsRoutes(
   const deleteThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    const chat = await chats.chats.deleteChat(user.org_id, chatId, user);
+    await chats.chats.deleteChat(user.org_id, chatId, user);
     await chats.runtime.closeChatSubtree(chatId).catch(() => {});
     await chats.runtime.stopChat(chatId).catch(() => {});
-    return reply.status(200).send(
-      chatWire({
-        id: chat.id,
-        org_id: chat.org_id,
-        user_id: chat.user_id,
-        title: chat.title,
-        created_at: chat.created_at,
-        machine_id: chat.machine_id,
-        machine_label: chat.machine_label,
-        generating: chat.generating,
-        unread: false,
-        project_id: chat.project_id,
-        archived: chat.archived,
-        deleted: chat.deleted,
-        machine_online: machineOnlineOf(chats, chat),
-      }),
-    );
+    return reply.status(200).send(await chatResponse(chats, user.org_id, user.id, chatId));
   };
   app.delete("/api/v1/chats/:id", deleteThread);
   app.delete("/api/v1/threads/:id", deleteThread);

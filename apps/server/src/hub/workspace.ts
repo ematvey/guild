@@ -8,40 +8,13 @@ import type { MachineRow } from "../platform/store/machines.js";
 import type { ProjectRow } from "../platform/store/projects.js";
 import type { ChatListRow } from "../platform/store/chats.js";
 import type { Chat, MachineInfo } from "@guild/wire/rest";
+import { chatWire } from "../chats/chat-wire.js";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
 
-/** One chat row in the sidebar wire shape. Key order is alphabetical: the
- *  Rust feed built rows through serde_json::Value (BTreeMap), and the
- *  golden capture pins that order. */
+/** One chat row in the sidebar wire shape. */
 function chatRow(ctx: PlatformContext, chat: ChatListRow): Chat {
-  const online = chat.machine_id !== null && ctx.hub.machineOnline(chat.machine_id);
-  // Old chats stored the raw machine id as their label; the live hub label
-  // (the machine's hostname) is the truth when the slot is up.
-  const label =
-    online && chat.machine_id !== null
-      ? (ctx.hub.machineLabel(chat.machine_id) ?? chat.machine_id)
-      : chat.machine_label;
-  return {
-    blocked: chat.blocked,
-    created_at: chat.created_at,
-    generating: chat.generating,
-    id: chat.id,
-    last_activity_at: chat.last_activity_at,
-    ...(chat.machine_id !== null ? { machine_id: chat.machine_id } : {}),
-    ...(label !== null ? { machine_label: label } : {}),
-    machine_online: online,
-    org_id: chat.org_id,
-    ...(chat.project_id !== null ? { project_id: chat.project_id } : {}),
-    ...(chat.project_name !== null ? { project_name: chat.project_name } : {}),
-    ...(chat.project_machine_label !== null
-      ? { project_machine_label: chat.project_machine_label }
-      : {}),
-    ...(chat.title !== null ? { title: chat.title } : {}),
-    unread: chat.unread,
-    user_id: chat.user_id,
-    working: chat.working,
-  };
+  return chatWire(ctx.hub, chat);
 }
 
 /** The caller's active chats, newest activity first. */

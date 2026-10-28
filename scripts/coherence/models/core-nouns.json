@@ -419,13 +419,17 @@
         {
           "where": "apps/server/src/platform/http/chats.ts",
           "role": "wire"
+        },
+        {
+          "where": "apps/server/src/chats/chat-wire.ts",
+          "role": "wire"
         }
       ],
       "translations": [
         {
           "from": "db",
           "to": "wire",
-          "at": "apps/server/src/platform/http/chats.ts"
+          "at": "apps/server/src/chats/chat-wire.ts"
         }
       ]
     }

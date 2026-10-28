@@ -624,7 +624,7 @@
       }
     },
     "Chat": {
-      "description": "One chat row in the sidebar list. `Chat` in api.rs.",
+      "description": "One chat row: the sidebar list row and the body of every chat read and write. `Chat` in api.rs.",
       "type": "object",
       "required": [
         "id",
@@ -636,7 +636,10 @@
         "working",
         "blocked",
         "last_activity_at",
-        "machine_online"
+        "machine_online",
+        "type",
+        "archived",
+        "deleted"
       ],
       "additionalProperties": false,
       "properties": {
@@ -691,6 +694,19 @@
         "machine_online": {
           "type": "boolean",
           "description": "The bound machine's socket is live now. Always serialized."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["user", "subagent", "routine"],
+          "description": "What the chat's thread is. A chat with no thread row is a user chat."
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "The user hid the chat from the sidebar; it still resolves."
+        },
+        "deleted": {
+          "type": "boolean",
+          "description": "The user removed the chat; it drops out of every list."
         }
       }
     },

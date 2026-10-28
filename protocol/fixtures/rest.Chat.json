@@ -15,7 +15,10 @@
     "machine_online": true,
     "working": false,
     "blocked": false,
-    "last_activity_at": "2026-10-28T09:00:00Z"
+    "last_activity_at": "2026-10-28T09:00:00Z",
+    "type": "user",
+    "archived": false,
+    "deleted": false
   },
   {
     "id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",
@@ -27,6 +30,9 @@
     "machine_online": false,
     "working": false,
     "blocked": false,
-    "last_activity_at": "2026-10-28T09:00:00Z"
+    "last_activity_at": "2026-10-28T09:00:00Z",
+    "type": "user",
+    "archived": false,
+    "deleted": false
   }
 ]

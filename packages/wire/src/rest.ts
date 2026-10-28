@@ -289,6 +289,9 @@ export interface TriggerSpec {
 // ---------------------------------------------------------------------------
 
 /** One chat row in the sidebar list. */
+/** The three kinds of thread. Archiving and deletion are flags, not types. */
+export type ThreadType = "user" | "subagent" | "routine";
+
 export interface Chat {
   id: string;
   org_id: string;
@@ -315,6 +318,12 @@ export interface Chat {
   project_machine_label?: string;
   /** The bound machine's socket is live now. */
   machine_online: boolean;
+  /** What the chat's thread is. A chat with no thread row is a user chat. */
+  type: ThreadType;
+  /** The user hid the chat from the sidebar; it still resolves. */
+  archived: boolean;
+  /** The user removed the chat; it drops out of every list. */
+  deleted: boolean;
 }
 
 /** The signed-in account. */
