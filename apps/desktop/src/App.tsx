@@ -504,6 +504,7 @@ function LayoutDiag() {
       setRows([
         `ua ${navigator.userAgent.includes("Safari") ? "safari" : "other"} standalone ${String((navigator as Navigator & { standalone?: boolean }).standalone)}`,
         `inner ${window.innerWidth}x${window.innerHeight} dpr ${window.devicePixelRatio}`,
+        `screen ${window.screen.width}x${window.screen.height} band ${window.screen.height - window.innerHeight}`,
         `docEl.client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
         `vv ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} off ${Math.round(vv.offsetTop)} scale ${vv.scale}` : "none"}`,
         `env top ${cs.paddingTop} bottom ${cs.paddingBottom}`,
