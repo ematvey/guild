@@ -1,8 +1,7 @@
 # Handoff — trace payload deltas
 
 Status: implemented on `develop`, not deployed. Prod runs the full-body
-version. Payload capture is unconditional — there is no switch to turn the
-bodies off.
+version. Payload capture is on unless `GUILD_TRACE_PAYLOADS=0`.
 
 ## Why
 

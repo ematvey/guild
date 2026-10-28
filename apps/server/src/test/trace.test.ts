@@ -75,7 +75,7 @@ describe("trace sink", () => {
     "DDL is idempotent; a trace, a span and a payload round-trip",
     async () => {
       const client = chClient();
-      const sink = new TraceStore(client);
+      const sink = new TraceStore(client, true);
       await sink.ensureOnce();
       await sink.ensureOnce(); // second run: CREATE IF NOT EXISTS is a no-op
       const traceId = crypto.randomUUID();
@@ -161,6 +161,10 @@ describe("trace sink", () => {
       expect(llm).toBeDefined();
       expect(Number(llm!["reasoning_tokens"])).toBe(5);
 
+      // A trace-payloads-off sink records the call but no payload rows.
+      const sinkOff = new TraceStore(client, false);
+      await sinkOff.recordPayload(String(llm!["request_id"]), stack.orgId, "request", "should not land");
+      await new Promise((resolve) => setTimeout(resolve, 300));
       const payloads = await sink.payloads(stack.orgId, String(llm!["request_id"]));
       expect(payloads).toHaveLength(1);
       expect(payloads[0]?.["body"]).toBe("x");
@@ -172,7 +176,7 @@ describe("trace sink", () => {
     "a request stores only its new messages and the read path rebuilds the history",
     async () => {
       const client = chClient();
-      const sink = new TraceStore(client);
+      const sink = new TraceStore(client, true);
       await sink.ensureOnce();
       const traceId = crypto.randomUUID();
       const filler = "x".repeat(500);
@@ -322,7 +326,7 @@ describe("gateway emission + activity API", () => {
   it(
     "member scoping: members see only their own spans; payloads stay admin-only",
     async () => {
-      const sink = new TraceStore(chClient());
+      const sink = new TraceStore(chClient(), true);
       const foreign = crypto.randomUUID();
       await sink.recordSpan({
         span_id: foreign,

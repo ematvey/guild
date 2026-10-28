@@ -87,6 +87,10 @@ export interface Config {
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
+  /** Trace payload capture (GUILD_TRACE_PAYLOADS, default on): the
+   *  llm_payloads request/response bodies. Set GUILD_TRACE_PAYLOADS=0 to
+   *  keep the span metadata (agent_spans) without the bodies. */
+  tracePayloads: boolean;
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
   workerMode: "off" | "on";
@@ -225,6 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // server process's cwd (pi-durable re-resolves tool cwds against it).
   const poolMax = Number(env.GUILD_POOL_MAX ?? 10);
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
+  const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
     faroUrl,
     webDistDir,
@@ -256,6 +261,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     clientToolTimeoutMs,
     retryBaseDelayMs: Number(env.GUILD_RETRY_BASE_DELAY_MS ?? 2000),
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES || null,
+    tracePayloads,
     // Worker-per-chat: when "on", the server holds no harness — admission
     // routes over IPC to a forked worker per active chat (see
     // worker/supervisor.ts). Default off until the rollout completes.
