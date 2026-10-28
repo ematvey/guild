@@ -185,6 +185,16 @@ const TextBlock = memo(function TextBlock({
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {b.text}
         </Markdown>
+        {b.attachments && b.attachments.length > 0 && (
+          <div className="flex max-w-full flex-wrap items-start gap-2">
+            {b.attachments.filter((a) => a.modality === "image").map((a) => (
+              <AttachmentImageThumb key={a.id} att={a} />
+            ))}
+            {b.attachments.filter((a) => a.modality !== "image").map((a) => (
+              <AttachmentFileChip key={a.id} att={a} />
+            ))}
+          </div>
+        )}
         {origin != null && (
           <button
             type="button"

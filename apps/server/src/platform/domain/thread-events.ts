@@ -57,8 +57,10 @@ export function assistantMessageEvent(
   model: string,
   interrupted?: boolean,
   error?: string,
+  attachments?: MessageAttachment[],
 ): ThreadEvent {
   const ev: ThreadEvent = { type: "assistant_message", turn, step, blocks, usage, model };
+  if (attachments !== undefined && attachments.length > 0) (ev as { attachments?: MessageAttachment[] }).attachments = attachments;
   if (interrupted !== undefined) (ev as { interrupted?: boolean }).interrupted = interrupted;
   // A failed provider attempt tracks its error on the event itself; the
   // client renders it only while it is the thread's latest block (a later
@@ -163,6 +165,9 @@ export function threadEventObject(event: ThreadEvent): ThreadEvent {
         blocks: event.blocks,
         usage: event.usage ?? {},
         model: event.model,
+        ...(event.attachments !== undefined && event.attachments.length > 0
+          ? { attachments: event.attachments }
+          : {}),
         interrupted: event.interrupted,
         error: event.error ?? undefined,
       };
@@ -281,6 +286,9 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         blocks: Array.isArray(payload["blocks"]) ? (payload["blocks"] as Block[]) : [],
         usage: (payload["usage"] ?? {}) as UsagePayload,
         model: String(payload["model"] ?? ""),
+        ...(Array.isArray(payload["attachments"]) && payload["attachments"].length > 0
+          ? { attachments: payload["attachments"] as MessageAttachment[] }
+          : {}),
         ...(payload["interrupted"] === undefined ? {} : { interrupted: Boolean(payload["interrupted"]) }),
         ...(payload["error"] === undefined || payload["error"] === null ? {} : { error: String(payload["error"]) }),
       };

@@ -43,6 +43,7 @@ import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { AttachmentStore } from "../platform/store/attachments.js";
+import { modalityOf } from "../platform/domain/mime.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import { UserMcpStore } from "../platform/store/userMcp.js";
@@ -382,6 +383,16 @@ export class GuildRuntime {
       agentRuns: {
         assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
         runEnd: (chatId, failure) => this.agentRuns.runEnd(chatId, failure),
+      },
+      agentFiles: {
+        pending: async (chatId) =>
+          (await this.attachments.pendingAgentFiles(chatId)).map((row) => ({
+            id: row.id,
+            filename: row.filename,
+            content_type: row.content_type,
+            size_bytes: Number(row.size_bytes),
+            modality: modalityOf(row.content_type),
+          })),
       },
       log,
     });

@@ -112,6 +112,21 @@ export class AttachmentStore {
     return toRow(res.rows[0]!);
   }
 
+  /** The chat's agent-authored attachments that no assistant event carries
+   *  yet, oldest first. The transcript projection stamps them onto the
+   *  turn's terminal assistant message. */
+  async pendingAgentFiles(chatId: string): Promise<AttachmentRow[]> {
+    const res = await this.pool.query<AttachmentDbRow>(
+      `SELECT ${ATTACHMENT_COLUMNS},
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM attachments
+       WHERE chat_id = $1 AND author_kind = 'agent' AND event_id IS NULL
+       ORDER BY created_at ASC, id ASC`,
+      [chatId],
+    );
+    return res.rows.map(toRow);
+  }
+
   /** Binds every unpublished agent attachment of a chat to its assistant
    *  event. Called once when the run reaches a terminal assistant event. */
   async publishAgentAttachments(chatId: string, eventId: string): Promise<void> {
@@ -129,19 +144,6 @@ export class AttachmentStore {
          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
        FROM attachments WHERE org_id = $1 AND id = ANY($2::uuid[])`,
       [orgId, ids],
-    );
-    return res.rows.map(toRow);
-  }
-
-  async listAgentFiles(chatId: string, authorId: string, since: string): Promise<AttachmentRow[]> {
-    const res = await this.pool.query<AttachmentDbRow>(
-      `SELECT ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
-       FROM attachments
-       WHERE chat_id = $1 AND author_kind = 'agent' AND author_id = $2
-         AND created_at >= $3::timestamptz
-       ORDER BY created_at ASC, id ASC`,
-      [chatId, authorId, since],
     );
     return res.rows.map(toRow);
   }

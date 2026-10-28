@@ -182,8 +182,10 @@ export interface RenderBlock {
   /// delivery/withdrawal reconcile matches blocks by it, not by key: a
   /// delivered queued send MOVES to a fresh seq).
   eventId?: string;
-  /// kind === "user": context attachment chips (metadata only; images may
-  /// carry a local preview URL for optimistic rendering).
+  /// A message's attached files (user uploads on kind === "user", the
+  /// turn's `send_file` files on the message's last kind === "text" block).
+  /// Metadata only; images may carry a local preview URL for optimistic
+  /// rendering.
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
   /// An optimistic user command not yet present in the durable history.
   pending?: boolean;
@@ -225,13 +227,32 @@ export interface PendingSend {
   queuedMode?: "steer" | "queue";
 }
 
-/** The queued-chip fields a user_message event carries (absent = delivered). */
-function queuedFieldsOf(ev: { queued?: boolean; mode?: string }): {
+/** The queued-chip fields a user_message event carries (absent = delivered). */function queuedFieldsOf(ev: { queued?: boolean; mode?: string }): {
   queued?: boolean;
   queuedMode?: "steer" | "queue";
 } {
   if (!ev.queued) return {};
   return { queued: true, queuedMode: ev.mode === "steer" ? "steer" : "queue" };
+}
+
+/** Stamps a message's attached files onto its last text block (or a text
+ *  block of its own when it said nothing), so the chips render with the
+ *  text they belong to. */
+function stampFiles(
+  blocks: RenderBlock[],
+  start: number,
+  attachments: readonly MessageAttachmentMeta[] | undefined,
+  ts: string,
+  key: string,
+): void {
+  if (attachments === undefined || attachments.length === 0) return;
+  for (let j = blocks.length - 1; j >= start; j--) {
+    if (blocks[j]!.kind === "text") {
+      blocks[j]!.attachments = [...attachments];
+      return;
+    }
+  }
+  blocks.push({ kind: "text", text: "", attachments: [...attachments], ts, key });
 }
 
 function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
@@ -381,6 +402,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
         if (ev.error) {
           blocks.push({ kind: "error", text: ev.error, key: seqKey(inEvent++) });
         }
+        stampFiles(blocks, start, ev.attachments, row.created_at, seqKey(inEvent++));
         break;
       }
       case "tool_result": {
@@ -934,6 +956,7 @@ export function createThreadReducer(): ThreadReducer {
         if (ev.error) {
           v.blocks.push({ kind: "error", text: ev.error, key: seqKey(0) });
         }
+        stampFiles(v.blocks, start, ev.attachments, row.created_at, seqKey(0));
         break;
       }
       case "tool_result": {

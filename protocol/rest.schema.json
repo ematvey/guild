@@ -134,6 +134,11 @@
         "blocks": { "type": "array", "items": { "$ref": "#/$defs/Block" } },
         "usage": { "$ref": "#/$defs/UsagePayload" },
         "model": { "type": "string" },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MessageAttachment" },
+          "description": "Omitted when empty. Files this turn attached to the message (send_file)."
+        },
         "interrupted": {
           "type": "boolean",
           "description": "Omitted when absent. True when the stream was aborted mid-flight."

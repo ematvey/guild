@@ -1024,8 +1024,41 @@ describe("subagent records (child events)", () => {
   });
 });
 
-describe("open cache reports synced, not non-empty", () => {
-  it("a previously synced empty thread swaps without a skeleton", () => {
+describe("the turn's attached files", () => {
+  const file = { id: "att-1", filename: "statement.docx", content_type: "application/docx", size_bytes: 42, modality: "document" };
+  const withFiles = (text: string, attachments = [file]): ThreadEvent => ({
+    type: "assistant_message",
+    turn: 1,
+    step: 1,
+    model: "m",
+    usage,
+    blocks: text === "" ? [] : [{ type: "text", text }],
+    attachments,
+  });
+
+  it("stamps them onto the message's text block", () => {
+    const derived = deriveThread([row(1, withFiles("done"))]);
+    const texts = derived.blocks.filter((b) => b.kind === "text");
+    expect(texts).toHaveLength(1);
+    expect(texts[0]!.attachments).toEqual([file]);
+  });
+
+  it("gives a silent message its own block so the file still renders", () => {
+    const derived = deriveThread([row(1, withFiles(""))]);
+    expect(derived.blocks).toHaveLength(1);
+    expect(derived.blocks[0]).toMatchObject({ kind: "text", text: "", attachments: [file] });
+  });
+
+  it("stamps them through the incremental lane too", () => {
+    const r = createThreadReducer();
+    r.open("chat");
+    r.applyState(state("chat", 1, []));
+    const applied = r.applyThreadEvents("chat", 2, [row(1, withFiles("done"))]);
+    expect(applied.blocks.find((b) => b.kind === "text")!.attachments).toEqual([file]);
+  });
+});
+
+describe("open cache reports synced, not non-empty", () => {  it("a previously synced empty thread swaps without a skeleton", () => {
     const r = createThreadReducer();
     r.open("empty");
     r.applyState(state("empty", 1, []));

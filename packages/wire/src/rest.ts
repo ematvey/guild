@@ -37,6 +37,9 @@ export type ThreadEvent =
       blocks: Block[];
       usage: UsagePayload;
       model: string;
+      /** Files this turn attached to the message (send_file). Omitted when
+       *  empty. */
+      attachments?: MessageAttachment[];
       interrupted?: boolean;
       error?: string;
     }

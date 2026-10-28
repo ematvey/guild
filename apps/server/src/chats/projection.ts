@@ -133,6 +133,10 @@ export class TranscriptProjection {
           tokens_out: message.usage.output,
           cost_usd: message.usage.cost.total,
         };
+        const attachments =
+          toolCalls.length === 0 && this.deps.agentFiles !== undefined
+            ? await this.deps.agentFiles.pending(state.chatId)
+            : [];
         const ev = assistantMessageEvent(
           state.turn,
           state.step,
@@ -141,6 +145,7 @@ export class TranscriptProjection {
           message.model,
           message.stopReason === "aborted" ? true : undefined,
           message.stopReason === "error" ? (message.errorMessage ?? "Model error") : undefined,
+          attachments,
         );
         const row = await this.append(state, entry, ev);
         state.lastEventId = row.id;

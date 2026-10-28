@@ -590,6 +590,11 @@ pub enum ThreadEvent {
         blocks: Vec<Block>,
         usage: UsagePayload,
         model: String,
+        /// Files this turn attached to the message with `send_file` (bytes
+        /// live in object storage; the chip metadata rides the event).
+        /// Absent on old events and on turns that attached nothing.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<MessageAttachment>,
         /// Aborted mid-stream: blocks carry the delivered prefix only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         interrupted: Option<bool>,

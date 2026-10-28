@@ -21,7 +21,7 @@ import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { TurnCommandStore } from "../platform/store/turn_commands.js";
-import { turnErrorEvent, type ThreadEventRow } from "../platform/domain/thread-events.js";
+import { turnErrorEvent, type MessageAttachment, type ThreadEventRow } from "../platform/domain/thread-events.js";
 
 export interface LiveBuffers {
   /** Unpersisted streaming buffers of the current generation attempt (the
@@ -65,6 +65,9 @@ export interface BridgeDeps {
     assistantEvent(chatId: string, row: ThreadEventRow): Promise<void>;
     runEnd(chatId: string, failure: string | null): Promise<void>;
   };
+  /** Files the turn attached with `send_file`, as chips for the terminal
+   *  assistant message. Absent (tests without an attachment store) = none. */
+  agentFiles?: { pending(chatId: string): Promise<MessageAttachment[]> };
   log: Logger;
 }
 

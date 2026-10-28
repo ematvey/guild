@@ -118,6 +118,7 @@ dbDescribe("agent send_file and turn attachments", () => {
 
     const row = await attachments.get(orgId, result.id);
     expect(row.filename).toBe("build.html");
+    expect((await attachments.pendingAgentFiles(thread.chat_id)).map((r) => r.id)).toEqual([result.id]);
     const raw = await env!.db.query<{
       event_id: string | null;
       author_kind: string;
@@ -146,6 +147,7 @@ dbDescribe("agent send_file and turn attachments", () => {
       [result.id],
     );
     expect(published.rows[0]!.event_id).toBe(event.id);
+    expect(await attachments.pendingAgentFiles(thread.chat_id)).toEqual([]);
   });
 
   it("rejects paths outside the workspace and symlinks", async () => {

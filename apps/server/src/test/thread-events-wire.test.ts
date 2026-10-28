@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadEvent } from "@guild/wire/rest";
 import {
+  assistantMessageEvent,
   normalizeThreadEvent,
   threadEventObject,
 } from "../platform/domain/thread-events.js";
@@ -44,8 +45,7 @@ describe("thread event wire", () => {
     expect(threadEventObject(event)).toHaveProperty("usage", {});
   });
 
-  it("keeps the judge verdict when a persisted row is normalized", () => {
-    const event = normalizeThreadEvent({
+  it("keeps the judge verdict when a persisted row is normalized", () => {    const event = normalizeThreadEvent({
       type: "approval_request",
       call_id: "call-1",
       name: "execute",
@@ -53,5 +53,21 @@ describe("thread event wire", () => {
       judge: { approve: true, reason: "safe", ms: 12 },
     });
     expect(event).toMatchObject({ judge: { approve: true, reason: "safe", ms: 12 } });
+  });
+
+  it("carries the turn's attached files on the assistant message", () => {
+    const attachments = [
+      { id: "att-1", filename: "build.html", content_type: "text/html", size_bytes: 13, modality: "document" },
+    ];
+    const event = assistantMessageEvent(1, 1, [{ type: "text", text: "done" }], {}, "m", undefined, undefined, attachments);
+    expect(threadEventObject(event)).toMatchObject({ attachments });
+    expect(normalizeThreadEvent(threadEventObject(event) as unknown as Record<string, unknown>)).toMatchObject({
+      attachments,
+    });
+  });
+
+  it("omits the attachments field when the turn attached nothing", () => {
+    const event = assistantMessageEvent(1, 1, [{ type: "text", text: "done" }], {}, "m");
+    expect(threadEventObject(event)).not.toHaveProperty("attachments");
   });
 });
