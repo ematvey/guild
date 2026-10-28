@@ -10,7 +10,7 @@ import { applyMachineList, applyMachineStatus } from "../../../lib/machines-stor
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
-import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
+import type { RenderBlock, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { busyAfterThreadPush, statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
@@ -27,7 +27,7 @@ export interface MemberSocketDeps {
   setProjects: (projects: Project[]) => void;
   setArchivedProjects: (projects: Project[]) => void;
   reducerRef: RefObject<ThreadReducer>;
-  setBlocks: (blocks: Block[]) => void;
+  setBlocks: (blocks: RenderBlock[]) => void;
   markBusy: (v: boolean) => void;
   busyRef: RefObject<boolean>;
   sendingRef: RefObject<boolean>;

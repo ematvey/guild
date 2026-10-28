@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { fetchChatTree, type ChatTree } from "../../../lib/api/chats";
 import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
-import { createThreadReducer, type Block, type ThreadReducer } from "../../../lib/thread-reducer";
+import { createThreadReducer, type RenderBlock, type ThreadReducer } from "../../../lib/thread-reducer";
 import { EARLIER_PAGE_SIZE } from "../mentions";
 import {
   initialNavigation,
@@ -24,7 +24,7 @@ const STATE_WAIT_MS = 5_000;
 type ScrollMemory = { top: number; atBottom: boolean };
 
 export function useThreadStore(chatId: string | null) {
-  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [blocks, setBlocks] = useState<RenderBlock[]>([]);
   const [threadLoading, setThreadLoading] = useState(() => chatId !== null); // cold deep link: skeleton with nothing to show
   const [displayedChatId, setDisplayedChatId] = useState<string | null>(null);
   const [displayedSynced, setDisplayedSynced] = useState(false);

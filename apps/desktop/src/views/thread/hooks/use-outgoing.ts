@@ -19,7 +19,7 @@ import {
   type DraftAttachment,
   type OutgoingCommand,
 } from "../../../lib/outgoing-command";
-import type { Block, ThreadReducer } from "../../../lib/thread-reducer";
+import type { RenderBlock, ThreadReducer } from "../../../lib/thread-reducer";
 import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
 import type { Project } from "../../../lib/api/projects";
@@ -56,7 +56,7 @@ export interface OutgoingDeps {
   refreshOutgoing: (update: (n: number) => number) => void;
   outgoingScope: string;
   reducerRef: RefObject<ThreadReducer>;
-  setBlocks: (blocks: Block[]) => void;
+  setBlocks: (blocks: RenderBlock[]) => void;
   markBusy: (v: boolean) => void;
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
@@ -309,7 +309,7 @@ export function useOutgoing(deps: OutgoingDeps) {
     await deliverOutgoing(command);
   };
 
-  const steerChip = useCallback(async (block: Block) => {
+  const steerChip = useCallback(async (block: RenderBlock) => {
     if (!chatId || !block.eventId) return;
     setSteeringMessage(block.eventId);
     try {
@@ -326,7 +326,7 @@ export function useOutgoing(deps: OutgoingDeps) {
   /** Trash on a queued chip: withdraws the not-yet-placed send server-side.
    *  The chip drops on success; 409 means the input was just placed — the
    *  delivery flow converts it to a transcript bubble (refresh incoming). */
-  const withdrawChip = useCallback(async (block: Block) => {
+  const withdrawChip = useCallback(async (block: RenderBlock) => {
     const cid = chatId;
     if (!cid || !block.eventId) return;
     try {
