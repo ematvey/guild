@@ -75,7 +75,9 @@ you.
   declares the only steps (`text-3xs` … `text-2xl`). Views use those names;
   no raw `text-[Npx]`/`text-[Nrem]` sizes. Resize text by editing the token.
   Do not scale the interface with `html { font-size }` or `zoom`: both move
-  layout and spacing, not just text.
+  layout and spacing, not just text. `docs/type-scale.md` maps every role —
+  prose, chrome, titles, metadata, dense data, micro labels — to a step and
+  an icon size; a new element takes a role from that table.
 - `PLAN.md` is the changelog of decisions. Code comments describe what code
   is and does now — no history narration in comments.
 

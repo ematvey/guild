@@ -1,0 +1,40 @@
+# Type and icon scale
+
+One scale, six roles. Every element that shows text or an icon belongs to
+one of them. A view names a step; it never sets a size of its own.
+
+The steps live in `packages/ui/src/theme.css` (`--text-3xs` … `--text-2xl`).
+A narrow screen shifts every step up by two pixels; nothing else changes.
+`body` carries `text-sm`, so an element that names no step still lands on
+the scale.
+
+| Role | Step | Icons | What belongs here |
+|---|---|---|---|
+| Reading | `text-base` | `size-4` | Message body, user bubble, composer input, thread title |
+| Chrome | `text-sm` | `size-4` control, `size-3.5` inline | Buttons, inputs, selects, menus, dialogs' body, list rows, sidebar rows, tool cards, settings labels, toasts |
+| Section title | `text-lg` | `size-5` | Dialog title, settings section heading, empty-state heading |
+| Metadata | `text-xs` | `size-3.5` | Timestamps, run status, origin links, hints under a label, badges, code and tables inside prose, chart labels |
+| Dense data | `text-2xs` | `size-3` | Trace and log tables, token and cost figures, rail captions, attachment chips |
+| Micro | `text-3xs` | `size-2.5` | Keyboard hints, counters, the sidebar rail |
+
+## Rules
+
+- **Prose is reading, chrome is chrome.** A paragraph the user reads for
+  meaning takes `text-base`. A label, a control or a list row takes
+  `text-sm`. This is the only distinction that matters at a glance.
+- **Nothing sets a raw size.** No `text-[13px]`, no `font-size` in CSS, no
+  `fontSize` prop. Relative sizes (`em`) are allowed only inside rendered
+  markdown, where they follow the surrounding prose.
+- **Icons follow their row.** An icon inside `text-sm` is `size-4` when it
+  is a control and `size-3.5` when it sits in a line of text. An icon next
+  to `text-base` prose is `size-4`.
+- **Line height comes from the step** (`--text-*--line-height`). The one
+  deliberate exception is the reading surface, which sets `leading-[1.75]`:
+  a paragraph needs a looser line than a label does.
+- **The phone differs by a shift, not a multiplier.** A multiplier widens
+  every gap and the band stops reading as one system.
+
+## Adding an element
+
+Pick the role, take the step and the icon size. If no role fits, the
+element is probably doing two jobs — split it before adding a step.

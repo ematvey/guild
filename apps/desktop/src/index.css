@@ -11,6 +11,9 @@ body,
 }
 
 body {
+  /* The scale floor. Anything that sets no step of its own lands on text-sm
+     instead of the browser's 16px, so no element sits outside the scale. */
+  font-size: var(--text-sm);
   overscroll-behavior: none;
   /* double-tap zoom off (pinch is blocked in index.html for Safari) */
   touch-action: manipulation;
