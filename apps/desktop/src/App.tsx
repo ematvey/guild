@@ -481,9 +481,11 @@ function BootBackground() {
 
 
 /// Layout readout for an installed web app: the numbers that decide where
-/// the shell, the composer and the safe areas land. Mounted only when the
-/// URL carries `?diag`, so a phone can report its real viewport instead of
-/// a desktop guess.
+/// the shell, the composer and the safe areas land. An installed web app has
+/// no address bar, so the switch is a stored flag: `?diag` turns it on (and
+/// shows it here), `?diag=off` turns it off. Safari and the installed copy
+/// share the same storage, so one visit in a tab arms the readout inside the
+/// installed app.
 function LayoutDiag() {
   const [rows, setRows] = useState<string[]>([]);
   useEffect(() => {
@@ -610,13 +612,29 @@ function AppInner() {
 }
 
 export default function App() {
+  const [diag] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("diag");
+      if (q === "off") {
+        localStorage.removeItem("guild.diag");
+        return false;
+      }
+      if (q !== null) {
+        localStorage.setItem("guild.diag", "1");
+        return true;
+      }
+      return localStorage.getItem("guild.diag") === "1";
+    } catch {
+      return false;
+    }
+  });
   return (
     <ThemeProvider>
       <AppInner />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
       {!IS_TAURI && <InstallPrompt />}
-      {new URLSearchParams(window.location.search).has("diag") && <LayoutDiag />}
+      {diag && <LayoutDiag />}
       <ThemedToaster />
     </ThemeProvider>
   );
