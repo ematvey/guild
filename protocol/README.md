@@ -1,6 +1,10 @@
 # protocol
 
-The wire, in one place. Nothing outside this directory decides a frame shape.
+The wire, in one place. Nothing outside this directory decides a frame shape
+that crosses a boundary we do not own. A wire between two modules of this
+server stays beside its code: the sandbox frames and their value encoding are
+in `apps/server/src/sandbox/protocol.ts`, because the sandbox is an
+implementation detail of the server and both ends ship together.
 
 ## What is here
 
@@ -14,13 +18,11 @@ The wire, in one place. Nothing outside this directory decides a frame shape.
 - `rpc.schema.json` — the line-delimited JSON-RPC 2.0 envelope between the
   desktop UI and the engine, and over the local CLI socket. Derived from
   `crates/protocol/src/rpc.rs`.
-- `sandbox.schema.json` — the sandbox RPC wire between the server's
-  `SandboxExecutionEnv` and the in-sandbox agent: one JSON frame per line,
-  tagged by `t`. Derived from `apps/server/src/sandbox/protocol.ts`.
 - `fixtures/<schema>.<Root>.json` — one example per variant of `$defs.<Root>`
   in `<schema>.schema.json`. Each file is a JSON array.
-- `check.mjs` — validates every fixture against its schema and requires a
-  fixture for every variant of a tagged union.
+- `check.mjs` — validates every fixture against its schema, requires a
+  fixture for every variant of a tagged union, and compares every named
+  object and union with its TypeScript declaration.
 
 The fixtures are the executable form of the schema. The Rust suite
 deserializes every one of them and re-serializes it back to the same JSON;
@@ -32,9 +34,29 @@ the other.
 
 ## Presence is the contract
 
-`absent` and `null` are different. A field the Rust sender omits must stay
+`absent` and `null` are different. A field the sender omits must stay
 omitted; a field it always serializes (even as `null`) must stay present.
 `additionalProperties: false` is deliberate: a new field is a contract change.
+
+A request follows its reader, a response follows its writer:
+
+- A request DTO lists in `required` only what the server cannot deserialize
+  without. `CreateProjectRequest.name` is optional because the server reads
+  an absent field as `None`.
+- A response DTO lists in `required` every field the server always
+  serializes. An `Option` that serializes as `null` is required and nullable.
+
+## Cross-schema references
+
+Each schema has an `$id` of `https://guild.local/protocol/<name>.schema.json`.
+A `$def` may reference another schema by that id: the socket frames point at
+`rest.schema.json#/$defs/Chat` and `#/$defs/ThreadEventRow`, so one type has
+one home. `check.mjs` registers every schema with Ajv before it compiles, so
+a cross-file `$ref` resolves.
+
+`Json` is reserved for a value whose shape the protocol does not fix: tool
+arguments, an org event payload, an RPC parameter. A frame payload that has
+a fixed shape gets a `$def`, even when it rides in an array.
 
 ## No generator
 

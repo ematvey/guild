@@ -333,9 +333,21 @@ describe("wire codec", () => {
       serializeServerMsg({
         type: "subagent_tree",
         chat_id: "00000000-0000-0000-0000-000000000000",
-        nodes: [{ thread_id: "t1" }],
+        nodes: [
+          {
+            thread_id: "t1",
+            chat_id: "00000000-0000-0000-0000-000000000000",
+            parent_thread_id: null,
+            agent_name: "researcher",
+            title: "Patents",
+            depth: 0,
+            status: null,
+          },
+        ],
       }),
-    ).toBe('{"type":"subagent_tree","chat_id":"00000000-0000-0000-0000-000000000000","nodes":[{"thread_id":"t1"}]}');
+    ).toBe(
+      '{"type":"subagent_tree","chat_id":"00000000-0000-0000-0000-000000000000","nodes":[{"thread_id":"t1","chat_id":"00000000-0000-0000-0000-000000000000","parent_thread_id":null,"agent_name":"researcher","title":"Patents","depth":0,"status":null}]}',
+    );
   });
 });
 

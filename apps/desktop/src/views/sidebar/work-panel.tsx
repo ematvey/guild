@@ -102,7 +102,7 @@ export const WorkPanel = memo(function WorkPanel({
             {!loadingChats && chats.slice(0, limit).map((c) => (
               <ChatListItem
                 key={c.id}
-                title={c.title}
+                title={c.title ?? ""}
                 active={c.id === chatId}
                 status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
                 onClick={() => onOpenChat(c.id)}

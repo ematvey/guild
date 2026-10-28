@@ -1,8 +1,16 @@
 [
-  { "type": "hello" },
-  { "type": "displaced" },
-  { "type": "auth_required" },
-  { "type": "pong" },
+  {
+    "type": "hello"
+  },
+  {
+    "type": "displaced"
+  },
+  {
+    "type": "auth_required"
+  },
+  {
+    "type": "pong"
+  },
   {
     "type": "tool_dispatch",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001",
@@ -18,15 +26,43 @@
     "name": "read_file",
     "arguments": "{\"path\":\"/tmp/a.txt\"}"
   },
-  { "type": "tool_cancel", "call_id": "call-1" },
-  { "type": "error", "message": "too many connections" },
+  {
+    "type": "tool_cancel",
+    "call_id": "call-1"
+  },
+  {
+    "type": "error",
+    "message": "too many connections"
+  },
   {
     "type": "machine_request",
     "request_id": "req-1",
     "op": "fs_home",
     "payload": null
   },
-  { "type": "thread_list", "chats": [] },
+  {
+    "type": "thread_list",
+    "chats": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000010",
+        "org_id": "018f0b7c-0000-7000-8000-000000000020",
+        "user_id": "018f0b7c-0000-7000-8000-000000000030",
+        "title": "Patents overview",
+        "created_at": "2026-10-28T09:00:00Z",
+        "machine_id": "m-1",
+        "machine_label": "workstation",
+        "generating": false,
+        "unread": true,
+        "working": false,
+        "blocked": false,
+        "last_activity_at": "2026-10-28T09:05:00Z",
+        "project_id": "018f0b7c-0000-7000-8000-000000000001",
+        "project_name": "web",
+        "project_machine_label": "workstation",
+        "machine_online": true
+      }
+    ]
+  },
   {
     "type": "chat_status",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001",
@@ -36,7 +72,18 @@
     "type": "thread_events",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001",
     "seq": 42,
-    "events": []
+    "events": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000041",
+        "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+        "seq": 7,
+        "event": {
+          "type": "system_message",
+          "content": "Compacted to 12 messages."
+        },
+        "created_at": "2026-10-28T09:01:00Z"
+      }
+    ]
   },
   {
     "type": "sync_begin",
@@ -46,7 +93,18 @@
     "type": "thread_state",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001",
     "seq": 42,
-    "events": [],
+    "events": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000041",
+        "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+        "seq": 7,
+        "event": {
+          "type": "system_message",
+          "content": "Compacted to 12 messages."
+        },
+        "created_at": "2026-10-28T09:01:00Z"
+      }
+    ],
     "text": "hello",
     "thinking": "",
     "generating": false,
@@ -75,18 +133,98 @@
     "generation_id": "018f0b7c-0000-7000-8000-000000000003",
     "seq": 7,
     "machine_id": null,
-    "event": { "type": "delta", "content": "hi" }
+    "event": {
+      "type": "delta",
+      "content": "hi"
+    }
   },
-  { "type": "org_event", "event": { "kind": "member_added" } },
+  {
+    "type": "org_event",
+    "event": {
+      "id": "018f0b7c-0000-7000-8000-000000000061",
+      "org_id": "018f0b7c-0000-7000-8000-000000000020",
+      "kind": "member_added",
+      "payload": {
+        "user_id": "018f0b7c-0000-7000-8000-000000000030"
+      },
+      "created_at": "2026-10-28T09:03:00Z"
+    }
+  },
   {
     "type": "subagent_tree",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001",
-    "nodes": []
+    "nodes": [
+      {
+        "thread_id": "018f0b7c-0000-7000-8000-000000000051",
+        "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+        "parent_thread_id": null,
+        "agent_name": "researcher",
+        "title": "Patents overview",
+        "depth": 0,
+        "status": "running"
+      }
+    ]
   },
-  { "type": "machine_status", "machine_id": "machine-1", "online": true },
-  { "type": "archived_thread_list", "chats": [] },
-  { "type": "project_list", "projects": [], "archived_projects": [] },
-  { "type": "machine_list", "machines": [] },
-  { "type": "workspace_identity", "name": "Guild" },
-  { "type": "workspace_identity", "name": "Guild", "logo_url": "https://example.com/logo.png" }
+  {
+    "type": "machine_status",
+    "machine_id": "machine-1",
+    "online": true
+  },
+  {
+    "type": "archived_thread_list",
+    "chats": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000011",
+        "org_id": "018f0b7c-0000-7000-8000-000000000020",
+        "user_id": "018f0b7c-0000-7000-8000-000000000030",
+        "created_at": "2026-10-27T09:00:00Z",
+        "generating": false,
+        "unread": false,
+        "working": false,
+        "blocked": false,
+        "last_activity_at": "2026-10-27T09:00:00Z",
+        "machine_online": false
+      }
+    ]
+  },
+  {
+    "type": "project_list",
+    "projects": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000001",
+        "name": "web",
+        "folder": "C:\\work\\web",
+        "machine_id": "m-1",
+        "machine_label": "workstation",
+        "created_at": "2026-10-22T10:00:00Z"
+      }
+    ],
+    "archived_projects": []
+  },
+  {
+    "type": "machine_list",
+    "machines": [
+      {
+        "machine_id": "m-1",
+        "name": "workstation",
+        "os": "linux",
+        "os_version": "6.8",
+        "app_version": "0.6.35",
+        "last_ip": "10.0.0.5",
+        "first_connected_at": "2026-10-28T09:00:00Z",
+        "last_connected_at": "2026-10-28T10:30:00Z",
+        "last_seen_at": "2026-10-28T10:30:00Z",
+        "connected": true
+      }
+    ]
+  },
+  {
+    "type": "workspace_identity",
+    "name": "Guild"
+  },
+  {
+    "type": "workspace_identity",
+    "name": "Guild",
+    "logo_url": "https://example.com/logo.png"
+  }
 ]

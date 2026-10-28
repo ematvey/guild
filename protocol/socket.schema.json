@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://guild.local/protocol/socket.schema.json",
   "title": "Guild member socket",
-  "description": "The frame vocabulary of the member and machine socket. Derived from crates/protocol/src/ws.rs, which is what the wire actually is. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
+  "description": "The frame vocabulary of the member and machine socket. Derived from crates/protocol/src/ws.rs, which is what the wire actually is. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable. A row type that also crosses the REST surface is referenced by the REST schema's `$id`, never copied here.",
   "$defs": {
     "Uuid": { "type": "string", "format": "uuid" },
     "Json": {},
@@ -126,7 +126,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "thread_list" },
-        "chats": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "chats": { "type": "array", "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Chat" } }
       }
     },
     "ChatStatus": {
@@ -150,7 +150,7 @@
           "type": "integer",
           "description": "The newest `seq` carried by `events`; the client watermark guard."
         },
-        "events": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "events": { "type": "array", "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ThreadEventRow" } }
       }
     },
     "SyncBegin": {
@@ -179,7 +179,7 @@
         "type": { "const": "thread_state" },
         "chat_id": { "$ref": "#/$defs/Uuid" },
         "seq": { "type": "integer" },
-        "events": { "type": "array", "items": { "$ref": "#/$defs/Json" } },
+        "events": { "type": "array", "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ThreadEventRow" } },
         "text": { "type": "string" },
         "thinking": { "type": "string" },
         "generating": { "type": "boolean" },
@@ -214,7 +214,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "org_event" },
-        "event": { "$ref": "#/$defs/Json" }
+        "event": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/EventRow" }
       }
     },
     "SubagentTree": {
@@ -224,7 +224,7 @@
       "properties": {
         "type": { "const": "subagent_tree" },
         "chat_id": { "$ref": "#/$defs/Uuid" },
-        "nodes": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "nodes": { "type": "array", "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/SubagentNode" } }
       }
     },
     "MachineStatus": {
@@ -243,7 +243,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "archived_thread_list" },
-        "chats": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "chats": { "type": "array", "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Chat" } }
       }
     },
     "ProjectList": {
@@ -252,8 +252,14 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "project_list" },
-        "projects": { "type": "array", "items": { "$ref": "#/$defs/Json" } },
-        "archived_projects": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "projects": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Project" }
+        },
+        "archived_projects": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Project" }
+        }
       }
     },
     "MachineList": {
@@ -262,7 +268,10 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "machine_list" },
-        "machines": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+        "machines": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/MachineInfo" }
+        }
       }
     },
     "WorkspaceIdentity": {
@@ -410,7 +419,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "tool_call_done" },
-        "call": { "$ref": "#/$defs/ToolCall" }
+        "call": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ToolCall" }
       }
     },
     "StreamToolStarted": {
@@ -458,16 +467,6 @@
         "call_id": { "type": "string" },
         "approved": { "type": "boolean" },
         "reason": { "type": "string" }
-      }
-    },
-    "ToolCall": {
-      "type": "object",
-      "required": ["id", "name", "arguments"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "arguments": { "$ref": "#/$defs/Json" }
       }
     },
     "MachineContext": {

@@ -1,32 +1,26 @@
 // Thread event shapes and the two thread reads that do not ride the member
 // socket: an older page of the durable log and the context-usage meter.
-// Shapes mirror the REST ThreadEvent, tightened for the
-// client (the wire carries Json).
 
 import { apiUrl, getToken } from "./session";
+import type { ServerFrame } from "@guild/wire/types";
 import type {
   ThreadEvent,
+  ThreadEventRow,
   UsagePayload,
   Block as ThreadBlock,
   MessageAttachment as MessageAttachmentMeta,
 } from "@guild/wire/rest";
 
-export type { ThreadEvent, UsagePayload, ThreadBlock, MessageAttachmentMeta };
-
-export interface ThreadState {
-  chat_id: string;
-  seq: number;
-  events: ThreadEventRow[];
-  text: string;
-  thinking: string;
-  generating: boolean;
-  /** An older page exists before `events[0]`. */
-  has_more_events?: boolean;
-  /** The chat's project, for the sidebar's grouping. */
-  project_id?: string;
-  project_name?: string;
-  project_machine_label?: string;
+export type {
+  ThreadEvent,
+  ThreadEventRow,
+  UsagePayload,
+  ThreadBlock,
+  MessageAttachmentMeta,
 };
+
+/** The `thread_state` frame body. */
+export type ThreadState = Extract<ServerFrame, { type: "thread_state" }>;
 
 export interface ThreadEventsPage {
   events: ThreadEventRow[];
@@ -73,13 +67,6 @@ export async function fetchThreadContext(chatId: string, model: string, signal: 
 
 // The REST shapes live in @guild/wire/rest, hand-written from
 // protocol/rest.schema.json. The local names stay for the view code.
-
-export interface ThreadEventRow {
-  id: string;
-  seq: number;
-  event: ThreadEvent;
-  created_at: string;
-}
 
 export type StreamFrame = {
   type: string;

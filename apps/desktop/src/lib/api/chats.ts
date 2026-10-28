@@ -4,12 +4,11 @@
 import { IS_TAURI, apiUrl, getToken } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta, StreamFrame } from "../thread-events";
-import type { Chat } from "@guild/wire/rest";
+import type { Chat, SubagentNode } from "@guild/wire/rest";
 
-/** One sidebar row: the wire `Chat` plus the fields the thread endpoints add.
- *  `title` is required here because the sidebar always renders it. */
+/** One sidebar row: the wire `Chat` plus the flags the thread endpoints add.
+ *  The wire omits `title` when the chat has none; render it with a fallback. */
 export interface ChatSummary extends Chat {
-  title: string;
   /** What the chat's thread is. A chat with no thread row is a user chat. */
   type?: ThreadType;
   /** The user hid the chat from the sidebar; it still resolves. */
@@ -49,15 +48,7 @@ export async function fetchChatTree(chatId: string, signal: AbortSignal): Promis
 }
 
 /** One node of the chat's thread subtree, with its latest run status. */
-export interface ChatSubagentNode {
-  thread_id: string;
-  chat_id: string;
-  parent_thread_id: string | null;
-  agent_name: string;
-  title: string;
-  depth: number;
-  status: string | null;
-}
+export type ChatSubagentNode = SubagentNode;
 
 export async function listChats(): Promise<ChatSummary[] | null> {
   try {

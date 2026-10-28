@@ -12,6 +12,37 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **`Json` is only for a value the protocol does not fix (2026-10-28).**
+  Every frame payload that has a fixed shape now has a `$def` and a typed
+  field. `thread_list.chats`, `archived_thread_list.chats`,
+  `thread_state.events`, `thread_events.events`, `subagent_tree.nodes` and
+  `org_event.event` carried `serde_json::Value` and a bare `Json` on the
+  TypeScript side, so the contract promised nothing about them and the
+  desktop cast each one. `ThreadEventRow`, `SubagentNode` and `EventRow` now
+  live in `rest.schema.json` with Rust and TypeScript counterparts, and the
+  socket frames reference them. The Rust frame envelope keeps `Value` for
+  these rows on purpose: a daemon that does not know a new event type must
+  still parse the frame it ignores. `Json` stays for tool arguments, an org
+  event payload, an RPC parameter and a trigger config. The checker now
+  compares every named object and union, not only the fixture roots, so
+  `StreamEvent` is checked without a fixture of its own. The desktop
+  `ChatSummary` no longer widens `title` to a required field: the wire omits
+  it when the chat has none.
+
+- **The sandbox wire is not part of the protocol contract (2026-10-28).**
+  The sandbox is an implementation detail of the server: both ends ship in
+  this repository, and the whole runner is a migration target. Its schema and
+  its two fixtures are deleted. The frames and the value encoding stay in
+  `apps/server/src/sandbox/protocol.ts`, beside the code that owns them.
+  `protocol/` holds only the wires that cross a boundary we do not own: the
+  member socket, the REST data-transfer types and the JSON-RPC envelope. The
+  checker now registers each schema by `$id`, so a frame can reference a row
+  type that another schema owns instead of copying it. `project_list`,
+  `machine_list` and `tool_call_done.call` use the REST `Project`,
+  `MachineInfo` and `ToolCall`. A request-only type follows the reader, not
+  the writer: `CreateProjectRequest.name` may be absent, because Rust reads a
+  missing `Option` as `None` while it always writes one as `null`.
+
 - **The wire check reads the TypeScript declarations (2026-10-28).**
   `protocol/check.mjs` now parses `packages/wire/src/*.ts` with the
   TypeScript compiler and compares each fixture root against its schema:
@@ -136,10 +167,9 @@ first. Code comments describe only the present.
   - **The same idea elsewhere.** `rustJsonText` re-implemented serde_json for
     HTTP responses — sorted keys, ryu floats, a marker that kept a `.0` tail.
     It served 61 call sites in 17 files and it is gone; those responses are
-    `JSON.stringify` too. The sandbox RPC wire (`server` to the in-sandbox
-    agent) is now described in `protocol/sandbox.schema.json` with fixtures,
-    and its `ClientFrame`/`AgentFrame` are `SandboxClientFrame`/
-    `SandboxAgentFrame` so the name is not shared with the member socket.
+    `JSON.stringify` too. The sandbox `ClientFrame`/`AgentFrame` are
+    `SandboxClientFrame`/`SandboxAgentFrame` so the name is not shared with
+    the member socket.
 
 - **A read mark pushes the workspace lists (2026-10-27).** `markRead` wrote
   `chat_reads` and stopped there, so only the client that sent the mark hid

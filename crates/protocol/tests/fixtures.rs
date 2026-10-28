@@ -75,6 +75,24 @@ where
     out
 }
 
+// Deserialize one fixture array into T. Request-only types use this: the
+// server reads them and never writes them, so a fixture frame may leave out
+// a field that the writer always serializes (`Option::None` becomes `null` on
+// the way out). A frame the reader rejects fails here.
+fn parse_only<T>(file: &str, frames: Vec<serde_json::Value>) -> Vec<T>
+where
+    T: DeserializeOwned + std::fmt::Debug,
+{
+    let mut out = Vec::with_capacity(frames.len());
+    for (index, frame) in frames.into_iter().enumerate() {
+        let value: T = serde_json::from_value(frame.clone()).unwrap_or_else(|e| {
+            panic!("{file}[{index}]: Rust rejects this frame: {e}\nframe: {frame}")
+        });
+        out.push(value);
+    }
+    out
+}
+
 #[test]
 fn server_frames_match_the_schema_fixtures() {
     let frames = fixture("socket.ServerFrame.json");
@@ -106,7 +124,7 @@ fn check_rest_root(root: &str) {
             round_trip::<protocol::registry::BundleManifest>(&file, frames);
         }
         "CreateProjectRequest" => {
-            round_trip::<protocol::api::CreateProjectRequest>(&file, frames);
+            parse_only::<protocol::api::CreateProjectRequest>(&file, frames);
         }
         "FieldSpec" => {
             round_trip::<protocol::registry::FieldSpec>(&file, frames);
@@ -137,6 +155,15 @@ fn check_rest_root(root: &str) {
         }
         "ToolCall" => {
             round_trip::<protocol::api::ToolCall>(&file, frames);
+        }
+        "ThreadEventRow" => {
+            round_trip::<protocol::api::ThreadEventRow>(&file, frames);
+        }
+        "SubagentNode" => {
+            round_trip::<protocol::api::SubagentNode>(&file, frames);
+        }
+        "EventRow" => {
+            round_trip::<protocol::api::EventRow>(&file, frames);
         }
         "ToolKind" => {
             round_trip::<protocol::api::ToolKind>(&file, frames);

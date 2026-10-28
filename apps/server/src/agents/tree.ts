@@ -4,17 +4,10 @@
 
 import type { PlatformPool } from "../platform/db.js";
 import type { WsServerMsg } from "../hub/protocol.js";
+import type { SubagentNode } from "@guild/wire/rest";
 
 /** One node of a chat's thread subtree, with its latest run status. */
-export interface SubagentNode {
-  thread_id: string;
-  chat_id: string;
-  parent_thread_id: string | null;
-  agent_name: string;
-  title: string;
-  depth: number;
-  status: string | null;
-}
+export type { SubagentNode };
 
 /** Every thread under the chat's own thread, at any depth. */
 export async function chatSubagentNodes(

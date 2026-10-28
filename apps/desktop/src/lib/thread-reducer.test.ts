@@ -15,13 +15,13 @@ import {
 import type { ThreadEvent, ThreadEventRow, ThreadState } from "./thread-events";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
-  return { id: `e${seq}`, seq, event, created_at: "t" };
+  return { id: `e${seq}`, chat_id: "chat-1", seq, event, created_at: "t" };
 }
 
 /** A durable user_message whose row id is the client's message id — the
  * shape the optimistic-send reconciliation matches on. */
 function echo(seq: number, content: string, messageId: string): ThreadEventRow {
-  return { id: messageId, seq, event: { type: "user_message", content, attachments: [] }, created_at: "t" };
+  return { id: messageId, chat_id: "chat-1", seq, event: { type: "user_message", content, attachments: [] }, created_at: "t" };
 }
 
 function state(
@@ -32,7 +32,7 @@ function state(
   thinking = "",
   generating = true,
 ): ThreadState {
-  return { chat_id: chatId, seq, events, text, thinking, generating };
+  return { type: "thread_state", has_more_events: false, chat_id: chatId, seq, events, text, thinking, generating };
 }
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
@@ -316,7 +316,7 @@ describe("queued steering mode updates", () => {
     const reducer = createThreadReducer();
     reducer.open("chat");
     const queued: ThreadEventRow = {
-      id: "same-message", seq: 1, created_at: "t",
+      id: "same-message", chat_id: "chat", seq: 1, created_at: "t",
       event: { type: "user_message", content: "correction", attachments: [], queued: true, mode: "queue" },
     };
     reducer.applyState(state("chat", 1, [queued]));
@@ -926,6 +926,7 @@ describe("subagent records (child events)", () => {
   });
   const rowAt = (seq: number, event: ThreadEvent, at: string): ThreadEventRow => ({
     id: `e${seq}`,
+    chat_id: "chat",
     seq,
     event,
     created_at: at,

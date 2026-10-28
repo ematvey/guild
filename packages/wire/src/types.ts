@@ -3,12 +3,33 @@
 // it exactly: an optional field is `field?: T`; an always-serialized nullable
 // field is `field: T | null`; an always-serialized plain field is `field: T`.
 //
-// `Json`, `ToolCall` and `ToolKind` live in ./rest.ts with the other REST
-// types. They are re-exported here because the socket frames use them.
+// `Json`, `Chat`, `EventRow`, `MachineInfo`, `Project`, `SubagentNode`,
+// `ThreadEventRow`, `ToolCall` and `ToolKind` live in ./rest.ts with the other
+// REST types. They are re-exported here because the socket frames use them.
 
-import type { Json, ToolCall, ToolKind } from "./rest.js";
+import type {
+  Chat,
+  EventRow,
+  Json,
+  MachineInfo,
+  Project,
+  SubagentNode,
+  ThreadEventRow,
+  ToolCall,
+  ToolKind,
+} from "./rest.js";
 
-export type { Json, ToolCall, ToolKind };
+export type {
+  Chat,
+  EventRow,
+  Json,
+  MachineInfo,
+  Project,
+  SubagentNode,
+  ThreadEventRow,
+  ToolCall,
+  ToolKind,
+};
 
 /** A JSON UUID string. */
 export type Uuid = string;
@@ -83,20 +104,20 @@ export type ServerFrame =
       op: string;
       payload: Json;
     }
-  | { type: "thread_list"; chats: Json[] }
+  | { type: "thread_list"; chats: Chat[] }
   | { type: "chat_status"; chat_id: Uuid; generating: boolean }
   | {
       type: "thread_events";
       chat_id: Uuid;
       seq: number;
-      events: Json[];
+      events: ThreadEventRow[];
     }
   | { type: "sync_begin"; chat_id: Uuid }
   | {
       type: "thread_state";
       chat_id: Uuid;
       seq: number;
-      events: Json[];
+      events: ThreadEventRow[];
       text: string;
       thinking: string;
       generating: boolean;
@@ -115,16 +136,16 @@ export type ServerFrame =
       machine_id: string | null;
       event: StreamEvent;
     }
-  | { type: "org_event"; event: Json }
-  | { type: "subagent_tree"; chat_id: Uuid; nodes: Json[] }
+  | { type: "org_event"; event: EventRow }
+  | { type: "subagent_tree"; chat_id: Uuid; nodes: SubagentNode[] }
   | { type: "machine_status"; machine_id: string; online: boolean }
-  | { type: "archived_thread_list"; chats: Json[] }
+  | { type: "archived_thread_list"; chats: Chat[] }
   | {
       type: "project_list";
-      projects: Json[];
-      archived_projects: Json[];
+      projects: Project[];
+      archived_projects: Project[];
     }
-  | { type: "machine_list"; machines: Json[] }
+  | { type: "machine_list"; machines: MachineInfo[] }
   | { type: "workspace_identity"; name: string; logo_url?: string };
 
 /** Client → server. */

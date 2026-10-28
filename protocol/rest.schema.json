@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://guild.local/protocol/rest.schema.json",
   "title": "Guild REST data-transfer types",
-  "description": "The data-transfer types that cross the TypeScript/Rust boundary over HTTP. Derived from crates/protocol/src/api.rs and crates/protocol/src/registry.rs, which is what the wire actually is. Presence is explicit. A field with only `#[serde(default)]` is always serialized and appears in `required`, even when its value is null. A field with `#[serde(skip_serializing_if = \"Option::is_none\")]` is omitted when it is None and is not in `required`. An `Option<T>` with no skip attribute is required and nullable. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
+  "description": "The data-transfer types that cross the TypeScript/Rust boundary over HTTP. Derived from crates/protocol/src/api.rs and crates/protocol/src/registry.rs, which is what the wire actually is. Presence is explicit. A field with only `#[serde(default)]` is always serialized and appears in `required`, even when its value is null. A field with `#[serde(skip_serializing_if = \"Option::is_none\")]` is omitted when it is None and is not in `required`. An `Option<T>` with no skip attribute is required and nullable. A request-only type is the exception: the server reads it and never writes it, so its presence follows the reader and an `Option<T>` field may be absent. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable.",
   "$defs": {
     "Uuid": { "type": "string", "format": "uuid" },
     "DateTime": {
@@ -442,13 +442,13 @@
       }
     },
     "CreateProjectRequest": {
-      "description": "Creates a project: a named folder bound to a machine.",
+      "description": "Creates a project: a named folder bound to a machine. Request-only: the server reads it and never writes it, so presence follows the reader. An absent `name` and a null `name` both mean the same thing.",
       "type": "object",
-      "required": ["name", "folder", "machine_id"],
+      "required": ["folder", "machine_id"],
       "additionalProperties": false,
       "properties": {
         "name": {
-          "description": "Always serialized. null when omitted; defaults to the folder's basename.",
+          "description": "Omitted or null when unset; defaults to the folder's basename.",
           "type": ["string", "null"]
         },
         "folder": { "type": "string" },
@@ -692,6 +692,63 @@
           "type": "boolean",
           "description": "The bound machine's socket is live now. Always serialized."
         }
+      }
+    },
+    "ThreadEventRow": {
+      "description": "One persisted thread event as the store returns it: the durable log row that the member socket and the thread reads carry. `ThreadEventRow` in api.rs.",
+      "type": "object",
+      "required": ["id", "chat_id", "seq", "event", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "seq": {
+          "type": "integer",
+          "description": "Monotonic per chat. The client's watermark."
+        },
+        "event": { "$ref": "#/$defs/ThreadEvent" },
+        "created_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
+    "SubagentNode": {
+      "description": "One node of a chat's thread subtree, with its latest run status. `SubagentNode` in api.rs.",
+      "type": "object",
+      "required": ["thread_id", "chat_id", "parent_thread_id", "agent_name", "title", "depth", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "thread_id": { "$ref": "#/$defs/Uuid" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "parent_thread_id": {
+          "description": "Always serialized. null for a top-level thread.",
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "agent_name": { "type": "string" },
+        "title": { "type": "string" },
+        "depth": { "type": "integer" },
+        "status": {
+          "description": "Always serialized. null before the thread's first run.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "EventRow": {
+      "description": "One org-scoped event row, as the `org_event` frame carries it. `EventRow` in api.rs.",
+      "type": "object",
+      "required": ["id", "org_id", "kind", "payload", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "kind": {
+          "type": "string",
+          "description": "Selects the payload shape."
+        },
+        "payload": {
+          "$ref": "#/$defs/Json",
+          "description": "Opaque here: the shape depends on `kind`."
+        },
+        "created_at": { "$ref": "#/$defs/DateTime" }
       }
     },
     "UserInfo": {
