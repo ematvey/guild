@@ -1166,7 +1166,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // chat view already carries the drawer button in its header.
   const mobileNavBar = (title?: string) =>
     isMobile ? (
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
+      <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
         <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
           <Menu />
         </Button>
@@ -1437,7 +1437,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           </>
         ) : (
           <>
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
               <Menu />
@@ -1768,7 +1768,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           ) : (
           <div
-            className={`pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm ${
+            className={`pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ maxWidth: chatWidth }}
