@@ -1,7 +1,8 @@
-// Golden replay: every M2 surface is replayed byte-for-byte against
-// fixtures captured from the live dev stack (TS :18080 proxying the Rust
-// server), with only dynamic values masked (completion ids, created
-// timestamps, uuids, key prefixes, upstream URLs, masked-key bullets).
+// Golden replay: every M2 surface is replayed against fixtures captured from
+// the live dev stack (TS :18080 proxying the Rust server), with only dynamic
+// values masked (completion ids, created timestamps, uuids, key prefixes,
+// upstream URLs, masked-key bullets). JSON bodies compare as parsed values;
+// SSE streams compare as parsed frames.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -19,7 +20,7 @@ function mask(text: string): string {
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z/g, "<TS>")
     .replace(/gk_[0-9a-f]{7}/g, "<PREFIX>")
-    .replace(/"created":\d+/g, '"created":<CREATED>')
+    .replace(/"created":\d+/g, '"created":"<CREATED>"')
     // The mock upstream's base_url and the masked key length are
     // environment details, not contract.
     .replace(/https?:\/\/[^"]+/g, "<URL>")
@@ -39,6 +40,26 @@ const CAPTURED_UPSTREAM_SSE =
   'data: {"choices":[],"usage":{"prompt_tokens":17,"completion_tokens":16}}\n\n' +
   "data: [DONE]\n\n";
 
+// Parses an SSE body into its frames: the optional event name and the parsed
+// JSON data (or the literal [DONE] marker).
+interface SseFrame {
+  event: string | null;
+  data: unknown;
+}
+
+function parseSse(text: string): SseFrame[] {
+  return text
+    .trim()
+    .split("\n\n")
+    .filter((frame) => frame !== "")
+    .map((frame) => {
+      const lines = frame.split("\n");
+      const event = lines.find((line) => line.startsWith("event: "))?.slice("event: ".length) ?? null;
+      const dataText = lines.find((line) => line.startsWith("data: "))?.slice("data: ".length) ?? "";
+      return { event, data: dataText === "[DONE]" ? "[DONE]" : JSON.parse(dataText) };
+    });
+}
+
 describe("M2 golden replay (live-capture fixtures)", () => {
   let stack: M2Stack;
 
@@ -46,7 +67,7 @@ describe("M2 golden replay (live-capture fixtures)", () => {
     stack = await setupM2Stack();
   }, 120_000);
 
-  it("admin catalog, models, api keys, both LLM surfaces, usage — byte-identical to the live stack", async () => {
+  it("admin catalog, models, api keys, both LLM surfaces, usage — matches the live stack", async () => {
     const inject = (
       method: "GET" | "POST" | "PUT" | "DELETE",
       url: string,
@@ -115,7 +136,7 @@ describe("M2 golden replay (live-capture fixtures)", () => {
     // were cleaned from the live stack after the run).
     const adminKey = (JSON.parse(key1.body) as { plaintext: string }).plaintext;
 
-    // --- byte-for-byte replays ---
+    // --- parsed-value replays ---
     const checks: [string, string, string][] = [
       [
         "admin providers",
@@ -145,7 +166,7 @@ describe("M2 golden replay (live-capture fixtures)", () => {
       ],
     ];
     for (const [label, actual, expected] of checks) {
-      expect(mask(actual), label).toBe(mask(expected));
+      expect(JSON.parse(mask(actual)), label).toEqual(JSON.parse(mask(expected)));
     }
 
     // OpenAI non-stream: usage (17/16) rides the usage frame the mock
@@ -156,7 +177,9 @@ describe("M2 golden replay (live-capture fixtures)", () => {
       max_tokens: 16,
     });
     expect(openaiRes.statusCode).toBe(200);
-    expect(mask(openaiRes.body), "openai nonstream").toBe(mask(gold("openai_nonstream.json")));
+    expect(JSON.parse(mask(openaiRes.body)), "openai nonstream").toEqual(
+      JSON.parse(mask(gold("openai_nonstream.json"))),
+    );
 
     // OpenAI stream: the mock serves the captured stream bytes verbatim
     // (no usage frame — exactly what the live upstream sent).
@@ -167,7 +190,9 @@ describe("M2 golden replay (live-capture fixtures)", () => {
       stream: true,
     });
     expect(openaiStream.statusCode).toBe(200);
-    expect(mask(openaiStream.body), "openai stream").toBe(mask(gold("openai_stream.txt")));
+    expect(parseSse(mask(openaiStream.body)), "openai stream").toEqual(
+      parseSse(mask(gold("openai_stream.txt"))),
+    );
 
     // Anthropic surface over the same openai-protocol provider.
     const anthropicRes = await inject("POST", "/anthropic/v1/messages", adminKey, {
@@ -176,7 +201,9 @@ describe("M2 golden replay (live-capture fixtures)", () => {
       max_tokens: 16,
     });
     expect(anthropicRes.statusCode).toBe(200);
-    expect(mask(anthropicRes.body), "anthropic nonstream").toBe(mask(gold("anthropic_nonstream.json")));
+    expect(JSON.parse(mask(anthropicRes.body)), "anthropic nonstream").toEqual(
+      JSON.parse(mask(gold("anthropic_nonstream.json"))),
+    );
 
     const anthropicStream = await inject("POST", "/anthropic/v1/messages", adminKey, {
       model: "GLM-5.3-Flash",
@@ -185,7 +212,9 @@ describe("M2 golden replay (live-capture fixtures)", () => {
       stream: true,
     });
     expect(anthropicStream.statusCode).toBe(200);
-    expect(mask(anthropicStream.body), "anthropic stream").toBe(mask(gold("anthropic_stream.txt")));
+    expect(parseSse(mask(anthropicStream.body)), "anthropic stream").toEqual(
+      parseSse(mask(gold("anthropic_stream.txt"))),
+    );
 
     // Usage: seed the exact aggregate the capture shows (1348 requests,
     // 34320778 tokens in, 716325 out, $0.00 cost).
@@ -193,12 +222,14 @@ describe("M2 golden replay (live-capture fixtures)", () => {
     await stack.seedUsage({ model: "GLM-5.3-Flash", costUsd: 0, tokensIn: 26482, tokensOut: 253 });
     await stack.seedUsage({ model: "GLM-5.3-Flash", costUsd: 0, tokensIn: 26482, tokensOut: 0 });
     await stack.drain();
-    expect(mask((await inject("GET", "/api/v1/usage?group_by=model", stack.memberToken)).body), "usage").toBe(
-      mask(gold("usage.json")),
-    );
-    expect(mask((await inject("GET", "/api/v1/usage/summary", stack.memberToken)).body), "usage summary").toBe(
-      mask(gold("usage_summary.json")),
-    );
+    expect(
+      JSON.parse(mask((await inject("GET", "/api/v1/usage?group_by=model", stack.memberToken)).body)),
+      "usage",
+    ).toEqual(JSON.parse(mask(gold("usage.json"))));
+    expect(
+      JSON.parse(mask((await inject("GET", "/api/v1/usage/summary", stack.memberToken)).body)),
+      "usage summary",
+    ).toEqual(JSON.parse(mask(gold("usage_summary.json"))));
 
     // The upstream saw exactly the four completion calls, each pointed at
     // the chat endpoint with the provider key.

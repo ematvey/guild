@@ -8,7 +8,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { INTEGRATIONS, integrationByName } from "../integration-catalog.js";
 import { isToolClass, manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect } from "../integrations/mcp.js";
@@ -29,7 +28,7 @@ import { randomUUID } from "node:crypto";
 const ASSISTANT_PROMPT_MAX = 10_000;
 
 function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(rustJsonText(value));
+  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 function jsonRecord(body: unknown): Record<string, unknown> {

@@ -9,7 +9,6 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
-import { rustJsonText } from "../provider/rust-json.js";
 import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
 import { SIGNING_SEED_KV } from "../store/org_kv.js";
 import { uuidv7 } from "../time.js";
@@ -29,9 +28,9 @@ function rawBody(req: FastifyRequest): Buffer {
   return Buffer.alloc(0);
 }
 
-/** json!/to_value-built responses carry serde_json's BTreeMap order. */
+/** Sends a JSON response body. */
 function sendJson(reply: FastifyReply, value: unknown): void {
-  reply.type("application/json").send(rustJsonText(value));
+  reply.type("application/json").send(JSON.stringify(value));
 }
 
 function objectKey(version: string, kind: string, platform: string, id: string, filename: string): string {

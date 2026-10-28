@@ -6,7 +6,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { queryParam, requireUser } from "./error.js";
-import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 import { errorText } from "../usage.js";
 import { isUuid } from "../time.js";
 import type { IdentityCtx, InfraContext } from "../route-contexts.js";
@@ -92,7 +91,7 @@ function renderSpan(row: Record<string, unknown>): Record<string, unknown> {
     tokens_in: number(row["tokens_in"]),
     tokens_out: number(row["tokens_out"]),
     reasoning_tokens: number(row["reasoning_tokens"]),
-    cost_usd: rustFloat(number(row["cost_usd"])),
+    cost_usd: number(row["cost_usd"]),
     error: row["error"] ?? "",
     input: row["input"] ?? "",
     output: row["output"] ?? "",
@@ -144,7 +143,7 @@ function renderTrace(row: Record<string, unknown>): Record<string, unknown> {
     tokens_in: number(row["tokens_in"]),
     tokens_out: number(row["tokens_out"]),
     reasoning_tokens: number(row["reasoning_tokens"]),
-    cost_usd: rustFloat(number(row["cost_usd"])),
+    cost_usd: number(row["cost_usd"]),
     longest_ms: number(row["longest_ms"]),
   };
 }
@@ -159,7 +158,7 @@ function renderSession(row: Record<string, unknown>): Record<string, unknown> {
     tool_calls: number(row["tool_calls"]),
     tokens_in: number(row["tokens_in"]),
     tokens_out: number(row["tokens_out"]),
-    cost_usd: rustFloat(number(row["cost_usd"])),
+    cost_usd: number(row["cost_usd"]),
     errors: number(row["errors"]),
     started_at: iso(row["started_at"]),
     ended_at: iso(row["ended_at"]),
@@ -211,7 +210,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         throw ApiError.internal(`activity query failed: ${errorText(error)}`);
       }
     }
-    return rustJsonText({ traces: rows.map(renderTrace), total });
+    return JSON.stringify({ traces: rows.map(renderTrace), total });
   });
 
   app.get("/api/v1/activity/traces/:id", async (req) => {
@@ -228,7 +227,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     if (result.trace === null) throw ApiError.notFound("no such trace");
     const owner = result.trace["user_id"];
     if (user.role !== "admin" && owner !== user.id) throw ApiError.notFound("no such trace");
-    return rustJsonText({
+    return JSON.stringify({
       trace: renderTrace(result.trace),
       spans: result.spans.map(renderSpan),
       children: result.children.map(renderTrace),
@@ -279,7 +278,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         throw ApiError.internal(`span query failed: ${errorText(error)}`);
       }
     }
-    return rustJsonText({ spans: rows.map(renderSpan), total });
+    return JSON.stringify({ spans: rows.map(renderSpan), total });
   });
 
   app.get("/api/v1/activity/sessions", async (req) => {
@@ -306,7 +305,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         throw ApiError.internal(`session query failed: ${errorText(error)}`);
       }
     }
-    return rustJsonText({ sessions: rows.map(renderSession), total });
+    return JSON.stringify({ sessions: rows.map(renderSession), total });
   });
 
   app.get("/api/v1/activity/summary", async (req) => {
@@ -326,7 +325,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     }
     const totals = (result["totals"] ?? {}) as Record<string, unknown>;
     const byDay = Array.isArray(result["by_day"]) ? (result["by_day"] as Record<string, unknown>[]) : [];
-    return rustJsonText({
+    return JSON.stringify({
       totals: {
         traces: number(totals["traces"]),
         failed_traces: number(totals["failed_traces"]),
@@ -336,7 +335,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         tokens_in: number(totals["tokens_in"]),
         tokens_out: number(totals["tokens_out"]),
         reasoning_tokens: number(totals["reasoning_tokens"]),
-        cost_usd: rustFloat(number(totals["cost_usd"])),
+        cost_usd: number(totals["cost_usd"]),
         p50_ms: number(totals["p50_ms"]),
         p95_ms: number(totals["p95_ms"]),
       },
@@ -345,7 +344,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         calls: number(row["calls"]),
         tokens_in: number(row["tokens_in"]),
         tokens_out: number(row["tokens_out"]),
-        cost_usd: rustFloat(number(row["cost_usd"])),
+        cost_usd: number(row["cost_usd"]),
         p95_ms: number(row["p95_ms"]),
       })),
     });
@@ -363,6 +362,6 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       if (isUnknownTable(error)) rows = [];
       else throw ApiError.internal(`payload query failed: ${errorText(error)}`);
     }
-    return rustJsonText({ payloads: rows.map((row) => ({ kind: row["kind"], body: row["body"] })) });
+    return JSON.stringify({ payloads: rows.map((row) => ({ kind: row["kind"], body: row["body"] })) });
   });
 }

@@ -4,7 +4,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";
-import { rustFloat, rustJsonText } from "../provider/rust-json.js";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { PROTOCOLS, providerSlug } from "../store/gateway.js";
 
@@ -29,7 +28,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
     for (const row of list) {
       if (row.alias !== "") aliases[row.model] = row.alias;
     }
-    return rustJsonText({ models: list.map((r) => r.model), aliases });
+    return JSON.stringify({ models: list.map((r) => r.model), aliases });
   };
   app.get("/api/v1/models", listModels);
   app.get("/api/v1/gateway/models", listModels);
@@ -37,14 +36,14 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
   app.get("/api/v1/admin/gateway/routes", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const rows = await gateway.gatewayStore.listRoutes(admin.org_id);
-    // f64 columns keep serde's ryu rendering (0 → "0.0").
+    // f64 columns stay numbers in the response.
     const rendered = rows.map((r) => ({
       ...r,
-      price_per_mtok_in_usd: rustFloat(r["price_per_mtok_in_usd"] as number),
-      price_per_mtok_out_usd: rustFloat(r["price_per_mtok_out_usd"] as number),
-      quota_monthly_usd: r["quota_monthly_usd"] === null ? null : rustFloat(r["quota_monthly_usd"] as number),
+      price_per_mtok_in_usd: r["price_per_mtok_in_usd"] as number,
+      price_per_mtok_out_usd: r["price_per_mtok_out_usd"] as number,
+      quota_monthly_usd: r["quota_monthly_usd"] === null ? null : r["quota_monthly_usd"] as number,
     }));
-    return rustJsonText({ routes: rendered });
+    return JSON.stringify({ routes: rendered });
   });
 
   app.put("/api/v1/admin/gateway/routes", async (req) => {
@@ -100,20 +99,20 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       temperature,
       modalities,
     );
-    return rustJsonText({});
+    return JSON.stringify({});
   });
 
   app.delete("/api/v1/admin/gateway/routes/:model", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const model = (req.params as Record<string, string>)["model"] ?? "";
     await gateway.gatewayStore.deleteRoute(admin.org_id, model);
-    return rustJsonText({});
+    return JSON.stringify({});
   });
 
   app.get("/api/v1/admin/gateway/providers", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const providers = await gateway.gatewayStore.listProviders(admin.org_id, gateway.masterKey());
-    return rustJsonText({ providers });
+    return JSON.stringify({ providers });
   });
 
   // Creates a provider: {name, protocol, base_url, key}. The slug routes
@@ -138,7 +137,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       throw ApiError.conflict("already_exists", `a provider with the name '${name}' already exists`);
     }
     await gateway.gatewayStore.createProvider(admin.org_id, slug, name, protocol, baseUrl, key, gateway.masterKey());
-    return rustJsonText({ provider: slug });
+    return JSON.stringify({ provider: slug });
   });
 
   // Updates a provider: {name, protocol, base_url, key?} — a blank key
@@ -167,7 +166,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       gateway.masterKey(),
     );
     if (!updated) throw ApiError.notFound(`no provider ${slug}`);
-    return rustJsonText({});
+    return JSON.stringify({});
   });
 
   // Removes a provider; routes referencing it stop resolving until a new
@@ -176,7 +175,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
     const admin = await requireAdminUser(ctx, req);
     const slug = (req.params as Record<string, string>)["slug"] ?? "";
     await gateway.gatewayStore.deleteProvider(admin.org_id, slug);
-    return rustJsonText({});
+    return JSON.stringify({});
   });
 }
 
