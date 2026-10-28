@@ -35,7 +35,7 @@ import type { ApprovalPolicy } from "../../lib/api/approvals";
 import type { ThreadEvent, ThreadEventRow } from "../../lib/thread-events";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
-  return { id: `e${seq}`, seq, event, created_at: "t" };
+  return { id: `e${seq}`, chat_id: "chat-1", seq, event, created_at: "t" };
 }
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
@@ -782,12 +782,12 @@ describe("approval upsert/resolve", () => {
 
 describe("authoritative socket state", () => {
   it("overwrites reflected tokens instead of appending them during sync", () => {
-    const state = { chat_id: "chat-1", seq: 2, events: [], text: "hello", thinking: "", generating: true };
+    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 2, events: [], text: "hello", thinking: "", generating: true };
     expect(threadStateBlocks(state).filter(b => b.kind === "text").map(b => b.text)).toEqual(["hello"]);
     expect(threadStateBlocks({ ...state, seq: 3, text: "hello!" }).map(b => b.text)).toEqual(["hello!"]);
   });
   it("renders a cross-tab user echo with no optimistic local send", () => {
-    const state = { chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab", attachments: [] })], text: "", thinking: "", generating: true };
+    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab", attachments: [] })], text: "", thinking: "", generating: true };
     expect(threadStateBlocks(state).map(b => b.text)).toEqual(["other tab"]);
   });
   it("keeps the in-flight thinking block's key stable across publishes", () => {
@@ -795,7 +795,7 @@ describe("authoritative socket state", () => {
     // streams; the reasoning block is not a durable event yet, so its key
     // must not change between publishes — a changing key remounts the
     // frame and snaps an expanded block shut mid-click.
-    const state = { chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go", attachments: [] })], text: "", thinking: "part one", generating: true };
+    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go", attachments: [] })], text: "", thinking: "part one", generating: true };
     const first = threadStateBlocks(state).find(b => b.kind === "reasoning");
     const second = threadStateBlocks({ ...state, seq: 8, thinking: "part one part two" }).find(b => b.kind === "reasoning");
     expect(first?.key).toBeTruthy();

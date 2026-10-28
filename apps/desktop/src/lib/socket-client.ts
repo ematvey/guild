@@ -73,35 +73,28 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     case "tool_cancel":
       return;
     case "thread_state":
-      handlers.onThreadState?.(message as unknown as ThreadState);
+      handlers.onThreadState?.(message);
       return;
     case "thread_events":
-      handlers.onThreadEvents?.(
-        message.chat_id,
-        message.seq,
-        message.events as unknown as ThreadEventRow[],
-      );
+      handlers.onThreadEvents?.(message.chat_id, message.seq, message.events);
       return;
     case "thread_list":
-      handlers.onThreadList(message.chats as unknown as ChatSummary[]);
+      handlers.onThreadList(message.chats);
       return;
     case "archived_thread_list":
-      handlers.onArchivedThreadList?.(message.chats as unknown as ChatSummary[]);
+      handlers.onArchivedThreadList?.(message.chats);
       return;
     case "project_list":
-      handlers.onProjectList?.(
-        message.projects as unknown as Project[],
-        message.archived_projects as unknown as Project[],
-      );
+      handlers.onProjectList?.(message.projects, message.archived_projects);
       return;
     case "machine_list":
-      handlers.onMachineList?.(message.machines as unknown as MachineInfo[]);
+      handlers.onMachineList?.(message.machines);
       return;
     case "machine_status":
       handlers.onMachineStatus?.(message.machine_id, message.online);
       return;
     case "subagent_tree":
-      handlers.onSubagentTree?.(message.chat_id, message.nodes as unknown as ChatSubagentNode[]);
+      handlers.onSubagentTree?.(message.chat_id, message.nodes);
       return;
     case "chat_status":
       handlers.onChatStatus({ chat_id: message.chat_id, generating: message.generating });
@@ -110,7 +103,7 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       handlers.onSync(message.chat_id, "begin");
       return;
     case "live_frame":
-      handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id ?? null, event: message.event as StreamFrame });
+      handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id ?? null, event: message.event });
       return;
     case "sync_done":
       handlers.onSync(message.chat_id, "done");

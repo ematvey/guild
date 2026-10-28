@@ -101,6 +101,41 @@ export type ThreadEvent =
     }
   | { type: "child_closed"; thread_id: string };
 
+/** One persisted thread event as the store returns it: the durable log row
+ *  that the member socket and the thread reads carry. */
+export interface ThreadEventRow {
+  id: string;
+  chat_id: string;
+  /** Monotonic per chat. The client's watermark. */
+  seq: number;
+  event: ThreadEvent;
+  created_at: string;
+}
+
+/** One node of a chat's thread subtree, with its latest run status. */
+export interface SubagentNode {
+  thread_id: string;
+  chat_id: string;
+  /** Always serialized. null for a top-level thread. */
+  parent_thread_id: string | null;
+  agent_name: string;
+  title: string;
+  depth: number;
+  /** Always serialized. null before the thread's first run. */
+  status: string | null;
+}
+
+/** One org-scoped event row, as the `org_event` frame carries it. */
+export interface EventRow {
+  id: string;
+  org_id: string;
+  /** Selects the payload shape. */
+  kind: string;
+  /** Opaque here: the shape depends on `kind`. */
+  payload: Json;
+  created_at: string;
+}
+
 /** One typed block inside an assistant thread event, in stream order. */
 export type Block =
   | { type: "text"; text: string }
@@ -178,10 +213,11 @@ export interface Project {
   created_at: string;
 }
 
-/** Creates a project: a named folder bound to a machine. */
+/** Creates a project: a named folder bound to a machine. `name` is optional:
+ *  an absent or null label defaults to the folder's basename. */
 export interface CreateProjectRequest {
-  /** Always serialized. null when omitted; defaults to the folder's basename. */
-  name: string | null;
+  /** Omitted or null when unset. */
+  name?: string | null;
   folder: string;
   machine_id: string;
 }

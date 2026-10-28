@@ -164,6 +164,43 @@ pub struct Chat {
     pub machine_online: bool,
 }
 
+/// One persisted thread event as the store returns it: the durable log row
+/// that the member socket and the thread reads carry. The frame envelope in
+/// `ws.rs` keeps `Value` for these rows, so a daemon that does not know a new
+/// event type still parses the frame.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ThreadEventRow {
+    pub id: Uuid,
+    pub chat_id: Uuid,
+    /// Monotonic per chat. The client's watermark.
+    pub seq: i64,
+    pub event: ThreadEvent,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One node of a chat's thread subtree, with its latest run status.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SubagentNode {
+    pub thread_id: Uuid,
+    pub chat_id: Uuid,
+    pub parent_thread_id: Option<Uuid>,
+    pub agent_name: String,
+    pub title: String,
+    pub depth: i64,
+    pub status: Option<String>,
+}
+
+/// One org-scoped event row, as the `org_event` frame carries it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EventRow {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    /// Selects the payload shape.
+    pub kind: String,
+    pub payload: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
 /// One durable machine-registry row for the machines page (spec §2.3),
 /// joined with the hub's live socket state. Connected rows sort before
 /// offline ones, then by last_seen_at descending.

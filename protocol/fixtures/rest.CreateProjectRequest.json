@@ -8,5 +8,9 @@
     "name": null,
     "folder": "\\\\wsl.localhost\\Ubuntu\\home\\me\\api",
     "machine_id": "machine-2"
+  },
+  {
+    "folder": "C:\\work\\site",
+    "machine_id": "machine-3"
   }
 ]

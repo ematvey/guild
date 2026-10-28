@@ -5,16 +5,12 @@
 import type { PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import type { EventRow } from "@guild/wire/rest";
 
 export const NOTIFY_CHANNEL = "guild_events";
 
-export interface EventRow {
-  id: string;
-  org_id: string;
-  kind: string;
-  payload: unknown;
-  created_at: string;
-}
+/** One org event row, as the log and the `org_event` frame carry it. */
+export type { EventRow };
 
 export class EventStore {
   constructor(readonly pool: PlatformPool) {}

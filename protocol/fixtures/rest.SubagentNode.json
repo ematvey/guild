@@ -1,0 +1,20 @@
+[
+  {
+    "thread_id": "018f0b7c-0000-7000-8000-000000000051",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000010",
+    "parent_thread_id": null,
+    "agent_name": "researcher",
+    "title": "Patents overview",
+    "depth": 0,
+    "status": "running"
+  },
+  {
+    "thread_id": "018f0b7c-0000-7000-8000-000000000052",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000011",
+    "parent_thread_id": "018f0b7c-0000-7000-8000-000000000051",
+    "agent_name": "reader",
+    "title": "Read the claims",
+    "depth": 1,
+    "status": null
+  }
+]

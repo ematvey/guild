@@ -20,6 +20,7 @@ export { uuidv7 } from "../time.js";
 
 import type {
   ThreadEvent,
+  ThreadEventRow,
   JudgeVerdict,
   Block,
   MessageAttachment,
@@ -27,16 +28,14 @@ import type {
   ToolKind,
 } from "@guild/wire/rest";
 
-export type { Block, JudgeVerdict, MessageAttachment, ThreadEvent, UsagePayload };
-
-/** One persisted thread event as the store returns it. */
-export interface ThreadEventRow {
-  id: string;
-  chat_id: string;
-  seq: number;
-  event: ThreadEvent;
-  created_at: string; // RFC3339, serde-chrono style
-}
+export type {
+  Block,
+  JudgeVerdict,
+  MessageAttachment,
+  ThreadEvent,
+  ThreadEventRow,
+  UsagePayload,
+};
 
 // ---------------------------------------------------------------------------
 // Constructors (declaration order = future wire order)

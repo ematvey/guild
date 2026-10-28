@@ -48,7 +48,7 @@ function chatRow(ctx: PlatformContext, chat: ChatListRow): Chat {
 export async function threadListSnapshot(
   ctx: PlatformContext,
   user: Caller,
-): Promise<unknown[]> {
+): Promise<Chat[]> {
   const rows = await ctx.chats.listChats(user.org_id, user.id);
   return rows.map((chat) => chatRow(ctx, chat));
 }
@@ -57,7 +57,7 @@ export async function threadListSnapshot(
 export async function archivedThreadListSnapshot(
   ctx: PlatformContext,
   user: Caller,
-): Promise<unknown[]> {
+): Promise<Chat[]> {
   const rows = await ctx.chats.listArchivedChats(user.org_id, user.id);
   return rows.map((chat) => chatRow(ctx, chat));
 }
@@ -107,13 +107,13 @@ export function machineInfo(row: MachineRow, connected: boolean): MachineInfo {
 export async function machineListSnapshot(
   ctx: PlatformContext,
   user: Caller,
-): Promise<unknown[]> {
+): Promise<MachineInfo[]> {
   const rows = await ctx.machines.listForUser(user.org_id, user.id);
   const list = rows.map((row) => machineInfo(row, ctx.hub.machineOnline(row.machine_id)));
   list.sort((a, b) => {
-    const connectedCmp = (b.connected as boolean ? 1 : 0) - (a.connected as boolean ? 1 : 0);
+    const connectedCmp = (b.connected ? 1 : 0) - (a.connected ? 1 : 0);
     if (connectedCmp !== 0) return connectedCmp;
-    return Date.parse(b.last_seen_at as string) - Date.parse(a.last_seen_at as string);
+    return Date.parse(b.last_seen_at) - Date.parse(a.last_seen_at);
   });
   return list;
 }

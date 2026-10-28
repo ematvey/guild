@@ -28,16 +28,11 @@ function resolveVariant(schema, variant) {
   return schema.$defs?.[name] ?? variant;
 }
 
-// The tag key a schema uses. The member socket tags with `type`; the sandbox
-// RPC wire tags with `t`.
-const TAG_KEYS = ['type', 't'];
-
+// The tag key every frame uses. A frame is an object tagged by `type`, and
+// the tag is a `const` in each variant.
 function variantTag(resolved) {
-  for (const key of TAG_KEYS) {
-    const tag = resolved.properties?.[key]?.const;
-    if (typeof tag === 'string') return tag;
-  }
-  return null;
+  const tag = resolved.properties?.type?.const;
+  return typeof tag === 'string' ? tag : null;
 }
 
 // The tag values a tagged union declares. A plain struct has no tags, so it
@@ -83,6 +78,13 @@ async function main() {
 
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   addFormats(ajv);
+  // Register every schema under its own `$id`, so a `$ref` can cross files.
+  // A socket frame may carry a row type that the REST schema owns; the row is
+  // declared once, in REST, and referenced here.
+  for (const [schemaName, schema] of schemas) {
+    if (typeof schema.$id !== 'string') fail(`${schemaName}.schema.json has no $id`);
+    ajv.addSchema(schema);
+  }
 
   let frames = 0;
   const seen = new Map(); // `${schema}.${root}` -> Set of type values
@@ -107,10 +109,9 @@ async function main() {
     }
     if (!Array.isArray(framesInFile)) fail(`${file}: top level is not an array`);
 
-    // Compile the root def through the whole schema so its internal $refs
-    // resolve. Drop $id: one Ajv instance, many root wrappers.
-    const { $id: _id, ...body } = schema;
-    const validate = ajv.compile({ ...body, $ref: `#/$defs/${root}` });
+    // Compile the root def through the whole schema so its internal and
+    // cross-file $refs resolve.
+    const validate = ajv.compile({ $ref: `${schema.$id}#/$defs/${root}` });
 
     framesInFile.forEach((frame, index) => {
       if (!validate(frame)) {
@@ -156,20 +157,32 @@ async function main() {
     fail(`${missing.length} variant(s) have no fixture`);
   }
 
-  // TypeScript conformance: every fixture root of the @guild/wire schemas
-  // must have a declaration in packages/wire, and that declaration must carry
-  // the same property names and presence rules as the schema. The sandbox
-  // schema is exempt: its types live beside the runner in
-  // apps/server/src/sandbox.
-  const WIRE_SCHEMAS = new Set(['rest', 'socket', 'rpc']);
+  // TypeScript conformance: every fixture root must have a declaration in
+  // packages/wire, and that declaration must carry the same property names
+  // and presence rules as the schema.
   const wireDir = join(DIR, '..', 'packages', 'wire', 'src');
   const declarations = await loadDeclarations(wireDir);
   const typeProblems = [];
+  const compared = new Set();
   for (const [schemaName, schemaRoots] of roots) {
-    if (!WIRE_SCHEMAS.has(schemaName)) continue;
     const schema = schemas.get(schemaName);
     for (const root of schemaRoots) {
+      compared.add(`${schemaName}.${root}`);
       compareRoot(`${schemaName}.${root}`, schema, schema.$defs?.[root], declarations.get(root), typeProblems);
+    }
+  }
+  // Every named object or union is compared, not only the fixture roots: a
+  // union can reach the wire inside another root and have no fixture of its
+  // own (StreamEvent rides `live_frame`).
+  for (const [schemaName, schema] of schemas) {
+    for (const [root, def] of Object.entries(schema.$defs ?? {})) {
+      const name = `${schemaName}.${root}`;
+      if (compared.has(name)) continue;
+      const declaration = declarations.get(root);
+      if (declaration === undefined) continue;
+      const shaped = def.oneOf !== undefined || def.enum !== undefined || def.properties !== undefined;
+      if (!shaped) continue;
+      compareRoot(name, schema, def, declaration, typeProblems);
     }
   }
   if (typeProblems.length > 0) {
@@ -266,8 +279,8 @@ function compareRoot(name, schema, def, declaration, problems) {
     const tags = [];
     for (const variant of def.oneOf) {
       const resolved = resolveVariant(schema, variant);
-      const tag = resolved.properties?.type?.const;
-      if (typeof tag !== 'string') continue;
+      const tag = variantTag(resolved);
+      if (tag === null) continue;
       tags.push(tag);
       const tsProps = declaration.variants.get(tag);
       if (tsProps === undefined) {

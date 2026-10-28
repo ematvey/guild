@@ -3,11 +3,15 @@ import { routeMessage, startSocket, type SocketHandlers, type SocketLike } from 
 import type { ThreadEventRow } from "./thread-events";
 import type { ThreadEvent } from "./thread-events";
 
-const chat = { id: "chat-1", title: "Chat", created_at: "now" };
+const chat = {
+  id: "chat-1", org_id: "o1", user_id: "u1", title: "Chat", created_at: "now",
+  generating: false, unread: false, working: false, blocked: false,
+  last_activity_at: "now", machine_online: false,
+};
 const delta = { type: "delta" as const, content: "hello" };
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
-  return { id: `e${seq}`, seq, event, created_at: "t" };
+  return { id: `e${seq}`, chat_id: "chat-1", seq, event, created_at: "t" };
 }
 
 class FakeSocket implements SocketLike {
@@ -76,7 +80,13 @@ describe("routeMessage", () => {
     ]);
 
     routeMessage({ type: "error", message: "bad" }, handlers);
-    routeMessage({ type: "org_event", event: {} }, handlers);
+    routeMessage(
+      {
+        type: "org_event",
+        event: { id: "e1", org_id: "o1", kind: "member_added", payload: {}, created_at: "now" },
+      },
+      handlers,
+    );
     expect(calls.slice(-2)).toEqual(["error:bad", "org"]);
 
     routeMessage({ type: "workspace_identity", name: "Acme" }, handlers);

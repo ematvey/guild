@@ -1,0 +1,23 @@
+[
+  {
+    "id": "018f0b7c-0000-7000-8000-000000000041",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000010",
+    "seq": 7,
+    "event": {
+      "type": "system_message",
+      "content": "Compacted to 12 messages."
+    },
+    "created_at": "2026-10-28T09:01:00Z"
+  },
+  {
+    "id": "018f0b7c-0000-7000-8000-000000000042",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000010",
+    "seq": 8,
+    "event": {
+      "type": "user_message",
+      "content": "Summarize the patents sheet.",
+      "attachments": []
+    },
+    "created_at": "2026-10-28T09:02:00Z"
+  }
+]
