@@ -11,6 +11,7 @@ import {
   PLAIN_METHODS,
   decodeValue,
   encodeValue,
+  sanitizeText,
   type AgentFrame,
   type ClientFrame,
   type HandleKind,
@@ -66,7 +67,8 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
       const [command, options] = args as [string | string[], (Omit<ShellExecOptions, "onOutput"> & { onOutput?: boolean }) | undefined];
       const forwarded: ShellExecOptions | undefined = options === undefined ? undefined : { ...options, onOutput: undefined };
       if (options?.onOutput === true) {
-        forwarded!.onOutput = (text, _context, info) => send({ t: "output", id, text, info: encodeValue(info) });
+        forwarded!.onOutput = (text, _context, info) =>
+          send({ t: "output", id, text: sanitizeText(text), info: encodeValue(info) });
       }
       return env.exec(command, forwarded, context);
     }

@@ -37,6 +37,7 @@ import type { PostgresDatabase, PostgresExecutor } from "./executor.js";
 import { rebuildLiveProjection } from "./live-projection.js";
 import { applyPostgresMigrations } from "./migrations.js";
 import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
+import { sanitizeText } from "../../platform/domain/text.js";
 
 // Pi Durable does not export its branding helpers from the package entry;
 // the erased brands are phantom types, so trusted numeric boundaries brand with casts.
@@ -45,7 +46,10 @@ const asEntryId = (value: number) => value as EntryId;
 const asDocumentId = (value: number) => value as DocumentId;
 const asSeq = (value: number) => value as Seq;
 
-const encodeJson = (value: unknown): string => JSON.stringify(value);
+const encodeJson = (value: unknown): string =>
+  JSON.stringify(value, (_key, item) =>
+    typeof item === "string" ? sanitizeText(item) : item,
+  );
 const parseJson = (value: unknown): unknown => JSON.parse(value as string);
 // Postgres TEXT holds valid UTF-8 only, so indexed string identities (kind, key,
 // request ID) are stored JSON-escaped to keep lone surrogates lossless.
@@ -971,18 +975,29 @@ export class PostgresDurableStorage implements Storage {
       case "entry":
         await this.claimId(tx, write.value.id, "entry");
         await tx.query(
-          "INSERT INTO entries (id, conversation_id, head, commit_seq, record) VALUES ($1, $2, $3, $4, $5)",
-          [write.value.id, write.value.conversationId, write.value.head ?? null, seq, encodeJson(write.value)],
+          "INSERT INTO entries (id, conversation_id, head, commit_seq, kind, record) VALUES ($1, $2, $3, $4, $5, $6)",
+          [
+            write.value.id,
+            write.value.conversationId,
+            write.value.head ?? null,
+            seq,
+            write.value.kind,
+            encodeJson(write.value),
+          ],
         );
         break;
-      case "task":
+      case "task": {
         await this.claimId(tx, write.value.id, "task");
+        const outcome = write.value.state.status === "completing" || write.value.state.status === "terminal"
+          ? write.value.state.outcome
+          : undefined;
+        const outcomeStatus = outcome?.status ?? null;
         await tx.query(
-          `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, outcome_status, record)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 					ON CONFLICT (id) DO UPDATE SET conversation_id = excluded.conversation_id, kind = excluded.kind,
 					status = excluded.status, abort_requested = excluded.abort_requested,
-					background = excluded.background, record = excluded.record`,
+					background = excluded.background, outcome_status = excluded.outcome_status, record = excluded.record`,
           [
             write.value.id,
             write.value.conversationId,
@@ -990,10 +1005,12 @@ export class PostgresDurableStorage implements Storage {
             write.value.state.status,
             write.value.abortRequested,
             write.value.background,
+            outcomeStatus,
             encodeJson(write.value),
           ],
         );
         break;
+      }
       case "submission":
         await this.claimId(tx, write.value.id, "submission");
         await tx.query(
