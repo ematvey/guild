@@ -1761,7 +1761,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         >
           {readOnlyThread ? (
             <div
-              className="pointer-events-auto mx-auto flex w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg"
+              className="pointer-events-auto mx-auto flex w-full items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg pointer-coarse:rounded-[1.75rem]"
               style={{ maxWidth: chatWidth }}
             >
               <span className="min-w-0 flex-1">
@@ -1782,7 +1782,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           ) : composerUnknown ? (
             <div
               aria-label="Loading thread composer"
-              className="pointer-events-auto mx-auto w-full rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm"
+              className="pointer-events-auto mx-auto w-full rounded-xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]"
               style={{ maxWidth: chatWidth }}
             >
               <div className="px-2 py-1.5">
@@ -1795,7 +1795,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             </div>
           ) : (
           <div
-            className={`pointer-events-auto mx-auto w-full rounded-[1.75rem] border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm ${
+            className={`pointer-events-auto mx-auto w-full rounded-xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem] ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ maxWidth: chatWidth }}
