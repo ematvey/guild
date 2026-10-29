@@ -10,9 +10,12 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
+import { createDownloadAttachmentTool } from "./attachment-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
+import type { AttachmentStore } from "../platform/store/attachments.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
+import type { ObjectStore } from "../platform/s3.js";
 
 export { ASSISTANT_PROMPT_KEY };
 
@@ -83,6 +86,10 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   skillRuntime?: SkillRuntime;
   /** Extra tool-task hooks (the workspace conflict journal). */
   toolHooks?: readonly HookRegistration[];
+  /** Chat attachments and their bytes in object storage — the
+   *  download_attachment tool; absent in tests without them. */
+  attachments?: Pick<AttachmentStore, "list">;
+  objects?: Pick<ObjectStore, "get">;
 }
 
 /** Codemode-only exposure: tools the model must not see directly become
@@ -130,6 +137,16 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
     tools: [
       ...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()),
       ...(deps.threadTools ?? []).map(toolsOnlyCaller),
+      ...(deps.attachments === undefined || deps.objects === undefined
+        ? []
+        : [
+            createDownloadAttachmentTool({
+              attachments: deps.attachments,
+              objects: deps.objects,
+              chatOfConversation: deps.chatOfConversation,
+              orgOfConversation: deps.orgOfConversation,
+            }),
+          ]),
     ],
     sections: [section, skillsSection, codemodeNotes],
     hooks: [createApprovalGate(deps), ...(deps.toolHooks ?? [])],

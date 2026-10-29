@@ -468,6 +468,8 @@ export class GuildRuntime {
       allowShellTools: this.config.allowShellTools,
       chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
       executorKind: (conversationId) => this.executorKind(conversationId),
+      attachments: this.attachments,
+      ...(this.objects === undefined ? {} : { objects: this.objects }),
       integrations: {
         gateDecision: async (conversationId, callName) => {
           const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);

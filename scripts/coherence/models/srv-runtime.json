@@ -219,6 +219,11 @@
       "role": "domain"
     },
     {
+      "where": "apps/server/src/harness/attachment-tools.ts",
+      "concept": "attachment",
+      "role": "domain"
+    },
+    {
       "where": "apps/server/src/harness/codemode-lint.ts",
       "concept": "tool",
       "role": "domain"
