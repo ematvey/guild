@@ -26,7 +26,7 @@ export function SettingsPanel({
     ...(isAdmin ? [{ key: "workspace" as const, label: "Workspace" }] : []),
   ];
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col text-base">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="font-semibold">Settings</span>
         <span className="flex items-center gap-1">

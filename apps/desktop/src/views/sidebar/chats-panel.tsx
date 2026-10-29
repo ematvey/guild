@@ -52,7 +52,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col text-base">
       <div className="flex items-center justify-between px-3 py-3">
         {/* The workspace switcher lives on the rail's first button; the panel
             header names the tab and carries the new-chat plus, like the
