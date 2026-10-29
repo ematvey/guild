@@ -1,7 +1,9 @@
 // Markup contracts for the extracted transcript blocks.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import Markdown from "react-markdown";
 import { CompactionCard, HoverStamp, ReasoningFrame, ThreadProgress, ThreadSkeleton, ThreadTitle, prettyStamp } from "./blocks";
+import { CHAT_MD_PLUGINS, mdComponents } from "../markdown";
 
 describe("ReasoningFrame", () => {
   it("labels a live reasoning block as Thinking…", () => {
@@ -23,6 +25,18 @@ describe("CompactionCard", () => {
       <CompactionCard c={{ summary: "earlier work", keepLast: 6 }} />,
     );
     expect(html).toContain("Context compacted");
+  });
+});
+
+describe("chat markdown", () => {
+  it("keeps a newline the model wrote", () => {
+    const html = renderToStaticMarkup(
+      <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
+        {"Header\n\n• one\n• two"}
+      </Markdown>,
+    );
+    expect(html).toContain("• one<br");
+    expect(html).toContain("• two");
   });
 });
 

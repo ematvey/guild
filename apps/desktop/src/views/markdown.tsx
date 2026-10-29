@@ -4,7 +4,16 @@
 // placeholders instead of loading).
 
 import type { Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { openExternal } from "../lib/open-external";
+
+/// Plugin set for chat text: GFM tables and task lists, plus a line break at
+/// every newline the model wrote. CommonMark folds a single newline into a
+/// space, which turns a list written with plain bullet characters into one
+/// paragraph. A message is prose on a screen, not a document: its lines stay
+/// lines.
+export const CHAT_MD_PLUGINS = [remarkGfm, remarkBreaks];
 
 /// Anchor for markdown content: every link routes through `openExternal`.
 /// Images never load from model/tool-controlled URLs: injected markdown

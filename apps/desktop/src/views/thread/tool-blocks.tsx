@@ -14,9 +14,8 @@ import {
   Wrench,
 } from "lucide-react";
 import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Frame } from "../frame";
-import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { highlightJs } from "../js-highlight";
 import { openExternal } from "../../lib/open-external";
 import { toolArtifactBlobUrl } from "../../lib/api/chats";
@@ -310,7 +309,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
         {m?.title && <p className="font-medium">{m.title}</p>}
         {t.content && (
           <div className={`max-h-64 overflow-y-auto ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-            <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{t.content}</Markdown>
+            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{t.content}</Markdown>
           </div>
         )}
         {t.status === "running" && (

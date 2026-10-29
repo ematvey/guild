@@ -4,7 +4,6 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode } from "react";
 import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   Archive,
   ArchiveRestore,
@@ -60,7 +59,7 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { Skeleton } from "@guild/ui/components/skeleton";
 
-import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { FrameToggleContext } from "../frame";
 import { WorkedForBlock, viewEntries } from "../worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../lib/sidebar-width";
@@ -182,7 +181,7 @@ const TextBlock = memo(function TextBlock({
   return (
     <div className="group relative">
       <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
           {b.text}
         </Markdown>
         {b.attachments && b.attachments.length > 0 && (

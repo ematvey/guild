@@ -12,6 +12,15 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A chat message keeps its line breaks (2026-10-29).** Markdown in the
+  thread, the compaction card, tool text and the agent message view now runs
+  with `remark-breaks` (`CHAT_MD_PLUGINS` in `views/markdown.tsx`). CommonMark
+  folds a single newline into a space, so a routine message written as plain
+  `•` bullet lines arrived as one paragraph. A message is prose on a screen,
+  not a document: its lines stay lines. Skill file previews keep plain GFM
+  because they render a document. The floor rises by 17 LOC for the plugin
+  set and its test.
+
 - **The mobile client is an engine-less client (2026-10-28).** iOS runs no
   engine, no tools, and no machine link: it bundles its own UI and uses the
   same HTTP API and member socket as web mode. The first stage is foreground

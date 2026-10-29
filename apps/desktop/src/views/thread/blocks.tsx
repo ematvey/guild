@@ -3,11 +3,10 @@
 import { useMemo } from "react";
 import { Brain } from "lucide-react";
 import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
 import { Frame } from "../frame";
 import { PayloadPre } from "../payload-pre";
-import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import type { CompactionBlock } from "../../lib/thread-reducer";
 
 /// Shown while a deep-linked thread's messages are in flight (the URL says
@@ -109,7 +108,7 @@ export function CompactionCard({ c }: { c: CompactionBlock }) {
     <Frame title={<span>Context compacted</span>}>
       <div className="space-y-2">
         <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-          <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{c.summary}</Markdown>
+          <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{c.summary}</Markdown>
         </div>
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>

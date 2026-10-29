@@ -3,8 +3,7 @@
 // collapsed.
 
 import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { JsonView } from "./JsonView";
 import type { Json, Message } from "@guild/wire/rest";
 
@@ -120,7 +119,7 @@ export function MessagesView({
             ) : text !== null ? (
               role === "assistant" ? (
                 <div className={`mt-1 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-                  <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
                     {text}
                   </Markdown>
                 </div>
