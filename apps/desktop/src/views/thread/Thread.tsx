@@ -361,9 +361,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // composer picks which, and the choice binds the chat.
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
-  // A drag that starts at the left border opens the drawer, the way the
-  // platform does it. The drawer only exists on a phone, so the listener
-  // does too.
+  // A drag from the left opens the drawer. iOS owns the first ~20px of that
+  // edge with its own back gesture, and a page cannot cancel it — so the drag
+  // must start past that band. The system keeps the edge; the drawer takes
+  // the rest; one swipe never does both.
   useEffect(() => {
     if (!isMobile) return;
     let startX = 0;
@@ -371,7 +372,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     let armed = false;
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      armed = t.clientX <= 24;
+      armed = t.clientX > 24 && t.clientX <= 96;
       startX = t.clientX;
       startY = t.clientY;
     };
