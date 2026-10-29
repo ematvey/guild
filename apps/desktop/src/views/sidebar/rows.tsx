@@ -290,7 +290,9 @@ export function ProjectHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      // The two row buttons are always up on a touch screen, so the row
+      // reserves their width there instead of letting the label run under.
+      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-sidebar-accent hover:text-sidebar-foreground pointer-coarse:pr-14"
       title={folder}
     >
       <ChevronRight
@@ -325,8 +327,9 @@ export function ProjectHeader({
               onNewChat();
             }
           }}
-          // right-1 + size-6 + 2px gap → the two hover buttons sit 2px apart
-          className="absolute right-[30px] top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+          // right-1 + size-6 + 2px gap → the two hover buttons sit 2px apart.
+          // A touch screen has no hover, so the plus is always up there.
+          className="absolute right-[30px] top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
         >
           <Plus className="size-4" />
         </span>
