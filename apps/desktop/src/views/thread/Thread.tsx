@@ -113,7 +113,7 @@ import { useVisualViewportPin } from "./use-visual-viewport-pin";
 import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
 import type { RenderBlock } from "../../lib/thread-reducer";
-import { installBackGuard, useThreadRoute } from "./hooks/use-thread-route";
+import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
 import { useComposer } from "./hooks/use-composer";
@@ -388,30 +388,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       window.removeEventListener("touchend", onEnd);
     };
   }, [isMobile]);
-  // Back means "up one level here", not "the previous URL". The guard entry
-  // holds the webview's own pop; this decides what the gesture does instead.
-  const backIntent = useRef<() => void>(() => {});
-  backIntent.current = () => {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-    if (route.overlay !== null) {
-      pushRoute({ overlay: null });
-      return;
-    }
-    if (route.skills !== null || route.agents !== null || route.tab === "settings") {
-      pushRoute({ skills: null, agents: null, tab: "chats" });
-      return;
-    }
-    if (route.chatId !== null) {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, newChat: true, tab: "chats" });
-    }
-  };
-  useEffect(() => {
-    if (IS_TAURI) return;
-    return installBackGuard(() => backIntent.current());
-  }, []);
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
   const [width, setWidth] = useState<number>(() => storedSidebarWidth());
   // settings may resize the shared width while this sidebar stays mounted
