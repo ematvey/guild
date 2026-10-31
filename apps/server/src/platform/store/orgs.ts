@@ -36,8 +36,15 @@ export class OrgStore {
   /** Tells the feed that the workspace identity moved. Every member socket
    *  repaints its title from the new row. */
   private async notifyOrg(orgId: string): Promise<void> {
-    await this.pool.query("SELECT pg_notify('guild_org', $1)", [
-      JSON.stringify({ org_id: orgId }),
-    ]);
+    await notifyOrgIdentity(this.pool, orgId);
   }
+}
+
+/** Tells the feed that an org's identity frame moved (a rename, a logo, or
+ *  the telemetry switch): every member socket of the org repaints it. The
+ *  one place that knows the `guild_org` payload shape. */
+export async function notifyOrgIdentity(pool: PlatformPool, orgId: string): Promise<void> {
+  await pool.query("SELECT pg_notify('guild_org', $1)", [
+    JSON.stringify({ org_id: orgId }),
+  ]);
 }

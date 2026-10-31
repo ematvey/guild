@@ -16,7 +16,6 @@ import { clearSettingsCaches } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./lib/machines-store";
 import { ThemeProvider } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
-import { startTelemetry } from "./lib/telemetry";
 
 const BAKED_URL: string =
   (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
@@ -289,8 +288,6 @@ function DesktopApp() {
     } catch {
       /* private mode: pref simply not remembered */
     }
-    // Telemetry target just became resolvable (desktop pairing/login).
-    void startTelemetry();
     // Resolve the server profile before entering the shell: the splash holds
     // until the IdP name/avatar are known, so the sidebar never flashes the
     // bare-email fallback. Bounded: an unreachable server must not hang the
@@ -512,12 +509,7 @@ function AppInner() {
         setAvatarUrl(u?.avatar_url ?? null);
         setOnboarded(u?.onboarded ?? true);
       })
-      .finally(() => {
-        // Web mode boots with a same-origin collector route; desktop waits
-        // for afterAuth.
-        void startTelemetry();
-        setReady(true);
-      });
+      .finally(() => setReady(true));
   }, []);
 
   if (!ready)

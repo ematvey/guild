@@ -324,12 +324,16 @@
     },
     "WorkspaceIdentity": {
       "type": "object",
-      "required": ["type", "name"],
+      "required": ["type", "name", "telemetry"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "workspace_identity" },
         "name": { "type": "string" },
-        "logo_url": { "type": "string" }
+        "logo_url": { "type": "string" },
+        "telemetry": {
+          "type": "boolean",
+          "description": "Admin-controlled telemetry switch: when true the client collects app diagnostics and sends them to the workspace collector."
+        }
       }
     },
 

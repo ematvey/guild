@@ -53,6 +53,7 @@ describe("health route (native)", () => {
       "/api/v1/auth/*",
       "/api/v1/me/approval",
       "/api/v1/org",
+      "/api/v1/org/telemetry",
       "/api/v1/org/logo",
       "/api/v1/orgs/*/logo",
       "/api/v1/events",

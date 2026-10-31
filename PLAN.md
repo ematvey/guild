@@ -12,6 +12,24 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Telemetry is the workspace's decision, and the socket explains a hang
+  (2026-10-31).** A user reported the app "hanging": the run finished in 15 s
+  and the answer was stored, but his client kept the turn "generating" for
+  51 minutes and his next message went out as a queued send. The server was
+  healthy; the client missed the turn's end. Two things changed. The Faro
+  switch is no longer a per-device toggle in Settings → About: it is
+  `telemetry_enabled` in `org_kv`, **on when absent**, admin-only
+  (`Settings → General`, `PUT /api/v1/org/telemetry`), and it rides the
+  `workspace_identity` frame so every client starts or stops collecting
+  live — a hang on one user's machine is only diagnosable if that machine
+  reports by default. And the client now traces the sequence that explains
+  such a hang: `socket.connect_start/open/close/connect_failed/watchdog_close`,
+  `socket.sync_sent`, `thread.state` (applied or stale, generating, open,
+  in-sync), `thread.list`, `thread.sync`, `socket.error_frame`, and every
+  `busy.set` with the name of the writer that set it. The trace is bounded
+  per event name and carries no message text or thread content. The floor
+  rises for the switch, the frame field and the trace.
+
 - **A thread always gets a name (2026-10-30).** The title call ran with a
   256-token cap, and a reasoning route can spend that whole budget thinking
   before it writes a word: the reply arrived empty with `finish_reason:

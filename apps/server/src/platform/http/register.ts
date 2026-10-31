@@ -45,7 +45,7 @@ export interface NativeRouteGroup {
 
 export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "auth", paths: ["/api/v1/auth/*", "/api/v1/me/approval"] },
-  { name: "org", paths: ["/api/v1/org", "/api/v1/org/logo", "/api/v1/orgs/*/logo"] },
+  { name: "org", paths: ["/api/v1/org", "/api/v1/org/telemetry", "/api/v1/org/logo", "/api/v1/orgs/*/logo"] },
   { name: "events", paths: ["/api/v1/events"] },
   { name: "attachments", paths: ["/api/v1/attachments/*", "/api/v1/chats/*/attachments"] },
   { name: "oidc", paths: ["/api/v1/auth/oidc/*", "/api/v1/admin/oidc"] },

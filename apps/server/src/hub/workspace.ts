@@ -42,15 +42,19 @@ export async function projectListSnapshot(
 }
 
 /** The workspace's display identity: the name and logo the app shell shows
- *  in its title. */
+ *  in its title, plus the admin-controlled telemetry switch the clients
+ *  obey. */
 export async function workspaceIdentitySnapshot(
   ctx: PlatformContext,
   orgId: string,
-): Promise<{ name: string; logo_url?: string }> {
-  const org = await ctx.orgs.get(orgId);
+): Promise<{ name: string; logo_url?: string; telemetry: boolean }> {
+  const [org, telemetry] = await Promise.all([
+    ctx.orgs.get(orgId),
+    ctx.orgKv.telemetryEnabled(orgId),
+  ]);
   return org.logo_url === null
-    ? { name: org.name }
-    : { name: org.name, logo_url: org.logo_url };
+    ? { name: org.name, telemetry }
+    : { name: org.name, logo_url: org.logo_url, telemetry };
 }
 
 /** MachineInfo wire shape. */

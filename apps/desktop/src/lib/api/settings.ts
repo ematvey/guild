@@ -73,6 +73,12 @@ export function putOrgName(name: string): Promise<void> {
   return request<void>("PUT", SETTINGS_PATHS.org, { name });
 }
 
+/** The workspace telemetry switch. Admin-only server-side; members see the
+ *  value on the workspace-identity frame. */
+export function putOrgTelemetry(enabled: boolean): Promise<void> {
+  return request<void>("PUT", `${SETTINGS_PATHS.org}/telemetry`, { enabled });
+}
+
 export async function uploadOrgLogo(file: File): Promise<{ logo_url: string }> {
   const token = getToken();
   const res = await fetch(

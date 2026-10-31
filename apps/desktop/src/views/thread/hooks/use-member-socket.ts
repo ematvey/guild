@@ -16,6 +16,7 @@ import { busyAfterThreadPush, statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
 import { IS_TAURI } from "../../../lib/session";
 import { applyWindowTitle } from "../../../lib/window-title";
+import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 
 
 export interface MemberSocketDeps {
@@ -28,7 +29,7 @@ export interface MemberSocketDeps {
   setArchivedProjects: (projects: Project[]) => void;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: RenderBlock[]) => void;
-  markBusy: (v: boolean) => void;
+  markBusy: (v: boolean, source: string) => void;
   busyRef: RefObject<boolean>;
   sendingRef: RefObject<boolean>;
   openChatIdRef: RefObject<string | null>;
@@ -112,6 +113,14 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     // The reducer owns the watermark and the view: a sequenced state applies
     // only its new events (a stale one changes nothing anywhere).
     const applied = reducerRef.current.applyState(state);
+    traceEvent("thread.state", {
+      seq: state.seq,
+      events: state.events.length,
+      generating: state.generating,
+      open: cid === openChatIdRef.current,
+      synced: syncingChatsRef.current.has(cid),
+      stale: applied.stale,
+    });
     if (applied.stale) return;
     onThreadStateApplied(cid);
     for (const row of state.events) {
@@ -150,7 +159,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
     // The route chat's live turn is the target's status even while the old
     // thread is still displayed (the composer is disabled during the swap).
-    markBusy(state.generating);
+    markBusy(state.generating, "thread_state");
     // The read mark follows the route chat, not the painted one: the first
     // state of an uncached open is what triggers the swap, and the paint ref
     // still names the old chat at this point.
@@ -190,10 +199,16 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
         resetSubagentTrees();
-        markBusy(false);
+        markBusy(false, "connect");
       },
       onMachineStatus: applyMachineStatus,
-      onWorkspaceIdentity: (identity) => applyWindowTitle(identity.name),
+      onWorkspaceIdentity: (identity) => {
+        // The org's telemetry switch rides the identity frame: the client
+        // obeys it and never decides on its own.
+        applyTelemetrySetting(identity.telemetry);
+        traceEvent("telemetry.switch", { enabled: identity.telemetry });
+        applyWindowTitle(identity.name);
+      },
       onMachineList: applyMachineList,
       onArchivedThreadList: (next) => setArchivedChats(next),
       onProjectList: (next, archived) => {
@@ -227,7 +242,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // HTTP round trip is in flight (the push predates the server's
         // generating flag — clearing busy here would let a second send
         // race the first).
-        markBusy(busyAfterThreadPush(rows, open, sendingRef.current, busyRef.current));
+        markBusy(busyAfterThreadPush(rows, open, sendingRef.current, busyRef.current), "thread_list");
+        traceEvent("thread.list", {
+          chats: rows.length,
+          open: open ?? "-",
+          openGenerating: rows.find((c) => c.id === open)?.generating ?? "absent",
+          sending: sendingRef.current,
+        });
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
@@ -270,6 +291,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         }
       },
       onSync: (cid, phase) => {
+        traceEvent("thread.sync", { chat: cid, phase, open: cid === openChatIdRef.current });
         if (phase === "begin") {
           syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);
           syncedAppliedRef.current.delete(cid);
@@ -313,6 +335,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         }
       },
       onError: (message) => {
+        traceEvent("socket.error_frame", { message: message.slice(0, 160) });
         if (message === "frames dropped — resync") {
           socketRef.current?.resync();
         } else if (message === "no such chat" && openChatIdRef.current) {

@@ -10,11 +10,7 @@ import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { IS_TAURI, serverBase } from "../../../lib/session";
-import {
-  setTelemetryEnabled,
-  startTelemetry,
-  telemetryEnabled,
-} from "../../../lib/telemetry";
+import { telemetryEnabled } from "../../../lib/telemetry";
 
 async function fetchJson(url: string): Promise<unknown | null> {
   try {
@@ -30,7 +26,8 @@ export function AboutSection() {
   const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
   const [serverVersion, setServerVersion] = useState<string | null | undefined>(undefined);
   const [latestRelease, setLatestRelease] = useState<string | null | undefined>(undefined);
-  const [telemetry, setTelemetry] = useState(telemetryEnabled());
+  // Read-only: the switch is the workspace admin's (Settings → General).
+  const [telemetry] = useState(telemetryEnabled());
   const [trace, setTrace] = useState<{
     enabled: boolean;
     path: string;
@@ -79,7 +76,14 @@ export function AboutSection() {
         </FactCard>
         <FactCard label="Server version">{serverVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : serverVersion ?? "Unavailable"}</FactCard>
         <FactCard label="Paired server">{base || "same origin (web)"}</FactCard>
-        <FactCard label="Newest published release">{latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : latestRelease ?? "none"}</FactCard>
+        <FactCard label="Telemetry">
+        <span className="text-sm text-muted-foreground">
+          {telemetry
+            ? "On — this workspace collects app diagnostics (errors, socket trace, performance)."
+            : "Off — nothing is collected. Your workspace admin controls this."}
+        </span>
+      </FactCard>
+      <FactCard label="Newest published release">{latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : latestRelease ?? "none"}</FactCard>
       </FactGrid>
       {IS_TAURI && (
         <p className="text-sm text-muted-foreground">
@@ -88,26 +92,6 @@ export function AboutSection() {
           server; a browser reload always picks up its current build.
         </p>
       )}
-      <FactCard label="Telemetry">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-muted-foreground">
-            {telemetry
-              ? "On — anonymous app diagnostics (errors, performance) sent to this server's Faro collector."
-              : "Off. Nothing is collected or sent."}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setTelemetryEnabled(!telemetry);
-              setTelemetry(!telemetry);
-              if (!telemetry) void startTelemetry();
-            }}
-          >
-            {telemetry ? "Disable" : "Enable"}
-          </Button>
-        </div>
-      </FactCard>
       {IS_TAURI && trace && (
         <FactCard label="Daemon trace">
           <div className="flex items-center justify-between gap-3">

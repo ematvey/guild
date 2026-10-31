@@ -6,6 +6,7 @@ import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
+import { traceEvent } from "./telemetry";
 import { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
 import { ChatSubagentNode, ChatSummary } from "./api/chats";
 import type { Project } from "./api/projects";
@@ -49,7 +50,7 @@ export interface SocketHandlers {
   onOrgEvent?: (event: unknown) => void;
   /** The workspace's display identity (name, logo), sent with every
    *  workspace push and on every rename. */
-  onWorkspaceIdentity?: (identity: { name: string; logo_url?: string }) => void;
+  onWorkspaceIdentity?: (identity: { name: string; logo_url?: string; telemetry: boolean }) => void;
 }
 
 /** Converts the current HTTP origin into the WebSocket origin. */
@@ -121,7 +122,11 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       handlers.onOrgEvent?.(message.event);
       return;
     case "workspace_identity":
-      handlers.onWorkspaceIdentity?.({ name: message.name, logo_url: message.logo_url });
+      handlers.onWorkspaceIdentity?.({
+        name: message.name,
+        logo_url: message.logo_url,
+        telemetry: message.telemetry,
+      });
       return;
   }
 }
@@ -149,12 +154,18 @@ export function startSocket(
   const PING_INTERVAL_MS = 5_000;
   const DEAD_AFTER_MS = 15_000;
   let lastFrameAt = 0;
+  // Diagnostics: which connect attempt this socket is, and when it opened.
+  // The trace is how a dropped link is explained after the fact (the switch
+  // is the org's; see telemetry.ts).
+  let attempt = 0;
+  let openedAt = 0;
   let pingsTimer: ReturnType<typeof setInterval> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   const noteFrame = (): void => {
     lastFrameAt = Date.now();
   };
+  const silentMs = (): number => (lastFrameAt === 0 ? -1 : Date.now() - lastFrameAt);
   const livenessLoop = (): void => {
     if (pingsTimer !== null) return;
     pingsTimer = setInterval(() => {
@@ -166,6 +177,7 @@ export function startSocket(
     watchdogTimer = setInterval(() => {
       if (stopped || socket === null || socket.readyState !== 1) return;
       if (lastFrameAt !== 0 && Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+        traceEvent("socket.watchdog_close", { attempt, silentMs: silentMs() });
         // Half-open black hole: force the reconnect path (onclose fires).
         try { socket.close(); } catch { /* already closing */ }
       }
@@ -178,7 +190,9 @@ export function startSocket(
 
   const sendSync = () => {
     if (socket?.readyState !== 1) return;
-    socket.send(serializeClientFrame({ type: "sync", chat_id: opts.getOpenChatId() }));
+    const chatId = opts.getOpenChatId();
+    traceEvent("socket.sync_sent", { attempt, chat: chatId ?? "-" });
+    socket.send(serializeClientFrame({ type: "sync", chat_id: chatId }));
   };
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null || connecting) return;
@@ -190,6 +204,8 @@ export function startSocket(
   const connect = async (): Promise<void> => {
     if (stopped || connecting) return;
     connecting = true;
+    attempt += 1;
+    traceEvent("socket.connect_start", { attempt, silentMs: silentMs() });
     try {
       if (needsRefresh) { await refreshSession(); needsRefresh = false; }
       const ticket = await mintTicket();
@@ -199,6 +215,8 @@ export function startSocket(
       socket = current;
       current.onopen = () => {
         if (socket !== current || stopped) return;
+        openedAt = Date.now();
+        traceEvent("socket.open", { attempt });
         viewWatermarks.clear();
         noteFrame();
         opts.onConnect?.();
@@ -215,6 +233,7 @@ export function startSocket(
           if (message.type === "auth_required") {
             connecting = true;
             needsRefresh = true;
+            traceEvent("socket.auth_required", { attempt });
             current.close();
             void refreshSession().then(() => {
               needsRefresh = false;
@@ -244,13 +263,24 @@ export function startSocket(
       current.onerror = () => {
         current.close();
       };
-      current.onclose = () => {
+      current.onclose = (event?: { code?: number; reason?: string }) => {
         if (socket !== current) return;
+        traceEvent("socket.close", {
+          attempt,
+          code: event?.code ?? -1,
+          reason: (event?.reason ?? "").slice(0, 80),
+          lifeMs: openedAt === 0 ? -1 : Date.now() - openedAt,
+          silentMs: silentMs(),
+        });
         socket = null;
         scheduleReconnect();
       };
     } catch (error) {
       connecting = false;
+      traceEvent("socket.connect_failed", {
+        attempt,
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 160),
+      });
       if (error instanceof SessionExpiredError) { stopped = true; opts.onAuthRequired?.(); return; }
       reportError(error, opts);
       scheduleReconnect();
@@ -267,6 +297,7 @@ export function startSocket(
     if (socket === null || socket.readyState !== 1) {
       if (lastFrameAt === 0 || Date.now() - lastFrameAt > DEAD_AFTER_MS) void connect();
     } else if (Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+      traceEvent("socket.wake_close", { attempt, silentMs: silentMs() });
       try { socket.close(); } catch { /* already closing */ }
     } else {
       sendSync();

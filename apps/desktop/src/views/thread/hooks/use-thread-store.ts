@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { fetchChatTree, type ChatTree } from "../../../lib/api/chats";
 import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
 import { createThreadReducer, type RenderBlock, type ThreadReducer } from "../../../lib/thread-reducer";
+import { traceEvent } from "../../../lib/telemetry";
 import { EARLIER_PAGE_SIZE } from "../mentions";
 import {
   initialNavigation,
@@ -72,7 +73,10 @@ export function useThreadStore(chatId: string | null) {
   // Synchronous mirror of `busy`: frame handlers read it before React
   // re-renders, and a list push must not clear a child thread's live turn.
   const busyRef = useRef(false);
-  const markBusy = (value: boolean): void => {
+  // `source` names the writer of the flag: a stuck spinner is explained by
+  // which push last set it, so every call site labels itself in the trace.
+  const markBusy = (value: boolean, source: string): void => {
+    traceEvent("busy.set", { value, source });
     busyRef.current = value;
     setBusy(value);
   };
@@ -160,7 +164,7 @@ export function useThreadStore(chatId: string | null) {
     clearStateTimer();
     // The target's ThreadState and status own the live turn. A cached swap
     // happens before its first state, so the old chat's busy must not leak.
-    if (clearBusy) markBusy(false);
+    if (clearBusy) markBusy(false, "swap");
     const opened = reducerRef.current.open(target);
     setBlocks(opened.blocks);
     hasMoreRef.current = opened.hasMore;
@@ -310,7 +314,7 @@ export function useThreadStore(chatId: string | null) {
     // Navigation must not clear a live turn (A7): the target's ThreadState
     // or status push owns that flag. The scratch surface has no target, so
     // it clears its own optimistic state.
-    if (cid === null && !skipBusyReset) markBusy(false);
+    if (cid === null && !skipBusyReset) markBusy(false, "open_scratch");
     saveScroll(displayedRef.current);
     const opened = reducerRef.current.open(cid);
     dispatchNavRef.current({

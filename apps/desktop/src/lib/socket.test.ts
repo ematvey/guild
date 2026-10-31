@@ -89,7 +89,7 @@ describe("routeMessage", () => {
     );
     expect(calls.slice(-2)).toEqual(["error:bad", "org"]);
 
-    routeMessage({ type: "workspace_identity", name: "Acme" }, handlers);
+    routeMessage({ type: "workspace_identity", name: "Acme", telemetry: true }, handlers);
     expect(calls.at(-1)).toBe("info:Acme");
   });
 

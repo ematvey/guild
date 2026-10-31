@@ -24,8 +24,11 @@ outside this repo, in the host's service configuration.
 
 Guild proxies browser telemetry through the server: `POST /faro/collect`
 forwards to `GUILD_FARO_URL` (default the collector above; empty disables).
-The client's Settings → About toggle (off by default) sends app diagnostics
-to it.
+The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
+absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
+The value rides the `workspace_identity` frame, so every client starts or
+stops collecting live. There is no per-device toggle; About shows the state
+read-only.
 
 - Each project gets its own **database/bucket** on the shared servers
   (Guild: db `guild`, bucket `guild`).

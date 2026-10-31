@@ -906,6 +906,50 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("carries the admin telemetry switch to every member socket", { timeout: TEST_TIMEOUT }, async () => {
+    // On by default: a fresh workspace collects until an admin turns it off.
+    const ws = await memberSocket();
+    const initial = await waitFrame(ws, (f) => f.type === "workspace_identity");
+    expect(initial.telemetry).toBe(true);
+
+    // A member cannot change it; the admin can, and the frame repaints live.
+    const refused = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org/telemetry",
+      headers: auth(stack.memberToken),
+      payload: { enabled: false },
+    });
+    expect(refused.statusCode).toBe(403);
+    const off = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org/telemetry",
+      headers: auth(stack.adminToken),
+      payload: { enabled: false },
+    });
+    expect(off.statusCode).toBe(200);
+    const pushed = await waitFrame(
+      ws,
+      (f) => f.type === "workspace_identity" && f.telemetry === false,
+    );
+    expect(pushed.telemetry).toBe(false);
+
+    const org = await stack.env.app.inject({
+      method: "GET",
+      url: "/api/v1/org",
+      headers: auth(stack.memberToken),
+    });
+    expect(JSON.parse(org.body).telemetry).toBe(false);
+
+    // Restore the default for the tests that follow.
+    await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/org/telemetry",
+      headers: auth(stack.adminToken),
+      payload: { enabled: true },
+    });
+    ws.end();
+  });
+
   it("pushes the updated workspace on a chat rename and archive", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("rename me");
     const ws = await memberSocket();

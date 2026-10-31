@@ -1,6 +1,8 @@
-//! GeneralSection — workspace identity: display name and logo. Admin-only
-//! (the section only appears for admins). The logo rides a public GET, but
-//! changes require the bearer.
+//! GeneralSection — workspace identity: display name, logo, and the
+//! workspace telemetry switch. Admin-only (the section only appears for
+//! admins). The logo rides a public GET, but changes require the bearer.
+//! Telemetry is the org's decision: members have no local control, and the
+//! clients obey the value the server pushes on the workspace-identity frame.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,11 +13,18 @@ import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { ApiError } from "../admin-api";
 import { apiUrl, serverUrl } from "../../../lib/session";
-import { deleteOrgLogo, getOrg, putOrgName, uploadOrgLogo } from "../../../lib/api/settings";
+import {
+  deleteOrgLogo,
+  getOrg,
+  putOrgName,
+  putOrgTelemetry,
+  uploadOrgLogo,
+} from "../../../lib/api/settings";
 
 interface OrgSettings {
   name: string;
   logo_url: string | null;
+  telemetry: boolean;
 }
 
 export default function GeneralSection() {
@@ -24,6 +33,7 @@ export default function GeneralSection() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [logoTick, setLogoTick] = useState(0); // busts the img cache on change
+  const [telemetryBusy, setTelemetryBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -70,6 +80,21 @@ export default function GeneralSection() {
     },
     [],
   );
+
+  const toggleTelemetry = async () => {
+    if (org === null) return;
+    const next = !org.telemetry;
+    setTelemetryBusy(true);
+    try {
+      await putOrgTelemetry(next);
+      setOrg((o) => (o ? { ...o, telemetry: next } : o));
+      toast.success(next ? "Telemetry on for this workspace" : "Telemetry off for this workspace");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setTelemetryBusy(false);
+    }
+  };
 
   const removeLogo = async () => {
     setBusy(true);
@@ -166,6 +191,29 @@ export default function GeneralSection() {
         <Input id="workspace-url" value={serverUrl()} readOnly disabled />
         <p className="text-xs text-muted-foreground">
           Where this workspace's server lives — fixed at sign-in, not changeable here.
+        </p>
+      </div>
+      <div className="max-w-md space-y-2">
+        <span className="text-sm font-medium">Telemetry</span>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted-foreground">
+            {org === null
+              ? "Loading…"
+              : org.telemetry
+                ? "On — clients send app diagnostics (errors, socket trace, performance) to this workspace's collector."
+                : "Off — clients collect and send nothing."}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={telemetryBusy || org === null}
+            onClick={() => void toggleTelemetry()}
+          >
+            {org?.telemetry ? "Turn off" : "Turn on"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Applies to every member of this workspace, live. There is no per-device switch.
         </p>
       </div>
     </div>

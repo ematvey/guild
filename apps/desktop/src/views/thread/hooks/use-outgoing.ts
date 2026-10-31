@@ -57,7 +57,7 @@ export interface OutgoingDeps {
   outgoingScope: string;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: RenderBlock[]) => void;
-  markBusy: (v: boolean) => void;
+  markBusy: (v: boolean, source: string) => void;
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
   sendingRef: RefObject<boolean>;
@@ -166,7 +166,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       setPendingSubmitId(command.id);
       sendingRef.current = false;
     } else if (openChatIdRef.current === target) {
-      markBusy(true);
+      markBusy(true, "optimistic_send");
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
@@ -216,7 +216,7 @@ export function useOutgoing(deps: OutgoingDeps) {
               key: command.id, sentAt: command.sentAt,
               attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
             justCreatedBusyRef.current = cid;
-            markBusy(true);
+            markBusy(true, "created");
             pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
           }
         },
@@ -254,14 +254,14 @@ export function useOutgoing(deps: OutgoingDeps) {
       if (!mountedRef.current) return;
       const cid = command.chatId ?? command.originChatId;
       const failed = reducerRef.current.failSend(cid, command.id, e instanceof Error ? e.message : String(e));
-      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); markBusy(false); }
+      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); markBusy(false, "send_failed"); }
       recoverOutgoing(command);
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
       setPendingSubmitId(cur => cur === command.id ? null : cur);
       sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
-      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) markBusy(false);
+      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) markBusy(false, "command_error");
       refreshOutgoing(n => n + 1);
     }
   };

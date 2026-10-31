@@ -199,6 +199,9 @@ pub enum WsServerMsg {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         logo_url: Option<String>,
+        /// The admin-controlled telemetry switch (absent on old servers).
+        #[serde(default)]
+        telemetry: bool,
     },
 }
 

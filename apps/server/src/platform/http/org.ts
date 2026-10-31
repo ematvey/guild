@@ -29,10 +29,25 @@ function rawBody(req: FastifyRequest): Buffer {
 export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, objects: ObjectStore): void {
   app.get("/api/v1/org", async (req, reply) => {
     const user = await requireUser(identity, req);
-    const org = await identity.orgs.get(user.org_id);
+    const [org, telemetry] = await Promise.all([
+      identity.orgs.get(user.org_id),
+      identity.orgKv.telemetryEnabled(user.org_id),
+    ]);
     return reply
       .status(200)
-      .send(sortedJson({ name: org.name, logo_url: org.logo_url }));
+      .send(sortedJson({ name: org.name, logo_url: org.logo_url, telemetry }));
+  });
+
+  // The workspace telemetry switch: admin-only, on by default. Members see
+  // the value on the workspace-identity frame and have no local control.
+  app.put("/api/v1/org/telemetry", async (req, reply) => {
+    const user = await requireUser(identity, req);
+    requireAdminRole(user);
+    const body = requireJsonBody(req);
+    const enabled = body["enabled"];
+    if (typeof enabled !== "boolean") throw ApiError.badRequest('missing "enabled" boolean');
+    await identity.orgKv.setTelemetryEnabled(user.org_id, enabled);
+    return reply.status(200).send(sortedJson({ ok: true, telemetry: enabled }));
   });
 
   app.put("/api/v1/org", async (req, reply) => {

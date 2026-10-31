@@ -226,11 +226,13 @@
   },
   {
     "type": "workspace_identity",
-    "name": "Guild"
+    "name": "Guild",
+    "telemetry": true
   },
   {
     "type": "workspace_identity",
     "name": "Guild",
-    "logo_url": "https://example.com/logo.png"
+    "logo_url": "https://example.com/logo.png",
+    "telemetry": true
   }
 ]

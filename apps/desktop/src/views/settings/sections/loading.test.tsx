@@ -19,9 +19,9 @@ vi.mock("../../../lib/api/approvals", () => ({
   setApprovalPolicyPrompt: vi.fn(),
 }));
 vi.mock("../../../lib/telemetry", () => ({
-  telemetryEnabled: () => false,
-  setTelemetryEnabled: vi.fn(),
-  startTelemetry: vi.fn(),
+  traceEvent: vi.fn(),
+  applyTelemetrySetting: vi.fn(),
+  telemetryEnabled: () => true,
 }));
 
 describe("first paint before settings requests resolve", () => {

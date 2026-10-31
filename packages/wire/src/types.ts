@@ -146,7 +146,7 @@ export type ServerFrame =
       archived_projects: Project[];
     }
   | { type: "machine_list"; machines: MachineInfo[] }
-  | { type: "workspace_identity"; name: string; logo_url?: string };
+  | { type: "workspace_identity"; name: string; logo_url?: string; telemetry: boolean };
 
 /** Client → server. */
 export type ClientFrame =
