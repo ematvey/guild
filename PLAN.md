@@ -12,6 +12,13 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A thread always gets a name (2026-10-30).** The title call ran with a
+  256-token cap, and a reasoning route can spend that whole budget thinking
+  before it writes a word: the reply arrived empty with `finish_reason:
+  length`, and the thread stayed "New thread" with no error logged. The cap
+  is now 1024, and an empty or unusable reply falls back to the head of the
+  user's first message, so a thread is named even when the model is not.
+
 - **A chat message keeps its line breaks (2026-10-29).** Markdown in the
   thread, the compaction card, tool text and the agent message view now runs
   with `remark-breaks` (`CHAT_MD_PLUGINS` in `views/markdown.tsx`). CommonMark

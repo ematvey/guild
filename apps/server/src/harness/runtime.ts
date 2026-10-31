@@ -101,7 +101,7 @@ import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 import { composeAgentInstructions, type ThreadInstructionContext } from "./instructions.js";
-import { TITLE_SYSTEM, cleanGeneratedTitle } from "./title.js";
+import { TITLE_SYSTEM, resolveGeneratedTitle } from "./title.js";
 import { SharedPoolDatabase, applyChatMappingMigration } from "../chats/durable-mapping.js";
 
 /** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
@@ -1863,13 +1863,16 @@ export class GuildRuntime {
           { role: "user", content: `Name this conversation:\n\n${text.slice(0, 2_000)}`, timestamp: Date.now() },
         ],
       },
-      { maxTokens: 256, temperature: 0.3, reasoning: "minimal" },
+      // A reasoning route can spend the whole budget thinking before it
+      // writes the title; the cap is generous and the fallback names the
+      // thread when the reply is still empty.
+      { maxTokens: 1_024, temperature: 0.3, reasoning: "minimal" },
     );
     const raw = result.content
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join(" ");
-    const title = cleanGeneratedTitle(raw);
+    const title = resolveGeneratedTitle(raw, text);
     if (title === "") return;
     await this.chats.setGeneratedTitle(row.org_id, chatId, threadId, title);
   }

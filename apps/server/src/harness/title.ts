@@ -19,3 +19,11 @@ export function cleanGeneratedTitle(raw: string): string {
     .trim();
   return deriveTitleFromMessage(stripped);
 }
+
+/** The thread's name: the model's line, or — when the call yielded nothing
+ *  usable (a reasoning model that spent its whole budget thinking, or an
+ *  empty reply) — the head of the user's first message. */
+export function resolveGeneratedTitle(raw: string, firstMessage: string): string {
+  const generated = cleanGeneratedTitle(raw);
+  return generated !== "" ? generated : deriveTitleFromMessage(firstMessage);
+}
