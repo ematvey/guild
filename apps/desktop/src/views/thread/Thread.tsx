@@ -911,7 +911,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: RailTab) => {
-    if (tab === "agents" || tab === "activity") {
+    if (tab === "agents" || tab === "activity" || tab === "skills") {
       switchTab(tab);
       setOpen(false);
       return;
@@ -1044,7 +1044,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // back to the catalog). Every panel state derives from it; user actions
   // navigate through pushRoute, so the URL is always the truth.
   const skillsRoute =
-    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, HAS_ENGINE) : null;
+    paneLayout.mainPane === "skillsPage" && route.skills !== null
+      ? clampSkillsRoute(route.skills, HAS_ENGINE)
+      : null;
   // The Skills route's main pane IS the skills page — the whole column right
   // of the rail, no sidebar panel at all (the inlineSettings pattern). The
   // chat thread only comes back when another route is navigated to.

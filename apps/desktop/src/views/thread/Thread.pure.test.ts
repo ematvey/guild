@@ -1222,11 +1222,26 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
     }
   });
 
-  it("mobile keeps the chats-only drawer behavior unchanged", () => {
-    for (const tab of ["chats", "work", "settings"] as ChatRoute["tab"][]) {
-      expect(tabPaneLayout(route(tab), true).mainPane).toBe("chat");
-      expect(tabPaneLayout(route(tab), true).aside).toBe(false);
+  it("mobile shows the surface the URL names, with no aside", () => {
+    const cases: [ReturnType<typeof route>, string][] = [
+      [route("chats"), "chat"],
+      [route("work"), "chat"],
+      [route("settings"), "settingsPage"],
+      [route("chats", { view: "catalog", slug: null, editor: null }), "skillsPage"],
+      [route("chats", null, { view: "directory" }), "agentsPage"],
+      [route("chats", null, AGENTS_ACTIVITY), "agentsPage"],
+    ];
+    for (const [r, pane] of cases) {
+      expect(tabPaneLayout(r, true)).toEqual({ aside: false, mainPane: pane, expandsPanel: false });
     }
+    const byPath: [string, string][] = [
+      ["/skills", "skillsPage"],
+      ["/agents", "agentsPage"],
+      ["/activity", "agentsPage"],
+      ["/settings/general", "settingsPage"],
+      ["/chats", "chat"],
+    ];
+    for (const [path, pane] of byPath) expect([path, tabPaneLayout(parseChatRoute(path), true).mainPane]).toEqual([path, pane]);
   });
 });
 

@@ -256,14 +256,25 @@ export function pruneStopping(
  *  the chat thread — so picking one must not touch the persisted sidebar
  *  collapsed state either (leaving restores the sidebar exactly as it was).
  *  Every other tab keeps the resizable panel next to the chat, and a tab
- *  pick re-expands a collapsed panel. Mobile has no rail aside at all
- *  (chats-only drawer) and always shows the chat. */
+ *  pick re-expands a collapsed panel. Mobile has no aside (the rail and
+ *  panels live in the drawer); its main pane is the surface the URL names,
+ *  the same page as on desktop. */
 export type TabPane = "chat" | "skillsPage" | "agentsPage" | "settingsPage";
 export function tabPaneLayout(
   route: Pick<ChatRoute, "tab" | "skills" | "agents">,
   isMobile: boolean,
 ): { aside: boolean; mainPane: TabPane; expandsPanel: boolean } {
-  if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
+  if (isMobile) {
+    const mainPane: TabPane =
+      route.skills !== null
+        ? "skillsPage"
+        : route.agents !== null
+          ? "agentsPage"
+          : route.tab === "settings"
+            ? "settingsPage"
+            : "chat";
+    return { aside: false, mainPane, expandsPanel: false };
+  }
   if (route.skills !== null)
     return { aside: false, mainPane: "skillsPage", expandsPanel: false };
   if (route.agents !== null)
