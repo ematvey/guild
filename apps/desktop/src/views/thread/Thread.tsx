@@ -1023,6 +1023,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
         <SettingsSectionPane
           sectionId={settingsSection}
           email={email}
+          role={role}
           detail={route.settingsDetail}
           onDetailChange={openSettingsDetail}
           usage={route.usage}

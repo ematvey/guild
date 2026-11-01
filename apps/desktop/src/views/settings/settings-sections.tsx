@@ -2,8 +2,6 @@
 //! rail's Settings tab renders in the main column. User sections for
 //! everyone; org sections appear for admins.
 
-import { Skeleton } from "@guild/ui/components/skeleton";
-import { useEffect, useState } from "react";
 import {
   Bell,
   Bot,
@@ -20,7 +18,6 @@ import {
   UsersRound,
   Waypoints,
 } from "lucide-react";
-import { apiMe } from "../../lib/api/servers";
 import type { UsageQuery } from "./usage-route";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
@@ -101,6 +98,7 @@ export const SETTINGS_SECTIONS: SectionDef[] = [
 export function SettingsSectionPane({
   sectionId,
   email,
+  role,
   detail,
   onDetailChange,
   usage,
@@ -108,6 +106,8 @@ export function SettingsSectionPane({
 }: {
   sectionId: string;
   email: string;
+  /** The viewer's workspace role, as the session reported it. */
+  role: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
   usage: UsageQuery;
@@ -119,6 +119,7 @@ export function SettingsSectionPane({
     <SectionPane
       def={def}
       email={email}
+      role={role}
       detail={detail}
       onDetailChange={onDetailChange}
       usage={usage}
@@ -130,6 +131,7 @@ export function SettingsSectionPane({
 function SectionPane({
   def,
   email,
+  role,
   detail,
   onDetailChange,
   usage,
@@ -137,6 +139,7 @@ function SectionPane({
 }: {
   def: SectionDef;
   email: string;
+  role: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
   usage: UsageQuery;
@@ -147,6 +150,7 @@ function SectionPane({
       <SectionBody
         id={def.id}
         email={email}
+        role={role}
         detail={detail}
         onDetailChange={onDetailChange}
         usage={usage}
@@ -159,6 +163,7 @@ function SectionPane({
 function SectionBody({
   id,
   email,
+  role,
   detail,
   onDetailChange,
   usage,
@@ -166,6 +171,7 @@ function SectionBody({
 }: {
   id: SectionId;
   email: string;
+  role: string;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
   usage: UsageQuery;
@@ -175,7 +181,7 @@ function SectionBody({
     case "general":
       return <GeneralSection />;
     case "account":
-      return <AccountSection email={email} />;
+      return <AccountSection email={email} role={role} />;
     case "appearance":
       return <AppearanceSection />;
     case "notifications":
@@ -214,11 +220,7 @@ function SectionBody({
   }
 }
 
-function AccountSection({ email }: { email: string }) {
-  const [role, setRole] = useState<string | null>(null);
-  useEffect(() => {
-    apiMe().then((u) => setRole(u?.role ?? "member")).catch(() => setRole("member"));
-  }, []);
+function AccountSection({ email, role }: { email: string; role: string }) {
   return (
     <div className="space-y-5">
       <PageHeader
@@ -230,11 +232,11 @@ function AccountSection({ email }: { email: string }) {
           <p className="break-all text-sm">{email}</p>
         </FactCard>
         <FactCard label="Role">
-          <div className="text-sm capitalize">{role === null ? <Skeleton className="h-4 w-20" /> : role}</div>
+          <div className="text-sm capitalize">{role}</div>
         </FactCard>
       </FactGrid>
       <div className="text-sm text-muted-foreground">
-        {role === null ? <Skeleton className="h-3 w-64 max-w-full" /> : role === "admin"
+        {role === "admin"
           ? "You can configure the workspace: users, teams, models, integrations and registry."
           : "Ask a workspace admin for model or integration changes."}
       </div>
