@@ -6,7 +6,21 @@
 // The host question has a third answer below: a web page installed as an app
 // (Home Screen or Dock), which is the only copy on iOS that can get Web Push.
 
+/** The page runs inside the Tauri webview. Today that shell is the desktop
+ *  app, which has both a native shell and a local engine; code asks one of
+ *  the two questions below instead. */
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** A native shell hosts the page: the bundled UI is not served by the
+ *  server (HTTP goes to the paired server URL), and the shell owns window
+ *  chrome, global hotkeys, external links and notifications. True for the
+ *  desktop app and for an engine-less mobile app. */
+export const HAS_SHELL = IS_TAURI;
+
+/** A local engine runs beside the page: it has a machine identity, executes
+ *  tools, serves the local file system and holds the session. Only the
+ *  desktop app has one; a browser tab and the mobile app do not. */
+export const HAS_ENGINE = IS_TAURI;
 
 /** localStorage keys owned by this module. */
 export const SERVER_URL_KEY = "guild.serverUrl";
@@ -18,7 +32,7 @@ export const TOKEN_KEY = "guild_token";
 /// the paired server URL the shell stored (afterAuth writes it from
 /// session.info). Falls back to same-origin (""), e.g. pre-pairing.
 export function serverBase(): string {
-  if (IS_TAURI) {
+  if (HAS_SHELL) {
     try {
       return (localStorage.getItem(SERVER_URL_KEY) ?? "").replace(/\/$/, "");
     } catch {
@@ -147,7 +161,7 @@ export function clearToken(): void {
 
 
 // ---- which host is this page -------------------------------------------------
-// The same question `IS_TAURI` answers, one level deeper: a web page can run
+// The same question `HAS_SHELL` answers, one level deeper: a web page can run
 // as an installed app, and only the installed copy on iOS can receive Web
 // Push. The surface is injected so the tests need no DOM.
 

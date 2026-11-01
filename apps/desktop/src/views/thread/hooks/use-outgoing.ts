@@ -25,7 +25,7 @@ import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
 import type { Project } from "../../../lib/api/projects";
 import type { RoutePatch } from "../route";
-import { IS_TAURI } from "../../../lib/session";
+import { HAS_ENGINE } from "../../../lib/session";
 
 
 export interface OutgoingDeps {
@@ -294,7 +294,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       createProjectId: pickedProjectRef.current?.id ?? null,
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
-      prepareLocally: prepareOnSendingMachine(IS_TAURI, !!currentProject, executor ?? undefined, IS_TAURI ? machineId() : ""),
+      prepareLocally: prepareOnSendingMachine(HAS_ENGINE, !!currentProject, executor ?? undefined, HAS_ENGINE ? machineId() : ""),
       sendMode: busy ? (mode === "steer" ? "steer" : "queue") : undefined,
       attachments: pendingRef.current,
     });

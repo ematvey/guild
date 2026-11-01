@@ -65,7 +65,7 @@ import { WorkedForBlock, viewEntries } from "../worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../lib/sidebar-width";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../../lib/chat-width";
 import { readDraft, writeDraft } from "../../lib/drafts";
-import { IS_TAURI } from "../../lib/session";
+import { HAS_ENGINE, HAS_SHELL } from "../../lib/session";
 import { apiUrl } from "../../lib/session";
 import { bindChatAgent, chatAgentBinding } from "../../lib/api/chats";
 import { listModels, type ModelOption } from "../../lib/api/models";
@@ -309,7 +309,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const outgoingScope = `${apiUrl("")}\n${email}`;
   // This client's own engine: its machine runs its own tools, so it is never
   // a remote machine with presence to show.
-  const localMachineId = IS_TAURI ? machineId() : undefined;
+  const localMachineId = HAS_ENGINE ? machineId() : undefined;
   const {
     pendingSubmitId, steeringMessage, settleOutgoing, deliverOutgoing, send,
     steerChip, withdrawChip, requestStop,
@@ -700,7 +700,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       if (e.code === "KeyB" && !e.altKey) {
         e.preventDefault();
         setCollapsed((c) => !c);
-      } else if (e.code === "KeyN" && (IS_TAURI ? true : e.altKey)) {
+      } else if (e.code === "KeyN" && (HAS_SHELL ? true : e.altKey)) {
         e.preventDefault();
         newChatRef.current();
       }
@@ -1207,7 +1207,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // back to the catalog). Every panel state derives from it; user actions
   // navigate through pushRoute, so the URL is always the truth.
   const skillsRoute =
-    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, IS_TAURI) : null;
+    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, HAS_ENGINE) : null;
   // The Skills route's main pane IS the skills page — the whole column right
   // of the rail, no sidebar panel at all (the inlineSettings pattern). The
   // chat thread only comes back when another route is navigated to.

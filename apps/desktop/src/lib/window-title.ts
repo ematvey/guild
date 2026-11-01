@@ -2,7 +2,7 @@
 // the workspace identity on connect and on every rename, so the title is
 // server state, never a fetch or a poll.
 
-import { IS_TAURI } from "./session";
+import { HAS_SHELL } from "./session";
 
 /** The title when the workspace has no name yet (sign-in, first paint). */
 export const APP_TITLE = "Guild";
@@ -19,7 +19,7 @@ export function windowTitle(name: string | null | undefined): string {
 export function applyWindowTitle(name: string | null | undefined): void {
   const title = windowTitle(name);
   if (typeof document !== "undefined") document.title = title;
-  if (!IS_TAURI) return;
+  if (!HAS_SHELL) return;
   void import("@tauri-apps/api/window")
     .then(({ getCurrentWindow }) => getCurrentWindow().setTitle(title))
     .catch(() => {});

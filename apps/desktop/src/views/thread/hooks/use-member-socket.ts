@@ -13,7 +13,7 @@ import type { ThreadState } from "../../../lib/thread-events";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { statusAfterGenerating, statusFromThreads, type ChatStatus } from "../status";
 import type { ThreadViewStore } from "../thread-view-store";
-import { IS_TAURI } from "../../../lib/session";
+import { HAS_ENGINE } from "../../../lib/session";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 
@@ -49,7 +49,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
   useEffect(() => {
-    if (!IS_TAURI) return;
+    if (!HAS_ENGINE) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void watchMachinePresence(presence => {
@@ -161,7 +161,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
-    if (IS_TAURI) void setMachineIdentity(machineId()).catch(() => {});
+    if (HAS_ENGINE) void setMachineIdentity(machineId()).catch(() => {});
     const connection = startSocket({
       onConnect: () => {
         syncingChatsRef.current.clear();

@@ -11,7 +11,7 @@ import {
 } from "@guild/ui/components/dialog";
 import { apiOnboarded } from "../../lib/api/servers";
 import { machineId } from "../../lib/machine-rpc";
-import { IS_TAURI, installState, installSurface, type InstallState } from "../../lib/session";
+import { HAS_ENGINE, installState, installSurface, type InstallState } from "../../lib/session";
 import type { MachineInfo } from "../../lib/api/machines";
 import type { Project } from "../../lib/api/projects";
 import { DeviceSetupDialog } from "../device-setup";
@@ -134,7 +134,7 @@ export function ThreadOverlays({
         onOpenChange={onCloseCreateProject}
         machines={machines}
         localMachineId={machineId()}
-        isTauri={IS_TAURI}
+        isTauri={HAS_ENGINE}
         projects={projects}
       />
     </>

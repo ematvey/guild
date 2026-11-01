@@ -6,7 +6,7 @@
 // and the desktop client is already open when it matters.
 
 import { getPushConfig, postPushSubscribe, postPushUnsubscribe, postPushTest } from "./api/settings";
-import { IS_TAURI } from "./session";
+import { HAS_SHELL } from "./session";
 
 /** Why a device cannot receive notifications, or null when it can. */
 export type PushBlocker = "desktop" | "unsupported" | "insecure" | "ios-not-installed";
@@ -20,12 +20,12 @@ const DEVICE_KEY = "guild.push.device_id";
  *  outlive a reload — a push subscription dies with it — and an installed
  *  app needs it for installability and offline launches. */
 export function ensureServiceWorker(): void {
-  if (IS_TAURI || !("serviceWorker" in navigator)) return;
+  if (HAS_SHELL || !("serviceWorker" in navigator)) return;
   void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
 }
 
 export function pushBlocker(): PushBlocker | null {
-  if (IS_TAURI) return "desktop";
+  if (HAS_SHELL) return "desktop";
   if (typeof window === "undefined") return "unsupported";
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "unsupported";
   // A push service needs a secure origin; localhost is the one exception.

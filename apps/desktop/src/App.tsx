@@ -8,7 +8,7 @@ import { InstallPrompt } from "./views/onboarding";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
-import { IS_TAURI, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
+import { HAS_ENGINE, HAS_SHELL, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
@@ -266,7 +266,7 @@ function DesktopApp() {
     // restore/refresh path — but a failure here means the machine never
     // registers and project creation fails with "unknown machine", so it
     // must be visible, never swallowed.
-    if (IS_TAURI) {
+    if (HAS_ENGINE) {
       try {
         await rpcCall("machine.identify", { machine_id: machineId() }, 10_000);
       } catch {
@@ -487,7 +487,7 @@ function AppInner() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (IS_TAURI) {
+    if (HAS_ENGINE) {
       // desktop mode: engine-side login happens on submit; nothing to
       // restore here (the engine session is in-memory).
       setReady(true);
@@ -515,7 +515,7 @@ function AppInner() {
   if (!ready)
     return <BootBackground />;
 
-  if (!IS_TAURI) {
+  if (!HAS_ENGINE) {
     const signOut = async () => {
       await apiLogout();
       clearToken();
@@ -555,7 +555,7 @@ export default function App() {
       <AppInner />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
-      {!IS_TAURI && <InstallPrompt />}
+      {!HAS_SHELL && <InstallPrompt />}
       <ThemedToaster />
     </ThemeProvider>
   );

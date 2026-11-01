@@ -32,7 +32,7 @@ import { rpcCall } from "../../../lib/machine-rpc";
 import { apiUrl } from "../../../lib/session";
 import { BUILTIN_COMMANDS, composerSkills, mentionCandidates, type ComposerSkill } from "../mentions";
 import { modalityOf } from "../attachments";
-import { IS_TAURI } from "../../../lib/session";
+import { HAS_ENGINE } from "../../../lib/session";
 
 
 export function useComposer({
@@ -122,7 +122,7 @@ export function useComposer({
     // local rows exist only on Tauri (the fs bridge); org installs come
     // from the server in both modes — uninstalled org skills are never
     // fetched, so they can never be mentioned.
-    const fs = IS_TAURI ? daemonFs(rpcCall) : null;
+    const fs = HAS_ENGINE ? daemonFs(rpcCall) : null;
     const local = fs
       ? fs.scopes().then((scopes) => listSkills(fs, scopes)).catch(() => null)
       : Promise.resolve(null);

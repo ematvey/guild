@@ -7,7 +7,7 @@
 //! The SDK is dynamically imported so the chat bundle pays for it only while
 //! the switch is on.
 
-import { IS_TAURI, serverBase } from "./session";
+import { HAS_SHELL, serverBase } from "./session";
 
 const COLLECT_PATH = "/faro/collect";
 
@@ -69,8 +69,8 @@ export async function startTelemetry(): Promise<void> {
   if (!enabled || faro) return;
   // Web mode: same-origin, resolvable immediately. Tauri: needs the paired
   // server URL (stored at afterAuth) — pre-pairing there is no target.
-  const base = IS_TAURI ? serverBase() : "";
-  if (IS_TAURI && !base) return;
+  const base = HAS_SHELL ? serverBase() : "";
+  if (HAS_SHELL && !base) return;
   try {
     const { initializeFaro } = await import("@grafana/faro-web-sdk");
     if (faro) return;
