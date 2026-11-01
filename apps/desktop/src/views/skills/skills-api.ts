@@ -1,11 +1,12 @@
-// Skills API for the Skills panel: the catalog (GET /api/v1/skills), the
-// detail payload (GET /api/v1/skills/:slug), and the action endpoints
-// (install/uninstall/pin/gate/unpublish/fork). Reads resolve to null on
-// failure (the views show their empty state); actions never throw — they
-// return an ok/message result the panel surfaces as a toast. Transport and
-// error envelope come from lib/api/request.
+// Skills API for the Skills panel: the detail payload (GET
+// /api/v1/skills/:slug), the source, the activity feed and the action
+// endpoints (install/uninstall/pin/gate/unpublish/fork/save). The catalog
+// and the caller's installs are pushed on the member socket
+// (views/skills/skills-store.ts). Every call follows lib/api/request's
+// contract: it resolves with the server's value or throws an ApiError
+// carrying the server's message; each view decides what a failure shows.
 
-import { ApiError, request } from "../../lib/api/request";
+import { request } from "../../lib/api/request";
 
 export interface SkillOwner {
   kind: "user" | "team";
@@ -83,82 +84,62 @@ export interface SkillActivityEvent {
 
 export type SkillActivityFilter = "all" | "changes";
 
-/** GET /api/v1/skills/activity?filter=…; null on any failure (the feed
- *  shows its empty state). */
-export async function skillsActivity(
-  filter: SkillActivityFilter = "all",
-): Promise<SkillActivityEvent[] | null> {
-  return orNull(
-    request<{ events: SkillActivityEvent[] }>("GET", `/api/v1/skills/activity?filter=${filter}`),
-  ).then((v) => v?.events ?? null);
-}
-
-/** A read's value, or null when it failed. */
-function orNull<T>(pending: Promise<T>): Promise<T | null> {
-  return pending.catch(() => null);
+/** GET /api/v1/skills/activity?filter=… — the feed's first page. */
+export async function skillsActivity(filter: SkillActivityFilter = "all"): Promise<SkillActivityEvent[]> {
+  const body = await request<{ events: SkillActivityEvent[] }>("GET", `/api/v1/skills/activity?filter=${filter}`);
+  return body.events;
 }
 
 /** GET /api/v1/skills/installs — the signed-in user's org installs (one
- *  row per installed skill, with its pinned version). Null on any failure
- *  (the local tab shows no org-installs list). */
-export async function fetchInstalls(): Promise<SkillInstall[] | null> {
-  return orNull(request<{ installs: SkillInstall[] }>("GET", "/api/v1/skills/installs")).then(
-    (v) => v?.installs ?? null,
-  );
+ *  row per installed skill, with its pinned version). The turn's context
+ *  assembly reads it outside the socket's reach. */
+export async function fetchInstalls(): Promise<SkillInstall[]> {
+  return (await request<{ installs: SkillInstall[] }>("GET", "/api/v1/skills/installs")).installs;
 }
 
-export type SkillActionResult =
-  | { ok: true; slug?: string; install?: SkillInstall }
-  | { ok: false; message: string };
-
-/** The org skill catalog; null on any failure (the panel shows its empty
- *  state). `q` narrows server-side; the panel filters client-side too. */
-export async function skillsList(q?: string): Promise<SkillItem[] | null> {
-  const path = q === undefined ? "/api/v1/skills" : `/api/v1/skills?q=${encodeURIComponent(q)}`;
-  return orNull(request<{ items: SkillItem[] }>("GET", path)).then((v) => v?.items ?? null);
+/** What an action answers: the saved slug and the caller's install, when
+ *  the endpoint returns them. */
+export interface SkillActionReply {
+  slug?: string;
+  install?: SkillInstall;
 }
 
-/** GET /api/v1/skills/:slug; null when the skill does not exist (or the
- *  request fails — the detail page shows its not-found state). */
-export async function skillsDetail(slug: string): Promise<SkillDetail | null> {
-  return orNull(request<SkillDetail>("GET", slugPath(slug)));
+/** GET /api/v1/skills/:slug; an ApiError with status 404 when the skill
+ *  does not exist. */
+export async function skillsDetail(slug: string): Promise<SkillDetail> {
+  return request<SkillDetail>("GET", slugPath(slug));
 }
 
-/** Runs one action; a failure carries the server's message. */
-async function send(method: string, path: string, body?: unknown): Promise<SkillActionResult> {
-  try {
-    const v = (await request<{ slug?: unknown; install?: SkillInstall } | undefined>(method, path, body)) ?? {};
-    return {
-      ok: true,
-      slug: typeof v.slug === "string" ? v.slug : undefined,
-      install: v.install ?? undefined,
-    };
-  } catch (error) {
-    return { ok: false, message: error instanceof ApiError || error instanceof Error ? error.message : String(error) };
-  }
+/** Runs one action; a refusal throws the server's ApiError. */
+async function send(method: string, path: string, body?: unknown): Promise<SkillActionReply> {
+  const v = (await request<{ slug?: unknown; install?: SkillInstall } | undefined>(method, path, body)) ?? {};
+  return {
+    ...(typeof v.slug === "string" ? { slug: v.slug } : {}),
+    ...(v.install !== undefined ? { install: v.install } : {}),
+  };
 }
 
 function slugPath(slug: string, suffix = ""): string {
   return `/api/v1/skills/${encodeURIComponent(slug)}${suffix}`;
 }
 
-export function skillsInstall(slug: string, version?: string): Promise<SkillActionResult> {
+export function skillsInstall(slug: string, version?: string): Promise<SkillActionReply> {
   return send("POST", slugPath(slug, "/install"), version === undefined ? {} : { version });
 }
 
-export function skillsUninstall(slug: string): Promise<SkillActionResult> {
+export function skillsUninstall(slug: string): Promise<SkillActionReply> {
   return send("DELETE", slugPath(slug, "/install"));
 }
 
-export function skillsPin(slug: string, version: string): Promise<SkillActionResult> {
+export function skillsPin(slug: string, version: string): Promise<SkillActionReply> {
   return send("POST", slugPath(slug, "/pin"), { version });
 }
 
-export function skillsGate(slug: string, enabled: boolean): Promise<SkillActionResult> {
+export function skillsGate(slug: string, enabled: boolean): Promise<SkillActionReply> {
   return send("POST", slugPath(slug, "/gate"), { enabled });
 }
 
-export function skillsUnpublish(slug: string): Promise<SkillActionResult> {
+export function skillsUnpublish(slug: string): Promise<SkillActionReply> {
   return send("POST", slugPath(slug, "/unpublish"));
 }
 
@@ -169,11 +150,9 @@ export interface EditorTeam {
 }
 
 /** The caller's team memberships (GET /api/v1/skills/teams) — one option
- *  per membership in the owner selector. Null on any failure (the selector
- *  degrades to Me only). */
-export async function myTeams(): Promise<EditorTeam[] | null> {
-  const v = await orNull(request<{ teams: EditorTeam[] }>("GET", "/api/v1/skills/teams"));
-  return v === null ? null : v.teams;
+ *  per membership in the owner selector. */
+export async function myTeams(): Promise<EditorTeam[]> {
+  return (await request<{ teams: EditorTeam[] }>("GET", "/api/v1/skills/teams")).teams;
 }
 
 /** One extra bundle file in a version's source manifest: path, size, sha and
@@ -193,13 +172,11 @@ export interface SkillSourceFile {
 export async function skillsSource(
   slug: string,
   version?: string,
-): Promise<{ version: string; skill_md: string; files: SkillSourceFile[] } | null> {
+): Promise<{ version: string; skill_md: string; files: SkillSourceFile[] }> {
   const suffix = version === undefined ? "" : `?version=${encodeURIComponent(version)}`;
-  return orNull(
-    request<{ version: string; skill_md: string; files: SkillSourceFile[] }>(
-      "GET",
-      slugPath(slug, `/source${suffix}`),
-    ),
+  return request<{ version: string; skill_md: string; files: SkillSourceFile[] }>(
+    "GET",
+    slugPath(slug, `/source${suffix}`),
   );
 }
 
@@ -228,7 +205,7 @@ export interface SkillSaveRequest {
 }
 
 /** Executes the editor's save request against the skills API. */
-export function skillsSave(req: SkillSaveRequest): Promise<SkillActionResult> {
+export function skillsSave(req: SkillSaveRequest): Promise<SkillActionReply> {
   return send(req.method, req.path, req.body);
 }
 
@@ -239,6 +216,6 @@ export function skillsFork(payload: {
   slug: string;
   forked_from: string;
   from_version?: string;
-}): Promise<SkillActionResult> {
+}): Promise<SkillActionReply> {
   return send("POST", "/api/v1/skills", payload);
 }

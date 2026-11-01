@@ -27,7 +27,7 @@ import {
   skillsSource,
   skillsUninstall,
   skillsUnpublish,
-  type SkillActionResult,
+  type SkillActionReply,
   type SkillDetail as SkillDetailData,
   type SkillMe,
   type SkillSourceFile,
@@ -256,12 +256,19 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
 
   useEffect(() => {
     let live = true;
-    skillsDetail(slug).then((d) => {
-      if (live) {
-        setLoadFailed(d === null);
+    skillsDetail(slug).then(
+      (d) => {
+        if (!live) return;
+        setLoadFailed(false);
         setDetail(d);
-      }
-    });
+      },
+      // A missing skill and an unreachable server both show not-found.
+      () => {
+        if (!live) return;
+        setLoadFailed(true);
+        setDetail(null);
+      },
+    );
     return () => {
       live = false;
     };
@@ -287,15 +294,16 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   const refetch = useCallback(() => setTick((t) => t + 1), []);
 
   const run = useCallback(
-    async (action: () => Promise<SkillActionResult>, okMsg: string, after?: () => void) => {
+    async (action: () => Promise<SkillActionReply>, okMsg: string, after?: () => void) => {
       setBusy(true);
-      const res = await action();
-      setBusy(false);
-      if (res.ok) {
+      try {
+        await action();
         toast.success(okMsg);
         after?.();
-      } else {
-        toast.error("Skill action failed", { description: res.message });
+      } catch (error) {
+        toast.error("Skill action failed", { description: error instanceof Error ? error.message : String(error) });
+      } finally {
+        setBusy(false);
       }
       refetch();
     },

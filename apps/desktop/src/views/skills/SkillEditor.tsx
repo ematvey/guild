@@ -253,25 +253,32 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   useEffect(() => {
     let live = true;
     if (mode === "create") {
-      myTeams().then((t) => {
-        if (live) setTeams(t ?? []);
-      });
+      myTeams().then(
+        (t) => {
+          if (live) setTeams(t);
+        },
+        // The owner selector degrades to Me only.
+        () => {
+          if (live) setTeams([]);
+        },
+      );
       return () => {
         live = false;
       };
     }
     void (async () => {
-      const detail = await skillsDetail(slug ?? "");
       // The source request pins the version explicitly so the seeded files
       // and the review diff both run against the latest published content
       // (a pinned install must not silently select an older version).
-      const source =
-        detail === null ? null : await skillsSource(slug ?? "", detail.latest_version ?? undefined);
+      const loaded = await skillsDetail(slug ?? "")
+        .then(async (detail) => ({ detail, source: await skillsSource(slug ?? "", detail.latest_version ?? undefined) }))
+        .catch(() => null);
       if (!live) return;
-      if (detail === null || source === null) {
+      if (loaded === null) {
         setLoadFailed(true);
         return;
       }
+      const { detail, source } = loaded;
       const files = source.files
         .filter((f) => f.path !== "SKILL.md" && f.path !== "manifest.json" && f.content !== null)
         .map((f) => ({ path: f.path, content: f.content as string }));
@@ -386,14 +393,15 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   // the review dialog, and the dialog's approve action calls this.
   const publish = async () => {
     setBusy(true);
-    const res = await skillsSave(saveRequest(mode, form));
-    setBusy(false);
-    if (res.ok) {
+    try {
+      const res = await skillsSave(saveRequest(mode, form));
       toast.success(res.slug !== undefined ? `Published ${res.slug}` : "Skill published");
       setReviewOpen(false);
       onSaved(res.slug ?? form.slug);
-    } else {
-      toast.error("Skill publish failed", { description: res.message });
+    } catch (error) {
+      toast.error("Skill publish failed", { description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(false);
     }
   };
 

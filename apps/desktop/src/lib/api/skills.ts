@@ -10,8 +10,9 @@ import { fetchInstalls, skillsSource } from "../../views/skills/skills-api";
 
 function orgSkillsApi(): OrgSkillsApi {
   return {
+    // The context assembly reads a failed request as "no org skills".
     installs: async () => {
-      const rows = await fetchInstalls();
+      const rows = await fetchInstalls().catch(() => null);
       if (rows === null) return null;
       return rows.map((row) => ({
         slug: row.slug,
@@ -19,7 +20,7 @@ function orgSkillsApi(): OrgSkillsApi {
       }));
     },
     skillBody: async (slug, version) => {
-      const source = await skillsSource(slug, version);
+      const source = await skillsSource(slug, version).catch(() => null);
       return source?.skill_md ?? null;
     },
   };

@@ -1,8 +1,9 @@
 // Tests for the skills API's `send()` helper: a caller that passes its own
 // headers (the JSON-bodied actions set content-type) must not lose the
 // Authorization header. Mocks global fetch to capture the URL + init it
-// receives. Also covers the editor's save target (POST create / PUT edit)
-// and the teams list the owner selector uses.
+// receives. Also covers the editor's save target (POST create / PUT edit),
+// the teams list the owner selector uses, and the error contract: a refusal
+// throws the server's ApiError.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +14,7 @@ import {
   skillsUninstall,
 } from "./skills-api";
 import { formatVersion } from "./version";
+import { ApiError } from "../../lib/api/request";
 
 const token = "test-token-123";
 
@@ -46,8 +48,7 @@ function captureFetch(): { urls: string[]; inits: RequestInit[] } {
 describe("send() header merge", () => {
   it("keeps Authorization when the caller passes content-type (install)", async () => {
     const { inits } = captureFetch();
-    const res = await skillsInstall("code-review", "v3");
-    expect(res.ok).toBe(true);
+    await skillsInstall("code-review", "v3");
     const headers = new Headers(inits[0]?.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${token}`);
     expect(headers.get("content-type")).toBe("application/json");
@@ -72,8 +73,7 @@ describe("skillsSave (the editor's save target)", () => {
   it("create mode POSTs the payload to /api/v1/skills", async () => {
     const { urls, inits } = captureFetch();
     const payload = { slug: "code-review", description: "d", body: "# hi" };
-    const res = await skillsSave({ method: "POST", path: "/api/v1/skills", body: payload });
-    expect(res.ok).toBe(true);
+    await skillsSave({ method: "POST", path: "/api/v1/skills", body: payload });
     expect(urls[0]).toContain("/api/v1/skills");
     expect(inits[0]?.method).toBe("POST");
     expect(inits[0]?.body).toBe(JSON.stringify(payload));
@@ -82,14 +82,13 @@ describe("skillsSave (the editor's save target)", () => {
   it("edit mode PUTs the payload to /api/v1/skills/:slug", async () => {
     const { urls, inits } = captureFetch();
     const payload = { description: "d", body: "# hi" };
-    const res = await skillsSave({ method: "PUT", path: "/api/v1/skills/code-review", body: payload });
-    expect(res.ok).toBe(true);
+    await skillsSave({ method: "PUT", path: "/api/v1/skills/code-review", body: payload });
     expect(urls[0]).toContain("/api/v1/skills/code-review");
     expect(inits[0]?.method).toBe("PUT");
     expect(inits[0]?.body).toBe(JSON.stringify(payload));
   });
 
-  it("surfaces a 409 slug_taken as ok:false with the server message", async () => {
+  it("throws a 409 slug_taken as an ApiError with the server message", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -99,12 +98,13 @@ describe("skillsSave (the editor's save target)", () => {
         }),
       ),
     );
-    const res = await skillsSave({
+    const error = await skillsSave({
       method: "POST",
       path: "/api/v1/skills",
       body: { slug: "taken", description: "", body: "" },
-    });
-    expect(res).toEqual({ ok: false, message: "a skill with this slug already exists" });
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 409, code: "slug_taken", message: "a skill with this slug already exists" });
   });
 });
 
@@ -125,12 +125,12 @@ describe("myTeams (the owner selector's team list)", () => {
     expect(urls[0]).toContain("/api/v1/skills/teams");
   });
 
-  it("returns null on failure", async () => {
+  it("throws an ApiError on failure", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
     );
-    expect(await myTeams()).toBeNull();
+    await expect(myTeams()).rejects.toBeInstanceOf(ApiError);
   });
 });
 

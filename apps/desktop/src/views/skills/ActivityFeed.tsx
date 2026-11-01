@@ -173,12 +173,15 @@ export function ActivityFeed() {
   useEffect(() => {
     let live = true;
     setSettled(false);
-    skillsActivity(filter).then((result) => {
-      if (live) {
-        setEvents(result);
-        setSettled(true);
-      }
-    });
+    skillsActivity(filter)
+      // An unreachable feed shows its empty state.
+      .catch(() => [])
+      .then((result) => {
+        if (live) {
+          setEvents(result);
+          setSettled(true);
+        }
+      });
     return () => {
       live = false;
     };

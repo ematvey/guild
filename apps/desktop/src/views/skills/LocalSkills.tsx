@@ -104,9 +104,9 @@ export async function uninstallSkill(
   rpc: (method: string, params: any, timeoutMs?: number) => Promise<any>,
   localGlobal: boolean,
 ): Promise<void> {
-  const res = await skillsUninstall(slug);
+  const removed = await skillsUninstall(slug).then(() => true, () => false);
   const projectDir = (await resolveProjectDir()) ?? undefined;
-  if (!res.ok) {
+  if (!removed) {
     await rpc("registry.uninstall", { slug, global: localGlobal, project_dir: projectDir });
     return;
   }
