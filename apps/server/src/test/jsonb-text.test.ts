@@ -30,7 +30,7 @@ describe("jsonbText", () => {
 });
 
 const ADMIN_URL =
-  process.env.GUILD_M1_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
+  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
 
 function suffix(): string {
   const bytes = new Uint8Array(6);

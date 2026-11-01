@@ -23,10 +23,10 @@ const REPO_ROOT = path.resolve(process.cwd(), "../..");
 export const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
 
 export const TEST_ADMIN_URL =
-  process.env.GUILD_M1_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
-export const TEST_S3_URL = process.env.GUILD_M1_TEST_S3_URL ?? "http://localhost:9950";
-export const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_M1_TEST_S3_ACCESS_KEY_ID");
-export const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_M1_TEST_S3_SECRET_ACCESS_KEY");
+  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
+export const TEST_S3_URL = process.env.GUILD_TEST_S3_URL ?? "http://localhost:9950";
+export const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_TEST_S3_ACCESS_KEY_ID");
+export const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_TEST_S3_SECRET_ACCESS_KEY");
 export const TEST_CLICKHOUSE_USER = testClickhouseUser();
 export const TEST_CLICKHOUSE_PASSWORD = testClickhousePassword();
 

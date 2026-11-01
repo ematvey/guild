@@ -21,10 +21,10 @@ import {
 } from "./harness.js";
 
 const TEST_CLICKHOUSE_URL =
-  process.env.GUILD_M2_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
-const TEST_CLICKHOUSE_USER = process.env.GUILD_M2_TEST_CLICKHOUSE_USER ?? "ch_user";
+  process.env.GUILD_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
+const TEST_CLICKHOUSE_USER = process.env.GUILD_TEST_CLICKHOUSE_USER ?? "ch_user";
 const TEST_CLICKHOUSE_PASSWORD =
-  process.env.GUILD_M2_TEST_CLICKHOUSE_PASSWORD ?? "ch_test_pass";
+  process.env.GUILD_TEST_CLICKHOUSE_PASSWORD ?? "ch_test_pass";
 
 function randomSuffix(): string {
   const bytes = new Uint8Array(6);

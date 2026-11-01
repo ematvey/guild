@@ -22,10 +22,10 @@ import { loadConfig } from "../../config.js";
 import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { testClickhousePassword, testClickhouseUser, testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
 
-const TEST_ADMIN_URL = process.env.GUILD_M6_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
-const TEST_S3_URL = process.env.GUILD_M6_TEST_S3_URL ?? "http://localhost:9950";
-const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_M6_TEST_S3_ACCESS_KEY_ID");
-const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_M6_TEST_S3_SECRET_ACCESS_KEY");
+const TEST_ADMIN_URL = process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
+const TEST_S3_URL = process.env.GUILD_TEST_S3_URL ?? "http://localhost:9950";
+const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_TEST_S3_ACCESS_KEY_ID");
+const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_TEST_S3_SECRET_ACCESS_KEY");
 const TEST_CLICKHOUSE_USER = testClickhouseUser();
 const TEST_CLICKHOUSE_PASSWORD = testClickhousePassword();
 
