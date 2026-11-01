@@ -224,7 +224,8 @@ pub enum WsServerMsg {
         agents: Vec<serde_json::Value>,
     },
     /// One run, created or changed, for every member who may see its agent.
-    /// Daemons tag-peek and ignore it.
+    /// A finished run carries its `call_count` and `tool_count`. Daemons
+    /// tag-peek and ignore it.
     AgentRun {
         run: serde_json::Value,
     },

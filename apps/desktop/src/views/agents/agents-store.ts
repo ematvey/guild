@@ -128,13 +128,16 @@ export function traceWithRun(trace: TraceRow, run: AgentRun): TraceRow {
   }
   const known = trace.tokens_in + trace.tokens_out;
   if (typeof run.tokens === "number" && run.tokens > known) next.tokens_in = trace.tokens_in + (run.tokens - known);
+  // A finished run's frame counts its calls; a count never moves backwards.
+  if (typeof run.call_count === "number" && run.call_count > trace.call_count) next.call_count = run.call_count;
+  if (typeof run.tool_count === "number" && run.tool_count > trace.tool_count) next.tool_count = run.tool_count;
   return next;
 }
 
 /** The activity summary moved by one trace row's change: `before` is the
  *  row as it was (undefined for a run new to the window). A new row counts
- *  as a trace, a move into "failed" as a failed trace, and token growth adds
- *  to the totals. */
+ *  as a trace, a move into "failed" as a failed trace, and token and call
+ *  growth adds to the totals. */
 export function summaryWithTrace(
   summary: ActivitySummary,
   before: TraceRow | undefined,
@@ -146,6 +149,7 @@ export function summaryWithTrace(
   totals.tokens_in += after.tokens_in - (before?.tokens_in ?? 0);
   totals.tokens_out += after.tokens_out - (before?.tokens_out ?? 0);
   totals.calls += after.call_count - (before?.call_count ?? 0);
+  totals.tool_calls += after.tool_count - (before?.tool_count ?? 0);
   return { ...summary, totals };
 }
 

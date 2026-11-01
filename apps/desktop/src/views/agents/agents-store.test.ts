@@ -113,4 +113,29 @@ describe("agents store", () => {
     const failed = summaryWithTrace(summary, undefined, traceFromRun({ ...done, status: "failed" })).totals;
     expect(failed).toMatchObject({ traces: 5, failed_traces: 1, tokens_in: 1500 });
   });
+
+  it("takes a finished run's call and tool counts and never lowers them", () => {
+    const running = { ...run("r1", "running", "2026-11-01T00:00:00Z"), started_at: "2026-11-01T00:00:00Z" };
+    const row = traceFromRun(running);
+    expect(row).toMatchObject({ call_count: 0, tool_count: 0 });
+    const done = {
+      ...running, status: "succeeded" as const, finished_at: "2026-11-01T00:00:02Z", call_count: 3, tool_count: 1,
+    };
+    const moved = traceWithRun(row, done);
+    expect(moved).toMatchObject({ call_count: 3, tool_count: 1 });
+    expect(traceFromRun(done)).toMatchObject({ call_count: 3, tool_count: 1 });
+    // A frame without counts, or with older ones, keeps what the row holds.
+    expect(traceWithRun(moved, { ...done, call_count: undefined, tool_count: undefined }))
+      .toMatchObject({ call_count: 3, tool_count: 1 });
+    expect(traceWithRun({ ...moved, call_count: 5 }, done)).toMatchObject({ call_count: 5, tool_count: 1 });
+
+    const summary = {
+      totals: {
+        traces: 1, failed_traces: 0, calls: 0, tool_calls: 0, errors: 0, tokens_in: 0,
+        tokens_out: 0, reasoning_tokens: 0, cost_usd: 0, p50_ms: 0, p95_ms: 0,
+      },
+      by_day: [],
+    } satisfies ActivitySummary;
+    expect(summaryWithTrace(summary, row, moved).totals).toMatchObject({ calls: 3, tool_calls: 1 });
+  });
 });

@@ -202,6 +202,10 @@ export interface AgentRun {
   created_at: string;
   agent_name: string | null;
   routine_name: string | null;
+  /** Model calls the run made; present on a finished run's `agent_run` frame. */
+  call_count?: number;
+  /** Tool calls the run made; present on a finished run's `agent_run` frame. */
+  tool_count?: number;
 }
 
 /** One of the caller's threads with an agent, with its chat's flags. */

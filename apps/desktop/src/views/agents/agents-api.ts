@@ -92,6 +92,10 @@ export interface AgentRun {
   error_message?: string | null;
   error_step?: string | null;
   tokens?: number | null;
+  /** Model calls the run made; a finished run's pushed frame carries it. */
+  call_count?: number;
+  /** Tool calls the run made; a finished run's pushed frame carries it. */
+  tool_count?: number;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;

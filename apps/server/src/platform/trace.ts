@@ -761,6 +761,14 @@ export class TraceStore {
     return rows.map((row) => (row === request ? { ...row, body } : row));
   }
 
+  /** One trace's model and tool call counts, counted as the trace list
+   *  counts them. A run's trace id is the run id. */
+  async callCounts(orgId: string, traceId: string): Promise<{ call_count: number; tool_count: number }> {
+    await this.ensureOnce();
+    const row = (await this.spanAggregates(orgId, [traceId])).get(traceId);
+    return { call_count: Number(row?.["call_count"] ?? 0), tool_count: Number(row?.["tool_count"] ?? 0) };
+  }
+
   /** Per-trace span totals for the listed trace ids. */
   private async spanAggregates(orgId: string, traceIds: string[]): Promise<Map<string, Record<string, unknown>>> {
     const out = new Map<string, Record<string, unknown>>();

@@ -29,6 +29,9 @@ export const AGENT_STATE_CHANNELS: ReadonlySet<string> = new Set([
 
 type Failed = (channel: string, error: unknown) => void;
 
+/** How long a finished run's frame waits for its call counts. */
+const COUNTS_TIMEOUT_MS = 2_000;
+
 /** An agent row on the wire: every joined field is always present. */
 export function agentWire(agent: StoreAgent): Agent {
   return {
@@ -157,8 +160,27 @@ export class AgentStateFeed {
     } catch {
       return;
     }
-    const frame: WsServerMsg = { type: "agent_run", run: runWire(run) };
+    const wire = runWire(run);
+    if (run.finished_at !== null) Object.assign(wire, await this.callCounts(orgId, runId));
+    const frame: WsServerMsg = { type: "agent_run", run: wire };
     for (const userId of viewers) this.send(userId, frame);
+  }
+
+  /** A finished run's model and tool call counts, from the same spans the
+   *  trace list counts. Unreachable analytics leave the counts out: the
+   *  frame still goes, and the client keeps the counts it has. */
+  private async callCounts(orgId: string, runId: string): Promise<{ call_count?: number; tool_count?: number }> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), COUNTS_TIMEOUT_MS);
+    });
+    try {
+      return (await Promise.race([this.ctx.trace.callCounts(orgId, runId), timeout])) ?? {};
+    } catch {
+      return {};
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async sendRoutines(orgId: string, agentId: string): Promise<void> {

@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
+import type { PlatformContext } from "../platform/root-context.js";
 
 const TEST_TIMEOUT = 30_000;
 
@@ -160,6 +161,38 @@ describe("agent and skill state frames", () => {
     } finally {
       owner.end();
       peer.end();
+    }
+  });
+
+  it("carries a finished run's call and tool counts", { timeout: TEST_TIMEOUT }, async () => {
+    const owner = await memberSocket(stack.memberToken);
+    try {
+      const agentId = await createAgent(stack.memberToken, `counted-${crypto.randomUUID().slice(0, 8)}`, "private");
+      const runId = await insertRun(agentId, stack.memberId, "running");
+      const running = await waitFrame(owner, (f) => f.type === "agent_run" && (f.run as { id: string }).id === runId);
+      expect(running.run).not.toHaveProperty("call_count");
+      const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+      const spans: ("llm" | "tool")[] = ["llm", "tool", "llm", "llm"];
+      for (const [index, spanType] of spans.entries()) {
+        await platform.trace.recordSpan({
+          span_id: crypto.randomUUID(),
+          trace_id: runId,
+          run_id: runId,
+          org_id: stack.orgId,
+          name: `${spanType}-${index}`,
+          span_type: spanType,
+          start_time: new Date(),
+        });
+      }
+      await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [runId]);
+      const finished = await waitFrame(
+        owner,
+        (f) => f.type === "agent_run" && (f.run as { id: string; status: string }).id === runId
+          && (f.run as { status: string }).status === "succeeded",
+      );
+      expect(finished.run).toMatchObject({ call_count: 3, tool_count: 1 });
+    } finally {
+      owner.end();
     }
   });
 
