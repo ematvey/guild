@@ -2,17 +2,9 @@
 // keys plus user-level keys
 // every member manages from their own settings.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ApiError } from "../errors.js";
-import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import type { FastifyInstance } from "fastify";
+import { parseUuidParam, requireJsonBody, requireUser, requireAdminUser } from "./error.js";
 import type { IdentityCtx } from "../route-contexts.js";
-
-/** The authenticated user from the session table, requiring the admin role. */
-async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest) {
-  const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
-  return user;
-}
 
 export function registerApiKeyRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.post("/api/v1/admin/api-keys", async (req) => {

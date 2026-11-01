@@ -2,11 +2,11 @@
 // logo of the caller's organization. The logo endpoint is public — <img>
 // tags cannot send bearer tokens, and a logo is not sensitive.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import { parseUuidParam, requireJsonBody, requireUser, requireAdminUser, queryParam, bodyBytes } from "./error.js";
 
 /** Accepted logo content types → file extension in the object key. */
 const LOGO_TYPES: ReadonlyArray<readonly [string, string]> = [
@@ -17,14 +17,6 @@ const LOGO_TYPES: ReadonlyArray<readonly [string, string]> = [
   ["image/svg+xml", "svg"],
 ];
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
-
-function rawBody(req: FastifyRequest): Buffer {
-  const body = req.body;
-  if (Buffer.isBuffer(body)) return body;
-  if (typeof body === "string") return Buffer.from(body);
-  if (body === undefined || body === null) return Buffer.alloc(0);
-  return Buffer.from(JSON.stringify(body));
-}
 
 export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, objects: ObjectStore): void {
   app.get("/api/v1/org", async (req, reply) => {
@@ -41,8 +33,7 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
   // The workspace telemetry switch: admin-only, on by default. Members see
   // the value on the workspace-identity frame and have no local control.
   app.put("/api/v1/org/telemetry", async (req, reply) => {
-    const user = await requireUser(identity, req);
-    requireAdminRole(user);
+    const user = await requireAdminUser(identity, req);
     const body = requireJsonBody(req);
     const enabled = body["enabled"];
     if (typeof enabled !== "boolean") throw ApiError.badRequest('missing "enabled" boolean');
@@ -51,8 +42,7 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
   });
 
   app.put("/api/v1/org", async (req, reply) => {
-    const user = await requireUser(identity, req);
-    requireAdminRole(user);
+    const user = await requireAdminUser(identity, req);
     const body = requireJsonBody(req);
     const name = typeof body["name"] === "string" ? body["name"].trim() : "";
     if (name === "") throw ApiError.badRequest("missing name");
@@ -64,14 +54,13 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
   });
 
   app.put("/api/v1/org/logo", { bodyLimit: LOGO_MAX_BYTES }, async (req, reply) => {
-    const user = await requireUser(identity, req);
-    requireAdminRole(user);
-    const contentType = queryOne(req, "content_type") ?? "image/png";
+    const user = await requireAdminUser(identity, req);
+    const contentType = queryParam(req, "content_type") ?? "image/png";
     const ext = LOGO_TYPES.find(([ct]) => ct === contentType)?.[1];
     if (ext === undefined) {
       throw ApiError.badRequest("unsupported image type (png, jpeg, webp, gif, svg)");
     }
-    const bytes = rawBody(req);
+    const bytes = bodyBytes(req);
     if (bytes.length === 0) throw ApiError.badRequest("empty upload");
     if (bytes.length > LOGO_MAX_BYTES) throw ApiError.badRequest("logo too large (max 2 MiB)");
     const key = `orgs/${user.org_id}/logo.${ext}`;
@@ -86,8 +75,7 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
   });
 
   app.delete("/api/v1/org/logo", async (req, reply) => {
-    const user = await requireUser(identity, req);
-    requireAdminRole(user);
+    const user = await requireAdminUser(identity, req);
     await identity.orgs.setLogoUrl(user.org_id, null);
     return reply.status(200).send({ ok: true });
   });
@@ -118,12 +106,3 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
   });
 }
 
-function requireAdminRole(user: { role: string }): void {
-  if (user.role !== "admin") throw ApiError.forbidden();
-}
-
-function queryOne(req: FastifyRequest, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}

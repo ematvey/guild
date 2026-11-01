@@ -6,20 +6,14 @@
 // unreachable collector answers 202 so clients never surface telemetry
 // errors.
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Config } from "../../config.js";
+import { bodyBytes } from "./error.js";
 
 /** Upstream timeout: telemetry is best-effort; never hold a browser long. */
 const UPSTREAM_TIMEOUT_MS = 5_000;
 /** Faro payloads are small (batched browser events); hard cap anyway. */
 const MAX_BODY = 1024 * 1024;
-
-function rawBody(req: FastifyRequest): Buffer {
-  const body = req.body;
-  if (Buffer.isBuffer(body)) return body;
-  if (typeof body === "string") return Buffer.from(body);
-  return Buffer.alloc(0);
-}
 
 export function registerFaroRoute(app: FastifyInstance, config: Config): void {
   void app.register(async (scope) => {
@@ -38,7 +32,7 @@ export function registerFaroRoute(app: FastifyInstance, config: Config): void {
         const res = await fetch(url, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: rawBody(req),
+          body: bodyBytes(req),
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         });
         // The upstream status passes through; anything unparsable is 202.

@@ -4,10 +4,10 @@
 // merge, connection tests) and the tools listing with per-tool curation
 // (M7 wiring; connector catalogs live in src/platform/integrations/).
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam, optionalJsonBody } from "./error.js";
 import { INTEGRATIONS, integrationByName } from "../integration-catalog.js";
 import { isToolClass, manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect } from "../integrations/mcp.js";
@@ -27,35 +27,19 @@ import { randomUUID } from "node:crypto";
  *  protection, not a context-window budget. */
 const ASSISTANT_PROMPT_MAX = 10_000;
 
-function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(JSON.stringify(value));
-}
-
-function jsonRecord(body: unknown): Record<string, unknown> {
-  return body !== null && typeof body === "object" && !Array.isArray(body)
-    ? (body as Record<string, unknown>)
-    : {};
-}
-
-async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest) {
-  const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
-  return user;
-}
-
 // ---------- users ----------
 
 export function registerAdminUserRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/admin/users", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     const users = await ctx.identity.listUsers(admin.org_id);
     sendJson(reply, { users });
     return reply;
   });
 
   app.post("/api/v1/admin/users", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
-    const record = jsonRecord(req.body);
+    const admin = await requireAdminUser(ctx, req);
+    const record = optionalJsonBody(req);
     const email = record["email"];
     if (typeof email !== "string") throw ApiError.badRequest("missing email");
     const password = record["password"];
@@ -71,9 +55,9 @@ export function registerAdminUserRoutes(app: FastifyInstance, ctx: IdentityCtx):
   });
 
   app.put("/api/v1/admin/users/:id", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     const userId = parseUuidParam(req, "id");
-    const record = jsonRecord(req.body);
+    const record = optionalJsonBody(req);
     let role: string | null = null;
     if (typeof record["role"] === "string" && record["role"] !== "") {
       if (record["role"] !== "admin" && record["role"] !== "member") {
@@ -101,7 +85,7 @@ export function registerAdminUserRoutes(app: FastifyInstance, ctx: IdentityCtx):
   });
 
   app.delete("/api/v1/admin/users/:id", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     const userId = parseUuidParam(req, "id");
     if (userId === admin.id) {
       throw ApiError.badRequest("cannot delete yourself");
@@ -122,28 +106,28 @@ function ensureMinPasswordLen(password: string): void {
 
 export function registerAdminPromptRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/admin/assistant-prompt", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     const prompt = await ctx.orgKv.get(admin.org_id, ASSISTANT_PROMPT_KEY);
     sendJson(reply, { prompt, default: DEFAULT_PERSONA });
     return reply;
   });
 
   app.put("/api/v1/admin/assistant-prompt", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     await setOrgPrompt(ctx, admin.org_id, ASSISTANT_PROMPT_KEY, req);
     sendJson(reply, { ok: true });
     return reply;
   });
 
   app.get("/api/v1/admin/approval-policy-prompt", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     const prompt = await ctx.orgKv.get(admin.org_id, APPROVAL_POLICY_PROMPT_KEY);
     sendJson(reply, { prompt, default: DEFAULT_APPROVAL_POLICY_PROMPT });
     return reply;
   });
 
   app.put("/api/v1/admin/approval-policy-prompt", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdminUser(ctx, req);
     await setOrgPrompt(ctx, admin.org_id, APPROVAL_POLICY_PROMPT_KEY, req);
     sendJson(reply, { ok: true });
     return reply;
@@ -157,7 +141,7 @@ async function setOrgPrompt(
   key: string,
   req: FastifyRequest,
 ): Promise<void> {
-  const record = jsonRecord(req.body);
+  const record = optionalJsonBody(req);
   const prompt = record["prompt"];
   if (typeof prompt !== "string") throw ApiError.badRequest('missing "prompt" string');
   if ([...prompt].length > ASSISTANT_PROMPT_MAX) {
@@ -236,7 +220,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // metadata and this org's install state, plus the approved registry v2
   // plugins. One list; the client filters and renders it.
   app.get("/api/v1/admin/integrations", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const rows = await gateway.integrations.list(admin.org_id);
     const items: Record<string, unknown>[] = [];
     const rowByName = new Map(rows.map((r) => [r.name, r]));
@@ -305,7 +289,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // compiled-in kind or an installed registry v2 MCP plugin. The new row's
   // stable id is the object's address from here on.
   app.post("/api/v1/admin/integrations", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const body = requireJsonBody(req);
     const name = body["name"];
     if (typeof name !== "string") throw ApiError.badRequest("missing name");
@@ -334,7 +318,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // Lists one integration's secret names, timestamps and masked previews —
   // never values.
   app.get("/api/v1/admin/integrations/:id/secrets", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
@@ -347,15 +331,15 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // the stored config is the source of truth, so selections survive bundle
   // republishes and settings saves.
   app.put("/api/v1/admin/integrations/:id/tools/:tool", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
-    const tool = param(req, "tool");
+    const tool = pathParam(req, "tool");
     // The name becomes a JSON object key and a URL path segment: URL-safe
     // charset only, dashes and dots included (MCP tool names use them).
     if (tool === "" || ![...tool].every((c) => /[a-zA-Z0-9_.-]/.test(c))) {
       throw ApiError.badRequest("invalid tool name");
     }
-    const record = jsonRecord(req.body);
+    const record = optionalJsonBody(req);
     const enabled = record["enabled"];
     if (typeof enabled !== "boolean") throw ApiError.badRequest("enabled must be a boolean");
     const approval = typeof record["approval"] === "string" ? record["approval"] : "default";
@@ -382,7 +366,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // without connecting; a broken plugin reports the resolution error — never
   // a silent empty list.
   app.get("/api/v1/admin/integrations/:id/tools", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
@@ -469,7 +453,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // Removes an integration's configuration by id (the connector can be
   // re-added later as a fresh row with a fresh id).
   app.delete("/api/v1/admin/integrations/:id", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     await gateway.integrations.delete(admin.org_id, id);
     sendJson(reply, {});
@@ -480,7 +464,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
   // credential values, validated and connection-tested before anything is
   // persisted. The connector slug comes from the row.
   app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
-    const admin = await requireAdmin(identity, req);
+    const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const existing = await gateway.integrations.get(admin.org_id, id);
@@ -499,10 +483,6 @@ function readMcpUrl(config: Record<string, unknown>): string | null {
     if (typeof url === "string") return url;
   }
   return null;
-}
-
-function param(req: FastifyRequest, name: string): string {
-  return (req.params as Record<string, string>)[name] ?? "";
 }
 
 // ---------- integration save path (create/update with connection tests) ----------

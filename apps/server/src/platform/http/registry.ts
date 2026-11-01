@@ -5,11 +5,11 @@
 // decision: the feature is out of scope, automation bundles are rejected).
 
 import { createHash } from "node:crypto";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
-import { requireUser } from "./error.js";
+import { requireUser, requireAdminUser, queryParam, sendJson, bodyBytes, pathParam } from "./error.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
@@ -32,25 +32,6 @@ export function objectKey(orgId: string, kind: string, slug: string, version: st
 
 export function sha256Hex(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
-}
-
-
-function queryOne(req: FastifyRequest, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}
-
-function rawBody(req: FastifyRequest): Buffer {
-  const body = req.body;
-  if (Buffer.isBuffer(body)) return body;
-  if (typeof body === "string") return Buffer.from(body);
-  return Buffer.alloc(0);
-}
-
-/** Sends a JSON response body. */
-function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 /** The shared publish body (the registry route and the skills editor both
@@ -145,13 +126,13 @@ export function registerRegistryRoutes(
 ): void {
   app.post("/api/v1/registry/:kind", { bodyLimit: MAX_BUNDLE_BYTES }, async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = param(req, "kind");
+    const kind = pathParam(req, "kind");
     validKind(kind);
-    const slug = queryOne(req, "slug");
+    const slug = queryParam(req, "slug");
     if (slug === undefined) throw ApiError.badRequest("missing slug query param");
-    const version = queryOne(req, "version");
+    const version = queryParam(req, "version");
     if (version === undefined) throw ApiError.badRequest("missing version query param");
-    const body = rawBody(req);
+    const body = bodyBytes(req);
     if (body.length > MAX_BUNDLE_BYTES) throw ApiError.badRequest("bundle exceeds 50 MiB");
 
     // parse + validate the bundle's manifest
@@ -194,7 +175,7 @@ export function registerRegistryRoutes(
 
   app.get("/api/v1/registry/:kind", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = param(req, "kind");
+    const kind = pathParam(req, "kind");
     validKind(kind);
     const items = await gateway.registry.listItems(user.org_id, kind);
     sendJson(reply, { items });
@@ -203,19 +184,19 @@ export function registerRegistryRoutes(
 
   app.get("/api/v1/registry/:kind/:slug", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = param(req, "kind");
+    const kind = pathParam(req, "kind");
     validKind(kind);
-    const versions = await gateway.registry.itemVersions(user.org_id, kind, param(req, "slug"));
+    const versions = await gateway.registry.itemVersions(user.org_id, kind, pathParam(req, "slug"));
     sendJson(reply, { versions });
     return reply;
   });
 
   app.get("/api/v1/registry/:kind/:slug/:version/bundle", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = param(req, "kind");
+    const kind = pathParam(req, "kind");
     validKind(kind);
-    const slug = param(req, "slug");
-    const version = param(req, "version");
+    const slug = pathParam(req, "slug");
+    const version = pathParam(req, "version");
     const stored = await gateway.registry.getVersion(user.org_id, kind, slug, version);
     // members can only download the exact approved bundle: the requested
     // version must be the approval's version and its stored hash must equal
@@ -238,10 +219,10 @@ export function registerRegistryRoutes(
   });
 
   app.post("/api/v1/registry/:kind/:slug/review", async (req, reply) => {
-    const admin = await requireAdmin(auth, req);
-    const kind = param(req, "kind");
+    const admin = await requireAdminUser(auth, req);
+    const kind = pathParam(req, "kind");
     validKind(kind);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     const body = req.body;
     const record = (body !== null && typeof body === "object" ? body : {}) as Record<string, unknown>;
     const status = record["status"];
@@ -265,15 +246,15 @@ export function registerRegistryRoutes(
 
   app.post("/api/v1/registry/:kind/:slug/install", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = param(req, "kind");
+    const kind = pathParam(req, "kind");
     validKind(kind);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     if (kind !== "integration") {
       throw ApiError.badRequest("only integration items are installed server-side; pull skills/mcp with the client");
     }
     // No explicit version: only an approval that still covers the latest
     // version and its exact bundle bytes yields a default.
-    let version = queryOne(req, "version") ?? null;
+    let version = queryParam(req, "version") ?? null;
     if (version === null) {
       const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null) throw ApiError.forbidden();
@@ -360,12 +341,3 @@ async function installMcpPlugin(
   return reply;
 }
 
-function param(req: FastifyRequest, name: string): string {
-  return (req.params as Record<string, string>)[name] ?? "";
-}
-
-async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest): Promise<UserRow> {
-  const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
-  return user;
-}

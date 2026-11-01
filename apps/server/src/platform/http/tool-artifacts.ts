@@ -1,12 +1,13 @@
-// Tool-artifact endpoints (tool artifacts design port): download spilled
-// tool results and list a chat's artifacts — symmetric to the attachments
-// endpoints. Clients never hold S3 credentials; the local engine fetches
+// Tool-artifact endpoints: download spilled tool results and list a chat's
+// artifacts — symmetric to the attachments endpoints. Clients never hold S3 credentials; the local engine fetches
 // through GET /api/v1/tool_artifacts/{id}.
 
 import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
+import { toolArtifactObjectKey } from "../store/toolArtifacts.js";
+import type { UserRow } from "../store/identity.js";
 
 export function registerToolArtifactRoutes(
   app: FastifyInstance,
@@ -22,7 +23,7 @@ export function registerToolArtifactRoutes(
     const chatId = parseUuidParam(req, "chatId");
     await readableByExecutor(chats, infra.pool, user.org_id, chatId, user);
     const rows = await chats.toolArtifacts.listForChat(user.org_id, chatId);
-    // sqlx rows interpolate as Values — sorted keys at every level.
+    // Rows render with sorted keys at every level.
     return reply.status(200).send(JSON.stringify(rows.map((r) => sortedJson(r))));
   });
 
@@ -35,7 +36,7 @@ export function registerToolArtifactRoutes(
     // same check as the attachments download); the chat's executor machine
     // also reads — spill prefetch and first-touch fetch.
     await readableByExecutor(chats, infra.pool, user.org_id, row.chat_id, user);
-    const key = `tool_artifacts/${row.org_id}/${row.id}/${row.filename}`;
+    const key = toolArtifactObjectKey(row.org_id, row.id, row.filename);
     let bytes: Buffer;
     try {
       bytes = await infra.objects.get(key);
@@ -50,10 +51,10 @@ export function registerToolArtifactRoutes(
   });
 }
 
-/** readable_by_executor: the chat's bound
- *  machine (project machine first, else the chat's) reads with its owner's
- *  member token; everyone else passes the owner/admin gate. */
-async function readableByExecutor(chats: ChatsCtx, pool: InfraContext["pool"], orgId: string, chatId: string, user: { id: string; role: string }): Promise<void> {
+/** The chat's bound machine (project machine first, else the chat's) reads
+ *  with its owner's member token; everyone else passes the chat's read
+ *  gate. */
+async function readableByExecutor(chats: ChatsCtx, pool: InfraContext["pool"], orgId: string, chatId: string, user: UserRow): Promise<void> {
   const res = await pool.query<{ machine_id: string | null }>(
     "SELECT COALESCE(pr.machine_id, c.machine_id) AS machine_id FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.org_id = $1 AND c.id = $2",
     [orgId, chatId],
@@ -67,5 +68,5 @@ async function readableByExecutor(chats: ChatsCtx, pool: InfraContext["pool"], o
       chats.wsLog?.(`machine read gate failed for ${machineId}: ${String(error)}`);
     }
   }
-  await chats.chats.getChat(orgId, chatId, user as never);
+  await chats.chats.getChat(orgId, chatId, user);
 }

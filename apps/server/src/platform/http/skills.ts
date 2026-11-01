@@ -4,14 +4,14 @@
 // internals as the registry route (publishBundleBytes) — server-assembled
 // bundles, content-addressed, auto-versioned; no review gate (§1.3).
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import type { SkillStore } from "../store/skills.js";
 import type { UserRow } from "../store/identity.js";
 import type { SkillRuntime } from "../../harness/skills.js";
 import { ApiError } from "../errors.js";
-import { requireUser } from "./error.js";
+import { requireUser, queryParam, sendJson, pathParam, optionalJsonBody } from "./error.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../registry-manifest.js";
 import { packBundle, parseBundle, type ParsedBundle } from "../bundle.js";
 import { nextVersion } from "../store/registry.js";
@@ -24,24 +24,6 @@ export interface SkillRouteOptions {
   /** The skills runtime — the connect-time pull route serves its
    *  syncPayload (the machine's desired install list). */
   runtime?: SkillRuntime;
-}
-
-function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(JSON.stringify(value));
-}
-
-function param(req: FastifyRequest, name: string): string {
-  return (req.params as Record<string, string>)[name] ?? "";
-}
-
-function queryOne(req: FastifyRequest, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}
-
-function jsonBody(req: FastifyRequest): Record<string, unknown> {
-  return (req.body !== null && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
 }
 
 function stringField(body: Record<string, unknown>, name: string): string {
@@ -250,7 +232,7 @@ export function registerSkillRoutes(
 
   app.post("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const body = jsonBody(req);
+    const body = optionalJsonBody(req);
     const slug = stringField(body, "slug");
     const description =
       typeof body["description"] === "string" ? singleLineDescription(body["description"] as string) : "";
@@ -337,8 +319,8 @@ export function registerSkillRoutes(
 
   app.put("/api/v1/skills/:slug", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
-    const body = jsonBody(req);
+    const slug = pathParam(req, "slug");
+    const body = optionalJsonBody(req);
     const description = singleLineDescription(stringField(body, "description"));
     const bodyText = stringField(body, "body");
     const files = extraFiles(body);
@@ -358,7 +340,7 @@ export function registerSkillRoutes(
 
   app.get("/api/v1/skills/activity", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const filter = queryOne(req, "filter") ?? "all";
+    const filter = queryParam(req, "filter") ?? "all";
     if (filter !== "all" && filter !== "changes") throw ApiError.badRequest("filter must be all or changes");
     // "changes" = authorship events (spec §1.1); "all" adds install/pin
     // activity and unpublish.
@@ -392,7 +374,7 @@ export function registerSkillRoutes(
 
   app.get("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const q = queryOne(req, "q") ?? null;
+    const q = queryParam(req, "q") ?? null;
     const rows = await skills.catalog(user.org_id, q);
     const items = await Promise.all(
       rows.map(async (r) => ({
@@ -419,7 +401,7 @@ export function registerSkillRoutes(
 
   app.get("/api/v1/skills/:slug", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     // Tombstoned skills keep their detail page (provenance survives
     // unpublish); only the catalog/search hide them.
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
@@ -454,13 +436,13 @@ export function registerSkillRoutes(
 
   app.get("/api/v1/skills/:slug/source", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null) throw ApiError.notFound("no such skill");
     // Version resolution: explicit query → the user's pinned version →
     // latest.
     const version =
-      queryOne(req, "version") ??
+      queryParam(req, "version") ??
       (await skills.byUserAndSlug(user.org_id, user.id, slug))?.pinned_version ??
       control.latest_version;
     if (version === undefined || version === null) throw ApiError.notFound("no such skill version");
@@ -483,12 +465,12 @@ export function registerSkillRoutes(
 
   app.post("/api/v1/skills/:slug/install", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");
     // No version in the body installs unpinned: the row follows the latest
     // published version until the user pins one explicitly.
-    const requested = typeof jsonBody(req)["version"] === "string" ? (jsonBody(req)["version"] as string) : null;
+    const requested = typeof optionalJsonBody(req)["version"] === "string" ? (optionalJsonBody(req)["version"] as string) : null;
     if (requested !== null) await gateway.registry.getVersion(user.org_id, "skill", slug, requested); // 404 when missing
     const install = await skills.install(user.org_id, user.id, slug, requested);
     await emitEvent(auth, user.org_id, "skill.installed", {
@@ -504,7 +486,7 @@ export function registerSkillRoutes(
 
   app.delete("/api/v1/skills/:slug/install", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     await skills.uninstall(user.org_id, user.id, slug);
     await emitEvent(auth, user.org_id, "skill.uninstalled", {
       slug,
@@ -518,8 +500,8 @@ export function registerSkillRoutes(
 
   app.post("/api/v1/skills/:slug/pin", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
-    const version = stringField(jsonBody(req), "version");
+    const slug = pathParam(req, "slug");
+    const version = stringField(optionalJsonBody(req), "version");
     await gateway.registry.getVersion(user.org_id, "skill", slug, version); // 404 when missing
     const install = await skills.setPin(user.org_id, user.id, slug, version);
     await emitEvent(auth, user.org_id, "skill.pinned", {
@@ -535,8 +517,8 @@ export function registerSkillRoutes(
 
   app.post("/api/v1/skills/:slug/gate", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
-    const body = jsonBody(req);
+    const slug = pathParam(req, "slug");
+    const body = optionalJsonBody(req);
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null) throw ApiError.notFound("no such skill");
     await assertCanManage(auth, user, control);
@@ -549,7 +531,7 @@ export function registerSkillRoutes(
 
   app.post("/api/v1/skills/:slug/unpublish", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const slug = param(req, "slug");
+    const slug = pathParam(req, "slug");
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null) throw ApiError.notFound("no such skill");
     await assertCanManage(auth, user, control);

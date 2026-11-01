@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { parseUuidParam, requireUser } from "./error.js";
+import { parseUuidParam, requireUser, queryParam } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
 import type { ChatStore } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
@@ -21,22 +21,16 @@ function safeContentType(raw: string): string {
   return value.toLowerCase();
 }
 
-function queryOne(req: { url: string }, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}
-
 export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext, chats: ChatStore): void {
   // Deprecated alias: /api/v1/chats/:chatId/attachments (the thread-domain
   // rename — /api/v1/threads/:chatId/attachments is primary).
   const uploadAttachment = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
-    const rawFilename = queryOne(req, "filename");
+    const rawFilename = queryParam(req, "filename");
     const filename = rawFilename === undefined ? null : safeFilename(rawFilename);
     if (filename === null) throw ApiError.badRequest("bad filename");
-    const contentType = safeContentType(queryOne(req, "content_type") ?? "application/octet-stream");
+    const contentType = safeContentType(queryParam(req, "content_type") ?? "application/octet-stream");
     // An upload writes into the conversation: the owner's alone.
     const chat = await chats.getOwnChat(user.org_id, chatId, user);
     const id = uuidv7();

@@ -8,7 +8,7 @@
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
+import { isUuid, pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import { calculateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
@@ -344,7 +344,7 @@ export class ThreadStore {
     // Submissions that are not user turns never have a queued echo, and
     // compaction runs use "compaction:<taskId>" request ids: a non-UUID id
     // must not reach the uuid-typed id column (the cast would throw).
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return undefined;
+    if (!isUuid(id)) return undefined;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

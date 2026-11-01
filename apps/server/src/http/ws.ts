@@ -20,7 +20,7 @@ import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
 import { ApiError } from "../platform/errors.js";
 import { requireUser } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { uuidv7 } from "../platform/time.js";
+import { uuidv7, isUuid } from "../platform/time.js";
 import { LiveHub, type LiveMember } from "../hub/live.js";
 import { SocketSink } from "../hub/sink.js";
 import { parseClientMsg, serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
@@ -36,8 +36,6 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const SESSION_WATCH_INTERVAL_MS = 5_000;
 const PONG_POLL_MS = 50;
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MachineConnectMeta {
   label: string | null;
@@ -174,7 +172,7 @@ export function parseUpgradeQuery(req: IncomingMessage): UpgradeQuery {
   if (ticket === null || ticket === "") throw new Error("missing query parameter: ticket");
   const machineId = get("machine_id");
   const instanceId = get("instance_id");
-  if (instanceId !== null && !UUID_RE.test(instanceId)) {
+  if (instanceId !== null && !isUuid(instanceId)) {
     throw new Error("invalid instance_id");
   }
   const resumeRaw = url.searchParams.get("resume");

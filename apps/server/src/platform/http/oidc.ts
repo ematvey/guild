@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import { decryptSecret, maskSecretLen } from "../crypto.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { requireJsonBody, requireUser } from "./error.js";
+import { requireJsonBody, requireAdminUser, queryParam } from "./error.js";
 import { isUuid } from "../time.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -197,8 +197,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   // ---------- admin config ----------
 
   app.put("/api/v1/admin/oidc", async (req, reply) => {
-    const admin = await requireUser(ctx, req);
-    requireAdminRole(admin);
+    const admin = await requireAdminUser(ctx, req);
     const body = requireJsonBody(req);
     const issuer = body["issuer"];
     const clientId = body["client_id"];
@@ -215,8 +214,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   });
 
   app.get("/api/v1/admin/oidc", async (req, reply) => {
-    const admin = await requireUser(ctx, req);
-    requireAdminRole(admin);
+    const admin = await requireAdminUser(ctx, req);
     // The redirect URI the server actually uses (built from the configured
     // API URL): IdP registration must match this, so settings shows it
     // instead of a window.location.origin guess that diverges inside the
@@ -247,8 +245,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   });
 
   app.delete("/api/v1/admin/oidc", async (req, reply) => {
-    const admin = await requireUser(ctx, req);
-    requireAdminRole(admin);
+    const admin = await requireAdminUser(ctx, req);
     await ctx.oidc.remove(admin.org_id);
     return reply.status(200).send({});
   });
@@ -266,11 +263,11 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
 
   // Starts the OIDC login: 302 to the IdP's authorization endpoint.
   app.get("/api/v1/auth/oidc/login", async (req, reply) => {
-    const nonce = queryOne(req, "nonce");
+    const nonce = queryParam(req, "nonce");
     if (nonce === undefined || !validNonce(nonce)) {
       throw ApiError.badRequest("missing or invalid login nonce");
     }
-    const orgId = queryOne(req, "org_id");
+    const orgId = queryParam(req, "org_id");
     if (orgId === undefined || !isUuid(orgId)) {
       throw ApiError.badRequest("missing org_id");
     }
@@ -298,9 +295,9 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   });
 
   app.get("/api/v1/auth/oidc/callback", async (req, reply) => {
-    const code = queryOne(req, "code");
+    const code = queryParam(req, "code");
     if (code === undefined) throw ApiError.badRequest("missing code");
-    const stateParam = queryOne(req, "state");
+    const stateParam = queryParam(req, "state");
     if (stateParam === undefined) throw ApiError.badRequest("missing state");
     const oidcState = verifyStateJwt(ctx, stateParam);
     const cookieHeaders = req.headers.cookie ? [req.headers.cookie] : [];
@@ -385,12 +382,3 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   });
 }
 
-function requireAdminRole(user: { role: string }): void {
-  if (user.role !== "admin") throw ApiError.forbidden();
-}
-
-function queryOne(req: { url: string }, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}

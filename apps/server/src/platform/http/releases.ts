@@ -4,34 +4,16 @@
 // downloads are verifiable offline.
 
 import { createHmac, createPrivateKey, createPublicKey, randomBytes, sign as cryptoSign, timingSafeEqual } from "node:crypto";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
-import { parseUuidParam, requireUser } from "./error.js";
+import { parseUuidParam, requireUser, requireAdminUser, queryParam, sendJson, bodyBytes } from "./error.js";
 import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
 import { SIGNING_SEED_KV } from "../store/org_kv.js";
 import { uuidv7 } from "../time.js";
 
 const MASTER_KEY_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-
-function queryOne(req: FastifyRequest, name: string): string | undefined {
-  const url = new URL(req.url, "http://local");
-  const value = url.searchParams.get(name);
-  return value === null ? undefined : value;
-}
-
-function rawBody(req: FastifyRequest): Buffer {
-  const body = req.body;
-  if (Buffer.isBuffer(body)) return body;
-  if (typeof body === "string") return Buffer.from(body);
-  return Buffer.alloc(0);
-}
-
-/** Sends a JSON response body. */
-function sendJson(reply: FastifyReply, value: unknown): void {
-  reply.type("application/json").send(JSON.stringify(value));
-}
 
 function objectKey(version: string, kind: string, platform: string, id: string, filename: string): string {
   return `releases/${version}/${kind}/${platform}/${id}/${filename}`;
@@ -54,12 +36,6 @@ function verifySignature(ctx: IdentityCtx, id: string, exp: number, sig: string)
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
     throw ApiError.unauthorized("bad download signature");
   }
-}
-
-async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest) {
-  const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
-  return user;
 }
 
 /** The release-signing ed25519 seed, in order: GUILD_RELEASE_SIGNING_SEED
@@ -187,8 +163,8 @@ export function registerReleaseRoutes(
   objects: ObjectStore,
 ): void {
   app.post("/api/v1/admin/releases", { bodyLimit: 512 * 1024 * 1024 }, async (req, reply) => {
-    await requireAdmin(ctx, req);
-    const version = queryOne(req, "version");
+    await requireAdminUser(ctx, req);
+    const version = queryParam(req, "version");
     if (version === undefined) throw ApiError.badRequest("missing version");
     if (
       version === "" ||
@@ -197,26 +173,26 @@ export function registerReleaseRoutes(
     ) {
       throw ApiError.badRequest("bad version");
     }
-    const kind = queryOne(req, "kind");
+    const kind = queryParam(req, "kind");
     if (kind === undefined) throw ApiError.badRequest("missing kind");
     if (kind !== "cli" && kind !== "desktop") {
       throw ApiError.badRequest("kind must be cli or desktop");
     }
-    const platform = queryOne(req, "platform");
+    const platform = queryParam(req, "platform");
     if (platform === undefined) throw ApiError.badRequest("missing platform");
     if (!validPlatform(platform)) throw ApiError.badRequest("unknown platform");
-    const rawFilename = queryOne(req, "filename");
+    const rawFilename = queryParam(req, "filename");
     if (rawFilename === undefined) throw ApiError.badRequest("missing filename");
     const filename = safeFilename(rawFilename);
     if (filename === null) throw ApiError.badRequest("bad filename");
-    const body = rawBody(req);
+    const body = bodyBytes(req);
     if (body.length === 0) throw ApiError.badRequest("empty body");
     if (body.length > 512 * 1024 * 1024) {
       throw ApiError.badRequest("artifact too large (max 512MiB)");
     }
-    const contentType = queryOne(req, "content_type") ?? "application/octet-stream";
-    const notes = queryOne(req, "notes") ?? "";
-    const updaterSignature = queryOne(req, "updater_sig") ?? "";
+    const contentType = queryParam(req, "content_type") ?? "application/octet-stream";
+    const notes = queryParam(req, "notes") ?? "";
+    const updaterSignature = queryParam(req, "updater_sig") ?? "";
 
     const id = uuidv7();
     const key = objectKey(version, kind, platform, id, filename);
@@ -248,14 +224,14 @@ export function registerReleaseRoutes(
   });
 
   app.get("/api/v1/admin/releases", async (req, reply) => {
-    await requireAdmin(ctx, req);
+    await requireAdminUser(ctx, req);
     const rows = await gateway.releases.list();
     sendJson(reply, { releases: rows });
     return reply;
   });
 
   app.delete("/api/v1/admin/releases/:id", async (req, reply) => {
-    await requireAdmin(ctx, req);
+    await requireAdminUser(ctx, req);
     const id = parseUuidParam(req, "id");
     const deleted = await gateway.releases.delete(id);
     const key = objectKey(deleted.version, deleted.kind, deleted.platform, deleted.id, deleted.filename);
@@ -297,8 +273,8 @@ export function registerReleaseRoutes(
   // Accepts either a valid signature (query) or a session bearer token.
   app.get("/api/v1/releases/:id/download", async (req, reply) => {
     const id = parseUuidParam(req, "id");
-    const exp = queryOne(req, "exp");
-    const sig = queryOne(req, "sig");
+    const exp = queryParam(req, "exp");
+    const sig = queryParam(req, "sig");
     let signed = false;
     if (exp !== undefined && sig !== undefined) {
       try {

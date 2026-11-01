@@ -3,16 +3,9 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
-import { requireJsonBody, requireUser } from "./error.js";
+import { requireJsonBody, requireUser, requireAdminUser } from "./error.js";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { PROTOCOLS, providerSlug } from "../store/gateway.js";
-
-/** The authenticated user from the session table, requiring the admin role. */
-async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest) {
-  const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
-  return user;
-}
 
 export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
   // User-facing: the org's enabled models. /api/v1/models is primary since

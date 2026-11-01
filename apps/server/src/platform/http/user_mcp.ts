@@ -13,15 +13,14 @@
 // rest and leave the API only as masked previews; decrypted values flow to
 // the MCP peer at call time only.
 
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { lookup } from "node:dns/promises";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";
+import { requireUser, parseUuidParam, requireJsonBody, sendJson } from "./error.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import { userMcpToolName } from "../domain/mcp.js";
 import type { JsonObject } from "../../integrations/shared.js";
-
 
 /** Tool names Guild reserves for its own machinery — a user server's name
  *  must not collide with them (the wire tool name is mcp<length>_<name>_<tool>, but
@@ -31,9 +30,6 @@ const RESERVED_NAMES = new Set([
   "read_skill", "search_skills", "push_skill", "tool_search",
 ]);
 
-function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(JSON.stringify(value));
-}
 /** The server-name rule: identifier-safe slug, 1–64 chars. The chat runtime
  *  wires tools as mcp<length>_<name>_<tool>, so the name must stay slug-safe. */
 export function validateName(name: string): void {

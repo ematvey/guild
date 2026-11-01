@@ -7,12 +7,13 @@
 // an HTTP error. The validation prefix of the call (auth, curation,
 // acting-as, body shape) is identical to the Rust route.
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { callPlugin } from "../integrations/execute.js";
 import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../integrations/plugins.js";
 import { resolveActingAs, toolAllowed, toolCurate } from "../integrations/policy.js";
+import { sendJson } from "./error.js";
 
 /** The caller of the script API: an org member (session) or an org API key.
  *  API keys act with their creating user's role (usage attributes the same
@@ -55,10 +56,6 @@ async function integrationCaller(auth: IdentityCtx, req: FastifyRequest): Promis
     email = null;
   }
   return { org: key.org_id, userId: owner, email, role };
-}
-
-function sendJson(reply: FastifyReply, value: unknown): void {
-  void reply.type("application/json").send(JSON.stringify(value));
 }
 
 async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTurn[]> {
