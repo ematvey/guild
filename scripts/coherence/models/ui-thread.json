@@ -108,6 +108,10 @@
         {
           "where": "apps/desktop/src/views/thread/hooks/use-thread-store.ts",
           "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/thread/thread-view-store.ts",
+          "role": "ui"
         }
       ],
       "translations": [
@@ -384,6 +388,18 @@
     {
       "where": "apps/desktop/src/views/thread/use-visual-viewport-pin.ts",
       "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/hooks/use-column-resize.ts",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/hooks/use-mobile-gestures.ts",
+      "reason": "presentational"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/hooks/use-scroll-pin.ts",
+      "reason": "presentational"
     }
   ]
 }
