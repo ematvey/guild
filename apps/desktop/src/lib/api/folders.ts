@@ -70,12 +70,9 @@ export async function remoteHome(machineId: string): Promise<string | null> {
   return v.home || null;
 }
 
-/// Hands the app process the machine identity (stable per install; keys the
-/// chat bindings). Starts presence + tool dispatch.
-export async function setMachineIdentity(machineId: string): Promise<void> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_machine_identity", { machineId });
-}
+/** The app shell keeps no per-machine server link, so there is no identity
+ *  to hand over; callers are due for removal. */
+export async function setMachineIdentity(_machineId: string): Promise<void> {}
 
 export interface PairingToken {
   id: string;

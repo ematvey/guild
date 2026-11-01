@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wsl-pretty-name"
+description = "Enables the wsl_pretty_name command without any pre-configured scope."
+commands.allow = ["wsl_pretty_name"]
+
+[[permission]]
+identifier = "deny-wsl-pretty-name"
+description = "Denies the wsl_pretty_name command without any pre-configured scope."
+commands.deny = ["wsl_pretty_name"]

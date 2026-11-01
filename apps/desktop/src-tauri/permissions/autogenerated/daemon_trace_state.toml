@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-daemon-trace-state"
+description = "Enables the daemon_trace_state command without any pre-configured scope."
+commands.allow = ["daemon_trace_state"]
+
+[[permission]]
+identifier = "deny-daemon-trace-state"
+description = "Denies the daemon_trace_state command without any pre-configured scope."
+commands.deny = ["daemon_trace_state"]

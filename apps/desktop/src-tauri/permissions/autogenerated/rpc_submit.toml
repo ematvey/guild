@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rpc-submit"
+description = "Enables the rpc_submit command without any pre-configured scope."
+commands.allow = ["rpc_submit"]
+
+[[permission]]
+identifier = "deny-rpc-submit"
+description = "Denies the rpc_submit command without any pre-configured scope."
+commands.deny = ["rpc_submit"]

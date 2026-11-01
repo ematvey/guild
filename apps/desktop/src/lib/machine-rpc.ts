@@ -3,7 +3,6 @@
 // client id (the presence key for client-tool termination detection).
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
@@ -22,10 +21,10 @@ export function machineId(): string {
 /**
  * Poll-based rpc bridge: submit returns in <1ms; results are collected by a
  * single poll loop and routed to waiters by id. Long-lived invoke responses
- * (the old rpc_request shape) can be silently lost by Windows WebView2
+ * can be silently lost by Windows WebView2
  * deferral delivery — this never leaves an invoke open, so a slow or wedged
  * daemon surfaces as a caller-side timeout instead of an eternal spinner.
- * Resolves with the full JSON-RPC envelope (same shape rpc_request returned).
+ * Resolves with the full JSON-RPC envelope.
  */
 
 /** One JSON-RPC reply from the engine. `R` is the method's result shape,
@@ -147,10 +146,10 @@ export function clientId(): string {
 
 export type MachinePresence = { connected: boolean; displaced?: boolean; auth_required?: boolean };
 
-export async function watchMachinePresence(update: (presence: MachinePresence) => void): Promise<() => void> {
-  const unlisten = await listen<MachinePresence>("app-presence", (event) => update(event.payload));
-  const presence = await invoke<MachinePresence>("machine_presence");
-  if (presence) update(presence);
-  return unlisten;
+/** The app shell holds no server connection, so it reports no presence:
+ *  displacement and auth expiry reach the UI through the member socket
+ *  (socket-client.ts `onDisplaced` / `onAuthRequired`). Returns a no-op
+ *  unsubscribe; callers are due for removal. */
+export async function watchMachinePresence(_update: (presence: MachinePresence) => void): Promise<() => void> {
+  return () => {};
 }
-

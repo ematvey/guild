@@ -4,23 +4,35 @@
 //! There is no headless daemon and no cross-process pipe to one; the local
 //! socket remains only as the CLI-verb entry point, hosted by this process.
 //!
-//! Server link: exactly one standing WebSocket connection, owned by this
-//! process — presence, client-tool dispatch, and the user fan-out bus all
-//! ride it. The webview is a pure UI: HTTP request/response plus per-turn
-//! replay, no tool execution, no presence duty.
+//! The shell holds no server connection of its own: the machine (executor)
+//! role rides the engine's machine link, and all display state reaches the
+//! webview over the webview's own member WebSocket. The shell's webview
+//! surface is the engine rpc bridge (submit + poll, allowlisted methods),
+//! local folder browsing, the daemon trace toggle, and the updater.
 
-use futures::{SinkExt, StreamExt};
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
-use protocol::ws::WsServerMsg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Poison-tolerant locking: every value guarded here (caches, rpc result
+/// maps, the pending update) stays valid if a holder panicked, so a panic in
+/// one command must not cascade into every later lock.
+trait LockExt<T> {
+    fn guard(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockExt<T> for Mutex<T> {
+    fn guard(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
 
 /// Client-side IPC trace: one line per rpc step into the per-user cache dir
 /// (`dirs::cache_dir()/guild/`, owner-only, size-capped), so a wedge can be
@@ -91,27 +103,123 @@ pub struct UpdateState {
 }
 
 /// Everything the webview rpc surface needs: the in-process engine
-/// connection (pipes to the same-process dispatch loop).
-#[derive(Default)]
+/// connection (pipes to the same-process dispatch loop) and the engine's
+/// Shared, published once the persisted session is restored.
 pub struct EngineState {
-    cell: Arc<Mutex<Option<Arc<Engine>>>>,
-    handle: Mutex<Option<AppHandle>>,
+    cell: Mutex<Option<Arc<Engine>>>,
     next_id: AtomicU64,
-    /// The engine's Shared (session + dispatch state), created at setup.
-    shared: Mutex<Option<Shared>>,
+    /// The engine's Shared (session + dispatch state). `None` until the
+    /// startup restore finishes; `start_engine` waits on it.
+    shared: tokio::sync::watch::Sender<Option<Shared>>,
+}
+
+impl Default for EngineState {
+    fn default() -> Self {
+        Self {
+            cell: Mutex::new(None),
+            next_id: AtomicU64::new(0),
+            shared: tokio::sync::watch::Sender::new(None),
+        }
+    }
 }
 
 pub struct Engine {
     /// Client→engine write half (std pipe writer; sync writes are fine —
     /// the dispatch loop reads on its own thread).
-    writer: Arc<Mutex<std::io::PipeWriter>>,
-    responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
-    /// Completed JSON-RPC envelopes for poll-based clients: every response
-    /// lands here regardless of transport, so the webview never needs a
-    /// long-lived invoke response (Windows WebView2 can silently lose those).
-    results: Arc<Mutex<HashMap<u64, Value>>>,
-    /// Submit timestamps for the poll-timeout sweep.
-    submitted: Arc<Mutex<HashMap<u64, std::time::Instant>>>,
+    writer: Mutex<std::io::PipeWriter>,
+    /// Completed JSON-RPC envelopes, drained by `rpc_poll`: the webview never
+    /// holds a long-lived invoke open (Windows WebView2 can silently lose
+    /// those).
+    results: Mutex<HashMap<u64, Value>>,
+    /// Submit timestamps of requests still waiting for their response: the
+    /// poll-timeout sweep and the engine-exit failure path act on these only.
+    submitted: Mutex<HashMap<u64, std::time::Instant>>,
+}
+
+impl Engine {
+    fn new(writer: std::io::PipeWriter) -> Self {
+        Self {
+            writer: Mutex::new(writer),
+            results: Mutex::new(HashMap::new()),
+            submitted: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Records a request as in flight.
+    fn submit(&self, id: u64) {
+        self.submitted.guard().insert(id, std::time::Instant::now());
+    }
+
+    /// A response arrived: the request is no longer in flight, and its
+    /// envelope waits for the next poll.
+    fn complete(&self, id: u64, value: Value) {
+        self.submitted.guard().remove(&id);
+        self.results.guard().insert(id, value);
+    }
+
+    /// Fails every request still in flight with `message`.
+    fn fail_in_flight(&self, message: &str) {
+        let ids: Vec<u64> = self.submitted.guard().drain().map(|(id, _)| id).collect();
+        let mut results = self.results.guard();
+        for id in ids {
+            results.insert(id, serde_json::json!({"id": id, "error": {"message": message}}));
+        }
+    }
+
+    /// Fails the in-flight requests submitted longer than `timeout` ago.
+    fn expire(&self, now: std::time::Instant, timeout: Duration) {
+        let stale: Vec<u64> = {
+            let mut submitted = self.submitted.guard();
+            let stale: Vec<u64> = submitted
+                .iter()
+                .filter(|(_, at)| now.duration_since(**at) > timeout)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &stale {
+                submitted.remove(id);
+            }
+            stale
+        };
+        let mut results = self.results.guard();
+        for id in stale {
+            ipc_trace("rpc-timeout", &format!("id={id}"));
+            results
+                .entry(id)
+                .or_insert_with(|| serde_json::json!({"id": id, "error": {"message": "engine timed out"}}));
+        }
+    }
+
+    /// Takes every completed envelope.
+    fn drain(&self) -> Vec<Value> {
+        self.results.guard().drain().map(|(_, v)| v).collect()
+    }
+}
+
+/// Engine methods the webview may call. The rpc bridge refuses anything
+/// else, so script running in the webview cannot reach the rest of the
+/// engine's dispatch surface (agent runs, policy changes, shutdown).
+const WEBVIEW_RPC_METHODS: &[&str] = &[
+    "session.info",
+    "session.clear",
+    "pair",
+    "login",
+    "machine.identify",
+    "workspace.list",
+    "workspace.switch",
+    "registry.publish",
+    "registry.uninstall",
+    "fs.scopes",
+    "fs.read_text",
+    "fs.list_dir",
+    "fs.exists",
+    "fs.write_text",
+];
+
+/// How long a request may stay in flight before `rpc_poll` fails it.
+const RPC_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn webview_rpc_allowed(method: &str) -> bool {
+    WEBVIEW_RPC_METHODS.contains(&method)
 }
 
 /// One parsed line from the engine.
@@ -139,9 +247,9 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
 /// Builds the in-process engine: two unidirectional std pipes carry the
 /// JSON-RPC line protocol between the webview-facing commands and the same
 /// `run_connection` dispatch the CLI socket serves — one dispatch surface,
-/// one session, two transports. Returns the engine (write half + response
-/// plumbing) and the read half its demux reader must consume.
-fn build_engine(shared: &Shared) -> anyhow::Result<(Engine, std::io::PipeReader)> {
+/// one session, two transports. Starts the dispatch loop and the response
+/// reader.
+fn build_engine(shared: &Shared) -> anyhow::Result<Arc<Engine>> {
     let (rd_in, wr_in) = std::io::pipe()?; // client → engine
     let (rd_out, wr_out) = std::io::pipe()?; // engine → client
     {
@@ -153,21 +261,15 @@ fn build_engine(shared: &Shared) -> anyhow::Result<(Engine, std::io::PipeReader)
             let _ = rt.block_on(run_connection(&shared, rd_in, wr_out));
         });
     }
-    Ok((
-        Engine {
-            writer: Arc::new(Mutex::new(wr_in)),
-            responses: Arc::new(Mutex::new(HashMap::new())),
-            results: Arc::new(Mutex::new(HashMap::new())),
-            submitted: Arc::new(Mutex::new(HashMap::new())),
-        },
-        rd_out,
-    ))
+    let engine = Arc::new(Engine::new(wr_in));
+    start_engine_reader(engine.clone(), rd_out);
+    Ok(engine)
 }
 
-/// Demuxing reader for the engine→client pipe: responses land in the shared
-/// response/result maps, server-push events are emitted to the webview as
-/// `rpc-event` (same shape the daemon pipe used to deliver).
-fn start_engine_reader(app: AppHandle, engine: Arc<Engine>, rd_out: std::io::PipeReader) {
+/// Reader for the engine→client pipe: responses complete their request.
+/// Push events belong to methods the webview does not call (see
+/// `WEBVIEW_RPC_METHODS`) and are only traced.
+fn start_engine_reader(engine: Arc<Engine>, rd_out: std::io::PipeReader) {
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(rd_out);
         use std::io::BufRead;
@@ -187,42 +289,15 @@ fn start_engine_reader(app: AppHandle, engine: Arc<Engine>, rd_out: std::io::Pip
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
                     ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
-                    engine.results.lock().unwrap().insert(id, value.clone());
-                    if let Some(sender) = engine.responses.lock().unwrap().remove(&id) {
-                        let _ = sender.send(value);
-                    }
+                    engine.complete(id, value);
                 }
                 Some(EngineLine::Event(ev)) => {
-                    let _ = app.emit("rpc-event", ev);
+                    ipc_trace("event", ev["event"].as_str().unwrap_or("?"));
                 }
-                None => {
-                    let _ = app.emit(
-                        "rpc-event",
-                        serde_json::json!({
-                            "protocol": 1u64, "event": "rpc.error",
-                            "payload": {"message": format!("unparseable engine line: {line}")},
-                        }),
-                    );
-                }
+                None => ipc_trace("unparseable", &format!("bytes={}", line.len())),
             }
         }
-        // Engine gone (app teardown): fail every pending RPC.
-        {
-            let mut res = engine.results.lock().unwrap();
-            for id in engine.submitted.lock().unwrap().keys() {
-                res.insert(
-                    *id,
-                    serde_json::json!({"id": *id, "error": {"message": "engine dropped the request"}}),
-                );
-            }
-        }
-        let _ = app.emit(
-            "rpc-event",
-            serde_json::json!({
-                "protocol": 1u64, "event": "rpc.error",
-                "payload": {"message": "engine connection lost"},
-            }),
-        );
+        engine.fail_in_flight("engine dropped the request");
     });
 }
 
@@ -233,28 +308,9 @@ fn envelope(id: u64, method: &str, params: &Value) -> Value {
     })
 }
 
-// ---- server link (the single standing connection) ----
-
-/// In-flight mirror for one chat, fed by the fan-out bus: enough state for a
-/// webview that opens (or reloads) mid-generation to catch up without a
-/// second server connection. `frames` are the wire events in arrival order;
-/// `seq` counts them.
-#[derive(Default)]
-struct Mirror {
-    seq: u64,
-    running: bool,
-    frames: Vec<Value>,
-}
-
+/// WSL caches shared by the folder-browsing commands.
 #[derive(Default)]
 pub struct GuildState {
-    presence: Mutex<Value>,
-    /// The engine Shared: one session, one dispatch surface, shared with the
-    /// CLI socket accept loop.
-    shared: Mutex<Option<Shared>>,
-    /// Machine identity — the webview's localStorage id (it keys the chat
-    /// bindings), passed in at boot. Presence starts only once it is set.
-    machine_id: Mutex<Option<String>>,
     /// Distro → /etc/os-release PRETTY_NAME, fetched lazily (first
     /// list_wsl_distros call) and cached for the app run.
     wsl_pretty: Mutex<HashMap<String, Option<String>>>,
@@ -265,34 +321,6 @@ pub struct GuildState {
     /// Distro → $HOME, fetched lazily on first specifier use, cached for
     /// the app run.
     wsl_homes: Mutex<HashMap<String, Option<String>>>,
-    /// chat_id → in-flight mirror.
-    mirrors: Mutex<HashMap<String, Mirror>>,
-    /// Bump to force the link task to re-read its config (login, sign-out,
-    /// machine identity set).
-    link_epoch: Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl GuildState {
-    fn shared(&self) -> Option<Shared> {
-        self.shared.lock().unwrap().clone()
-    }
-
-    /// Snapshot of what the link needs right now. The desktop WS is a plain
-    /// member connection — the machine (executor) role lives in the
-    /// daemon's machine link (spec 2026-09-18 agent-loop unification §3).
-    fn link_config(&self) -> Option<(String, String)> {
-        let shared = self.shared()?;
-        let s = shared.session.lock().unwrap();
-        let cloud = s.auth.cloud()?;
-        Some((cloud.base_url.clone(), cloud.token.clone()))
-    }
-
-    fn mirror_update<F: FnOnce(&mut Mirror)>(&self, chat_id: &str, f: F) -> u64 {
-        let mut mirrors = self.mirrors.lock().unwrap();
-        let m = mirrors.entry(chat_id.to_string()).or_default();
-        f(m);
-        m.seq
-    }
 }
 
 // ---- WSL + local filesystem browsing (project folder sources, spec §5) ----
@@ -343,7 +371,7 @@ fn run_wsl(_args: &[&str]) -> Option<String> {
 fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
     let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
         let empty: Vec<Distro> = Vec::new();
-        *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), empty.clone()));
+        *state.wsl_distros.guard() = Some((std::time::Instant::now(), empty.clone()));
         return Ok(empty);
     };
     let mut out = Vec::new();
@@ -353,8 +381,7 @@ fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
         }
         let pretty_name = state
             .wsl_pretty
-            .lock()
-            .unwrap()
+            .guard()
             .get(&name)
             .cloned()
             .flatten();
@@ -364,7 +391,7 @@ fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
             pretty_name,
         });
     }
-    *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
+    *state.wsl_distros.guard() = Some((std::time::Instant::now(), out.clone()));
     Ok(out)
 }
 
@@ -391,21 +418,6 @@ fn parse_wsl_list(raw: &str) -> Vec<(String, bool)> {
 }
 
 /// PRETTY_NAME of an /etc/os-release body (first match, quotes stripped).
-/// Percent-encode a query component (machine ids/names are simple, but the
-/// name can carry spaces).
-fn qenc(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 fn parse_pretty_name(os_release: &str) -> Option<String> {
     os_release
         .lines()
@@ -414,614 +426,27 @@ fn parse_pretty_name(os_release: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-#[derive(Debug)]
-enum LinkError {
-    Displaced,
-    AuthRequired,
-    Closed,
-    Backpressure,
-    Failed(String),
-}
-
-impl std::fmt::Display for LinkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Displaced => f.write_str("displaced"),
-            Self::AuthRequired => f.write_str("authentication required"),
-            Self::Closed => f.write_str("socket closed"),
-            Self::Backpressure => f.write_str("socket outbound queue full"),
-            Self::Failed(error) => f.write_str(error),
-        }
-    }
-}
-
-const PRIORITY_QUEUE_CAP: usize = 16;
-const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-const TERMINAL_WRITE_TIMEOUT: Duration = WRITE_TIMEOUT;
-
-type WsMessage = tokio_tungstenite::tungstenite::Message;
-
-async fn send_ws_message_with_deadline<W>(
-    sink: &mut W,
-    message: WsMessage,
-    deadline: Duration,
-) -> Result<(), String>
-where
-    W: futures::Sink<WsMessage> + Unpin,
-    W::Error: std::fmt::Display,
-{
-    tokio::time::timeout(deadline, sink.send(message))
-        .await
-        .map_err(|_| "socket write timed out".to_string())?
-        .map_err(|error| format!("socket write: {error}"))
-}
-
-#[derive(Clone)]
-struct OutboundQueue {
-    // Single channel: since the machine role moved to the daemon's link,
-    // every host frame is priority-classed (pongs, terminal notices).
-    priority_tx: tokio::sync::mpsc::Sender<WsMessage>,
-    overflow: tokio::sync::watch::Sender<bool>,
-}
-
-impl OutboundQueue {
-    fn try_send_priority(&self, message: WsMessage) -> Result<(), LinkError> {
-        self.try_send_on(&self.priority_tx, message)
-    }
-
-    fn try_send_on(
-        &self,
-        tx: &tokio::sync::mpsc::Sender<WsMessage>,
-        message: WsMessage,
-    ) -> Result<(), LinkError> {
-        match tx.try_send(message) {
-            Ok(()) => Ok(()),
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                self.overflow.send_replace(true);
-                Err(LinkError::Backpressure)
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(LinkError::Closed),
-        }
-    }
-}
-
-async fn wait_for_overflow(signal: &mut tokio::sync::watch::Receiver<bool>) {
-    while !*signal.borrow_and_update() {
-        if signal.changed().await.is_err() {
-            break;
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LinkEvent {
-    Closed,
-    Displaced,
-    AuthRequired,
-    Failed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LinkAction {
-    Backoff,
-    Takeover,
-    Remint,
-}
-
-fn link_action(event: LinkEvent) -> LinkAction {
-    match event {
-        LinkEvent::Displaced => LinkAction::Takeover,
-        LinkEvent::AuthRequired => LinkAction::Remint,
-        LinkEvent::Closed | LinkEvent::Failed => LinkAction::Backoff,
-    }
-}
-
-fn publish_presence(state: &GuildState, app: &AppHandle, presence: Value) {
-    *state.presence.lock().unwrap() = presence.clone();
-    let _ = app.emit("app-presence", presence);
-}
-
-/// The WS link: the desktop's member connection (frame delivery to the
-/// webview). The machine (executor) role lives in the daemon's machine
-/// link — this socket carries no machine_id (spec 2026-09-18 agent-loop
-/// unification §3).
-async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
-    guild_app_server::machine_link::ensure_crypto_provider();
-    let mut last_cfg: Option<(String, String)> = None;
-    let mut instance_id = uuid::Uuid::now_v7();
-    let mut resume = false;
-    let mut was_connected = false;
-    loop {
-        let Some((base, token)) = state.link_config() else {
-            if was_connected {
-                was_connected = false;
-                publish_presence(&state, &app, serde_json::json!({ "connected": false }));
-            }
-            last_cfg = None;
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            continue;
-        };
-        let cfg = (base.clone(), token.clone());
-        if last_cfg.as_ref() != Some(&cfg) {
-            state.mirrors.lock().unwrap().clear();
-            instance_id = uuid::Uuid::now_v7();
-            resume = false;
-            last_cfg = Some(cfg.clone());
-        }
-        let epoch = state.link_epoch.load(Ordering::SeqCst);
-        let result = ws_session(
-            &state,
-            &app,
-            &base,
-            &token,
-            instance_id,
-            resume,
-            &mut was_connected,
-        )
-        .await;
-        resume = true;
-        if was_connected {
-            was_connected = false;
-            publish_presence(&state, &app, serde_json::json!({ "connected": false }));
-        }
-        match result {
-            Ok(()) => {
-                ipc_trace("link", "socket closed");
-            }
-            Err(error) => {
-                let event = match &error {
-                    LinkError::Displaced => LinkEvent::Displaced,
-                    LinkError::AuthRequired => LinkEvent::AuthRequired,
-                    LinkError::Closed => LinkEvent::Closed,
-                    LinkError::Backpressure | LinkError::Failed(_) => LinkEvent::Failed,
-                };
-                let action = link_action(event);
-                match action {
-                    LinkAction::Takeover => {
-                        publish_presence(
-                            &state,
-                            &app,
-                            serde_json::json!({ "connected": false, "displaced": true }),
-                        );
-                        wait_for_link_change(&state, epoch, &base, &token).await;
-                    }
-                    LinkAction::Remint => {
-                        let cloud = state
-                            .shared()
-                            .and_then(|s| s.session.lock().unwrap().auth.cloud().cloned());
-                        if let Some(cloud) = cloud {
-                            match cloud.refresh_session().await {
-                                Err(guild_app_server::cloud::CloudError::Unauthorized) => {
-                                    publish_presence(
-                                        &state,
-                                        &app,
-                                        serde_json::json!({"connected": false, "auth_required": true}),
-                                    );
-                                    wait_for_link_change(&state, epoch, &base, &token).await;
-                                }
-                                Err(error) => {
-                                    ipc_trace("link", &format!("session refresh failed: {error}"))
-                                }
-                                Ok(()) => {}
-                            }
-                        }
-                    }
-                    LinkAction::Backoff => {
-                        ipc_trace("link", &format!("socket ended: {error}"));
-                    }
-                }
-            }
-        }
-        if state.link_epoch.load(Ordering::SeqCst) == epoch
-            && state
-                .link_config()
-                .is_some_and(|(b, t)| b == base && t == token)
-        {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        }
-    }
-}
-
-/// Bounded like the machine link's `wait_for_config_change_or_backoff`:
-/// a displacer that dies must not park the member link forever — once the
-/// backoff elapses the same config reconnects (a genuinely competing
-/// instance just re-displaces us, visibly, at the slow cadence).
-const DISPLACED_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
-
-async fn wait_for_link_change(state: &GuildState, epoch: u64, base: &str, token: &str) {
-    let deadline = tokio::time::Instant::now() + DISPLACED_BACKOFF;
-    loop {
-        if state.link_epoch.load(Ordering::SeqCst) != epoch {
-            return;
-        }
-        let unchanged = state
-            .link_config()
-            .is_some_and(|(b, t)| b == base && t == token);
-        if !unchanged {
-            return;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
-}
-
-async fn ws_session(
-    state: &Arc<GuildState>,
-    app: &AppHandle,
-    base: &str,
-    token: &str,
-    instance_id: uuid::Uuid,
-    resume: bool,
-    connected: &mut bool,
-) -> Result<(), LinkError> {
-    let cloud = state
-        .shared()
-        .and_then(|shared| shared.session.lock().unwrap().auth.cloud().cloned())
-        .ok_or_else(|| LinkError::Failed("session disappeared".into()))?;
-    let ticket_url = format!("{}/api/v1/ws/ticket", base.trim_end_matches('/'));
-    let ticket_response = cloud
-        .http_pub()
-        .post(ticket_url)
-        .bearer_auth(token)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|error| LinkError::Failed(format!("ticket request: {error}")))?;
-    if ticket_response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(LinkError::AuthRequired);
-    }
-    if !ticket_response.status().is_success() {
-        return Err(LinkError::Failed(format!(
-            "ticket request: HTTP {}",
-            ticket_response.status()
-        )));
-    }
-    let ticket = ticket_response
-        .json::<Value>()
-        .await
-        .map_err(|error| LinkError::Failed(format!("ticket response: {error}")))?["ticket"]
-        .as_str()
-        .ok_or_else(|| LinkError::Failed("ticket response has no ticket".into()))?
-        .to_string();
-
-    let url = with_instance(websocket_url(state, base, &ticket)?, instance_id, resume);
-    let (socket, _) = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        tokio_tungstenite::connect_async(url.as_str()),
-    )
-    .await
-    .map_err(|_| LinkError::Failed("socket connect timed out".into()))?
-    .map_err(|error| LinkError::Failed(format!("socket connect: {error}")))?;
-    let (mut socket_tx, mut socket_rx) = socket.split();
-    let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
-    let (overflow_tx, overflow_rx) = tokio::sync::watch::channel(false);
-    let outbound = OutboundQueue {
-        priority_tx,
-        overflow: overflow_tx,
-    };
-    let writer = tokio::spawn(async move {
-        loop {
-            let Some(message) = priority_rx.recv().await else {
-                break;
-            };
-            send_ws_message_with_deadline(&mut socket_tx, message, WRITE_TIMEOUT).await?;
-        }
-        Ok::<(), String>(())
-    });
-
-    let mut writer = Box::pin(writer);
-    let mut overflow_rx = overflow_rx;
-    let bootstrap_deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    let mut bootstrapped = false;
-    let result = loop {
-        tokio::select! {
-            _ = tokio::time::sleep_until(bootstrap_deadline), if !bootstrapped => {
-                break Err(LinkError::Failed("socket bootstrap deadline".into()));
-            }
-            _ = wait_for_overflow(&mut overflow_rx) => {
-                break Err(LinkError::Backpressure);
-            }
-            writer_result = &mut writer => {
-                break writer_result
-                    .map_err(|error| LinkError::Failed(format!("socket writer: {error}")))
-                    .and_then(|result| result.map_err(LinkError::Failed))
-                    .map(|_| ());
-            }
-            incoming = receive_ws_message(&mut socket_rx, &outbound) => {
-                match incoming {
-                    Ok(text) => match classify_member_frame(&text) {
-                            MemberFrame::LiveFrame { chat_id, machine_id: frame_machine_id, event } => {
-                                let data = websocket_frame_data(chat_id, frame_machine_id, event, None);
-                                if let Err(error) = handle_app_frame(state, app, &data).await {
-                                    ipc_trace("link", &format!("frame error: {error}"));
-                                }
-                            }
-                            MemberFrame::ChatStatus { chat_id, generating } => {
-                                let _ = app.emit("chat-status", serde_json::json!({
-                                    "chat_id": chat_id,
-                                    "generating": generating,
-                                }));
-                            }
-                            MemberFrame::OrgEvent { event } => {
-                                let _ = app.emit("org-event", event);
-                            }
-                            MemberFrame::Hello => {
-                                *connected = true;
-                                publish_presence(state, app, serde_json::json!({ "connected": true }));
-                            }
-                            MemberFrame::ThreadList => { bootstrapped = true; }
-                            MemberFrame::Error { message } => {
-                                ipc_trace("link", &format!("server error: {message}"));
-                            }
-                            MemberFrame::Displaced => break Err(LinkError::Displaced),
-                            MemberFrame::AuthRequired => break Err(LinkError::AuthRequired),
-                            // State/display frames, dispatches (the executor
-                            // role is the daemon's machine link), unknown
-                            // variants, and unparseable text: ignored, the
-                            // link survives server protocol drift.
-                            MemberFrame::Other => {}
-                    },
-                    Err(error) => break Err(error),
-                }
-            }
-        }
-    };
-    let _ = outbound.try_send_priority(WsMessage::Close(None));
-    let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, &mut writer).await;
-    writer.abort();
-    let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
-    result
-}
-
-/// The member-relevant subset of `WsServerMsg`, extracted by tag-peeking
-/// the raw JSON first: the member link's liveness must not depend on the
-/// display event vocabulary (`StreamEvent` gains variants regularly, and
-/// member sockets receive the same live feed as machine sockets). Only the
-/// frames the member acts on are parsed typed; everything else — state
-/// frames, dispatches, unknown variants, unparseable text — is ignored.
-enum MemberFrame {
-    LiveFrame {
-        chat_id: uuid::Uuid,
-        machine_id: Option<String>,
-        event: protocol::api::StreamEvent,
-    },
-    ChatStatus {
-        chat_id: uuid::Uuid,
-        generating: bool,
-    },
-    OrgEvent {
-        event: Value,
-    },
-    Hello,
-    ThreadList,
-    Error {
-        message: String,
-    },
-    Displaced,
-    AuthRequired,
-    /// Anything the member does not act on: state/sync frames, tool
-    /// dispatches, machine requests, frames with an unknown `type` tag,
-    /// frames whose typed parse fails (a display frame carrying a newer
-    /// server's `StreamEvent` variant), and non-JSON text. All ignored.
-    Other,
-}
-
-fn classify_member_frame(text: &str) -> MemberFrame {
-    let Ok(value) = serde_json::from_str::<Value>(text) else {
-        return MemberFrame::Other;
-    };
-    let tag = value
-        .get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or_default()
-        .to_string();
-    match tag.as_str() {
-        "live_frame" | "chat_status" | "org_event" | "hello" | "thread_list" | "error" => {
-            match serde_json::from_value::<WsServerMsg>(value) {
-                Ok(WsServerMsg::LiveFrame {
-                    chat_id,
-                    machine_id,
-                    event,
-                    ..
-                }) => MemberFrame::LiveFrame {
-                    chat_id,
-                    machine_id,
-                    event,
-                },
-                Ok(WsServerMsg::ChatStatus {
-                    chat_id,
-                    generating,
-                }) => MemberFrame::ChatStatus {
-                    chat_id,
-                    generating,
-                },
-                Ok(WsServerMsg::OrgEvent { event }) => MemberFrame::OrgEvent { event },
-                Ok(WsServerMsg::Hello) => MemberFrame::Hello,
-                Ok(WsServerMsg::ThreadList { .. }) => MemberFrame::ThreadList,
-                Ok(WsServerMsg::Error { message }) => MemberFrame::Error { message },
-                // A tag the member recognizes but a variant it does not act
-                // on (or drift inside it): ignore, the link survives.
-                Ok(_) => MemberFrame::Other,
-                // Tag matched but the payload did not: a display frame from a
-                // newer server (unknown `StreamEvent` variant) or drifted
-                // shape — log and keep the link, the member just skips it.
-                Err(_) => {
-                    ipc_trace("link", &format!("unparsed member frame: {tag}"));
-                    MemberFrame::Other
-                }
-            }
-        }
-        "displaced" => MemberFrame::Displaced,
-        "auth_required" => MemberFrame::AuthRequired,
-        // Known-ignored frames (thread_state, sync_begin, sync_done,
-        // tool_dispatch, machine_request) and unknown tags land here.
-        _ => MemberFrame::Other,
-    }
-}
-
-async fn receive_ws_message<S>(
-    socket_rx: &mut S,
-    outbound: &OutboundQueue,
-) -> Result<String, LinkError>
-where
-    S: futures::Stream<
-            Item = Result<
-                tokio_tungstenite::tungstenite::Message,
-                tokio_tungstenite::tungstenite::Error,
-            >,
-        > + Unpin,
-{
-    loop {
-        match tokio::time::timeout(Duration::from_secs(20), socket_rx.next())
-            .await
-            .map_err(|_| LinkError::Failed("socket read silence deadline".into()))?
-        {
-            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                // Raw text: classification (and typed parsing of only the
-                // frames the member acts on) happens in the session loop, so
-                // an unknown server variant cannot tear the link down.
-                return Ok(text.to_string());
-            }
-            Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                outbound.try_send_priority(WsMessage::Pong(payload))?;
-            }
-            Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                return Err(LinkError::Closed);
-            }
-            Some(Err(error)) => return Err(LinkError::Failed(format!("socket read: {error}"))),
-            Some(Ok(_)) => {}
-        }
-    }
-}
-
-fn with_instance(mut url: url::Url, instance: uuid::Uuid, resume: bool) -> url::Url {
-    url.query_pairs_mut()
-        .append_pair("instance_id", &instance.to_string())
-        .append_pair("resume", if resume { "true" } else { "false" });
-    url
-}
-
-fn websocket_url(state: &Arc<GuildState>, base: &str, ticket: &str) -> Result<url::Url, LinkError> {
-    let mut url = url::Url::parse(base)
-        .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
-    let scheme = match url.scheme() {
-        "http" => "ws",
-        "https" => "wss",
-        scheme => {
-            return Err(LinkError::Failed(format!(
-                "unsupported server scheme: {scheme}"
-            )))
-        }
-    };
-    url.set_scheme(scheme)
-        .map_err(|_| LinkError::Failed("could not set websocket scheme".into()))?;
-    let path = format!("{}/api/v1/ws", url.path().trim_end_matches('/'));
-    url.set_path(&path);
-    // Member connection: ticket + the stable client id (the webview's
-    // per-install machine id doubles as the presence key). The machine
-    // identity itself rides the daemon's machine link, not this socket.
-    let client_id = state
-        .machine_id
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| "guild-desktop".into());
-    url.set_query(Some(&format!(
-        "ticket={}&client_id={}",
-        qenc(ticket),
-        qenc(&client_id)
-    )));
-    Ok(url)
-}
-
-fn websocket_frame_data(
-    chat_id: uuid::Uuid,
-    machine_id: Option<String>,
-    event: protocol::api::StreamEvent,
-    workdir: Option<String>,
-) -> String {
-    let mut v = serde_json::json!({
-        "chat_id": chat_id,
-        "machine_id": machine_id,
-        "event": event,
-    });
-    if let Some(workdir) = workdir {
-        v["workdir"] = workdir.into();
-    }
-    v.to_string()
-}
-
-/// Handles one WS frame: mirrors it for late webviews and forwards it to
-/// the webview. Tool execution is the daemon's machine link's job — this
-/// path only displays (spec 2026-09-18 agent-loop unification §3).
-async fn handle_app_frame(
-    state: &Arc<GuildState>,
-    app: &AppHandle,
-    data: &str,
-) -> Result<(), String> {
-    let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
-    let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
-    let ev = v["event"].clone();
-    let ev_type = ev["type"].as_str().unwrap_or_default().to_string();
-
-    // Mirror + forward to the webview (it renders what it has open and asks
-    // for the mirror when it needs catch-up).
-    let seq = state.mirror_update(&chat_id, |m| {
-        m.running = !matches!(ev_type.as_str(), "done" | "error");
-        if m.running {
-            m.frames.push(ev.clone());
-            if m.frames.len() > 4000 {
-                m.frames.drain(..1000);
-            }
-        } else {
-            // Turn over: the durable thread has everything; drop the mirror.
-            m.frames.clear();
-        }
-        m.seq += 1;
-    });
-    let _ = app.emit(
-        "app-frame",
-        serde_json::json!({ "chat_id": chat_id, "seq": seq, "event": ev }),
-    );
-
-    Ok(())
-}
-
 // Commands live in a submodule: `#[tauri::command]` in the crate-root
 // module trips E0255 (macro re-imports itself).
 pub mod commands {
     use super::*;
 
-    #[tauri::command]
-    pub fn machine_presence(state: State<'_, Arc<GuildState>>) -> Value {
-        state.presence.lock().unwrap().clone()
-    }
-
-    /// Idempotent: the engine exists from app setup; kept so the webview's
-    /// boot flow is unchanged.
+    /// Resolves once the engine can take requests: waits for the startup
+    /// session restore (bounded by setup), and rebuilds the engine after a
+    /// write failure dropped it.
     #[tauri::command]
     pub async fn start_engine(state: State<'_, EngineState>) -> Result<(), String> {
-        if state.cell.lock().unwrap().is_some() {
-            return Ok(());
-        }
         let shared = state
             .shared
-            .lock()
-            .unwrap()
+            .subscribe()
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| "engine not initialized".to_string())?
             .clone()
             .ok_or_else(|| "engine not initialized".to_string())?;
-        let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
-        let engine = Arc::new(engine);
-        let handle = state.handle.lock().unwrap().clone();
-        let Some(handle) = handle else {
-            return Err("engine not initialized".to_string());
-        };
-        start_engine_reader(handle, engine.clone(), rd_out);
-        let mut guard = state.cell.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(engine);
+        let mut cell = state.cell.guard();
+        if cell.is_none() {
+            *cell = Some(build_engine(&shared).map_err(|e| e.to_string())?);
         }
         Ok(())
     }
@@ -1066,26 +491,6 @@ pub mod commands {
         }
     }
 
-    /// The webview hands over its machine identity (localStorage, stable per
-    /// install — it keys existing chat bindings). Starts/refreshes the
-    /// server link.
-    #[tauri::command]
-    pub async fn set_machine_identity(
-        state: State<'_, Arc<GuildState>>,
-        machine_id: String,
-    ) -> Result<(), String> {
-        let changed = {
-            let mut m = state.machine_id.lock().unwrap();
-            let changed = m.as_deref() != Some(machine_id.as_str());
-            *m = Some(machine_id);
-            changed
-        };
-        if changed {
-            state.link_epoch.fetch_add(1, Ordering::SeqCst);
-        }
-        Ok(())
-    }
-
     /// WSL distros on this machine, for the project folder sources. Each
     /// row: `wsl --list --verbose` name + running state, plus the distro's
     /// PRETTY_NAME (lazy, cached per distro). Runs on the blocking pool —
@@ -1099,7 +504,7 @@ pub mod commands {
         let state = state.inner().clone();
         tokio::task::spawn_blocking(move || {
             const TTL: std::time::Duration = std::time::Duration::from_secs(60);
-            let cached = state.wsl_distros.lock().unwrap().clone();
+            let cached = state.wsl_distros.guard().clone();
             if let Some((at, distros)) = cached {
                 if at.elapsed() < TTL {
                     return Ok(distros);
@@ -1130,7 +535,7 @@ pub mod commands {
     ) -> Result<Option<String>, String> {
         let state = state.inner().clone();
         tokio::task::spawn_blocking(move || {
-            let cached = state.wsl_pretty.lock().unwrap().get(&distro).cloned();
+            let cached = state.wsl_pretty.guard().get(&distro).cloned();
             if let Some(cached) = cached {
                 return Ok(cached);
             }
@@ -1139,8 +544,7 @@ pub mod commands {
                 .and_then(parse_pretty_name);
             state
                 .wsl_pretty
-                .lock()
-                .unwrap()
+                .guard()
                 .insert(distro, pretty.clone());
             Ok(pretty)
         })
@@ -1159,14 +563,14 @@ pub mod commands {
     ) -> Result<Option<String>, String> {
         let state = state.inner().clone();
         tokio::task::spawn_blocking(move || {
-            let cached = state.wsl_homes.lock().unwrap().get(&distro).cloned();
+            let cached = state.wsl_homes.guard().get(&distro).cloned();
             if let Some(cached) = cached {
                 return Ok(cached);
             }
             let home = run_wsl(&["-d", &distro, "--exec", "sh", "-c", "echo $HOME"])
                 .map(|raw| raw.trim().to_string())
                 .filter(|h| h.starts_with('/') && !h.is_empty());
-            state.wsl_homes.lock().unwrap().insert(distro, home.clone());
+            state.wsl_homes.guard().insert(distro, home.clone());
             Ok(home)
         })
         .await
@@ -1284,57 +688,38 @@ pub mod commands {
         out
     }
 
-    /// In-flight mirror catch-up for a webview opening (or reloading) a chat
-    /// mid-generation: everything the fan-out bus delivered so far, plus the
-    /// seq watermark — frames with seq ≤ this are already reflected.
-    #[tauri::command]
-    pub async fn chat_snapshot(
-        state: State<'_, Arc<GuildState>>,
-        chat_id: String,
-    ) -> Result<Value, String> {
-        let mirrors = state.mirrors.lock().unwrap();
-        let Some(m) = mirrors.get(&chat_id) else {
-            return Ok(serde_json::json!({ "running": false, "seq": 0, "frames": [] }));
-        };
-        Ok(serde_json::json!({
-            "running": m.running,
-            "seq": m.seq,
-            "frames": m.frames,
-        }))
-    }
-
     /// Submit an rpc without waiting for its response: returns the request id
     /// immediately. Results are collected by rpc_poll. This keeps every webview
     /// invoke sub-millisecond — Windows WebView2 can silently lose long-lived
     /// invoke responses, and a pair/login must not depend on that path.
+    /// Only `WEBVIEW_RPC_METHODS` are forwarded.
     #[tauri::command]
     pub async fn rpc_submit(
         state: State<'_, EngineState>,
         method: String,
         params: Value,
     ) -> Result<u64, String> {
-        let engine = {
-            let guard = state.cell.lock().unwrap();
-            guard
-                .clone()
-                .ok_or_else(|| "engine not started".to_string())?
-        };
+        if !webview_rpc_allowed(&method) {
+            ipc_trace("rpc-refused", &format!("method={method}"));
+            return Err(format!("rpc method not available to the app: {method}"));
+        }
+        let engine = state
+            .cell
+            .guard()
+            .clone()
+            .ok_or_else(|| "engine not started".to_string())?;
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         ipc_trace("rpc-start", &format!("id={id} method={method}"));
-        engine
-            .submitted
-            .lock()
-            .unwrap()
-            .insert(id, std::time::Instant::now());
-        let mut w = engine.writer.lock().unwrap();
+        engine.submit(id);
+        let mut w = engine.writer.guard();
         if let Err(e) = w
             .write_all(envelope(id, &method, &params).to_string().as_bytes())
             .and_then(|_| w.write_all(b"\n"))
             .and_then(|_| w.flush())
         {
             ipc_trace("write-fail", &format!("id={id} err={e}"));
-            engine.submitted.lock().unwrap().remove(&id);
-            *state.cell.lock().unwrap() = None;
+            engine.submitted.guard().remove(&id);
+            *state.cell.guard() = None;
             return Err(format!("engine write failed: {e}"));
         }
         drop(w);
@@ -1342,38 +727,16 @@ pub mod commands {
         Ok(id)
     }
 
-    /// Drain completed rpc envelopes (and inject timeouts for submissions
-    /// older than 120s). Returns full JSON-RPC envelopes; clients route by
-    /// the `id` field.
+    /// Drain completed rpc envelopes (and inject timeouts for requests still
+    /// in flight after 120s). Returns full JSON-RPC envelopes; clients route
+    /// by the `id` field.
     #[tauri::command]
     pub async fn rpc_poll(state: State<'_, EngineState>) -> Result<Vec<Value>, String> {
-        let engine = {
-            let guard = state.cell.lock().unwrap();
-            guard.clone()
-        };
-        let Some(engine) = engine else {
+        let Some(engine) = state.cell.guard().clone() else {
             return Ok(vec![]);
         };
-        let now = std::time::Instant::now();
-        {
-            let mut sub = engine.submitted.lock().unwrap();
-            let mut results = engine.results.lock().unwrap();
-            let stale: Vec<u64> = sub
-                .iter()
-                .filter(|(_, t)| now.duration_since(**t) > std::time::Duration::from_secs(120))
-                .map(|(id, _)| *id)
-                .collect();
-            for id in stale {
-                sub.remove(&id);
-                results.entry(id).or_insert_with(
-                    || serde_json::json!({"id": id, "error": {"message": "engine timed out"}}),
-                );
-                ipc_trace("rpc-timeout", &format!("id={id}"));
-            }
-        }
-        let mut results = engine.results.lock().unwrap();
-        let drained: Vec<Value> = results.drain().map(|(_, v)| v).collect();
-        Ok(drained)
+        engine.expire(std::time::Instant::now(), RPC_TIMEOUT);
+        Ok(engine.drain())
     }
 
     /// Version of the pending downloaded update, if any (UI queries on mount
@@ -1384,8 +747,7 @@ pub mod commands {
     ) -> Result<Option<String>, String> {
         Ok(state
             .pending
-            .lock()
-            .unwrap()
+            .guard()
             .as_ref()
             .map(|(u, _)| u.version.clone()))
     }
@@ -1397,7 +759,7 @@ pub mod commands {
         app: AppHandle,
     ) -> Result<(), String> {
         let (update, bytes) = {
-            let mut guard = state.pending.lock().unwrap();
+            let mut guard = state.pending.guard();
             guard
                 .take()
                 .ok_or_else(|| "no pending update".to_string())?
@@ -1407,7 +769,7 @@ pub mod commands {
             // Restore: a failed install must not lose the pending update —
             // the next install attempt would otherwise report "no pending
             // update".
-            *state.pending.lock().unwrap() = Some((update, bytes));
+            *state.pending.guard() = Some((update, bytes));
             return Err(e.to_string());
         }
         app.request_restart();
@@ -1415,58 +777,6 @@ pub mod commands {
         Ok(())
     }
 
-    #[tauri::command]
-    pub async fn rpc_request(
-        state: State<'_, EngineState>,
-        method: String,
-        params: Value,
-    ) -> Result<Value, String> {
-        let engine = {
-            let guard = state.cell.lock().unwrap();
-            guard
-                .clone()
-                .ok_or_else(|| "engine not started".to_string())?
-        };
-        let id = state.next_id.fetch_add(1, Ordering::SeqCst);
-        let t0 = std::time::Instant::now();
-        ipc_trace("rpc-start", &format!("id={id} method={method}"));
-        // oneshot: tauri's async_runtime re-exports shadow `mpsc::channel`
-        // inside #[tauri::command] scopes; oneshot stays unambiguous.
-        let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
-        engine.responses.lock().unwrap().insert(id, tx);
-        {
-            let mut w = engine.writer.lock().unwrap();
-            if let Err(e) = w
-                .write_all(envelope(id, &method, &params).to_string().as_bytes())
-                .and_then(|_| w.write_all(b"\n"))
-                .and_then(|_| w.flush())
-            {
-                ipc_trace("write-fail", &format!("id={id} err={e}"));
-                *state.cell.lock().unwrap() = None;
-                return Err(format!("engine write failed: {e}"));
-            }
-        }
-        ipc_trace("write-ok", &format!("id={id}"));
-        // Bounded wait: a wedged (alive-but-silent) engine must not leave the
-        // UI spinning forever — 120s covers any legitimate request (pair,
-        // login, session restore); chat streaming rides on events, not this.
-        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-            Ok(Ok(value)) => {
-                ipc_trace("rpc-resolved", &format!("id={id} in {:?}", t0.elapsed()));
-                Ok(value)
-            }
-            Ok(Err(_)) => {
-                engine.responses.lock().unwrap().remove(&id);
-                ipc_trace("rpc-dropped", &format!("id={id} after {:?}", t0.elapsed()));
-                Err("engine dropped the request".into())
-            }
-            Err(_) => {
-                engine.responses.lock().unwrap().remove(&id);
-                ipc_trace("rpc-timeout", &format!("id={id} after {:?}", t0.elapsed()));
-                Err("engine timed out".into())
-            }
-        }
-    }
 } // commands module
 
 /// Checks the paired server for a newer signed build and, if found, downloads
@@ -1525,8 +835,7 @@ async fn check_and_prepare_update(app: &AppHandle) {
         let state: State<UpdateState> = app.state();
         let already = state
             .pending
-            .lock()
-            .unwrap()
+            .guard()
             .as_ref()
             .is_some_and(|(pending, _)| pending.version == version);
         if already {
@@ -1560,7 +869,7 @@ async fn check_and_prepare_update(app: &AppHandle) {
         }
     };
     let state: State<UpdateState> = app.state();
-    *state.pending.lock().unwrap() = Some((update, bytes));
+    *state.pending.guard() = Some((update, bytes));
     eprintln!("updater: version {version} ready to install");
     let _ = app.emit("update-ready", serde_json::json!({"version": version}));
 }
@@ -1573,7 +882,7 @@ async fn check_update_now(app: AppHandle) {
     const MIN_INTERVAL: Duration = Duration::from_secs(60);
     {
         let state: State<UpdateState> = app.state();
-        let mut last = state.last_check.lock().unwrap();
+        let mut last = state.last_check.guard();
         if let Some(t) = *last {
             if t.elapsed() < MIN_INTERVAL {
                 return;
@@ -1602,7 +911,7 @@ pub fn start_update_checker(app: AppHandle) {
                 // after a scheduled check does not re-download immediately.
                 {
                     let state: State<UpdateState> = app.state();
-                    *state.last_check.lock().unwrap() = Some(std::time::Instant::now());
+                    *state.last_check.guard() = Some(std::time::Instant::now());
                 }
                 check_and_prepare_update(&app).await;
                 // re-check every 15 minutes while the app is open
@@ -1610,6 +919,59 @@ pub fn start_update_checker(app: AppHandle) {
             }
         });
     });
+}
+
+/// Restores the persisted session, hosts the CLI socket on it, builds the
+/// webview engine, and publishes the Shared so `start_engine` resolves.
+async fn boot_engine(app: AppHandle) {
+    guild_app_server::machine_link::ensure_crypto_provider();
+    let session = match tokio::time::timeout(
+        Duration::from_secs(10),
+        guild_app_server::jsonrpc_loop::restored_session(),
+    )
+    .await
+    {
+        Ok(r) => r.unwrap_or_else(|_| Default::default()),
+        Err(_) => {
+            eprintln!("setup: session restore timed out; starting without a validated session");
+            Default::default()
+        }
+    };
+    let shared = Shared::new(session);
+
+    // CLI verbs: the socket is hosted by this process, backed by the SAME
+    // Shared the webview engine dispatches on — pair/login from the webview
+    // must reach the machine link's watch channel in the same step, not on
+    // the next app start. If an old background daemon still owns the
+    // endpoint, this waits and hosts the moment the stale one is retired.
+    // While the systemd unit daemon is active (after `daemon install`) the
+    // host task parks: no socket, no machine link — the unit owns the
+    // executor, and the GUI reclaims both when the unit stops. Whoever hosts
+    // the socket, auth stays propagated: the daemon re-seeds its link config
+    // from token.json changes.
+    {
+        let daemon_shared = shared.clone();
+        tauri::async_runtime::spawn(async move {
+            match guild_app_server::daemon::socket_path() {
+                Ok(path) => {
+                    let _ = guild_app_server::daemon::run_daemon_shared_reclaiming(
+                        path,
+                        daemon_shared,
+                    )
+                    .await;
+                }
+                Err(e) => eprintln!("setup: no CLI socket path: {e}"),
+            }
+        });
+    }
+
+    let state: State<EngineState> = app.state();
+    match build_engine(&shared) {
+        Ok(engine) => *state.cell.guard() = Some(engine),
+        // start_engine retries the build from the published Shared.
+        Err(e) => eprintln!("setup: engine build failed: {e}"),
+    }
+    state.shared.send_replace(Some(shared));
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -1637,16 +999,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_update_now,
             commands::start_engine,
-            commands::rpc_request,
             commands::rpc_submit,
             commands::rpc_poll,
-            commands::set_machine_identity,
             commands::list_wsl_distros,
             commands::wsl_home,
             commands::wsl_pretty_name,
             commands::list_dir,
-            commands::chat_snapshot,
-            commands::machine_presence,
             commands::daemon_trace_state,
             commands::set_daemon_trace,
             commands::install_update,
@@ -1665,76 +1023,13 @@ pub fn run() {
                 });
             }
 
-            // One session, one dispatch surface. The CLI socket and the
-            // webview pipes both serve this Shared. Bounded: an unreachable
-            // server must not hang the window open — the token stays usable
-            // by the link either way.
-            let session = tauri::async_runtime::block_on(async {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    guild_app_server::jsonrpc_loop::restored_session(),
-                )
-                .await
-                {
-                    Ok(r) => r.unwrap_or_else(|_| Default::default()),
-                    Err(_) => {
-                        eprintln!("setup: session restore timed out; starting without a validated session");
-                        Default::default()
-                    }
-                }
-            });
-            let shared = guild_app_server::jsonrpc_loop::Shared::new(session);
-            {
-                let state: State<EngineState> = app.state();
-                *state.shared.lock().unwrap() = Some(shared.clone());
-                // The engine-recovery path (start_engine) rebuilds the engine
-                // after a write failure dropped it; it needs the app handle
-                // for the event reader.
-                *state.handle.lock().unwrap() = Some(handle.clone());
-            }
-            {
-                let guild: State<Arc<GuildState>> = app.state();
-                *guild.shared.lock().unwrap() = Some(shared.clone());
-            }
-
-            // CLI verbs: the socket is hosted by this process, backed by
-            // the SAME Shared the webview engine dispatches on — pair/login
-            // from the webview must reach the machine link's watch channel
-            // in the same step, not on the next app start. If an old
-            // background daemon still owns the endpoint, this waits and
-            // hosts the moment the stale one is retired. While the systemd
-            // unit daemon is active (after `daemon install`) the host task
-            // parks: no socket, no machine link — the unit owns the
-            // executor, and the GUI reclaims both when the unit stops.
-            // Whoever hosts the socket, auth stays propagated: the daemon
-            // re-seeds its link config from token.json changes.
-            {
-                let daemon_shared = shared.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = guild_app_server::daemon::run_daemon_shared_reclaiming(
-                        guild_app_server::daemon::socket_path().expect("socket path"),
-                        daemon_shared,
-                    )
-                    .await;
-                });
-            }
-
-            // The webview-facing engine (in-process pipes).
-            {
-                let state: State<EngineState> = app.state();
-                let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
-                let engine = Arc::new(engine);
-                start_engine_reader(handle.clone(), engine.clone(), rd_out);
-                *state.cell.lock().unwrap() = Some(engine);
-            }
-
-            // The single standing server connection: shares the managed
-            // state (machine identity, WSL caches, mirrors) with the commands.
-            {
-                let guild: State<Arc<GuildState>> = app.state();
-                let guild = guild.inner().clone();
-                tauri::async_runtime::spawn(ws_link_task(guild, handle.clone()));
-            }
+            // One session, one dispatch surface: the CLI socket and the
+            // webview pipes both serve this Shared. The restore validates the
+            // stored session against the server, so it runs off the main
+            // thread (the window paints meanwhile; `start_engine` waits for
+            // it). Bounded: an unreachable server must not hold the engine
+            // back — the stored token stays usable either way.
+            tauri::async_runtime::spawn(boot_engine(handle.clone()));
 
             // Window close → collapse to tray (the process keeps executing
             // tools and holding presence). Real exit only from the tray.
@@ -1852,308 +1147,68 @@ mod tests {
         assert!(parse_line("not json").is_none());
     }
 
+    fn test_engine() -> Engine {
+        let (_rd, wr) = std::io::pipe().unwrap();
+        Engine::new(wr)
+    }
+
+    #[test]
+    fn a_response_ends_the_request_in_flight() {
+        let engine = test_engine();
+        engine.submit(7);
+        engine.complete(7, serde_json::json!({"id": 7, "result": {"ok": true}}));
+        assert!(engine.submitted.guard().is_empty());
+        // Neither the timeout sweep nor engine exit rewrites a finished rpc.
+        engine.expire(
+            std::time::Instant::now() + Duration::from_secs(600),
+            RPC_TIMEOUT,
+        );
+        engine.fail_in_flight("engine dropped the request");
+        let drained = engine.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0]["result"]["ok"], true);
+    }
+
+    #[test]
+    fn requests_without_a_response_time_out_or_fail_on_engine_exit() {
+        let engine = test_engine();
+        engine.submit(1);
+        engine.submit(2);
+        engine.expire(std::time::Instant::now(), RPC_TIMEOUT);
+        assert!(engine.drain().is_empty(), "fresh requests are not expired");
+        engine.expire(
+            std::time::Instant::now() + RPC_TIMEOUT + Duration::from_secs(1),
+            RPC_TIMEOUT,
+        );
+        engine.submit(3);
+        engine.fail_in_flight("engine dropped the request");
+        let mut drained = engine.drain();
+        drained.sort_by_key(|v| v["id"].as_u64());
+        let messages: Vec<&str> = drained
+            .iter()
+            .map(|v| v["error"]["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            messages,
+            ["engine timed out", "engine timed out", "engine dropped the request"]
+        );
+    }
+
+    #[test]
+    fn webview_rpc_allowlist_admits_only_the_app_surface() {
+        for method in ["session.info", "pair", "login", "fs.write_text", "registry.publish"] {
+            assert!(webview_rpc_allowed(method), "{method}");
+        }
+        for method in ["agent.start", "agent.policy.set", "daemon.shutdown", "chat.send", ""] {
+            assert!(!webview_rpc_allowed(method), "{method}");
+        }
+    }
+
     #[test]
     fn envelope_carries_protocol() {
         let v = envelope(5, "login", &serde_json::json!({"a": 1}));
         assert_eq!(v["protocol"], 1);
         assert_eq!(v["id"], 5);
-    }
-
-    #[test]
-    fn bare_close_uses_standard_backoff() {
-        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
-    }
-
-    #[test]
-    fn immediate_redisplacement_enters_takeover_state() {
-        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
-    }
-
-    #[test]
-    fn repeated_bare_closes_remain_retryable() {
-        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
-    }
-
-    #[test]
-    fn explicit_displaced_enters_takeover_state() {
-        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn silent_read_is_bounded_during_bootstrap_and_after_connect() {
-        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
-        let (overflow, _) = tokio::sync::watch::channel(false);
-        let outbound = OutboundQueue {
-            priority_tx,
-            overflow,
-        };
-        let mut reader = futures::stream::pending();
-        let error = receive_ws_message(&mut reader, &outbound)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(error, LinkError::Failed(message) if message.contains("silence deadline"))
-        );
-    }
-
-    /// A displaced frame arriving on the socket (the server-side slot
-    /// takeover that produces it is owned and tested by the server) must
-    /// drive the desktop read path to the terminal reconnect policy.
-    #[tokio::test]
-    async fn displaced_frame_on_socket_uses_terminal_reconnect_policy() {
-        guild_app_server::machine_link::ensure_crypto_provider();
-        use futures::{SinkExt, StreamExt};
-        let app = axum::Router::new().route(
-            "/api/v1/ws",
-            axum::routing::get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
-                ws.on_upgrade(move |socket| async move {
-                    let (mut tx, _rx) = socket.split();
-                    let _ = tx
-                        .send(axum::extract::ws::Message::text(r#"{"type":"displaced"}"#))
-                        .await;
-                    let _ = tx.close().await;
-                })
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let url = with_instance(
-            machine_url_for_test(&base, "fixture", "machine", "Desk").unwrap(),
-            uuid::Uuid::now_v7(),
-            true,
-        );
-        let (mut stale, _) = tokio_tungstenite::connect_async(url.as_str()).await.unwrap();
-        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
-        let outbound = OutboundQueue {
-            priority_tx,
-            overflow: tokio::sync::watch::channel(false).0,
-        };
-        let text = receive_ws_message(&mut stale, &outbound).await.unwrap();
-        assert!(matches!(
-            classify_member_frame(&text),
-            MemberFrame::Displaced
-        ));
-        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
-        server.abort();
-    }
-
-    struct StalledSink;
-
-    impl futures::Sink<WsMessage> for StalledSink {
-        type Error = std::io::Error;
-
-        fn poll_ready(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Pending
-        }
-
-        fn start_send(self: std::pin::Pin<&mut Self>, _: WsMessage) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Pending
-        }
-
-        fn poll_close(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-    }
-
-    #[tokio::test]
-    async fn stalled_ordinary_write_hits_deadline() {
-        let mut sink = StalledSink;
-        let result = send_ws_message_with_deadline(
-            &mut sink,
-            WsMessage::Text("ordinary".into()),
-            Duration::from_millis(1),
-        )
-        .await;
-        assert_eq!(result.unwrap_err(), "socket write timed out");
-    }
-
-    #[test]
-    fn auth_required_requests_ticket_remint() {
-        assert_eq!(link_action(LinkEvent::AuthRequired), LinkAction::Remint);
-    }
-
-    #[test]
-    fn outbound_queue_marks_link_dead_when_full() {
-        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
-        let (overflow, signal) = tokio::sync::watch::channel(false);
-        let queue = OutboundQueue {
-            priority_tx,
-            overflow,
-        };
-        for _ in 0..PRIORITY_QUEUE_CAP {
-            queue
-                .try_send_priority(WsMessage::Text("frame".into()))
-                .unwrap();
-        }
-        assert!(matches!(
-            queue.try_send_priority(WsMessage::Text("overflow".into())),
-            Err(LinkError::Backpressure)
-        ));
-        assert!(*signal.borrow());
-    }
-
-    #[test]
-    fn priority_replies_flow_through_the_single_queue() {
-        let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
-        let (overflow, _signal) = tokio::sync::watch::channel(false);
-        let queue = OutboundQueue {
-            priority_tx,
-            overflow,
-        };
-        queue
-            .try_send_priority(WsMessage::Pong(Vec::new().into()))
-            .unwrap();
-        queue.try_send_priority(WsMessage::Close(None)).unwrap();
-        assert!(matches!(
-            priority_rx.try_recv().unwrap(),
-            WsMessage::Pong(_)
-        ));
-        assert!(matches!(
-            priority_rx.try_recv().unwrap(),
-            WsMessage::Close(None)
-        ));
-    }
-
-    #[test]
-    fn websocket_url_uses_ws_scheme_and_encodes_the_member_query() {
-        let state = Arc::new(GuildState::default());
-        *state.machine_id.lock().unwrap() = Some("machine id".into());
-        let url = websocket_url(&state, "https://guild.example/base", "ticket/+").unwrap();
-        assert_eq!(url.scheme(), "wss");
-        assert_eq!(url.path(), "/base/api/v1/ws");
-        // Member connection: ticket + the per-install client id only — no
-        // machine keys (the executor role is the daemon's machine link).
-        assert_eq!(
-            url.query(),
-            Some("ticket=ticket%2F%2B&client_id=machine%20id")
-        );
-    }
-
-    /// Builds the machine-role upgrade URL the daemon's machine link sends
-    /// (the takeover semantics this suite exercises moved there with the
-    /// machine role; the server contract is unchanged).
-    fn machine_url_for_test(
-        base: &str,
-        ticket: &str,
-        machine_id: &str,
-        machine_name: &str,
-    ) -> Result<url::Url, LinkError> {
-        let mut url = url::Url::parse(base)
-            .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
-        url.set_scheme(match url.scheme() {
-            "https" => "wss",
-            _ => "ws",
-        })
-        .map_err(|_| LinkError::Failed("scheme".into()))?;
-        url.set_path(&format!("{}/api/v1/ws", url.path().trim_end_matches('/')));
-        url.set_query(Some(&format!(
-            "ticket={}&client_id={}&machine_id={}&machine_name={}",
-            qenc(ticket),
-            qenc(machine_id),
-            qenc(machine_id),
-            qenc(machine_name)
-        )));
-        Ok(url)
-    }
-
-    #[test]
-    fn websocket_frame_data_keeps_app_frame_shape() {
-        let data = websocket_frame_data(
-            uuid::Uuid::nil(),
-            Some("machine".into()),
-            protocol::api::StreamEvent::Delta {
-                content: "hello".into(),
-            },
-            None,
-        );
-        let value: Value = serde_json::from_str(&data).unwrap();
-        assert_eq!(value["chat_id"], uuid::Uuid::nil().to_string());
-        assert_eq!(value["machine_id"], "machine");
-        assert_eq!(value["event"]["type"], "delta");
-        assert!(value.get("workdir").is_none());
-    }
-
-    #[test]
-    fn dispatch_frame_carries_workdir() {
-        let data = websocket_frame_data(
-            uuid::Uuid::nil(),
-            Some("machine".into()),
-            protocol::api::StreamEvent::Delta {
-                content: "hi".into(),
-            },
-            Some("\\\\wsl.localhost\\arch\\home\\me".into()),
-        );
-        let value: Value = serde_json::from_str(&data).unwrap();
-        assert_eq!(value["workdir"], "\\\\wsl.localhost\\arch\\home\\me");
-    }
-
-    /// The tag-peek classifier parses only the member-relevant variants;
-    /// state frames, dispatches, unknown variants, and non-JSON text are all
-    /// Other — server protocol evolution cannot end the member session.
-    #[test]
-    fn member_classifier_ignores_state_unknown_and_malformed_frames() {
-        // A live frame carrying a `StreamEvent` variant this build does not
-        // know: a display frame, ignored — not a link teardown.
-        let future_live = serde_json::json!({
-            "type": "live_frame",
-            "chat_id": uuid::Uuid::nil(),
-            "generation_id": uuid::Uuid::nil(),
-            "seq": 1,
-            "event": {"type": "brand_new_stream_variant"}
-        });
-        for text in [
-            future_live.to_string(),
-            r#"{"type":"thread_state","chat_id":"00000000-0000-0000-0000-000000000000","seq":1,"events":[],"text":"","thinking":"","generating":false,"new_field":true}"#.to_string(),
-            r#"{"type":"tool_dispatch","chat_id":42}"#.to_string(),
-            r#"{"type":"machine_request","request_id":"r1","op":"fs_list","payload":{}}"#.to_string(),
-            "not json at all".to_string(),
-            r#"{"no_type_tag": true}"#.to_string(),
-        ] {
-            assert!(
-                matches!(classify_member_frame(&text), MemberFrame::Other),
-                "frame must be ignored, not fatal: {text}"
-            );
-        }
-        assert!(matches!(
-            classify_member_frame(r#"{"type":"displaced"}"#),
-            MemberFrame::Displaced
-        ));
-        assert!(matches!(
-            classify_member_frame(r#"{"type":"auth_required"}"#),
-            MemberFrame::AuthRequired
-        ));
-        let hello = classify_member_frame(r#"{"type":"hello"}"#);
-        assert!(matches!(hello, MemberFrame::Hello));
-        let status = classify_member_frame(
-            r#"{"type":"chat_status","chat_id":"00000000-0000-0000-0000-000000000000","generating":true}"#,
-        );
-        assert!(matches!(
-            status,
-            MemberFrame::ChatStatus {
-                generating: true,
-                ..
-            }
-        ));
-        let live = classify_member_frame(
-            r#"{"type":"live_frame","chat_id":"00000000-0000-0000-0000-000000000000","generation_id":"00000000-0000-0000-0000-000000000000","seq":1,"event":{"type":"delta","content":"hi"}}"#,
-        );
-        assert!(matches!(live, MemberFrame::LiveFrame { .. }));
     }
 
     #[test]
