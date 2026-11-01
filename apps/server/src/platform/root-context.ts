@@ -24,6 +24,10 @@ import { TeamStore } from "./store/teams.js";
 import { OrgKvStore, KvStore } from "./store/org_kv.js";
 import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
 import { UserMcpStore } from "./store/userMcp.js";
+import { PushStore } from "./store/push.js";
+import { PushNotifier } from "../push/notifier.js";
+import { webPushSender } from "../push/sender.js";
+import { pushSubject, vapidKeys, type VapidKeys } from "../push/vapid.js";
 import { LiveHub } from "../hub/live.js";
 import { TicketStore } from "../hub/tickets.js";
 import { ChatStore } from "./store/chats.js";
@@ -87,6 +91,8 @@ export class PlatformContext {
   readonly integrationSecrets: IntegrationSecretStore;
   /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
   readonly userMcp: UserMcpStore;
+  readonly push: PushStore;
+  readonly pushNotifier: PushNotifier;
   /** The real machine/member socket registry (M5 hub core). The M3 harness
    *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
    *  and casts here in its own tests. */
@@ -168,6 +174,14 @@ export class PlatformContext {
     this.integrations = new IntegrationStore(this.pool);
     this.integrationSecrets = new IntegrationSecretStore(this.pool);
     this.userMcp = new UserMcpStore(this.pool);
+    this.push = new PushStore(this.pool);
+    this.pushNotifier = new PushNotifier({
+      store: this.push,
+      // Presence gate: a live member socket already carries the frame.
+      isPresent: (userId) => this.hub.memberSinksOfUser(userId).length > 0,
+      sender: async () => webPushSender(await this.pushKeys(), pushSubject(this.config)),
+      log: (message) => log.warn?.(message),
+    });
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
@@ -198,6 +212,7 @@ export class PlatformContext {
         : undefined;
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
+    this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot),
@@ -230,6 +245,24 @@ export class PlatformContext {
     const key = Buffer.from(this.config.masterKeyHex, "hex");
     if (key.length !== 32) throw new Error("GUILD_MASTER_KEY_HEX must decode to 32 bytes");
     return key;
+  }
+
+  pushKeys(): Promise<VapidKeys> {
+    return vapidKeys(this.kv);
+  }
+
+  /** A turn ended for a chat: notify its owner when no socket is watching. */
+  private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
+    const owner = await this.chats.ownerOf(chatId);
+    if (owner === null) return;
+    const chat = await this.chats.getChatInOrg(owner.org_id, chatId).catch(() => null);
+    await this.pushNotifier.turnEnded({
+      orgId: owner.org_id,
+      userId: owner.user_id,
+      chatId,
+      title: chat?.title ?? "",
+      failed,
+    });
   }
 
   private createClickhouse(): ClickhouseClient {

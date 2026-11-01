@@ -68,6 +68,7 @@ export interface BridgeDeps {
   /** Files the turn attached with `send_file`, as chips for the terminal
    *  assistant message. Absent (tests without an attachment store) = none. */
   agentFiles?: { pending(chatId: string): Promise<MessageAttachment[]> };
+
   log: Logger;
 }
 
@@ -109,11 +110,17 @@ function invocationOf(submissionId: number): string {
 export class ChatBridge {
   private readonly states = new Map<string, BridgeState>();
   private streamSink: GenerationStreamSink | null = null;
+  private turnEndedHook: ((chatId: string, failed: boolean) => Promise<void>) | null = null;
 
   private readonly projection: TranscriptProjection;
 
   constructor(private readonly deps: BridgeDeps) {
     this.projection = new TranscriptProjection(deps);
+  }
+
+  /** Wires the push lane's turn-end hook (unset = no notifications). */
+  setTurnEnded(hook: ((chatId: string, failed: boolean) => Promise<void>) | null): void {
+    this.turnEndedHook = hook;
   }
 
   /** Wires the live-frame fan-out (the feed forwarder; unset = frames are
@@ -292,6 +299,11 @@ export class ChatBridge {
       }
       case "run_end": {
         await this.deps.chats.setGenerating(state.orgId, state.chatId, false);
+        // The turn is over: if its owner has no live socket, this is the one
+        // moment a notification is worth sending.
+        if (this.turnEndedHook !== null) {
+          await this.turnEndedHook(state.chatId, state.failure !== null).catch(() => {});
+        }
         for (const input of event.inputs) {
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(input)));
           for (const command of commands) {

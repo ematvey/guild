@@ -12,6 +12,22 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A finished run reaches the phone (2026-11-01).** The socket cannot carry a
+  result to a closed app, so the server now has a second transport beside it,
+  not a second event system: `run_end` asks the push lane, which asks presence
+  (a live member socket means the frame is enough) and then sends one Web Push
+  per device with a per-thread topic, so a thread never piles up notifications.
+  Devices live in `push_subscriptions` (migration 0100), keyed by a client
+  device id; a 404/410 from the push service deletes the row instead of
+  retrying it forever. VAPID keys are minted on first use and kept in
+  `server_kv`, so a redeploy keeps the identity and existing subscriptions
+  keep working. The payload names the thread and how the run ended — never the
+  answer: the app syncs on open, and a push is only a hint. Settings →
+  Notifications owns the per-device switch; iOS Safari reads as "add to Home
+  Screen first" because that is the only place Web Push works there. The floor
+  rises for the store, the sender, the notifier, the routes, the service
+  worker and the settings pane.
+
 - **The open chat's turn state is derived, not stored (2026-10-31).** `busy`
   was a `useState` with eight writers across three hooks: two of them were
   the server's own `generating` flag, four were "my send died", two were

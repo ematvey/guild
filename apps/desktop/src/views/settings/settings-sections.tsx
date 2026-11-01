@@ -5,6 +5,7 @@
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { useEffect, useState } from "react";
 import {
+  Bell,
   Bot,
   Building2,
   Cpu,
@@ -37,10 +38,12 @@ import IntegrationsSection from "./sections/IntegrationsSection";
 import McpSection from "./sections/McpSection";
 import SsoSection from "./sections/SsoSection";
 import RegistrySection from "./sections/RegistrySection";
+import { NotificationsSection } from "./sections/NotificationsSection";
 
 type SectionId =
   | "account"
   | "appearance"
+  | "notifications"
   | "machine"
   | "gateway"
   | "general"
@@ -70,6 +73,7 @@ export interface SectionDef {
 export const SETTINGS_SECTIONS: SectionDef[] = [
   { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
   { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
+  { id: "notifications", label: "Notifications", icon: <Bell className="size-4" />, group: "user" },
   { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
   { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
   { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
@@ -174,6 +178,8 @@ function SectionBody({
       return <AccountSection email={email} />;
     case "appearance":
       return <AppearanceSection />;
+    case "notifications":
+      return <NotificationsSection />;
     case "machine":
       return <MachineSection />;
     case "gateway":

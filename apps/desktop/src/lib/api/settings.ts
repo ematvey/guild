@@ -79,6 +79,40 @@ export function putOrgTelemetry(enabled: boolean): Promise<void> {
   return request<void>("PUT", `${SETTINGS_PATHS.org}/telemetry`, { enabled });
 }
 
+/** Web Push: this device's notification subscription. */
+export interface PushSubscriptionInfo {
+  device_id: string;
+  platform: string;
+  created_at: string;
+  last_seen_at: string;
+  last_error: string | null;
+}
+
+export function getPushConfig(): Promise<{ public_key: string }> {
+  return request<{ public_key: string }>("GET", "/api/v1/push/config");
+}
+
+export function getPushSubscriptions(): Promise<{ subscriptions: PushSubscriptionInfo[] }> {
+  return request<{ subscriptions: PushSubscriptionInfo[] }>("GET", "/api/v1/push/subscriptions");
+}
+
+export function postPushSubscribe(body: {
+  device_id: string;
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  platform: string;
+}): Promise<{ ok: boolean; id: string }> {
+  return request<{ ok: boolean; id: string }>("POST", "/api/v1/push/subscribe", body);
+}
+
+export function postPushUnsubscribe(endpoint: string): Promise<{ ok: boolean; removed: boolean }> {
+  return request<{ ok: boolean; removed: boolean }>("POST", "/api/v1/push/unsubscribe", { endpoint });
+}
+
+export function postPushTest(): Promise<{ ok: boolean; delivered: number }> {
+  return request<{ ok: boolean; delivered: number }>("POST", "/api/v1/push/test", {});
+}
+
 export async function uploadOrgLogo(file: File): Promise<{ logo_url: string }> {
   const token = getToken();
   const res = await fetch(

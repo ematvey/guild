@@ -67,6 +67,7 @@ describe("health route (native)", () => {
       "/api/v1/api-keys/*",
       "/api/v1/admin/api-keys",
       "/api/v1/admin/api-keys/*",
+      "/api/v1/push/*",
       "/api/v1/usage",
       "/api/v1/usage/*",
       "/openai/v1/*",

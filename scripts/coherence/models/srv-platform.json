@@ -1,630 +1,697 @@
 {
-  "model_roots": [],
-  "shared_canonical": [
-    "apps/server/src/platform/integrations/plugins.ts"
-  ],
-  "concepts": [
+ "model_roots": [],
+ "shared_canonical": [
+  "apps/server/src/platform/integrations/plugins.ts"
+ ],
+ "concepts": [
+  {
+   "id": "integration-tool",
+   "definition": "One tool an integration declares: a raw name, a description, a JSON Schema, and a manifest class.",
+   "canonical": "apps/server/src/integrations/loader.ts",
+   "types": [
+    "IntegrationToolSpec",
+    "IntegrationToolInfo"
+   ],
+   "aliases": [
+    "connector-tool",
+    "plugin-tool"
+   ],
+   "representations": [
     {
-      "id": "integration-tool",
-      "definition": "One tool an integration declares: a raw name, a description, a JSON Schema, and a manifest class.",
-      "canonical": "apps/server/src/integrations/loader.ts",
-      "types": [
-        "IntegrationToolSpec",
-        "IntegrationToolInfo"
-      ],
-      "aliases": [
-        "connector-tool",
-        "plugin-tool"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/integrations/loader.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integration-catalog.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/plugins.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
+     "where": "apps/server/src/integrations/loader.ts",
+     "role": "domain"
     },
     {
-      "id": "tool-class",
-      "definition": "The risk class of one integration tool (read, write or admin) and the role policy that follows from it.",
-      "canonical": "apps/server/src/platform/domain/tool-class.ts",
-      "types": [],
-      "aliases": [
-        "tool-classification"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/domain/tool-class.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/policy.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
+     "where": "apps/server/src/platform/integration-catalog.ts",
+     "role": "domain"
     },
     {
-      "id": "provider-protocol",
-      "definition": "The wire shape a model provider speaks (openai or anthropic), and the chunk stream one provider adapter yields.",
-      "canonical": "apps/server/src/platform/provider/types.ts",
-      "types": [
-        "ModelProvider",
-        "ProviderRequest",
-        "ProviderChunk",
-        "ProviderError",
-        "ChatChunk",
-        "InternalMessage",
-        "RoutedCall",
-        "SseDecoder"
-      ],
-      "aliases": [
-        "wire-protocol",
-        "provider-shape"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/provider/types.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/provider/sse.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/llm.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/openai.ts",
-          "role": "wire"
-        },
-        {
-          "where": "apps/server/src/platform/http/anthropic.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/openai.ts"
-        }
-      ]
+     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "role": "domain"
     },
     {
-      "id": "gateway-credential",
-      "definition": "The org, user and session identity one LLM gateway request runs as, derived from an API key or the internal key.",
-      "canonical": "apps/server/src/platform/http/llm.ts",
-      "types": [
-        "GatewayCredential",
-        "GatewayTraceHeaders"
-      ],
-      "aliases": [
-        "proxy-credential"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/http/llm.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/openai.ts",
-          "role": "wire"
-        },
-        {
-          "where": "apps/server/src/platform/http/anthropic.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/openai.ts"
-        }
-      ]
-    },
-    {
-      "id": "trace",
-      "definition": "One agent run or plain chat turn recorded in ClickHouse, with its LLM and tool spans, grouped by session.",
-      "canonical": "apps/server/src/platform/trace.ts",
-      "types": [
-        "TraceStore",
-        "TraceRecordInput",
-        "TraceSpanInput",
-        "TraceFilters",
-        "SpanFilters",
-        "SessionFilters",
-        "LlmTraceCall",
-        "SpanType",
-        "SpanStatus"
-      ],
-      "aliases": [
-        "agent-trace",
-        "activity-trace"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/trace.ts",
-          "role": "db"
-        },
-        {
-          "where": "apps/server/src/platform/http/activity.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "db",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/activity.ts"
-        }
-      ]
-    },
-    {
-      "id": "skill-read",
-      "definition": "One recorded read of a skill bundle, with org, user, team and chat attribution.",
-      "canonical": "apps/server/src/platform/skillReads.ts",
-      "types": [
-        "SkillReadSink",
-        "SkillReadEvent"
-      ],
-      "aliases": [
-        "skill-read-event"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/skillReads.ts",
-          "role": "db"
-        }
-      ],
-      "translations": []
-    },
-    {
-      "id": "chat-work",
-      "definition": "The derived predicate that one chat still has work: a live task, a queued submission, or an unprojected entry.",
-      "canonical": "apps/server/src/platform/store/work.ts",
-      "types": [],
-      "aliases": [
-        "pending-work",
-        "chat-busy"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/store/work.ts",
-          "role": "domain"
-        }
-      ],
-      "translations": []
-    },
-    {
-      "id": "org-kv",
-      "definition": "One key/value setting row, scoped to an org or to the whole server.",
-      "canonical": "apps/server/src/platform/store/org_kv.ts",
-      "types": [
-        "OrgKvStore",
-        "KvStore",
-        "SIGNING_SEED_KV",
-        "ASSISTANT_PROMPT_KEY",
-        "APPROVAL_POLICY_PROMPT_KEY"
-      ],
-      "aliases": [
-        "org-setting-row",
-        "server-kv"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/store/org_kv.ts",
-          "role": "db"
-        },
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "db",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
-    },
-    {
-      "id": "admin-prompt",
-      "definition": "An admin-configured org prompt (assistant persona or auto-approval policy) that overrides a built-in default.",
-      "canonical": "apps/server/src/platform/http/admin.ts",
-      "types": [],
-      "aliases": [
-        "assistant-prompt",
-        "approval-policy-prompt"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        },
-        {
-          "where": "apps/server/src/platform/store/org_kv.ts",
-          "role": "db"
-        }
-      ],
-      "translations": [
-        {
-          "from": "db",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
-    },
-    {
-      "id": "mcp-peer",
-      "definition": "One short-lived client connection to a remote MCP server: handshake, tool list, and tool call.",
-      "canonical": "apps/server/src/platform/integrations/mcp.ts",
-      "types": [
-        "McpPeer",
-        "McpTool",
-        "McpToolResult"
-      ],
-      "aliases": [
-        "mcp-client"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/integrations/mcp.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/execute.ts",
-          "role": "domain"
-        }
-      ],
-      "translations": []
-    },
-    {
-      "id": "integration-envelope",
-      "definition": "The identity and secret headers one integration call carries to an MCP server.",
-      "canonical": "apps/server/src/platform/integrations/plugins.ts",
-      "types": [
-        "PluginTurn",
-        "PluginExecutor",
-        "PluginGateway",
-        "PluginSecretSource"
-      ],
-      "aliases": [
-        "identity-envelope"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/platform/integrations/plugins.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/execute.ts",
-          "role": "wire"
-        },
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/integrations/execute.ts"
-        }
-      ]
-    },
-    {
-      "id": "integration-secret",
-      "definition": "One stored credential value of an integration, resolved at call time and never carried in a snapshot.",
-      "canonical": "apps/server/src/integrations/shared.ts",
-      "types": [],
-      "aliases": [
-        "connector-secret"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/integrations/shared.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/plugins.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/http/admin.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/admin.ts"
-        }
-      ]
-    },
-    {
-      "id": "integration-trait",
-      "definition": "A capability (web search, web fetch) with one Guild-provided tool name, description, and argument schema; an integration supplies the implementation.",
-      "canonical": "apps/server/src/integrations/traits.ts",
-      "types": [
-        "TraitSpec"
-      ],
-      "aliases": [
-        "capability"
-      ],
-      "representations": [
-        {
-          "where": "apps/server/src/integrations/traits.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/integrations/plugins.ts",
-          "role": "domain"
-        },
-        {
-          "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
-          "role": "ui"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "ui",
-          "at": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx"
-        }
-      ]
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
     }
-  ],
-  "attaches": [
+   ],
+   "translations": [
     {
-      "where": "apps/server/src/platform/http/admin.ts",
-      "concept": "integration",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/thread-stream.ts",
-      "concept": "thread-state",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/thread-stream.ts",
-      "concept": "chat",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/integrations/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/platform/integrations/plugins.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/atlassian/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/atlassian/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/firecrawl/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/firecrawl/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/github/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/github/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/gitlab/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/gitlab/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/google_workspace/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/google_workspace/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/hubspot/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/hubspot/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/langfuse/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/langfuse/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/searxng/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/searxng/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/slack/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/slack/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/superproxy/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/superproxy/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/platform/provider/types.ts",
-      "concept": "message",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/platform/http/openai.ts",
-      "concept": "message",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/anthropic.ts",
-      "concept": "message",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/openai.ts",
-      "concept": "tool-call",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/anthropic.ts",
-      "concept": "tool-call",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/llm.ts",
-      "concept": "usage-event",
-      "role": "wire"
-    },
-    {
-      "where": "apps/server/src/platform/http/llm.ts",
-      "concept": "gateway-route",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/platform/http/llm.ts",
-      "concept": "api-key",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/platform/skillReads.ts",
-      "concept": "skill",
-      "role": "db"
-    },
-    {
-      "where": "apps/server/src/integrations/loader.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/index.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/types.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/probe.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/api-tool.ts",
-      "concept": "integration-tool",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/grafana/execute.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/grafana/integration.ts",
-      "concept": "integration",
-      "role": "domain"
-    },
-    {
-      "where": "apps/server/src/integrations/traits.ts",
-      "concept": "integration-trait",
-      "role": "domain"
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/admin.ts"
     }
-  ],
-  "no_concept": [
+   ]
+  },
+  {
+   "id": "tool-class",
+   "definition": "The risk class of one integration tool (read, write or admin) and the role policy that follows from it.",
+   "canonical": "apps/server/src/platform/domain/tool-class.ts",
+   "types": [],
+   "aliases": [
+    "tool-classification"
+   ],
+   "representations": [
     {
-      "where": "apps/server/src/platform/http/register.ts",
-      "reason": "infrastructure"
+     "where": "apps/server/src/platform/domain/tool-class.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/integrations/policy.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
     }
-  ],
-  "types_no_concept": []
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/admin.ts"
+    }
+   ]
+  },
+  {
+   "id": "provider-protocol",
+   "definition": "The wire shape a model provider speaks (openai or anthropic), and the chunk stream one provider adapter yields.",
+   "canonical": "apps/server/src/platform/provider/types.ts",
+   "types": [
+    "ModelProvider",
+    "ProviderRequest",
+    "ProviderChunk",
+    "ProviderError",
+    "ChatChunk",
+    "InternalMessage",
+    "RoutedCall",
+    "SseDecoder"
+   ],
+   "aliases": [
+    "wire-protocol",
+    "provider-shape"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/provider/types.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/provider/sse.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/llm.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/openai.ts",
+     "role": "wire"
+    },
+    {
+     "where": "apps/server/src/platform/http/anthropic.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/openai.ts"
+    }
+   ]
+  },
+  {
+   "id": "gateway-credential",
+   "definition": "The org, user and session identity one LLM gateway request runs as, derived from an API key or the internal key.",
+   "canonical": "apps/server/src/platform/http/llm.ts",
+   "types": [
+    "GatewayCredential",
+    "GatewayTraceHeaders"
+   ],
+   "aliases": [
+    "proxy-credential"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/http/llm.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/openai.ts",
+     "role": "wire"
+    },
+    {
+     "where": "apps/server/src/platform/http/anthropic.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/openai.ts"
+    }
+   ]
+  },
+  {
+   "id": "trace",
+   "definition": "One agent run or plain chat turn recorded in ClickHouse, with its LLM and tool spans, grouped by session.",
+   "canonical": "apps/server/src/platform/trace.ts",
+   "types": [
+    "TraceStore",
+    "TraceRecordInput",
+    "TraceSpanInput",
+    "TraceFilters",
+    "SpanFilters",
+    "SessionFilters",
+    "LlmTraceCall",
+    "SpanType",
+    "SpanStatus"
+   ],
+   "aliases": [
+    "agent-trace",
+    "activity-trace"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/trace.ts",
+     "role": "db"
+    },
+    {
+     "where": "apps/server/src/platform/http/activity.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "db",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/activity.ts"
+    }
+   ]
+  },
+  {
+   "id": "skill-read",
+   "definition": "One recorded read of a skill bundle, with org, user, team and chat attribution.",
+   "canonical": "apps/server/src/platform/skillReads.ts",
+   "types": [
+    "SkillReadSink",
+    "SkillReadEvent"
+   ],
+   "aliases": [
+    "skill-read-event"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/skillReads.ts",
+     "role": "db"
+    }
+   ],
+   "translations": []
+  },
+  {
+   "id": "chat-work",
+   "definition": "The derived predicate that one chat still has work: a live task, a queued submission, or an unprojected entry.",
+   "canonical": "apps/server/src/platform/store/work.ts",
+   "types": [],
+   "aliases": [
+    "pending-work",
+    "chat-busy"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/store/work.ts",
+     "role": "domain"
+    }
+   ],
+   "translations": []
+  },
+  {
+   "id": "org-kv",
+   "definition": "One key/value setting row, scoped to an org or to the whole server.",
+   "canonical": "apps/server/src/platform/store/org_kv.ts",
+   "types": [
+    "OrgKvStore",
+    "KvStore",
+    "SIGNING_SEED_KV",
+    "ASSISTANT_PROMPT_KEY",
+    "APPROVAL_POLICY_PROMPT_KEY"
+   ],
+   "aliases": [
+    "org-setting-row",
+    "server-kv"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/store/org_kv.ts",
+     "role": "db"
+    },
+    {
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "db",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/admin.ts"
+    }
+   ]
+  },
+  {
+   "id": "admin-prompt",
+   "definition": "An admin-configured org prompt (assistant persona or auto-approval policy) that overrides a built-in default.",
+   "canonical": "apps/server/src/platform/http/admin.ts",
+   "types": [],
+   "aliases": [
+    "assistant-prompt",
+    "approval-policy-prompt"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
+    },
+    {
+     "where": "apps/server/src/platform/store/org_kv.ts",
+     "role": "db"
+    }
+   ],
+   "translations": [
+    {
+     "from": "db",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/admin.ts"
+    }
+   ]
+  },
+  {
+   "id": "mcp-peer",
+   "definition": "One short-lived client connection to a remote MCP server: handshake, tool list, and tool call.",
+   "canonical": "apps/server/src/platform/integrations/mcp.ts",
+   "types": [
+    "McpPeer",
+    "McpTool",
+    "McpToolResult"
+   ],
+   "aliases": [
+    "mcp-client"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/integrations/mcp.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/integrations/execute.ts",
+     "role": "domain"
+    }
+   ],
+   "translations": []
+  },
+  {
+   "id": "integration-envelope",
+   "definition": "The identity and secret headers one integration call carries to an MCP server.",
+   "canonical": "apps/server/src/platform/integrations/plugins.ts",
+   "types": [
+    "PluginTurn",
+    "PluginExecutor",
+    "PluginGateway",
+    "PluginSecretSource"
+   ],
+   "aliases": [
+    "identity-envelope"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/integrations/execute.ts",
+     "role": "wire"
+    },
+    {
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/integrations/execute.ts"
+    }
+   ]
+  },
+  {
+   "id": "integration-secret",
+   "definition": "One stored credential value of an integration, resolved at call time and never carried in a snapshot.",
+   "canonical": "apps/server/src/integrations/shared.ts",
+   "types": [],
+   "aliases": [
+    "connector-secret"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/integrations/shared.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/admin.ts",
+     "role": "wire"
+    }
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/admin.ts"
+    }
+   ]
+  },
+  {
+   "id": "integration-trait",
+   "definition": "A capability (web search, web fetch) with one Guild-provided tool name, description, and argument schema; an integration supplies the implementation.",
+   "canonical": "apps/server/src/integrations/traits.ts",
+   "types": [
+    "TraitSpec"
+   ],
+   "aliases": [
+    "capability"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/integrations/traits.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
+     "role": "ui"
+    }
+   ],
+   "translations": [
+    {
+     "from": "domain",
+     "to": "ui",
+     "at": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx"
+    }
+   ]
+  },
+  {
+   "id": "push-subscription",
+   "definition": "One browser or device registered to receive a Web Push notification when a run ends while no socket is watching: its endpoint, its keys, and the server identity that signs the push.",
+   "canonical": "apps/server/src/platform/store/push.ts",
+   "types": [
+    "PushSubscriptionRow",
+    "PushSubscriptionInput",
+    "PushPayload",
+    "PushSender",
+    "VapidKeys"
+   ],
+   "aliases": [
+    "push-device",
+    "notification-device"
+   ],
+   "representations": [
+    {
+     "where": "apps/server/src/platform/store/push.ts",
+     "role": "db"
+    },
+    {
+     "where": "apps/server/src/push/vapid.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/push/sender.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/push/notifier.ts",
+     "role": "domain"
+    },
+    {
+     "where": "apps/server/src/platform/http/push.ts",
+     "role": "wire"
+    },
+    {
+     "where": "apps/desktop/src/lib/push.ts",
+     "role": "ui"
+    },
+    {
+     "where": "apps/desktop/src/views/settings/sections/NotificationsSection.tsx",
+     "role": "ui"
+    },
+    {
+     "where": "apps/desktop/public/sw.js",
+     "role": "ui"
+    }
+   ],
+   "translations": [
+    {
+     "from": "db",
+     "to": "wire",
+     "at": "apps/server/src/platform/http/push.ts"
+    },
+    {
+     "from": "wire",
+     "to": "ui",
+     "at": "apps/desktop/src/lib/push.ts"
+    },
+    {
+     "from": "domain",
+     "to": "db",
+     "at": "apps/server/src/push/notifier.ts"
+    }
+   ]
+  }
+ ],
+ "attaches": [
+  {
+   "where": "apps/server/src/platform/http/admin.ts",
+   "concept": "integration",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/thread-stream.ts",
+   "concept": "thread-state",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/thread-stream.ts",
+   "concept": "chat",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/integrations/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/platform/integrations/plugins.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/atlassian/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/atlassian/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/firecrawl/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/firecrawl/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/github/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/github/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/gitlab/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/gitlab/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/google_workspace/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/google_workspace/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/hubspot/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/hubspot/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/langfuse/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/langfuse/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/searxng/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/searxng/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/slack/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/slack/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/superproxy/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/superproxy/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/platform/provider/types.ts",
+   "concept": "message",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/platform/http/openai.ts",
+   "concept": "message",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/anthropic.ts",
+   "concept": "message",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/openai.ts",
+   "concept": "tool-call",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/anthropic.ts",
+   "concept": "tool-call",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/llm.ts",
+   "concept": "usage-event",
+   "role": "wire"
+  },
+  {
+   "where": "apps/server/src/platform/http/llm.ts",
+   "concept": "gateway-route",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/platform/http/llm.ts",
+   "concept": "api-key",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/platform/skillReads.ts",
+   "concept": "skill",
+   "role": "db"
+  },
+  {
+   "where": "apps/server/src/integrations/loader.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/index.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/types.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/probe.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/api-tool.ts",
+   "concept": "integration-tool",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/grafana/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/grafana/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/traits.ts",
+   "concept": "integration-trait",
+   "role": "domain"
+  }
+ ],
+ "no_concept": [
+  {
+   "where": "apps/server/src/platform/http/register.ts",
+   "reason": "infrastructure"
+  }
+ ],
+ "types_no_concept": []
 }

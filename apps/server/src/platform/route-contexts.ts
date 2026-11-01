@@ -34,6 +34,8 @@ import type { ReleaseStore } from "./store/releases.js";
 import type { ProjectStore } from "./store/projects.js";
 import type { TeamStore } from "./store/teams.js";
 import type { OrgKvStore, KvStore } from "./store/org_kv.js";
+import type { PushStore } from "./store/push.js";
+import type { VapidKeys } from "../push/vapid.js";
 import type { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
 import type { UserMcpStore } from "./store/userMcp.js";
 import type { ChatStore } from "./store/chats.js";
@@ -78,8 +80,12 @@ export interface IdentityCtx {
   /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
   readonly userMcp: UserMcpStore;
   readonly attachments: AttachmentStore;
+  /** Web Push device registry (the notifications settings surface). */
+  readonly push: PushStore;
   readonly config: Config;
   masterKey(): Buffer;
+  /** The server's VAPID pair, minted on first use. */
+  pushKeys(): Promise<VapidKeys>;
 }
 
 /** The chats lane: chat/thread stores, the turn-command journal, the agent

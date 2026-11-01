@@ -16,6 +16,7 @@ import { registerAttachmentRoutes } from "./attachments.js";
 import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
+import { registerPushRoutes } from "./push.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerActivityRoutes } from "./activity.js";
 import { registerChatsRoutes } from "./chats.js";
@@ -51,6 +52,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "oidc", paths: ["/api/v1/auth/oidc/*", "/api/v1/admin/oidc"] },
   { name: "gateway-admin", paths: ["/api/v1/gateway/models", "/api/v1/admin/gateway/*"] },
   { name: "api-keys", paths: ["/api/v1/api-keys", "/api/v1/api-keys/*", "/api/v1/admin/api-keys", "/api/v1/admin/api-keys/*"] },
+  { name: "push", paths: ["/api/v1/push/*"] },
   { name: "usage", paths: ["/api/v1/usage", "/api/v1/usage/*"] },
   { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
   { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
@@ -122,6 +124,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerOidcRoutes(scope, auth);
     registerGatewayAdminRoutes(scope, gateway, auth);
     registerApiKeyRoutes(scope, auth);
+    registerPushRoutes(scope, auth, ctx.pushNotifier);
     registerUsageRoutes(scope, auth, infra);
     registerActivityRoutes(scope, auth, infra);
     // M5 hub core: machine registry routes + the ws-ticket mint (the /api/v1/ws

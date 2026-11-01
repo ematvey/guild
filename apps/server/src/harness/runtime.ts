@@ -1924,6 +1924,12 @@ export class GuildRuntime {
     this.supervisor?.setStreamSink(sink);
   }
 
+  /** The push lane's turn-end hook (the notifier's presence gate decides
+   *  whether a notification is worth sending). */
+  setTurnEnded(hook: ((chatId: string, failed: boolean) => Promise<void>) | null): void {
+    this.bridge.setTurnEnded(hook);
+  }
+
   /** Live streaming buffers of a conversation (the ThreadState frame's
    *  text/thinking). */
   liveBuffers(chatId: string): LiveBuffers {
