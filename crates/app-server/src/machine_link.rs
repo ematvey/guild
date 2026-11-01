@@ -340,10 +340,6 @@ async fn ws_session(
 /// read_file's truncation marker.
 const FS_LIST_MAX_ENTRIES: usize = 1000;
 
-/// Cap on `fs_read` payloads (machine-side control plane read): a huge file
-/// must not ride the executor socket as one frame.
-const FS_READ_MAX_BYTES: usize = 1024 * 1024;
-
 /// Fills each sync entry's bundle URL when the server omitted it: the
 /// machine's own authenticated registry bundle endpoint — the same one
 /// install_skill uses.
@@ -434,8 +430,9 @@ async fn pull_skills_at(cloud: &CloudClient, root: &Path) -> Result<serde_json::
     .await
 }
 
-/// Control-plane ops the server sends over the executor socket (read-only
-/// filesystem access for the desktop's remote folder browse).
+/// One `artifact.prefetch_v1` request: records the artifact's path→id
+/// mapping and materializes it in the project directory ahead of the
+/// first tool touch.
 async fn prefetch_artifact(
     payload: &serde_json::Value,
     hooks: &guild_core::tools::artifacts::ArtifactHooks,
@@ -468,6 +465,10 @@ async fn prefetch_artifact(
     Ok(serde_json::json!({"path": path}))
 }
 
+/// Control-plane ops the server sends over the executor socket: capability
+/// discovery, turn-context preparation, and the read-only directory browse
+/// behind the desktop's remote folder picker (`fs_home`, `fs_list` on
+/// absolute paths).
 async fn machine_request_result(
     op: &str,
     payload: &serde_json::Value,
@@ -496,8 +497,7 @@ async fn machine_request_result(
         "fs_home" => Ok(serde_json::json!({
             "home": std::env::var("HOME").unwrap_or_default()
         })),
-        "fs_read" => {
-            use base64::Engine as _;
+        "fs_list" => {
             let path = payload["path"]
                 .as_str()
                 .map(str::trim)
@@ -506,26 +506,6 @@ async fn machine_request_result(
             if !Path::new(path).is_absolute() {
                 return Err("path must be absolute".into());
             }
-            let bytes = tokio::fs::read(path)
-                .await
-                .map_err(|e| format!("{path}: {e}"))?;
-            if bytes.len() > FS_READ_MAX_BYTES {
-                return Err(format!("{path}: exceeds the 1 MiB read cap"));
-            }
-            match std::str::from_utf8(&bytes) {
-                Ok(text) => Ok(serde_json::json!({ "path": path, "content": text })),
-                Err(_) => Ok(serde_json::json!({
-                    "path": path,
-                    "content_base64": base64::engine::general_purpose::STANDARD.encode(&bytes)
-                })),
-            }
-        }
-        "fs_list" => {
-            let path = payload["path"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or("missing path")?;
             let mut reader = tokio::fs::read_dir(path)
                 .await
                 .map_err(|e| format!("{path}: {e}"))?;
@@ -1844,61 +1824,6 @@ mod tests {
     }
 
     #[test]
-    fn fs_read_returns_text_and_rejects_relative_paths_and_oversize_files() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let dir = temp_scoped_dir("fs-read");
-        std::fs::write(dir.join("text.txt"), "hello fs_read").unwrap();
-        let bytes: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01];
-        std::fs::write(dir.join("bin.bin"), &bytes).unwrap();
-        let result = rt
-            .block_on(machine_request_result(
-                "fs_read",
-                &serde_json::json!({ "path": dir.join("text.txt").to_string_lossy() }),
-            ))
-            .unwrap();
-        assert_eq!(result["content"], "hello fs_read");
-        let bin = rt
-            .block_on(machine_request_result(
-                "fs_read",
-                &serde_json::json!({ "path": dir.join("bin.bin").to_string_lossy() }),
-            ))
-            .unwrap();
-        use base64::Engine as _;
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(bin["content_base64"].as_str().unwrap())
-                .unwrap(),
-            bytes
-        );
-        assert!(bin["content"].is_null());
-        assert!(rt
-            .block_on(machine_request_result(
-                "fs_read",
-                &serde_json::json!({ "path": "relative/path.txt" }),
-            ))
-            .is_err());
-        assert!(rt
-            .block_on(machine_request_result("fs_read", &serde_json::json!({})))
-            .is_err());
-        let big = dir.join("big.bin");
-        std::fs::write(&big, vec![0u8; FS_READ_MAX_BYTES + 1]).unwrap();
-        assert!(rt
-            .block_on(machine_request_result(
-                "fs_read",
-                &serde_json::json!({ "path": big.to_string_lossy() }),
-            ))
-            .is_err());
-        let missing = rt
-            .block_on(machine_request_result(
-                "fs_read",
-                &serde_json::json!({ "path": dir.join("nope.txt").to_string_lossy() }),
-            ))
-            .unwrap_err();
-        assert!(missing.contains("nope.txt"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn fs_list_lists_dirs_first_and_reports_no_truncation_below_the_cap() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let dir = temp_scoped_dir("small");
@@ -1921,6 +1846,28 @@ mod tests {
         assert_eq!(names, vec!["a-dir", "b-dir", "a-file", "b-file"]);
         assert!(entries.iter().all(|e| e["is_dir"].is_boolean()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fs_list_rejects_relative_and_missing_paths() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        for payload in [
+            serde_json::json!({ "path": "relative/dir" }),
+            serde_json::json!({ "path": "." }),
+            serde_json::json!({}),
+        ] {
+            assert!(
+                rt.block_on(machine_request_result("fs_list", &payload))
+                    .is_err(),
+                "fs_list must reject {payload}"
+            );
+        }
+        assert!(rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": "/etc/hostname" }),
+            ))
+            .is_err_and(|e| e.contains("unknown op")));
     }
 
     #[test]
