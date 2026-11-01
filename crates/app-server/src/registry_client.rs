@@ -382,7 +382,9 @@ pub fn write_sidecar(dir: &Path, p: &SkillProvenance) -> anyhow::Result<()> {
 /// Reads the sidecar; `None` when absent or unparsable (a dir without a
 /// sidecar is a plain skill folder — never Guild-managed).
 pub fn read_sidecar(dir: &Path) -> Option<SkillProvenance> {
-    Some(parse_sidecar(&std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?))
+    Some(parse_sidecar(
+        &std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?,
+    ))
 }
 
 /// Parses sidecar text (the flat `key: value` YAML write_sidecar emits).

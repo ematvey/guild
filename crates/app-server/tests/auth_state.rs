@@ -358,9 +358,7 @@ async fn two_workspaces_stay_independent() {
     let b_before = link_b.borrow().clone();
     state
         .transition(
-            AuthChange::Switch {
-                base_url: a.uri(),
-            },
+            AuthChange::Switch { base_url: a.uri() },
             Some(&store),
             &links,
         )
@@ -399,9 +397,7 @@ async fn two_workspaces_stay_independent() {
     // Per-workspace sign-out of B (non-active).
     state
         .transition(
-            AuthChange::SignOutWorkspace {
-                base_url: b.uri(),
-            },
+            AuthChange::SignOutWorkspace { base_url: b.uri() },
             Some(&store),
             &links,
         )

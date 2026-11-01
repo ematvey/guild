@@ -6,14 +6,14 @@
 //! `machine.identify`, `fs.*` (the file bridge), `session.*`, `models.list`,
 //! `registry.*`, `mcp.*`. Streaming arrives as events.
 
+use crate::agent_session::Approval;
+use crate::agent_session::ApprovalPolicy;
 use crate::agent_session::PendingApprovals;
 use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
 use crate::machine_link::LinkRegistry;
 use anyhow::Context as _;
-use crate::agent_session::ApprovalPolicy;
 use guild_core::tools::artifacts::ArtifactIndex;
-use crate::agent_session::Approval;
 use protocol::api::Message;
 use protocol::rpc::{Request, Response, RpcError, PROTOCOL_VERSION};
 use serde_json::{json, Value};
@@ -291,10 +291,7 @@ where
 /// ordered queue: none of them waits on the session order, and each must
 /// answer while a queued request (a login, a chat's prelude) is in flight.
 fn is_out_of_band(method: &str) -> bool {
-    matches!(
-        method,
-        "agent.approve" | "daemon.hello" | "daemon.shutdown"
-    )
+    matches!(method, "agent.approve" | "daemon.hello" | "daemon.shutdown")
 }
 
 /// The event a client receives when its subscriber fell behind the
@@ -695,7 +692,13 @@ async fn adopt_login_with_identity(
     // holding it across the network await parks a worker thread that every
     // other task needs (the daemon runs two workers), which wedges the
     // daemon until restart.
-    let cloud = shared.session.lock().unwrap().auth.cloud_of(&base_url).cloned();
+    let cloud = shared
+        .session
+        .lock()
+        .unwrap()
+        .auth
+        .cloud_of(&base_url)
+        .cloned();
     if let Some(cloud) = cloud {
         if let Ok((name, logo)) = cloud.org_settings().await {
             let mut session = shared.session.lock().unwrap();
@@ -1067,7 +1070,11 @@ async fn agent_approve(
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-fn policy_set(session: Arc<Mutex<EngineState>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+fn policy_set(
+    session: Arc<Mutex<EngineState>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
     let result = (|| {
         let tool = param(&req, "tool")?.to_string();
         let policy: Approval = serde_json::from_value(req.params["policy"].clone())
@@ -1083,7 +1090,11 @@ fn policy_set(session: Arc<Mutex<EngineState>>, req: Request, out_tx: mpsc::Unbo
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-fn policy_get(session: Arc<Mutex<EngineState>>, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+fn policy_get(
+    session: Arc<Mutex<EngineState>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
     let policy = session.lock().unwrap().policy.clone();
     let _ = out_tx.send(
         serde_json::to_value(Response::ok(req.id, serde_json::to_value(&policy).unwrap())).unwrap(),

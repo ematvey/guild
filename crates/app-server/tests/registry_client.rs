@@ -43,7 +43,9 @@ async fn spawn_mock_registry(state: Arc<Mutex<RegistryState>>) -> wiremock::Mock
     // publish: POST /api/v1/registry/{kind}?slug=&version= (gzip body)
     let st = state.clone();
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path_regex("/api/v1/registry/(skill|mcp)"))
+        .and(wiremock::matchers::path_regex(
+            "/api/v1/registry/(skill|mcp)",
+        ))
         .respond_with(move |req: &wiremock::Request| {
             let mut query: HashMap<String, String> = req
                 .url
@@ -53,7 +55,8 @@ async fn spawn_mock_registry(state: Arc<Mutex<RegistryState>>) -> wiremock::Mock
             let slug = query.remove("slug").unwrap_or_default();
             let version = query.remove("version").unwrap_or_default();
             let mut s = st.lock().unwrap();
-            s.bundles.insert((slug.clone(), version.clone()), req.body.clone());
+            s.bundles
+                .insert((slug.clone(), version.clone()), req.body.clone());
             s.slug = slug.clone();
             s.latest_version = version.clone();
             wiremock::ResponseTemplate::new(200)
@@ -236,9 +239,16 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
 
     // approve once; both installs are pinned versions
     state.lock().unwrap().review_status = "approved".into();
-    registry_client::install_skill(&cloud, &project, "upgradable", Some("1.0.0"), false, "a@b.c")
-        .await
-        .unwrap();
+    registry_client::install_skill(
+        &cloud,
+        &project,
+        "upgradable",
+        Some("1.0.0"),
+        false,
+        "a@b.c",
+    )
+    .await
+    .unwrap();
     assert!(dest.join("old-helper.txt").is_file());
     assert_eq!(
         guild_app_server::registry_client::read_sidecar(&dest)
@@ -253,9 +263,16 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
     registry_client::publish(&cloud, "skill", &skill_dir, "1.1.0")
         .await
         .unwrap();
-    registry_client::install_skill(&cloud, &project, "upgradable", Some("1.1.0"), false, "a@b.c")
-        .await
-        .unwrap();
+    registry_client::install_skill(
+        &cloud,
+        &project,
+        "upgradable",
+        Some("1.1.0"),
+        false,
+        "a@b.c",
+    )
+    .await
+    .unwrap();
 
     assert!(
         !dest.join("old-helper.txt").exists(),

@@ -128,7 +128,10 @@ async fn registry_validates_schema_before_running() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("failed validation"), "{err}");
-    let err = reg.run("mystery_tool", &dir, json!({}), None).await.unwrap_err();
+    let err = reg
+        .run("mystery_tool", &dir, json!({}), None)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("unknown tool"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

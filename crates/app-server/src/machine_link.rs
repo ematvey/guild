@@ -12,8 +12,8 @@
 
 use crate::cloud::{CloudClient, CloudError};
 use crate::jsonrpc_loop::Shared;
-use crate::machine_frames::{ServerFrame, classify_server_frame};
-use crate::machine_meta::{MachineMeta, hostname_label, machine_meta};
+use crate::machine_frames::{classify_server_frame, ServerFrame};
+use crate::machine_meta::{hostname_label, machine_meta, MachineMeta};
 use crate::session_store;
 use futures::{SinkExt, StreamExt};
 use protocol::ws::WsClientMsg;

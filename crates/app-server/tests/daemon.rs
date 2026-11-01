@@ -267,8 +267,7 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     // serving.
     let dpath2 = path.clone();
     let gui_host = gui.clone();
-    let second =
-        tokio::spawn(async move { run_daemon_shared_reclaiming(dpath2, gui_host).await });
+    let second = tokio::spawn(async move { run_daemon_shared_reclaiming(dpath2, gui_host).await });
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(
         a.call("daemon.hello", serde_json::json!({}))["result"]["version"].is_string(),

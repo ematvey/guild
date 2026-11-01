@@ -1,10 +1,7 @@
 //! File tools: read, write, edit — all scoped to the project dir.
 
 use super::workspace::{self, WorkspaceKind};
-use super::{
-    resolve_scoped, resolve_scoped_in, truncate, Tool, ToolFailure,
-    ToolOutcome,
-};
+use super::{resolve_scoped, resolve_scoped_in, truncate, Tool, ToolFailure, ToolOutcome};
 use async_trait::async_trait;
 use base64::Engine as _;
 use protocol::api::ToolSpec;

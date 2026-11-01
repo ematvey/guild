@@ -5,8 +5,7 @@ use futures::SinkExt;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, CreateProjectRequest, LoginRequest,
-    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent,
-    UserInfo,
+    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent, UserInfo,
 };
 use protocol::ws::WsServerMsg;
 use std::time::Duration;

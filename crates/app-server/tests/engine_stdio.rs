@@ -106,7 +106,6 @@ impl EngineProc {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("engine stdout closed"),
         }
     }
-
 }
 
 impl Drop for EngineProc {
@@ -154,7 +153,9 @@ async fn engine_stdio_pair_flow() {
             "authorization",
             format!("Bearer {issued_token}"),
         ))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({"user": user})))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({"user": user})),
+        )
         .mount(&server)
         .await;
     let base_url = server.uri();

@@ -152,7 +152,10 @@ where
         slug: slug.to_string(),
         version,
         publisher: entry["publisher"].as_str().unwrap_or_default().to_string(),
-        published_at: entry["published_at"].as_str().unwrap_or_default().to_string(),
+        published_at: entry["published_at"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         installed_at: chrono::Utc::now().to_rfc3339(),
         bundle_hash: format!("sha256:{actual}"),
         ..Default::default()
@@ -278,7 +281,10 @@ mod tests {
         // name the publisher from the machine's own index.
         let sidecar = sidecar_of(&dir).unwrap();
         assert!(sidecar.contains("publisher: Dana Levi"), "{sidecar}");
-        assert!(sidecar.contains("published_at: 2026-05-12T09:00:00Z"), "{sidecar}");
+        assert!(
+            sidecar.contains("published_at: 2026-05-12T09:00:00Z"),
+            "{sidecar}"
+        );
         assert!(!root.join(".agents/skills/old-skill").exists());
         assert!(user.join("SKILL.md").exists(), "user dir untouched");
         let seen = fetched.lock().unwrap();

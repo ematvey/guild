@@ -256,7 +256,6 @@ fn normalize(path: &Path) -> Option<PathBuf> {
     }
 }
 
-
 const MAX_MODEL_OUTPUT: usize = 64 * 1024;
 
 fn truncate(s: String) -> String {

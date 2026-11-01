@@ -13,8 +13,8 @@ fn fixture(name: &str) -> Vec<serde_json::Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../protocol/fixtures")
         .join(name);
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
@@ -104,7 +104,10 @@ fn server_frames_match_the_schema_fixtures() {
 fn stream_events_match_the_schema_fixtures() {
     let frames = fixture("socket.StreamEvent.json");
     let parsed: Vec<protocol::api::StreamEvent> = round_trip("socket.StreamEvent.json", frames);
-    assert!(!parsed.is_empty(), "the stream event fixture must not be empty");
+    assert!(
+        !parsed.is_empty(),
+        "the stream event fixture must not be empty"
+    );
 }
 
 #[test]
@@ -242,7 +245,10 @@ fn rest_fixtures_match_the_schema() {
     for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
         let path = entry.expect("read fixture dir entry").path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if let Some(root) = name.strip_prefix("rest.").and_then(|n| n.strip_suffix(".json")) {
+        if let Some(root) = name
+            .strip_prefix("rest.")
+            .and_then(|n| n.strip_suffix(".json"))
+        {
             roots.push(root.to_string());
         }
     }
@@ -257,7 +263,10 @@ fn rest_fixtures_match_the_schema() {
 fn machine_context_matches_the_schema_fixtures() {
     let frames = fixture("socket.MachineContext.json");
     let parsed: Vec<MachineContext> = round_trip("socket.MachineContext.json", frames);
-    assert!(!parsed.is_empty(), "the machine-context fixture must not be empty");
+    assert!(
+        !parsed.is_empty(),
+        "the machine-context fixture must not be empty"
+    );
 }
 
 // The JSON-RPC envelope fixtures, one file per root: rpc.<Root>.json.
@@ -285,7 +294,10 @@ fn rpc_fixtures_match_the_schema() {
     for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
         let path = entry.expect("read fixture dir entry").path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if let Some(root) = name.strip_prefix("rpc.").and_then(|n| n.strip_suffix(".json")) {
+        if let Some(root) = name
+            .strip_prefix("rpc.")
+            .and_then(|n| n.strip_suffix(".json"))
+        {
             roots.push(root.to_string());
         }
     }

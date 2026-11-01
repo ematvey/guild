@@ -1,5 +1,5 @@
-use guild_app_server::cloud::{CloudClient, CloudError};
 use futures::{Stream, StreamExt};
+use guild_app_server::cloud::{CloudClient, CloudError};
 use protocol::api::{Message, StreamEvent};
 use protocol::ws::WsServerMsg;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -62,8 +62,11 @@ async fn spawn_mock_hub(
                 async move {
                     ws.on_upgrade(move |socket| async move {
                         use futures::{SinkExt, StreamExt};
-                        let mut frames_rx =
-                            frames_rx.lock().unwrap().take().expect("one member connection");
+                        let mut frames_rx = frames_rx
+                            .lock()
+                            .unwrap()
+                            .take()
+                            .expect("one member connection");
                         let (mut tx, mut rx) = socket.split();
                         // The bootstrap the client waits for before submitting
                         // the command.
@@ -132,12 +135,7 @@ where
     Ok((text, done))
 }
 
-fn live_frame(
-    chat: Uuid,
-    generation: Uuid,
-    seq: i64,
-    event: StreamEvent,
-) -> WsServerMsg {
+fn live_frame(chat: Uuid, generation: Uuid, seq: i64, event: StreamEvent) -> WsServerMsg {
     WsServerMsg::LiveFrame {
         chat_id: chat,
         generation_id: generation,
@@ -196,11 +194,10 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
             },
         ))
         .unwrap();
-    let (text, done) =
-        tokio::time::timeout(Duration::from_secs(5), collect_turn(stream))
-            .await
-            .unwrap()
-            .unwrap();
+    let (text, done) = tokio::time::timeout(Duration::from_secs(5), collect_turn(stream))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(text, "WS answer");
     assert!(done.is_some());
     server.abort();
@@ -268,12 +265,14 @@ async fn cloud_command_buffers_frames_that_arrive_before_the_ack() {
         .await
         .unwrap()
         .unwrap();
-    let (text, done) =
-        tokio::time::timeout(Duration::from_secs(5), collect_turn(stream))
-            .await
-            .unwrap()
-            .unwrap();
-    assert_eq!(text, "WS answer", "pre-ack frames must be buffered, not lost");
+    let (text, done) = tokio::time::timeout(Duration::from_secs(5), collect_turn(stream))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        text, "WS answer",
+        "pre-ack frames must be buffered, not lost"
+    );
     assert!(done.is_some());
     server.abort();
 }

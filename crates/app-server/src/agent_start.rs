@@ -6,11 +6,11 @@
 //! Approvals ride the server journal: auto policies resolve over the
 //! approvals endpoint immediately, Ask waits for `agent.approve`.
 
+use crate::agent_session::Approval;
+use crate::agent_session::ApprovalPolicy;
 use crate::agent_session::PendingApprovals;
 use crate::cloud::{CloudClient, CloudError};
 use futures::{Stream, StreamExt};
-use crate::agent_session::ApprovalPolicy;
-use crate::agent_session::Approval;
 use protocol::api::{CreateProjectRequest, Project, StreamEvent};
 use protocol::rpc::Event;
 use serde_json::{json, Value};
