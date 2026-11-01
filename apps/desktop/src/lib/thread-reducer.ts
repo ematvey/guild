@@ -672,7 +672,9 @@ export interface ApplyResult {
   /// False when the state's seq was not newer than the view's watermark —
   /// nothing was applied and the caller must not render from it.
   stale: boolean;
-  /// True while a manual /compact is in flight for the view's chat. The
+  /// True while a compaction runs for the view's chat: the server's
+  /// `compacting` flag, or a manual /compact this client sent that the
+  /// server has not reported yet. The
   /// guard is data the reducer computes (compaction target vs open chat),
   /// never a chatId comparison in the component body: with a null chatId
   /// a null-vs-null comparison holds and the "Compacting thread…" line
@@ -760,6 +762,10 @@ export interface ThreadReducer {
   /** Arms (chatId) or disarms (null) the manual-compaction line. Arming
    * snapshots the compaction keys present now; applyState reconciles. */
   setCompacting(chatId: string | null): ApplyResult;
+  /** The server accepted the manual compaction: from here a state that
+   * reports no compaction running ends the line, with or without a
+   * summary. */
+  compactStarted(chatId: string): ApplyResult;
   /** A task outcome clears only its own chat's pending indicator. */
   finishCompacting(chatId: string): ApplyResult;
 }
@@ -773,8 +779,14 @@ export function createThreadReducer(): ThreadReducer {
   const views = new Map<string, ChatView>();
   const LOOSE = "";
   let current = LOOSE;
-  /** Chat with a manual /compact in flight; null = none. */
+  /** Chat with a manual /compact in flight that no state has reported yet;
+   * null = none. */
   let compactingChat: string | null = null;
+  /** The armed /compact's request was accepted by the server. */
+  let compactPosted = false;
+  /** Chats whose latest state reported a running compaction. */
+  const serverCompacting = new Set<string>();
+  const compactingOf = (cid: string): boolean => compactingChat === cid || serverCompacting.has(cid);
   /** Optimistic send marker keyed by chat (settled by the durable echo). */
   const pendingByChat = new Map<string, Map<string, PendingSend>>();
   const pendingOf = (cid: string) => {
@@ -807,7 +819,7 @@ export function createThreadReducer(): ThreadReducer {
   const result = (v: ChatView, stale = false, synced = true): ApplyResult => ({
     blocks: v.blocks,
     stale,
-    compacting: compactingChat !== null && current !== LOOSE && compactingChat === current,
+    compacting: current !== LOOSE && compactingOf(current),
     synced,
     hasMore: v.hasMore,
     oldestSeq: v.events[0]?.seq ?? -1,
@@ -1109,7 +1121,7 @@ export function createThreadReducer(): ThreadReducer {
       return {
         blocks: v.blocks,
         stale: false,
-        compacting: chatId !== null && compactingChat === chatId,
+        compacting: chatId !== null && compactingOf(chatId),
         synced: v.synced,
         hasMore: v.hasMore,
         oldestSeq: v.events[0]?.seq ?? -1,
@@ -1202,6 +1214,17 @@ export function createThreadReducer(): ThreadReducer {
         if (v.blocks.some((b) => b.kind === "compaction" && !v.compactKeys.includes(b.key))) {
           compactingChat = null;
         }
+      }
+      // The server's flag owns the line once it speaks: a running
+      // compaction takes over from the local arm, and a lowered flag after
+      // the request was accepted ends it — also when the compaction wrote
+      // no summary or failed. A state captured before the request landed
+      // cannot lower a fresh arm. Servers that omit the flag leave the
+      // summary block as the only end signal.
+      if (state.compacting !== undefined) {
+        if (state.compacting) serverCompacting.add(cid);
+        else serverCompacting.delete(cid);
+        if (compactingChat === cid && (state.compacting || compactPosted)) compactingChat = null;
       }
       return result(v);
     },
@@ -1393,10 +1416,18 @@ export function createThreadReducer(): ThreadReducer {
         v.compactKeys = v.blocks.filter((b) => b.kind === "compaction").map((b) => b.key);
         compactingChat = chatId;
       }
+      compactPosted = false;
+      return result(viewOf(current));
+    },
+    compactStarted(chatId) {
+      if (compactingChat === chatId) compactPosted = true;
       return result(viewOf(current));
     },
     finishCompacting(chatId) {
-      if (compactingChat === chatId) compactingChat = null;
+      if (compactingChat === chatId) {
+        compactingChat = null;
+        compactPosted = false;
+      }
       return result(viewOf(current));
     },
   };

@@ -266,12 +266,15 @@ export function useOutgoing(deps: OutgoingDeps) {
       promptRef.current = "";
       setPrompt("");
       requestAnimationFrame(autoGrow);
-      // The line stays up until the durable compaction event reaches the
-      // view (the reducer settles it from the thread state); a request that
-      // started no task, or failed, lowers it here.
+      // The line stays up until the server reports the compaction over
+      // (the reducer settles it from the thread state's `compacting` flag
+      // or the durable summary); a request that started no task, or failed,
+      // lowers it here.
       store.mutate((r) => r.setCompacting(chatId));
       try {
-        if (!await compactChat(chatId)) {
+        if (await compactChat(chatId)) {
+          store.mutate((r) => r.compactStarted(chatId));
+        } else {
           toast.info("No compaction was needed");
           store.mutate((r) => r.finishCompacting(chatId));
         }

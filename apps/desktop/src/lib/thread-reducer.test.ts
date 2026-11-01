@@ -602,6 +602,61 @@ describe("compacting guard (the null === null flash)", () => {
   });
 });
 
+describe("compacting flag from the server", () => {
+  const go = row(1, { type: "user_message", content: "go", attachments: [] });
+  const flagged = (seq: number, compacting: boolean): ThreadState => ({ ...state("c1", seq, [go], "", "", false), compacting });
+
+  it("a compaction that ends without a summary lowers the line", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    r.compactStarted("c1");
+    expect(r.applyState(flagged(2, true)).compacting).toBe(true);
+    const ended = r.applyState(flagged(3, false));
+    expect(ended.compacting).toBe(false);
+    expect(ended.blocks.some((b) => b.kind === "compaction")).toBe(false);
+  });
+
+  it("a failed compaction the server never reported running still ends once accepted", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    r.compactStarted("c1");
+    expect(r.applyState(flagged(2, false)).compacting).toBe(false);
+  });
+
+  it("a state captured before the request was accepted cannot lower a fresh arm", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    expect(r.applyState(flagged(2, false)).compacting).toBe(true);
+    r.compactStarted("c1");
+    expect(r.applyState(flagged(3, false)).compacting).toBe(false);
+  });
+
+  it("shows a compaction this client did not start, for its own chat only", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    expect(r.applyState(flagged(1, true)).compacting).toBe(true);
+    expect(r.view("c2").compacting).toBe(false);
+    expect(r.open(null).compacting).toBe(false);
+    expect(r.open("c1").compacting).toBe(true);
+    expect(r.applyState(flagged(2, false)).compacting).toBe(false);
+  });
+
+  it("a state without the flag leaves the line to the summary block", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    r.compactStarted("c1");
+    expect(r.applyState(state("c1", 2, [go], "", "", false)).compacting).toBe(true);
+  });
+});
+
 describe("artifact card on spilled tool_result frames", () => {
   const callEvent = {
     type: "assistant_message" as const,

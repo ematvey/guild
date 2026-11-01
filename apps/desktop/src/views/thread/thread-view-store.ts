@@ -29,7 +29,8 @@ export interface ThreadViewSnapshot {
   hasMore: boolean;
   /** The loaded window's oldest seq (-1 = nothing loaded). */
   oldestSeq: number;
-  /** A manual /compact is in flight for the displayed chat. */
+  /** A compaction runs for the displayed chat (the server's flag, or a
+   *  manual /compact the server has not reported yet). */
   compacting: boolean;
 }
 
