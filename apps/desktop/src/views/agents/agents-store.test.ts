@@ -4,7 +4,7 @@
 // seeds over HTTP only until a frame owns it, and a reconnect re-seeds.
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Agent, AgentRun, AgentThread, TraceRow } from "./agents-api";
+import type { ActivitySummary, Agent, AgentRun, AgentThread, TraceRow } from "./agents-api";
 
 const api = vi.hoisted(() => ({
   listAgentRuns: vi.fn(),
@@ -20,6 +20,7 @@ import {
   clearAgentState,
   onAgentRun,
   resetAgentSlices,
+  summaryWithTrace,
   traceFromRun,
   traceWithRun,
   upsertRun,
@@ -89,5 +90,27 @@ describe("agents store", () => {
     const moved: TraceRow = traceWithRun(row, pushed);
     expect(moved).toMatchObject({ status: "failed", error: "boom", finished_at: "2026-11-01T00:01:00Z" });
     expect(upsertRun([pushed], { ...pushed, status: "succeeded" })[0]!.status).toBe("succeeded");
+  });
+
+  it("moves a trace row's tokens and duration with its run and keeps counts the run does not carry", () => {
+    const running = { ...run("r1", "running", "2026-11-01T00:00:00Z"), started_at: "2026-11-01T00:00:00Z" };
+    const row: TraceRow = { ...traceFromRun(running), call_count: 3, tokens_in: 100, tokens_out: 20 };
+    const done = { ...running, status: "succeeded" as const, tokens: 500, finished_at: "2026-11-01T00:00:02.500Z" };
+    const moved = traceWithRun(row, done);
+    expect(moved).toMatchObject({ status: "succeeded", duration_ms: 2500, call_count: 3, tokens_out: 20 });
+    expect(moved.tokens_in + moved.tokens_out).toBe(500);
+    expect(traceWithRun(moved, { ...done, tokens: null })).toMatchObject({ tokens_in: moved.tokens_in, call_count: 3 });
+    expect(traceFromRun(done)).toMatchObject({ duration_ms: 2500, tokens_in: 500 });
+
+    const summary = {
+      totals: {
+        traces: 4, failed_traces: 0, calls: 9, tool_calls: 0, errors: 0, tokens_in: 1000,
+        tokens_out: 100, reasoning_tokens: 0, cost_usd: 0, p50_ms: 0, p95_ms: 0,
+      },
+      by_day: [],
+    } satisfies ActivitySummary;
+    expect(summaryWithTrace(summary, row, moved).totals).toMatchObject({ traces: 4, tokens_in: 1380, tokens_out: 100 });
+    const failed = summaryWithTrace(summary, undefined, traceFromRun({ ...done, status: "failed" })).totals;
+    expect(failed).toMatchObject({ traces: 5, failed_traces: 1, tokens_in: 1500 });
   });
 });

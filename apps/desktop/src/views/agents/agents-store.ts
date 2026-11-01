@@ -7,7 +7,7 @@
 // seed them again. A frame that lands before its seed wins over the seed.
 
 import { useEffect, useSyncExternalStore } from "react";
-import type { Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
+import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 
 type Slice = "runs" | "threads" | "routines";
@@ -105,22 +105,53 @@ function seed(slice: Slice, agentId: string, rows: AgentRun[] | AgentThread[] | 
 }
 
 /** A trace row moved by its run's frame: the trace id is the run id, and the
- *  run carries the status, summary, end and error the row shows. The span
- *  totals stay as the trace store reported them. */
+ *  run carries the status, summary, error, start, end and token total the
+ *  row shows. The duration follows from the run's start and end. The run
+ *  carries one token total, not the in/out split: a total above the row's
+ *  sum counts its difference as input until the trace store's split
+ *  arrives. Counts the run does not carry (calls, tools, spans) keep their
+ *  last known value. */
 export function traceWithRun(trace: TraceRow, run: AgentRun): TraceRow {
-  return {
+  const startedAt = run.started_at ?? trace.started_at;
+  const finishedAt = run.finished_at ?? null;
+  const next: TraceRow = {
     ...trace,
     status: run.status,
     summary: run.summary ?? trace.summary,
     error: run.error_message ?? trace.error,
-    started_at: run.started_at ?? trace.started_at,
-    finished_at: run.finished_at ?? null,
+    started_at: startedAt,
+    finished_at: finishedAt,
   };
+  if (startedAt !== null && finishedAt !== null) {
+    const duration = Date.parse(finishedAt) - Date.parse(startedAt);
+    if (Number.isFinite(duration) && duration >= 0) next.duration_ms = duration;
+  }
+  const known = trace.tokens_in + trace.tokens_out;
+  if (typeof run.tokens === "number" && run.tokens > known) next.tokens_in = trace.tokens_in + (run.tokens - known);
+  return next;
+}
+
+/** The activity summary moved by one trace row's change: `before` is the
+ *  row as it was (undefined for a run new to the window). A new row counts
+ *  as a trace, a move into "failed" as a failed trace, and token growth adds
+ *  to the totals. */
+export function summaryWithTrace(
+  summary: ActivitySummary,
+  before: TraceRow | undefined,
+  after: TraceRow,
+): ActivitySummary {
+  const totals = { ...summary.totals };
+  if (before === undefined) totals.traces += 1;
+  if (after.status === "failed" && before?.status !== "failed") totals.failed_traces += 1;
+  totals.tokens_in += after.tokens_in - (before?.tokens_in ?? 0);
+  totals.tokens_out += after.tokens_out - (before?.tokens_out ?? 0);
+  totals.calls += after.call_count - (before?.call_count ?? 0);
+  return { ...summary, totals };
 }
 
 /** A new run as an activity trace row, before the trace store has its spans. */
 export function traceFromRun(run: AgentRun): TraceRow {
-  return {
+  const row: TraceRow = {
     trace_id: run.id,
     org_id: "",
     user_id: run.user_id ?? null,
@@ -148,6 +179,7 @@ export function traceFromRun(run: AgentRun): TraceRow {
     cost_usd: 0,
     longest_ms: 0,
   };
+  return traceWithRun(row, run);
 }
 
 /** Subscribes to every run frame; views that keep their own run rows (the

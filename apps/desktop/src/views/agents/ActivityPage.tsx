@@ -47,7 +47,7 @@ import {
   type TraceRow,
 } from "./agents-api";
 import type { AgentRun } from "./agents-api";
-import { traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
+import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import {
   AgentGlyph,
   EmptyState,
@@ -194,14 +194,17 @@ export function ActivityPage({
   // analytics over the trace store and reload on their Refresh.
   useAgentRunUpdates((run) => {
     if (filters.tab !== "traces" || traces === null) return;
-    if (traces.some((row) => row.trace_id === run.id)) {
-      setTraces((rows) => rows?.map((row) => (row.trace_id === run.id ? traceWithRun(row, run) : row)) ?? rows);
+    const before = traces.find((row) => row.trace_id === run.id);
+    if (before !== undefined) {
+      const after = traceWithRun(before, run);
+      setTraces((rows) => rows?.map((row) => (row.trace_id === run.id ? after : row)) ?? rows);
+      setSummary((value) => (value === null ? value : summaryWithTrace(value, before, after)));
       return;
     }
     if (!runMatchesFilters(run, filters, agentId)) return;
-    setTraces((rows) =>
-      rows === null || rows.some((row) => row.trace_id === run.id) ? rows : [traceFromRun(run), ...rows],
-    );
+    const row = traceFromRun(run);
+    setTraces((rows) => (rows === null || rows.some((r) => r.trace_id === run.id) ? rows : [row, ...rows]));
+    setSummary((value) => (value === null ? value : summaryWithTrace(value, undefined, row)));
     setTotal((value) => value + 1);
   });
 
