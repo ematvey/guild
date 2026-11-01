@@ -97,10 +97,18 @@ export function openSocket(url: string, factory: SocketFactory = (u) => new WebS
   return factory(url);
 }
 
-/** Never hand an empty message to the UI: a blank toast tells the user nothing. */
+const UNREACHABLE = "Can't reach the server — reconnecting";
+
+/** Never hand an empty message or a raw network failure to the UI: fetch
+ *  rejects an unreachable host with a TypeError ("Failed to fetch", "Load
+ *  failed"), which tells the user nothing. */
 function reportError(error: unknown, handlers: SocketHandlers): void {
+  if (error instanceof TypeError) {
+    handlers.onError?.(UNREACHABLE);
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
-  handlers.onError?.(message.trim() === "" ? "Could not reach the server" : message);
+  handlers.onError?.(message.trim() === "" ? UNREACHABLE : message);
 }
 
 /** Pure protocol router. It has no browser or socket dependencies. */

@@ -141,11 +141,12 @@ describe("routeMessage", () => {
 });
 
 describe("startSocket", () => {
-  it.each(["reject", "http"])("recovers from a %s ticket failure", async (failure) => {
+  it.each(["reject", "http", "network"])("recovers from a %s ticket failure", async (failure) => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "client-1" });
     const fetchMock = vi.fn(async () => {
       if (failure === "reject") throw new Error("offline");
+      if (failure === "network") throw new TypeError("Failed to fetch");
       return { ok: false, statusText: "Unavailable", json: async () => ({}) };
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -156,6 +157,7 @@ describe("startSocket", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(errors).toHaveLength(1);
+    if (failure === "network") expect(errors[0]).toBe("Can't reach the server — reconnecting");
     await vi.advanceTimersByTimeAsync(3000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     connection.stop();
