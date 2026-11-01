@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { ChatTree } from "../../../lib/api/chats";
-import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
+import { fetchThreadEventsPage } from "../../../lib/thread-events";
 import { traceEvent } from "../../../lib/telemetry";
 import { EARLIER_PAGE_SIZE } from "../mentions";
 import type { NavigationEvent } from "../navigation";
@@ -32,7 +32,6 @@ export function useThreadStore(chatId: string | null) {
    *  otherwise push the view down by their height). */
   const earlierAnchor = useRef<{ height: number; top: number } | null>(null);
   // The context ring's revision: the displayed chat's newest applied seq.
-  const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
   // Every chat's tree facts the socket pushed: the sync bracket of each
   // opened chat, then every change to its title, run status, parent or
   // flags. A repeat visit renders the cached facts at once.
@@ -177,11 +176,6 @@ export function useThreadStore(chatId: string | null) {
     dispatchNavRef.current({ type: "state", chatId: cid });
   }, [store]);
 
-  const updateContextRevision = useCallback((cid: string, events: ThreadState["events"]) => {
-    const seq = events[events.length - 1]?.seq ?? 0;
-    setContextRevision(prev => prev?.chatId === cid && prev.seq >= seq ? prev : { chatId: cid, seq });
-  }, []);
-
   /** Loads the page before the displayed view's oldest loaded event. */
   const earlierController = useRef<AbortController | null>(null);
   const loadEarlier = useCallback(async () => {
@@ -246,8 +240,6 @@ export function useThreadStore(chatId: string | null) {
     view,
     loadingEarlier,
     earlierAnchor,
-    contextRevision,
-    updateContextRevision,
     onThreadStateApplied,
     childTree,
     applyChatTree,

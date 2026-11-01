@@ -7,13 +7,16 @@
 // Table triggers NOTIFY every write (migrations/0101_agent_notify.sql, and
 // 0102 for an agent rename, which moves its threads' chat trees); each
 // key's pushes run on one chain, so a snapshot read before a write never
-// lands after the one read after it.
+// lands after the one read after it. A whole-value frame reaches a socket
+// only when it differs from the one that socket holds: a write another member
+// cannot see sends that member nothing.
 
 import type { PlatformContext } from "../platform/root-context.js";
 import { AgentStore } from "../agents/store.js";
 import type { Agent as StoreAgent, AgentRoutine as StoreRoutine, AgentRun as StoreRun } from "../agents/types.js";
 import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
 import type { WsServerMsg } from "./protocol.js";
+import { sendChanged } from "./sent-frames.js";
 
 /** The NOTIFY channels this feed consumes. */
 export const AGENT_STATE_CHANNELS: ReadonlySet<string> = new Set([
@@ -139,7 +142,7 @@ export class AgentStateFeed {
       if (user.org_id !== orgId) continue;
       if (ensurePersonal) await this.store.ensurePersonalAgent(user);
       const agents = (await this.store.list(user, { includeArchived: true })).map(agentWire);
-      this.send(userId, { type: "agent_list", agents });
+      this.sendKeyed(userId, "agent_list", { type: "agent_list", agents });
     }
   }
 
@@ -165,13 +168,13 @@ export class AgentStateFeed {
     if (viewers.length === 0) return;
     const routines = (await this.store.listRoutines(agentId)).map(routineWire);
     const frame: WsServerMsg = { type: "agent_routines", agent_id: agentId, routines };
-    for (const userId of viewers) this.send(userId, frame);
+    for (const userId of viewers) this.sendKeyed(userId, `agent_routines:${agentId}`, frame);
   }
 
   private async sendThreads(userId: string, agentId: string): Promise<void> {
     if (!this.connected(userId)) return;
     const page = await this.store.listThreads(agentId, userId);
-    this.send(userId, { type: "agent_threads", agent_id: agentId, threads: page.threads });
+    this.sendKeyed(userId, `agent_threads:${agentId}`, { type: "agent_threads", agent_id: agentId, threads: page.threads });
   }
 
   private async sendSkillCatalogs(orgId: string, userIds: string[]): Promise<void> {
@@ -180,7 +183,7 @@ export class AgentStateFeed {
     const items = await this.ctx.skills.catalog(orgId, null);
     for (const userId of members) {
       const installs = await this.ctx.skills.listForUser(orgId, userId);
-      this.send(userId, { type: "skill_catalog", items, installs });
+      this.sendKeyed(userId, "skill_catalog", { type: "skill_catalog", items, installs });
     }
   }
 
@@ -190,6 +193,12 @@ export class AgentStateFeed {
 
   private send(userId: string, frame: WsServerMsg): void {
     for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sink.send(frame);
+  }
+
+  /** Sends a whole-value frame to each of the user's sockets that does not
+   *  already hold it. */
+  private sendKeyed(userId: string, key: string, frame: WsServerMsg): void {
+    for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sendChanged(sink, key, frame);
   }
 
   /** Serializes one key's pushes; a failed push is logged and the chain

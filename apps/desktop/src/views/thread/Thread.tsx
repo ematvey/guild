@@ -245,7 +245,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const thread = useThreadStore(chatId);
   const {
     store, view, loadingEarlier, earlierAnchor,
-    contextRevision, updateContextRevision, onThreadStateApplied,
+    onThreadStateApplied,
     childTree, stopping, setStopping, pendingSend, setSendPending, retireSendPending,
     pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
     scrollRestoreRef, loadEarlier, openForChat, cancelPending, applyChatTree,
@@ -338,7 +338,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const { socketRef } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, store, retireSendPending, openChatIdRef,
-    onThreadStateApplied, updateContextRevision, setSubagentTree,
+    onThreadStateApplied, setSubagentTree,
     resetSubagentTrees, applyChatTree, cancelPending,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
@@ -1859,8 +1859,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <ContextRing chatId={viewChatId} model={model}
-                  revision={contextRevision?.chatId === viewChatId ? contextRevision.seq : null} />
+                <ContextRing chatId={viewChatId} model={model} />
                 {(() => {
                   const chipAgent = pickedAgent;
                   return agentLocked ? (

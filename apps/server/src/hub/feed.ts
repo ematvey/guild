@@ -4,8 +4,9 @@
 // NotifyHub) feeds an in-process fan-out. Views republish only when the
 // capture changes (seq-zeroed content compare), live frames carry the
 // generation identity the turn ack issues, and a machine presence flip
-// pushes the thread list so the connection dot moves live. Agent and skill
-// state rides the same LISTEN through AgentStateFeed.
+// pushes the thread list so the connection dot moves live. Workspace lists
+// reach each socket only as the part that changed for it (sent-frames.ts).
+// Agent and skill state rides the same LISTEN through AgentStateFeed.
 
 import type { Logger } from "pino";
 import type { PlatformContext } from "../platform/root-context.js";
@@ -22,7 +23,9 @@ import {
   threadListSnapshot,
 } from "./workspace.js";
 import type { GenerationStreamSink } from "../chats/bridge.js";
+import { contextUsageMsg } from "../chats/context-usage.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
+import { sendChanged, sendChatList } from "./sent-frames.js";
 
 const VIEW_POLL_MS = 100;
 /** Ticks between sweeps of per-chat state whose owner has no socket. */
@@ -32,6 +35,11 @@ const MAX_CACHED_CHATS = 4_096;
 
 type FeedLog = Pick<Logger, "warn">;
 const SILENT: FeedLog = { warn: () => {} };
+
+/** One workspace list; a push re-reads only the parts its change can move. */
+export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models";
+
+const ALL_PARTS: readonly WorkspacePart[] = ["identity", "chats", "archived", "projects", "machines", "models"];
 
 interface ChatIdentity {
   orgId: string;
@@ -63,6 +71,8 @@ export class FeedForwarder implements GenerationStreamSink {
   private readonly subagentTrees = new Map<string, string>();
   /** Last pushed header facts per chat, as JSON: same dedupe as the tree. */
   private readonly chatTrees = new Map<string, string>();
+  /** Last pushed context usage per chat, as JSON: same dedupe as the tree. */
+  private readonly contextUsages = new Map<string, string>();
   /** The agent list, runs, routines, thread lists and skill catalog. */
   private readonly agentState: AgentStateFeed;
   /** Per-chat fan-out baseline: rows at/below this seq already reached the
@@ -142,6 +152,9 @@ export class FeedForwarder implements GenerationStreamSink {
         generating: parsed.generating,
       };
       this.sendToUser(parsed.user_id, frame);
+      // The flip moves the chat's list row (its spinner, its unread dot):
+      // each socket gets that row alone.
+      void this.pushWorkspace(parsed.org_id, parsed.user_id, ["chats"]);
       // A generating flip changes the chat's view content: the next view
       // poll re-captures and broadcasts it if it differs.
       if (!this.chats.has(parsed.chat_id)) {
@@ -151,7 +164,7 @@ export class FeedForwarder implements GenerationStreamSink {
       return;
     }
     if (channel === "guild_workspace") {
-      let parsed: { org_id?: string; user_id?: string };
+      let parsed: { org_id?: string; user_id?: string; parts?: unknown };
       try {
         parsed = JSON.parse(payload);
       } catch {
@@ -160,8 +173,12 @@ export class FeedForwarder implements GenerationStreamSink {
       if (typeof parsed.org_id !== "string" || typeof parsed.user_id !== "string") return;
       // Every sidebar list (chats, archived, projects, machines) rides one
       // serialized push, so a snapshot taken before a write can never land
-      // after the one that carries it.
-      void this.pushWorkspace(parsed.org_id, parsed.user_id);
+      // after the one that carries it. A payload naming its `parts` re-reads
+      // only those.
+      const parts = Array.isArray(parsed.parts)
+        ? parsed.parts.filter((part): part is WorkspacePart => ALL_PARTS.includes(part as WorkspacePart))
+        : ALL_PARTS;
+      void this.pushWorkspace(parsed.org_id, parsed.user_id, parts.length > 0 ? parts : ALL_PARTS);
       return;
     }
     if (channel === "guild_org") {
@@ -195,6 +212,11 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       if (typeof parsed.org_id !== "string" || typeof parsed.event_id !== "string") return;
       void this.orgEvent(parsed.org_id, parsed.event_id).catch((error: unknown) => this.failed(channel, null, error));
+      return;
+    }
+    if (channel === "guild_compaction") {
+      if (payload === "") return;
+      void this.compaction(payload).catch((error: unknown) => this.failed(channel, null, error));
       return;
     }
     if (channel === "guild_subagent_tree") {
@@ -253,8 +275,8 @@ export class FeedForwarder implements GenerationStreamSink {
     this.dirtyChats.delete(chatId);
     // List-level state: a new user turn creates the row (and moves its
     // activity stamp), an assistant turn moves the unread count, and an
-    // approval request or decision flips the blocked flag. Each one
-    // re-pushes the workspace, not a bare chat list.
+    // approval request or decision flips the blocked flag. Each one moves
+    // only the chat list, and each socket gets only the rows that changed.
     const last = await this.ctx.pool.query<{ type: string }>(
       "SELECT type FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
       [chatId],
@@ -266,7 +288,7 @@ export class FeedForwarder implements GenerationStreamSink {
       lastType === "approval_decision" ||
       lastType === "assistant_message"
     ) {
-      void this.pushWorkspace(chat.orgId, chat.userId);
+      void this.pushWorkspace(chat.orgId, chat.userId, ["chats"]);
     }
     // An open turn owns the view: instead of re-broadcasting the whole
     // thread per append, fan out only the rows committed since the last
@@ -311,11 +333,15 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   /** One capture → broadcast if the seq-zeroed content differs from the
-   *  last view (the frame itself carries the real seq). */
-  private async publishView(chatId: string, orgId: string, userId: string): Promise<void> {
+   *  last view (the frame itself carries the real seq), or always when
+   *  `force`: a client can hold a flag the server never sent (a /compact it
+   *  armed itself), so a compaction's settlement re-asserts the view. The
+   *  chat's context usage follows every capture, deduped on its own. */
+  private async publishView(chatId: string, orgId: string, userId: string, force = false): Promise<void> {
     const capture = await captureThreadState(this.ctx, this.ctx.pool, orgId, chatId);
+    await this.publishContextUsage(chatId, orgId, userId);
     const dedupe = threadStateWire({ ...capture, seq: 0 });
-    if (this.views.get(chatId) === dedupe) return;
+    if (!force && this.views.get(chatId) === dedupe) return;
     this.views.set(chatId, dedupe);
     this.sendToUser(userId, threadStateMsg(capture));
     // The full view carried every row of the log: the incremental lane
@@ -323,6 +349,36 @@ export class FeedForwarder implements GenerationStreamSink {
     // is reserved later than the read — a row can commit in between).
     const maxRow = capture.events.reduce((max, row) => Math.max(max, row.seq), 0);
     this.sentSeqs.set(chatId, Math.max(this.sentSeqs.get(chatId) ?? 0, maxRow));
+  }
+
+  /** The chat's context usage, pushed when it differs from the last one
+   *  sent (a turn ended, a compaction moved the measured window). */
+  private async publishContextUsage(chatId: string, orgId: string, userId: string): Promise<void> {
+    const frame = await contextUsageMsg(this.ctx, orgId, chatId);
+    const wire = JSON.stringify(frame);
+    if (this.contextUsages.get(chatId) === wire) return;
+    this.contextUsages.set(chatId, wire);
+    this.sendToUser(userId, frame);
+  }
+
+  /** A compaction task of a conversation was written (created or settled):
+   *  its chat's view republishes even when the capture matches the last one,
+   *  so a compaction that began and ended between two captures, with no
+   *  summary, still lowers the line a client armed. */
+  private async compaction(conversationId: string): Promise<void> {
+    const res = await this.ctx.pool.query<{ chat_id: string }>(
+      "SELECT chat_id FROM chat_conversations WHERE conversation_id = $1",
+      [conversationId],
+    );
+    for (const { chat_id: chatId } of res.rows) {
+      const chat = await this.ensureChat(chatId, false);
+      if (chat === null) continue;
+      if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
+        this.evict(chatId);
+        continue;
+      }
+      await this.publishView(chatId, chat.orgId, chat.userId, true);
+    }
   }
 
   // -- live generation frames ---------------------------------------------------
@@ -426,6 +482,7 @@ export class FeedForwarder implements GenerationStreamSink {
     this.views.delete(chatId);
     this.subagentTrees.delete(chatId);
     this.chatTrees.delete(chatId);
+    this.contextUsages.delete(chatId);
     this.sentSeqs.delete(chatId);
     this.dirtyChats.delete(chatId);
   }
@@ -437,6 +494,7 @@ export class FeedForwarder implements GenerationStreamSink {
       ...this.views.keys(),
       ...this.subagentTrees.keys(),
       ...this.chatTrees.keys(),
+      ...this.contextUsages.keys(),
       ...this.sentSeqs.keys(),
     ]);
     for (const chatId of chatIds) {
@@ -491,14 +549,18 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   /** One serialized workspace push per user. Every list-changing write and
-   *  presence flip calls this; the chain keeps the wire order equal to the
-   *  commit order, so an older snapshot can never overtake a newer one. */
-  pushWorkspace(orgId: string, userId: string): Promise<void> {
+   *  presence flip calls this with the parts its change can move (all by
+   *  default); the chain keeps the wire order equal to the commit order, so
+   *  an older snapshot can never overtake a newer one. Each socket receives
+   *  only what differs from what it holds: a socket's first push (on
+   *  connect, always all parts) is the whole workspace, a later one is the
+   *  change. */
+  pushWorkspace(orgId: string, userId: string, parts: readonly WorkspacePart[] = ALL_PARTS): Promise<void> {
     if (this.stopped) return Promise.resolve();
     const key = `${orgId}:${userId}`;
     const previous = this.workspaceChains.get(key) ?? Promise.resolve();
     const next = previous
-      .then(() => this.sendWorkspace(orgId, userId))
+      .then(() => this.sendWorkspace(orgId, userId, parts))
       .catch((error: unknown) => this.failed("guild_workspace", null, error));
     this.workspaceChains.set(key, next);
     void next.finally(() => {
@@ -507,30 +569,36 @@ export class FeedForwarder implements GenerationStreamSink {
     return next;
   }
 
-  private async sendWorkspace(orgId: string, userId: string): Promise<void> {
+  private async sendWorkspace(orgId: string, userId: string, parts: readonly WorkspacePart[]): Promise<void> {
     if (this.stopped) return;
-    if (this.ctx.hub.sinksOfUser(userId).length === 0) return;
+    const sinks = this.ctx.hub.sinksOfUser(userId);
+    if (sinks.length === 0) return;
     const user = { org_id: orgId, id: userId };
+    const want = new Set<WorkspacePart>(parts);
     const [info, chats, archived, projects, machines, models] = await Promise.all([
-      workspaceIdentitySnapshot(this.ctx, orgId),
-      threadListSnapshot(this.ctx, user),
-      archivedThreadListSnapshot(this.ctx, user),
-      projectListSnapshot(this.ctx, user),
-      machineListSnapshot(this.ctx, user),
-      modelListSnapshot(this.ctx, orgId),
+      want.has("identity") ? workspaceIdentitySnapshot(this.ctx, orgId) : null,
+      want.has("chats") ? threadListSnapshot(this.ctx, user) : null,
+      want.has("archived") ? archivedThreadListSnapshot(this.ctx, user) : null,
+      want.has("projects") ? projectListSnapshot(this.ctx, user) : null,
+      want.has("machines") ? machineListSnapshot(this.ctx, user) : null,
+      want.has("models") ? modelListSnapshot(this.ctx, orgId) : null,
     ]);
-    // The chat list stays first: clients and the local engine wait on it
-    // at bootstrap; the rest are additive frames.
-    this.sendToUser(userId, { type: "workspace_identity", ...info });
-    this.sendToUser(userId, { type: "thread_list", chats });
-    this.sendToUser(userId, { type: "archived_thread_list", chats: archived });
-    this.sendToUser(userId, {
-      type: "project_list",
-      projects: projects.projects,
-      archived_projects: projects.archived_projects,
-    });
-    this.sendToUser(userId, { type: "machine_list", machines });
-    this.sendToUser(userId, { type: "model_list", models });
+    for (const sink of sinks) {
+      // The chat list goes first: the local engine waits on it at
+      // bootstrap; the rest are additive frames.
+      if (chats !== null) sendChatList(sink, chats);
+      if (info !== null) sendChanged(sink, "workspace_identity", { type: "workspace_identity", ...info });
+      if (archived !== null) sendChanged(sink, "archived_thread_list", { type: "archived_thread_list", chats: archived });
+      if (projects !== null) {
+        sendChanged(sink, "project_list", {
+          type: "project_list",
+          projects: projects.projects,
+          archived_projects: projects.archived_projects,
+        });
+      }
+      if (machines !== null) sendChanged(sink, "machine_list", { type: "machine_list", machines });
+      if (models !== null) sendChanged(sink, "model_list", { type: "model_list", models });
+    }
   }
 
   // -- fan-out ------------------------------------------------------------------
@@ -540,7 +608,8 @@ export class FeedForwarder implements GenerationStreamSink {
   private async pushWorkspaceIdentity(orgId: string): Promise<void> {
     if (this.stopped) return;
     const info = await workspaceIdentitySnapshot(this.ctx, orgId);
-    this.sendToOrg(orgId, { type: "workspace_identity", ...info });
+    const frame: WsServerMsg = { type: "workspace_identity", ...info };
+    for (const sink of this.ctx.hub.sinksOfOrg(orgId)) sendChanged(sink, "workspace_identity", frame);
   }
 
   /** The org's model routes moved (an admin added, renamed, toggled or
@@ -548,7 +617,8 @@ export class FeedForwarder implements GenerationStreamSink {
   private async pushModelList(orgId: string): Promise<void> {
     if (this.stopped) return;
     const models = await modelListSnapshot(this.ctx, orgId);
-    this.sendToOrg(orgId, { type: "model_list", models });
+    const frame: WsServerMsg = { type: "model_list", models };
+    for (const sink of this.ctx.hub.sinksOfOrg(orgId)) sendChanged(sink, "model_list", frame);
   }
 
   /** Machine presence flip: the owner's member sockets repaint the online
@@ -559,7 +629,7 @@ export class FeedForwarder implements GenerationStreamSink {
     for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sink.send(frame);
     // A claim can be a new registration or a re-pair (the rows and the
     // chats' machine labels move), so the registry list repaints too.
-    void this.pushWorkspace(orgId, userId);
+    void this.pushWorkspace(orgId, userId, ["chats", "archived", "projects", "machines"]);
   }
 
   private sendToUser(userId: string, frame: WsServerMsg): void {

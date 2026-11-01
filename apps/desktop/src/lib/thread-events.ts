@@ -1,5 +1,5 @@
-// Thread event shapes and the two thread reads that do not ride the member
-// socket: an older page of the durable log and the context-usage meter.
+// Thread event shapes and the one thread read that does not ride the member
+// socket: an older page of the durable log.
 
 import { apiUrl, getToken } from "./session";
 import type { ServerFrame, StreamEvent } from "@guild/wire/types";
@@ -41,25 +41,6 @@ export async function fetchThreadEventsPage(
     { headers: { authorization: `Bearer ${getToken()}` }, signal },
   );
   if (!response.ok) throw new Error("Could not load earlier messages");
-  return response.json();
-}
-
-export interface ThreadContextUsage {
-  tokens: number | null;
-  max: number | null;
-  model: string | null;
-  usage_model: string | null;
-  /** Display name of `usage_model`; null when that route is gone or unnamed. */
-  usage_model_alias: string | null;
-}
-
-export async function fetchThreadContext(chatId: string, model: string, signal: AbortSignal): Promise<ThreadContextUsage> {
-  const query = new URLSearchParams({ model });
-  const response = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/context?${query}`), {
-    headers: { authorization: `Bearer ${getToken()}` },
-    signal,
-  });
-  if (!response.ok) throw new Error("Could not load context usage");
   return response.json();
 }
 

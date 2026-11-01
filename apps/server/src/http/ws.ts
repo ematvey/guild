@@ -55,6 +55,8 @@ export interface UpgradeQuery {
   machine_app_version: string | null;
   instance_id: string | null;
   resume: boolean;
+  /** Optional frames the client understands (`features=chat_row,…`). */
+  features: string[];
 }
 
 /** Desktop-supplied registry metadata from the upgrade query; the store
@@ -157,7 +159,8 @@ function rejectUpgrade(socket: Duplex, status: number, message: string): void {
 /** `?ticket=<single-use>&client_id=<stable browser id>&machine_id=<opt>…`.
  *  `client_id` identifies the browser across tabs (member identity);
  *  `machine_id` (desktop only) claims the machine's singleton slot. The
- *  `machine_*` params carry registry metadata. */
+ *  `machine_*` params carry registry metadata. `features` names the
+ *  optional frames the client applies (`chat_row`). */
 export function parseUpgradeQuery(req: IncomingMessage): UpgradeQuery {
   const url = new URL(req.url ?? "/", "http://localhost");
   const get = (name: string): string | null => {
@@ -188,6 +191,7 @@ export function parseUpgradeQuery(req: IncomingMessage): UpgradeQuery {
     machine_app_version: get("machine_app_version"),
     instance_id: instanceId,
     resume,
+    features: (get("features") ?? "").split(",").filter((name) => name !== ""),
   };
 }
 
@@ -284,6 +288,7 @@ class SocketGate {
       message.type === "chat_status" ||
       message.type === "subagent_tree" ||
       message.type === "chat_tree" ||
+      message.type === "context_usage" ||
       message.type === "org_event" ||
       message.type === "error"
     );
@@ -321,7 +326,7 @@ async function driveSocket(
 ): Promise<void> {
   const { user, session_hash: sessionHash, expires_at: expiresAt } = identity;
   const hub = chats.hub;
-  const sink = new SocketSink();
+  const sink = new SocketSink(query.features);
   const connId = uuidv7();
   const meta = metaFromQuery(query);
   const machineId = query.machine_id;

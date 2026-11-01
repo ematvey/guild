@@ -12,6 +12,7 @@ import { busyFrom } from "../status";
 import { useChatData } from "./use-chat-data";
 import { useMemberSocket } from "./use-member-socket";
 import { useThreadStore } from "./use-thread-store";
+import { contextUsageOf } from "../../../lib/context-usage-store";
 
 class FakeWebSocket {
   static all: FakeWebSocket[] = [];
@@ -71,7 +72,6 @@ function useHarness() {
     retireSendPending: thread.retireSendPending,
     openChatIdRef: thread.openChatIdRef,
     onThreadStateApplied: thread.onThreadStateApplied,
-    updateContextRevision: thread.updateContextRevision,
     setSubagentTree: data.setSubagentTree,
     resetSubagentTrees: data.resetSubagentTrees,
     applyChatTree: thread.applyChatTree,
@@ -185,5 +185,29 @@ describe("member socket → thread store (integration)", () => {
 
     unmount();
     expect(second.readyState).toBe(3);
+  });
+
+  it("declares chat_row, applies one changed row in place, and stores pushed context usage", async () => {
+    const { result, unmount } = renderHook(() => useHarness());
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const socket = FakeWebSocket.all[0]!;
+    expect(socket.url).toContain("features=chat_row");
+    act(() => socket.open());
+    const row = (id: string, title: string, unread: boolean) => ({
+      id, org_id: "o", user_id: "u", title, created_at: "2026-11-01T00:00:00Z",
+      generating: false, unread, working: false, blocked: false,
+      last_activity_at: "2026-11-01T00:00:00Z", machine_online: false,
+      type: "user", archived: false, deleted: false,
+    });
+    act(() => socket.deliver({ type: "thread_list", chats: [row("chat-2", "Two", false), row("chat-3", "Three", false)] }));
+    act(() => socket.deliver({ type: "chat_row", chat: row("chat-3", "Renamed", true) }));
+    expect(result.current.data.chats?.map((c) => [c.id, c.title])).toEqual([["chat-2", "Two"], ["chat-3", "Renamed"]]);
+    expect(result.current.data.chatStatus["chat-3"]).toMatchObject({ unread: true, generating: false });
+
+    act(() => socket.deliver({
+      type: "context_usage", chat_id: CHAT, tokens: 1200, usage_model: "m", usage_model_alias: "Model",
+    }));
+    expect(contextUsageOf(CHAT)).toEqual({ tokens: 1200, usage_model: "m", usage_model_alias: "Model" });
+    unmount();
   });
 });

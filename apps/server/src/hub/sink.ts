@@ -33,6 +33,9 @@ export interface BacklogState {
 }
 
 export class SocketSink {
+  /** Optional frames the client declared it applies (the upgrade query's
+   *  `features`); a frame outside this set is never sent to it. */
+  readonly features: ReadonlySet<string>;
   private queue: SocketOutput[] = [];
   private pending = 0;
   private overloaded = false;
@@ -41,6 +44,10 @@ export class SocketSink {
   private dead = false;
   private lastPong: Buffer | null = null;
   private notifyWriter: (() => void) | null = null;
+
+  constructor(features: Iterable<string> = []) {
+    this.features = new Set(features);
+  }
 
   /** Resolves when the writer has something to act on (output, a latch, or
    *  death). */

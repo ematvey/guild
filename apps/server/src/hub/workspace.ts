@@ -10,6 +10,7 @@ import type { Chat, MachineInfo } from "@guild/wire/rest";
 import type { ModelOption } from "@guild/wire/types";
 import { servedWebBundle } from "../http/web.js";
 import { chatWire } from "../chats/chat-wire.js";
+import { DEFAULT_CONTEXT_WINDOW } from "../chats/context-usage.js";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
 
@@ -63,10 +64,15 @@ export async function workspaceIdentitySnapshot(
   };
 }
 
-/** The org's enabled chat models with their display names. */
+/** The org's enabled chat models with their display names and context
+ *  windows. */
 export async function modelListSnapshot(ctx: PlatformContext, orgId: string): Promise<ModelOption[]> {
   const rows = await ctx.gatewayStore.listModels(orgId);
-  return rows.map((row) => ({ id: row.model, alias: row.alias }));
+  return rows.map((row) => ({
+    id: row.model,
+    alias: row.alias,
+    context_window: row.context_window ?? DEFAULT_CONTEXT_WINDOW,
+  }));
 }
 
 /** MachineInfo wire shape. */

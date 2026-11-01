@@ -188,9 +188,9 @@ export class GatewayStore {
 
   /** Enabled routes selectable in chats; the alias is the user-visible
    *  label, empty when the admin has not named the route. */
-  async listModels(orgId: string): Promise<{ model: string; alias: string }[]> {
-    const res = await this.pool.query<{ model: string; alias: string }>(
-      "SELECT model, alias FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model",
+  async listModels(orgId: string): Promise<{ model: string; alias: string; context_window: number | null }[]> {
+    const res = await this.pool.query<{ model: string; alias: string; context_window: number | null }>(
+      "SELECT model, alias, context_window FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model",
       [orgId],
     );
     return res.rows;

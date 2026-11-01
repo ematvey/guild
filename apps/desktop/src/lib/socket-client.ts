@@ -23,6 +23,7 @@ import type { Project } from "./api/projects";
 import type { MachineInfo } from "./api/machines";
 import type { ModelOption } from "./api/models";
 import type { WorkspaceIdentity } from "./workspace-store";
+import type { ContextUsage } from "./context-usage-store";
 
 export interface SocketLike {
   readonly readyState: number;
@@ -45,6 +46,11 @@ export interface SocketHandlers {
   /** The open chat's thread subtree with each node's latest run status. */
   onSubagentTree?: (chat_id: string, nodes: ChatSubagentNode[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
+  /** One active-list row changed in place (sent instead of the whole list
+   *  to a socket that declared `chat_row`). */
+  onChatRow?: (chat: ChatSummary) => void;
+  /** One chat's context usage (its sync bracket, then every change). */
+  onContextUsage?: (chatId: string, usage: ContextUsage) => void;
   /** The archived chats list, sent with every workspace push. */
   onArchivedThreadList?: (chats: ChatSummary[]) => void;
   /** Active and archived projects, sent with every workspace push. */
@@ -80,6 +86,10 @@ export interface SocketHandlers {
    *  route change. */
   onModelList?: (models: ModelOption[]) => void;
 }
+
+/** Optional server frames this client applies: one changed chat-list row
+ *  instead of the whole list. */
+export const SOCKET_FEATURES = "chat_row";
 
 /** Converts the current HTTP origin into the WebSocket origin. */
 
@@ -180,6 +190,16 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     case "model_list":
       handlers.onModelList?.(message.models);
       return;
+    case "chat_row":
+      handlers.onChatRow?.(message.chat);
+      return;
+    case "context_usage":
+      handlers.onContextUsage?.(message.chat_id, {
+        tokens: message.tokens,
+        usage_model: message.usage_model,
+        usage_model_alias: message.usage_model_alias,
+      });
+      return;
     default: {
       // A new frame variant must get a route here before it compiles.
       const unrouted: never = message;
@@ -273,7 +293,8 @@ export function startSocket(
       if (needsRefresh) { await refreshSession(); needsRefresh = false; }
       const ticket = await mintTicket();
       if (stopped) return;
-      const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}`;
+      // `features` names the optional frames this client applies.
+      const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}&features=${SOCKET_FEATURES}`;
       // One live socket per connection: a prior one still open (a half-open
       // socket a wake-up gave up on) is detached first, so its late frames
       // and its close cannot reach this connection.

@@ -1070,6 +1070,150 @@ describe("member-socket feed", () => {
   });
 });
 
+// What one change costs on the wire: a socket receives the part of the
+// workspace that moved for it, a compaction's settlement always reaches the
+// chat's view, and the context meter rides the socket.
+describe("member-socket push volume", () => {
+  /** A member socket that applies chat_row frames, past its first paint. */
+  async function rowSocket(): Promise<ScriptedClient> {
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    const ticket = (JSON.parse(res.body) as { ticket: string }).ticket;
+    const ws = new ScriptedClient(base, `ticket=${ticket}&client_id=${crypto.randomUUID()}&features=chat_row`);
+    await ws.open();
+    await waitFrame(ws, (f) => f.type === "model_list");
+    return ws;
+  }
+
+  const WORKSPACE_FRAMES = new Set([
+    "workspace_identity",
+    "thread_list",
+    "archived_thread_list",
+    "project_list",
+    "machine_list",
+    "model_list",
+  ]);
+
+  it("a plain turn sends the changed chat row and its context usage, never the workspace bracket", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("push volume");
+    const ws = await rowSocket();
+    const legacy = await memberSocket();
+    try {
+      await waitFrame(legacy, (f) => f.type === "model_list");
+      const before = ws.frames.length;
+      const legacyBefore = legacy.frames.length;
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/turns`,
+        headers: auth(stack.memberToken),
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hello" }] },
+      });
+      expect(res.statusCode).toBe(200);
+      const usage = await waitFrame(
+        ws,
+        (f) => f.type === "context_usage" && f.chat_id === chat.id && typeof f.tokens === "number",
+        20_000,
+      );
+      expect(typeof usage.usage_model).toBe("string");
+      await waitFrame(ws, (f) => f.type === "chat_status" && f.chat_id === chat.id && f.generating === false);
+      // The list row settles with the turn: spinner off, unread dot on.
+      await waitFrame(
+        ws,
+        (f) => f.type === "chat_row" && (f.chat as { id: string }).id === chat.id
+          && (f.chat as { unread: boolean; generating: boolean }).unread
+          && !(f.chat as { generating: boolean }).generating,
+      );
+      // Trailing pushes (the run's last commit, the generating flip) land.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const turn = textFrames(ws).slice(before);
+      const kinds = turn.map((f) => f.type as string);
+      expect(kinds.filter((kind) => WORKSPACE_FRAMES.has(kind))).toEqual([]);
+      const rows = turn.filter((f) => f.type === "chat_row");
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThanOrEqual(6);
+      expect(rows.every((f) => (f.chat as { id: string }).id === chat.id)).toBe(true);
+
+      // A client without chat_row gets the list, and only the list.
+      const legacyKinds = textFrames(legacy).slice(legacyBefore).map((f) => f.type as string);
+      expect(legacyKinds).toContain("thread_list");
+      expect(legacyKinds.filter((kind) => WORKSPACE_FRAMES.has(kind) && kind !== "thread_list")).toEqual([]);
+    } finally {
+      ws.end();
+      legacy.end();
+    }
+  });
+
+  it("carries the chat's context usage inside its sync bracket", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("usage sync");
+    const ws = await rowSocket();
+    try {
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chat.id);
+      const frames = textFrames(ws);
+      const begin = frames.findIndex((f) => f.type === "sync_begin" && f.chat_id === chat.id);
+      const usage = frames.findIndex((f) => f.type === "context_usage" && f.chat_id === chat.id);
+      const done = frames.findIndex((f) => f.type === "sync_done" && f.chat_id === chat.id);
+      expect(begin).toBeGreaterThan(-1);
+      expect(usage).toBeGreaterThan(begin);
+      expect(usage).toBeLessThan(done);
+      expect(frames[usage]).toEqual({
+        type: "context_usage",
+        chat_id: chat.id,
+        tokens: null,
+        usage_model: null,
+        usage_model_alias: null,
+      });
+    } finally {
+      ws.end();
+    }
+  });
+
+  it("pushes compacting=false when a compaction ends without a summary", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("no-op compaction");
+    const ws = await rowSocket();
+    try {
+      // One short turn: the feed's last view of the chat reads
+      // compacting=false, and there is nothing to compact.
+      const turn = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/turns`,
+        headers: auth(stack.memberToken),
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "short" }] },
+      });
+      expect(turn.statusCode).toBe(200);
+      await waitFrame(
+        ws,
+        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.generating === false
+          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        20_000,
+      );
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/compact`,
+        headers: auth(stack.memberToken),
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const started = JSON.parse(res.body) as { task_id: number | null; seq: number };
+      expect(started.task_id).toBeGreaterThan(0);
+      // The view already read compacting=false before the request: only the
+      // settlement's forced republish can carry a newer state.
+      const settled = await waitFrame(
+        ws,
+        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.compacting === false
+          && (f.seq as number) > started.seq,
+      );
+      expect(settled.generating).toBe(false);
+    } finally {
+      ws.end();
+    }
+  });
+});
+
 // The per-chat caches follow the connected owners: a chat whose owner has
 // no socket loses its cached tree and view, the identity cache is bounded,
 // and a failed push is logged with its channel and chat.

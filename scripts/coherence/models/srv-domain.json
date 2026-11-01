@@ -209,7 +209,8 @@
       "types": [
         "FeedForwarder",
         "ChatIdentity",
-        "UserBindings"
+        "UserBindings",
+        "WorkspacePart"
       ],
       "aliases": [
         "feed-forwarder"
@@ -217,6 +218,10 @@
       "representations": [
         {
           "where": "apps/server/src/hub/feed.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/hub/sent-frames.ts",
           "role": "domain"
         }
       ],
@@ -380,6 +385,35 @@
         }
       ],
       "translations": []
+    },
+    {
+      "id": "context-usage",
+      "definition": "One chat's context usage: the tokens of its last completed model request since the last compaction and the model that request ran on. The member socket pushes it as the context_usage frame; the composer's context meter draws it over the selected model's context window.",
+      "canonical": "apps/server/src/chats/context-usage.ts",
+      "types": [
+        "ContextUsageReads",
+        "ContextUsage"
+      ],
+      "aliases": [
+        "context-meter"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/chats/context-usage.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/context-usage-store.ts",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/socket-client.ts"
+        }
+      ]
     }
   ],
   "attaches": [

@@ -159,6 +159,10 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
   };
 }
 
+/** The workspace lists a chat-row write can move (the feed re-reads only
+ *  these; a `guild_workspace` payload without `parts` moves every list). */
+const CHAT_LIST_PARTS = ["chats", "archived"];
+
 /** A new chat is a new sidebar row: the workspace push is what puts it in
  *  every open tab before the first message names it. */
 async function notifyChatCreated(
@@ -168,7 +172,7 @@ async function notifyChatCreated(
   chatId: string,
 ): Promise<void> {
   await client.query("SELECT pg_notify('guild_workspace', $1)", [
-    JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId }),
+    JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId, parts: CHAT_LIST_PARTS }),
   ]);
 }
 
@@ -428,7 +432,7 @@ export class ChatStore {
     // A rename or archive moves the sidebar lists: the workspace push
     // carries the new title, or the row's move into the archived list.
     await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+      JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId, parts: CHAT_LIST_PARTS }),
     ]);
     return rowToChat(row);
   }
@@ -459,7 +463,7 @@ export class ChatStore {
     });
     if (row.newly_deleted === true) {
       await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId, parts: CHAT_LIST_PARTS }),
       ]);
     }
     return rowToChat(row);
@@ -671,7 +675,7 @@ export class ChatStore {
     });
     if (ownerId === null) return;
     await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: ownerId, chat_id: chatId }),
+      JSON.stringify({ org_id: orgId, user_id: ownerId, chat_id: chatId, parts: CHAT_LIST_PARTS }),
     ]);
   }
 
@@ -698,7 +702,7 @@ export class ChatStore {
     // The marker is sidebar state: every other open client of this user
     // must clear the dot, so the read write pushes the workspace lists.
     await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId }),
+      JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId, parts: CHAT_LIST_PARTS }),
     ]);
   }
 }

@@ -1,28 +1,22 @@
-import { useEffect, useState } from "react";
-import { fetchThreadContext, type ThreadContextUsage } from "../lib/thread-events";
+import { useSyncExternalStore } from "react";
+import { useContextUsage } from "../lib/context-usage-store";
+import { modelsSnapshot, subscribeModels } from "../lib/models-store";
 import { DesktopTooltip } from "./desktop-tooltip";
 
 const count = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
-/** Only committed history revisions trigger a read; streaming text does not. */
-export function ContextRing({ chatId, model, revision }: {
+/** The composer's context meter. The chat's usage arrives over the member
+ *  socket (its sync bracket, then every turn end and compaction); the
+ *  denominator is the selected model's context window from the pushed
+ *  model list. */
+export function ContextRing({ chatId, model }: {
   chatId: string | null;
   model: string;
-  revision: number | null;
 }) {
-  const key = `${chatId ?? ""}:${model}`;
-  const [read, setRead] = useState<{ key: string; usage?: ThreadContextUsage; failed?: boolean }>();
-  useEffect(() => {
-    if (!chatId || !model) return;
-    const controller = new AbortController();
-    void fetchThreadContext(chatId, model, controller.signal).then(
-      usage => { if (!controller.signal.aborted) setRead({ key, usage }); },
-      () => { if (!controller.signal.aborted) setRead({ key, failed: true }); },
-    );
-    return () => controller.abort();
-  }, [chatId, model, revision, key]);
-
-  const usage = read?.key === key ? read.usage : undefined;
+  const pushed = useContextUsage(chatId);
+  const models = useSyncExternalStore(subscribeModels, modelsSnapshot, modelsSnapshot);
+  const max = models?.find((m) => m.id === model)?.context_window ?? null;
+  const usage = pushed === undefined ? undefined : { ...pushed, max };
   const known = usage?.tokens != null && usage.max != null && usage.max > 0;
   const percent = known ? Math.round(usage.tokens! / usage.max! * 100) : null;
   const fill = percent === null ? 0 : Math.max(0, Math.min(100, percent));
@@ -30,8 +24,8 @@ export function ContextRing({ chatId, model, revision }: {
     ? `Context: ~${count.format(usage.tokens!)} / ${count.format(usage.max!)} tokens (${percent}%). Last completed request, including its response${usage.usage_model !== model ? `; measured on ${usage.usage_model_alias ?? "a model the catalog no longer lists"}` : ""}.`
     : !chatId ? "Context usage available after the first response"
     : !model ? "Choose a model to see context usage"
-    : read?.key !== key ? "Loading context usage"
-    : read.failed ? "Context usage unavailable"
+    : usage === undefined ? "Loading context usage"
+    : usage.tokens != null && max === null ? "Context usage unavailable"
     : "Context usage available after the next response";
   const color = percent !== null && percent >= 95 ? "text-destructive"
     : percent !== null && percent >= 80 ? "text-amber-500" : "text-muted-foreground";

@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { startSocket } from "../../../lib/socket-client";
 import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
 import { applyModelList } from "../../../lib/models-store";
+import { applyContextUsage, clearContextUsage } from "../../../lib/context-usage-store";
+import { registerCacheClear } from "../../settings/use-cached-api";
 import { applyWorkspaceIdentity } from "../../../lib/workspace-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { Project } from "../../../lib/api/projects";
@@ -25,6 +27,7 @@ import {
 import { applyOrgEvent, applySkillCatalog } from "../../skills/skills-store";
 import type { ChatTree } from "../../../lib/api/chats";
 
+registerCacheClear(clearContextUsage);
 
 export interface MemberSocketDeps {
   signOut: () => void;
@@ -38,7 +41,6 @@ export interface MemberSocketDeps {
   retireSendPending: (chatId: string, source: string) => void;
   openChatIdRef: RefObject<string | null>;
   onThreadStateApplied: (cid: string) => void;
-  updateContextRevision: (cid: string, events: ThreadState["events"]) => void;
   setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
   resetSubagentTrees: () => void;
   /** One chat's header facts arrived (inside its sync bracket or live). */
@@ -54,7 +56,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, store, retireSendPending, openChatIdRef,
-    onThreadStateApplied, updateContextRevision, setSubagentTree, resetSubagentTrees, applyChatTree,
+    onThreadStateApplied, setSubagentTree, resetSubagentTrees, applyChatTree,
     cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
@@ -87,6 +89,22 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
     );
     return true;
+  };
+
+  /** Pushed list rows as this client shows them. The open chat's turns are
+   *  on screen: the server's read watermark lags the local read, so a push
+   *  landing in between must not raise its unread badge. A title is
+   *  write-once after it is set: a row without one is older than the row
+   *  already held, so the known title stays. */
+  const pushedRows = (rows: ChatSummary[]): ChatSummary[] => {
+    const open = openChatIdRef.current;
+    const read = open !== null && readSentRef.current.has(open);
+    const known = new Map((chatsRef.current ?? []).map((c) => [c.id, c.title]));
+    return rows.map((c) => {
+      const unread = read && c.id === open && c.unread ? { ...c, unread: false } : c;
+      const prior = known.get(c.id);
+      return prior && !unread.title ? { ...unread, title: prior } : unread;
+    });
   };
 
   const applyHistory = (state: ThreadState) => {
@@ -150,9 +168,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         syncedReadRef.current.add(cid);
       }
     }
-    // The screen shows the displayed chat's view straight from the store;
-    // only the context ring's revision follows the displayed chat here.
-    if (cid === store.getSnapshot().displayedChatId) updateContextRevision(cid, state.events);
   };
 
   // One member socket serves both browser tabs and Tauri webviews. The
@@ -189,30 +204,15 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onOrgEvent: applyOrgEvent,
       onChatTree: applyChatTree,
       onArchivedThreadList: (next) => setArchivedChats(next),
+      onContextUsage: applyContextUsage,
       onProjectList: (next, archived) => {
         setProjects(next);
         setArchivedProjects(archived);
       },
       onThreadList: (nextChats) => {
-        // The open chat's turns are on screen: the server's read watermark
-        // lags the local read POST, so a push landing in between must not
-        // raise its unread badge.
         const open = openChatIdRef.current;
-        const rows = open === null || !readSentRef.current.has(open)
-          ? nextChats
-          : nextChats.map((c) =>
-              c.id === open && c.unread
-                ? { ...c, unread: false }
-                : c,
-            );
-        // A title is write-once after it is set: a snapshot without one is
-        // older than the row we already hold. Keep the known title.
-        const known = new Map((chatsRef.current ?? []).map((c) => [c.id, c.title]));
-        const titled = rows.map((c) => {
-          const prior = known.get(c.id);
-          return prior && !c.title ? { ...c, title: prior } : c;
-        });
-        setChats(titled);
+        const rows = pushedRows(nextChats);
+        setChats(rows);
         // Merge, not replace: a child thread is never in the list, so its
         // live status must survive every sidebar push.
         setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));
@@ -224,6 +224,18 @@ export function useMemberSocket(deps: MemberSocketDeps) {
             (c) => c.running && (c.chatId ?? c.originChatId) === open,
           ),
         });
+      },
+      // One row changed in place: it replaces its own entry, read through
+      // the same masks as a whole list.
+      onChatRow: (chat) => {
+        const [row] = pushedRows([chat]);
+        setChats((prev) => {
+          if (prev === null) return prev;
+          return prev.some((c) => c.id === row!.id)
+            ? prev.map((c) => (c.id === row!.id ? row! : c))
+            : [row!, ...prev];
+        });
+        setChatStatus((prev) => ({ ...prev, ...statusFromThreads([row!]) }));
       },
       // A chat_status frame moves the spinner and the unread dot of every
       // chat but the open one. The open chat's turn belongs to its sequenced
@@ -243,7 +255,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onThreadEvents: (cid, seq, events) => {
         // Incremental durable-log fan-out: the same rows a refresh replays,
         // applied live. Settles optimistic sends exactly like applyHistory.
-        const applied = store.mutate((r) => r.applyThreadEvents(cid, seq, events));
+        store.mutate((r) => r.applyThreadEvents(cid, seq, events));
         for (const row of events) {
           if (row.event.type === "user_message") observedUserIdsRef.current.add(row.id);
           const command = outgoingRef.current.get(row.id);
@@ -262,10 +274,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
               && Date.parse(row.last_activity_at) >= Date.parse(activity)) return prev;
             return prev!.map((c) => (c.id === cid ? { ...c, last_activity_at: activity } : c));
           });
-        }
-        if (applied.stale) return;
-        if (cid === openChatIdRef.current && cid === store.getSnapshot().displayedChatId) {
-          updateContextRevision(cid, events);
         }
       },
       onSync: (cid, phase) => {

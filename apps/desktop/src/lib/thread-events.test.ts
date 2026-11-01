@@ -46,24 +46,4 @@ describe("thread reads", () => {
       fetchThreadEventsPage("c1", 10, 20, new AbortController().signal),
     ).rejects.toThrow("Could not load earlier messages");
   });
-
-  it("asks the context meter for the named model", async () => {
-    const calls = setup(
-      new Response(JSON.stringify({ tokens: 10, max: 100, model: "m", usage_model: null, usage_model_alias: null }), {
-        status: 200,
-      }),
-    );
-    const { fetchThreadContext } = await import("./thread-events");
-    const usage = await fetchThreadContext("c1", "gpt x", new AbortController().signal);
-    expect(usage.tokens).toBe(10);
-    expect(calls[0].url).toBe("/api/v1/threads/c1/context?model=gpt+x");
-  });
-
-  it("rejects a failed context read", async () => {
-    setup(new Response("nope", { status: 502 }));
-    const { fetchThreadContext } = await import("./thread-events");
-    await expect(fetchThreadContext("c1", "m", new AbortController().signal)).rejects.toThrow(
-      "Could not load context usage",
-    );
-  });
 });
