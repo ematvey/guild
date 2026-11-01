@@ -7,7 +7,8 @@
 //! secrets editor (masked previews, write-only values), and per-tool
 //! curation (enable/disable + approval policy per declared tool).
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTheme } from "../../../theme";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
 import {
@@ -104,9 +105,29 @@ const TRAIT_LABELS: Record<string, string> = {
   web_fetch: "Web fetch",
 };
 
-/** The brand mark, rendered inline so it follows the theme (a logo drawn in
- *  currentColor stays visible on both surfaces). */
+/** A data URL for an SVG document. `currentColor` is replaced by `color`
+ *  first: an <img> does not inherit the page's text color. */
+export function svgDataUrl(svg: string, color: string): string {
+  const bytes = new TextEncoder().encode(svg.replaceAll("currentColor", color));
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
+/** The brand mark, drawn as an image so manifest markup never enters the
+ *  DOM (no script, no handlers). A mark drawn in currentColor takes the
+ *  surrounding foreground color, re-read on theme change. */
 function Logo({ svg, size = "size-10" }: { svg: string; size?: string }) {
+  const { theme } = useTheme();
+  const ref = useRef<HTMLDivElement>(null);
+  const [color, setColor] = useState<string | null>(null);
+  useEffect(() => {
+    // Next frame: the provider applies the theme class after this effect.
+    const frame = requestAnimationFrame(() => {
+      if (ref.current) setColor(getComputedStyle(ref.current).color);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [theme, svg]);
   if (svg === "") {
     return (
       <div className={`${size} flex items-center justify-center rounded-lg bg-muted text-muted-foreground`}>
@@ -115,12 +136,9 @@ function Logo({ svg, size = "size-10" }: { svg: string; size?: string }) {
     );
   }
   return (
-    <div
-      className={`${size} flex shrink-0 items-center justify-center text-foreground [&_svg]:h-full [&_svg]:w-full`}
-      // The manifest's logo is server-approved content (shipped with the
-      // plugin or reviewed with the registry bundle), never user markdown.
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div ref={ref} className={`${size} flex shrink-0 items-center justify-center text-foreground`}>
+      {color !== null && <img alt="" src={svgDataUrl(svg, color)} className="h-full w-full" />}
+    </div>
   );
 }
 
