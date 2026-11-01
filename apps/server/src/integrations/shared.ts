@@ -17,8 +17,6 @@ export interface ToolOutcome {
 /** A decoded JSON object: tool arguments, configs and vendor payloads
  *  across the connector and harness tool runtimes. */
 export type JsonObject = Record<string, unknown>;
-/** The name platform/integrations imports JsonObject under. */
-export type Json = JsonObject;
 
 export const CALL_TIMEOUT_MS = 20_000;
 export const LIST_TIMEOUT_MS = 30_000;

@@ -428,7 +428,7 @@ describe("connector execute spot checks (mock backend)", () => {
 
 import type { IntegrationCallIdentity } from "../platform/integrations/execute.js";
 import type { PluginSecretSource, IntegrationTurn } from "../platform/integrations/plugins.js";
-import type { Json } from "../platform/integrations/plugins.js";
+import type { JsonObject } from "../integrations/shared.js";
 import type { IntegrationToolSpec } from "../platform/integration-catalog.js";
 
 describe("MCP tools/call (stub peer)", () => {
@@ -445,7 +445,7 @@ describe("MCP tools/call (stub peer)", () => {
       let body = "";
       req.on("data", (c: Buffer) => (body += c));
       req.on("end", () => {
-        const msg = JSON.parse(body) as { id: number; method: string; params?: Json };
+        const msg = JSON.parse(body) as { id: number; method: string; params?: JsonObject };
         seen.headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, String(v)]));
         seen.methods.push(msg.method);
         const reply = (result: unknown): void => {

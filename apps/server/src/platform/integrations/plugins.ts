@@ -9,8 +9,7 @@ import { integrationByName, traitForTool, type IntegrationToolSpec } from "../in
 import { traitSpec } from "../../integrations/traits.js";
 import { manifestToolClass, toolClassOf } from "../domain/tool-class.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
-
-export type Json = Record<string, unknown>;
+import type { JsonObject } from "../../integrations/shared.js";
 
 /** The narrow store surface the dispatcher re-resolves secrets through
  *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
@@ -56,7 +55,7 @@ export interface IntegrationTurn {
   slug: string;
   description: string;
   tools: IntegrationToolInfo[];
-  rowConfig: Json;
+  rowConfig: JsonObject;
   secretNames: string[];
   identityKey: string;
 }
@@ -80,7 +79,7 @@ export function unnamespacedTool(slug: string, tool: string): string | null {
 /** The manifest whose content an admin's approval covers: resolved only
  *  while the item is approved AND the approval's recorded version is still
  *  the latest — a republish resets the review status. */
-export async function registryManifestIfApproved(gateway: IntegrationGateway, orgId: string, slug: string): Promise<Json | null> {
+export async function registryManifestIfApproved(gateway: IntegrationGateway, orgId: string, slug: string): Promise<JsonObject | null> {
   const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) return null;
   const [version, bundleSha256] = approved;
@@ -88,10 +87,10 @@ export async function registryManifestIfApproved(gateway: IntegrationGateway, or
   if (stored.bundle_sha256 !== bundleSha256) {
     throw new Error(`registry item ${slug}: stored bundle no longer matches the approved hash`);
   }
-  return (stored.manifest ?? {}) as Json;
+  return (stored.manifest ?? {}) as JsonObject;
 }
 
-export async function registryManifest(gateway: IntegrationGateway, orgId: string, slug: string): Promise<Json> {
+export async function registryManifest(gateway: IntegrationGateway, orgId: string, slug: string): Promise<JsonObject> {
   const manifest = await registryManifestIfApproved(gateway, orgId, slug);
   if (manifest === null) {
     throw new Error(`registry item ${slug} has no approval covering its latest version and bundle`);
@@ -101,17 +100,17 @@ export async function registryManifest(gateway: IntegrationGateway, orgId: strin
 
 /** Secret names a v2 manifest declares: the settings schema's secret-kind
  *  fields when it yields any, else the auth block's list. */
-export function manifestSecretNames(manifest: Json): string[] {
+export function manifestSecretNames(manifest: JsonObject): string[] {
   const settings = manifest["settings"];
-  if (settings !== null && typeof settings === "object" && Array.isArray((settings as Json)["fields"])) {
-    const derived = ((settings as Json)["fields"] as Json[])
+  if (settings !== null && typeof settings === "object" && Array.isArray((settings as JsonObject)["fields"])) {
+    const derived = ((settings as JsonObject)["fields"] as JsonObject[])
       .filter((f) => f["kind"] === "secret" && typeof f["name"] === "string")
       .map((f) => f["name"] as string);
     if (derived.length > 0) return derived;
   }
   const auth = manifest["auth"];
-  if (auth !== null && typeof auth === "object" && Array.isArray((auth as Json)["secret_names"])) {
-    return (auth as Json)["secret_names"] as string[];
+  if (auth !== null && typeof auth === "object" && Array.isArray((auth as JsonObject)["secret_names"])) {
+    return (auth as JsonObject)["secret_names"] as string[];
   }
   return [];
 }
@@ -139,7 +138,7 @@ export function envelopeHeaders(
   return headers;
 }
 
-function toMcpToolInfo(slug: string, manifest: Json, tool: McpTool): IntegrationToolInfo {
+function toMcpToolInfo(slug: string, manifest: JsonObject, tool: McpTool): IntegrationToolInfo {
   return {
     spec: {
       name: namespacedTool(slug, tool.name),
@@ -164,12 +163,12 @@ export async function resolveIntegrations(
   const masterKey = gateway.masterKey();
   const out: IntegrationTurn[] = [];
   for (const row of rows) {
-    const config = (row.config ?? {}) as Json;
+    const config = (row.config ?? {}) as JsonObject;
     // An installed v2 bundle is the admin's explicit choice — a row
     // carrying an mcp.url resolves as MCP even when a compiled-in connector
     // of the same slug exists.
     const mcpUrl = config["mcp"] !== null && typeof config["mcp"] === "object" && !Array.isArray(config["mcp"])
-      ? (config["mcp"] as Json)["url"]
+      ? (config["mcp"] as JsonObject)["url"]
       : undefined;
     if (typeof mcpUrl !== "string" || mcpUrl === "") {
       const connector = integrationByName(row.name);
@@ -208,7 +207,7 @@ export async function resolveIntegrations(
     // from the registry manifest. The connect happens before curation
     // filtering deliberately: drift detection (new remote tools landing
     // disabled) requires the live list.
-    let manifest: Json;
+    let manifest: JsonObject;
     try {
       manifest = await registryManifest(gateway, orgId, row.name);
     } catch {
@@ -246,8 +245,8 @@ export async function resolveIntegrations(
       rowConfig: config,
       secretNames,
       identityKey:
-        auth !== null && typeof auth === "object" && typeof (auth as Json)["identity_key"] === "string"
-          ? (auth as Json)["identity_key"] as string
+        auth !== null && typeof auth === "object" && typeof (auth as JsonObject)["identity_key"] === "string"
+          ? (auth as JsonObject)["identity_key"] as string
           : "email",
     });
   }

@@ -6,7 +6,7 @@
 
 import { mcpConnect, type McpPeer } from "./mcp.js";
 import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
-import { callSignals, type Json, type ToolOutcome } from "../../integrations/shared.js";
+import { callSignals, type JsonObject, type ToolOutcome } from "../../integrations/shared.js";
 import { integrationByName } from "../integration-catalog.js";
 
 // ---------- the plugin dispatcher (call_plugin) ----------
@@ -15,9 +15,9 @@ import { integrationByName } from "../integration-catalog.js";
  *  tests dispatch through callPlugin; this is the raw connector surface). */
 export async function executeConnectorTool(
   slug: string,
-  config: Json,
+  config: JsonObject,
   tool: string,
-  args: Json,
+  args: JsonObject,
   secrets: [string, string][],
   actingAs: string | null,
   signal?: AbortSignal,
@@ -45,7 +45,7 @@ export async function callPlugin(
   source: PluginSecretSource,
   turn: IntegrationTurn,
   rawTool: string,
-  args: Json,
+  args: JsonObject,
   identity: IntegrationCallIdentity,
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
@@ -63,8 +63,8 @@ export async function callPlugin(
   // MCP plugin: a short-lived call connection keeps caller and call ID
   // exact (the Rust pool's per-call connect).
   const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, turn.secretNames, masterKey);
-  const url = (turn.rowConfig as Json)["mcp"];
-  const mcpUrl = url !== null && typeof url === "object" ? (url as Json)["url"] : undefined;
+  const url = (turn.rowConfig as JsonObject)["mcp"];
+  const mcpUrl = url !== null && typeof url === "object" ? (url as JsonObject)["url"] : undefined;
   if (typeof mcpUrl !== "string") throw new Error("mcp url missing");
   const headers = envelopeHeaders(identity.callId, identity.orgId, identity.callerId, identity.actingAs, secrets);
   let peer: McpPeer;

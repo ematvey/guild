@@ -4,7 +4,7 @@
 // tools/call (the tool call maps the peer's content blocks to the
 // integration outcome contract, mcp_call_tool).
 
-type Json = Record<string, unknown>;
+import type { JsonObject } from "../../integrations/shared.js";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 /** rmcp's default request timeout. */
@@ -28,10 +28,10 @@ export interface McpPeer {
   /** tools/call with the raw (un-namespaced) tool name; the result maps
    *  through the mcp_call_tool contract (text blocks joined with \n; an
    *  error flag surfaces as isError, never as a thrown transport error). */
-  callTool(tool: string, args: Json): Promise<McpToolResult>;
+  callTool(tool: string, args: JsonObject): Promise<McpToolResult>;
 }
 
-function parseSseData(chunk: string): Json[] {
+function parseSseData(chunk: string): JsonObject[] {
   return chunk
     .split("\n")
     .filter((line) => line.startsWith("data:"))
@@ -39,25 +39,25 @@ function parseSseData(chunk: string): Json[] {
     .filter((line) => line.length > 0)
     .map((line) => {
       try {
-        return JSON.parse(line) as Json;
+        return JSON.parse(line) as JsonObject;
       } catch {
         return null;
       }
     })
-    .filter((v): v is Json => v !== null);
+    .filter((v): v is JsonObject => v !== null);
 }
 
 /** Reads a JSON-RPC response that may arrive as plain JSON or as an SSE
  *  stream (the streamable-HTTP transport allows both). */
-async function readRpcResponse(res: Response, requestId: number): Promise<Json> {
+async function readRpcResponse(res: Response, requestId: number): Promise<JsonObject> {
   const contentType = res.headers.get("content-type") ?? "";
   const text = await res.text();
-  let messages: Json[];
+  let messages: JsonObject[];
   if (contentType.includes("text/event-stream")) {
     messages = parseSseData(text);
   } else {
     try {
-      messages = [JSON.parse(text) as Json];
+      messages = [JSON.parse(text) as JsonObject];
     } catch {
       throw new Error("mcp transport returned a non-JSON body");
     }
@@ -65,17 +65,17 @@ async function readRpcResponse(res: Response, requestId: number): Promise<Json> 
   const reply = messages.find((m) => m["id"] === requestId);
   if (reply === undefined) throw new Error("mcp response missing the request id");
   if (reply["error"] !== null && reply["error"] !== undefined) {
-    const err = reply["error"] as Json;
+    const err = reply["error"] as JsonObject;
     throw new Error(`mcp error ${err["code"]}: ${String(err["message"] ?? "unknown")}`);
   }
   const result = reply["result"];
   if (result === null || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("mcp response missing result");
   }
-  return result as Json;
+  return result as JsonObject;
 }
 
-function rpcRequest(id: number, method: string, params: Json): Json {
+function rpcRequest(id: number, method: string, params: JsonObject): JsonObject {
   return { jsonrpc: "2.0", id, method, params };
 }
 
@@ -97,7 +97,7 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
     ...headers,
   };
   let sessionId: string | null = null;
-  const post = async (body: Json): Promise<Response> => {
+  const post = async (body: JsonObject): Promise<Response> => {
     signal?.throwIfAborted();
     const allHeaders: Record<string, string> = { ...baseHeaders };
     if (sessionId !== null) allHeaders["mcp-session-id"] = sessionId;
@@ -146,9 +146,9 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
 
   let nextId = 2;
   return {
-    async callTool(tool: string, args: Json): Promise<McpToolResult> {
+    async callTool(tool: string, args: JsonObject): Promise<McpToolResult> {
       const id = nextId++;
-      const params: Json = { name: tool };
+      const params: JsonObject = { name: tool };
       if (args !== null && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length > 0) {
         params["arguments"] = args;
       }
@@ -168,7 +168,7 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
       const blocks = result["content"];
       const text = Array.isArray(blocks)
         ? blocks
-            .map((b) => (b !== null && typeof b === "object" && (b as Json)["type"] === "text" ? String((b as Json)["text"] ?? "") : null))
+            .map((b) => (b !== null && typeof b === "object" && (b as JsonObject)["type"] === "text" ? String((b as JsonObject)["text"] ?? "") : null))
             .filter((t): t is string => t !== null)
             .join("\n")
         : "";
@@ -185,7 +185,7 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
       const tools = result["tools"];
       if (!Array.isArray(tools)) throw new Error("mcp tools/list result missing tools");
       return tools.map((t) => {
-        const tool = t as Json;
+        const tool = t as JsonObject;
         const description = typeof tool["description"] === "string" ? tool["description"] : "";
         return {
           name: String(tool["name"] ?? ""),

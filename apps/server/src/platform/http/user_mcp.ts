@@ -20,8 +20,8 @@ import { ApiError } from "../errors.js";
 import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";
 import { mcpConnect } from "../integrations/mcp.js";
 import { userMcpToolName } from "../domain/mcp.js";
+import type { JsonObject } from "../../integrations/shared.js";
 
-type Json = Record<string, unknown>;
 
 /** Tool names Guild reserves for its own machinery — a user server's name
  *  must not collide with them (the wire tool name is mcp<length>_<name>_<tool>, but
@@ -123,7 +123,7 @@ export function validateHeaders(raw: unknown): Record<string, string> | undefine
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw ApiError.badRequest("headers must be a JSON object of name → value");
   }
-  const entries = Object.entries(raw as Json);
+  const entries = Object.entries(raw as JsonObject);
   if (entries.length > 32) throw ApiError.badRequest("too many headers");
   const out: Record<string, string> = {};
   for (const [name, value] of entries) {
@@ -150,7 +150,7 @@ export async function probeServer(
   }
 }
 
-async function connectionDraft(body: Json): Promise<{ name: string; url: string; headers?: Record<string, string> }> {
+async function connectionDraft(body: JsonObject): Promise<{ name: string; url: string; headers?: Record<string, string> }> {
   const name = body["name"];
   if (typeof name !== "string") throw ApiError.badRequest("missing name");
   validateName(name);
@@ -268,7 +268,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
 function serverView(
   auth: IdentityCtx,
   row: { id: string; name: string; url: string; enabled: boolean; headers_enc: Buffer | null; created_at: string; updated_at: string },
-): Json {
+): JsonObject {
   return {
     id: row.id,
     name: row.name,

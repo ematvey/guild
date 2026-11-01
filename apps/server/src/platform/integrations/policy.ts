@@ -1,7 +1,8 @@
 // Per-tool integration policy: the stored curation map, the role/class
 // gate, and the acting-identity override rule.
 
-import type { Json, IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
+import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
+import type { JsonObject } from "../../integrations/shared.js";
 import { classRank, isToolClass } from "../domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
@@ -17,14 +18,14 @@ export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
  *  stored config: adapter-bound (built-in connector) → enabled, follow user
  *  policy; MCP-bound (live discovery) → disabled — nothing is exposed that
  *  the admin did not approve. Unknown approval values read as the default. */
-export function toolCurate(rowConfig: Json, mcp: boolean, rawTool: string): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
+export function toolCurate(rowConfig: JsonObject, mcp: boolean, rawTool: string): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
   const tools = rowConfig["tools"];
   const stored =
     tools !== null && typeof tools === "object" && !Array.isArray(tools)
-      ? (tools as Json)[rawTool]
+      ? (tools as JsonObject)[rawTool]
       : undefined;
   if (stored !== null && typeof stored === "object" && !Array.isArray(stored)) {
-    const c = stored as Json;
+    const c = stored as JsonObject;
     return {
       enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : !mcp,
       alwaysAsk: c["approval"] === TOOL_APPROVAL_ALWAYS_ASK,
@@ -37,11 +38,11 @@ export function toolCurate(rowConfig: Json, mcp: boolean, rawTool: string): { en
 /** Classes one role may call. Default policy: member read-only, admin (and
  *  owner — owners are admins) everything; a stored `tool_policy` tightens or
  *  reshapes per role, never past the manifest. */
-function allowedClasses(rowConfig: Json, role: string): string[] {
+function allowedClasses(rowConfig: JsonObject, role: string): string[] {
   const resolvedRole = role === "owner" ? "admin" : role;
   const policy = rowConfig["tool_policy"];
   if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
-    const tp = (policy as Json)[resolvedRole];
+    const tp = (policy as JsonObject)[resolvedRole];
     if (Array.isArray(tp)) {
       // A stored policy entry replaces the default for that role — an empty
       // list allows nothing.

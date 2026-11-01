@@ -236,7 +236,7 @@ export class PlatformContext {
     this.wsMachineReconcile = async (machineId, connId) => {
       this.machineDispatch.reconcileMachine(machineId, connId);
     };
-    this.feed = new FeedForwarder(this);
+    this.feed = new FeedForwarder(this, log);
     this.feed.start();
     this.runtime.setStreamSink(this.feed);
   }
