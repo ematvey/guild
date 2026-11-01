@@ -51,6 +51,8 @@ async function chatResponse(chats: ChatsCtx, orgId: string, userId: string, chat
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 
+const APPROVAL_EXPIRED_REASON = "expired — no turn was waiting for this approval";
+
 /** GET /api/v1/chats/{id}/thread body. */
 async function threadBody(chats: ChatsCtx, gateway: GatewayCtx, user: UserRow, chatId: string): Promise<string> {
   const events = await chats.threads.listEvents(user.org_id, chatId);
@@ -178,7 +180,7 @@ export function registerChatsRoutes(
   const stopTurn = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     await chats.turnCommands.cancelWaitingHead(chatId);
     await chats.runtime.stopChat(chatId);
     return reply.status(200).send(JSON.stringify({ stopped: true }));
@@ -190,7 +192,7 @@ export function registerChatsRoutes(
   const appendThreadEvent = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     const body = requireJsonBody(req);
     const event = coerceThreadEvent(body);
     // Engine-path turn join: `turn: 0` means "join the latest turn"; the
@@ -225,7 +227,7 @@ export function registerChatsRoutes(
   const approvalMode = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    const approval = await chats.chats.approval(user.org_id, user.id, chatId);
+    const approval = await chats.chats.approval(user.org_id, user, chatId);
     return reply.status(200).send(JSON.stringify({ default: approval?.default ?? null }));
   };
   // Deprecated alias: GET|POST /api/v1/chats/:id/approval (the per-chat
@@ -251,7 +253,7 @@ export function registerChatsRoutes(
         `unknown approval mode ${String(mode)} — expected ask, approve_for_me, full_access, or default`,
       );
     }
-    await chats.chats.setApproval(user.org_id, user.id, chatId, policy);
+    await chats.chats.setApproval(user.org_id, user, chatId, policy);
     return reply.status(200).send(JSON.stringify({ default: responseMode }));
   };
   // Deprecated alias: POST /api/v1/chats/:id/approval.
@@ -276,10 +278,10 @@ export function registerChatsRoutes(
     if (rawTitle !== undefined && rawTitle !== null && typeof rawTitle !== "string") {
       throw invalidTypeText(req, "title");
     }
-    const title = typeof rawTitle === "string" ? rawTitle.trim() : undefined;
-    const effectiveTitle = title !== undefined && title !== "" ? title : title === "" ? null : undefined;
+    // An absent title keeps the current one; null or a blank string clears it.
+    const title = rawTitle === undefined ? undefined : typeof rawTitle === "string" && rawTitle.trim() !== "" ? rawTitle.trim() : null;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
-    await chats.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
+    await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null);
     if (archived === true) {
       // Archiving closes the agent-thread subtree first: descendants stop
       // and deliveries stop. Then the in-flight generation is ended, or an
@@ -340,7 +342,7 @@ export function registerChatsRoutes(
     if (typeof agentId !== "string" || agentId.trim() === "") {
       throw ApiError.badRequest("agent_id is required");
     }
-    const chat = await chats.chats.getChat(user.org_id, chatId, user);
+    const chat = await chats.chats.getOwnChat(user.org_id, chatId, user);
     let bound: { thread_id: string };
     try {
       bound = await chats.runtime.bindChatAgent(chatId, user.id, agentId, chat.title ?? "", user);
@@ -370,7 +372,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const messageId = parseUuidParam(req, "messageId");
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     const command = await chats.turnCommands.byId(messageId, chatId);
     if (!command) throw ApiError.notFound("no such message");
     if (command.status !== "pending" && command.status !== "submitted") {
@@ -394,7 +396,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const messageId = parseUuidParam(req, "messageId");
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     const command = await chats.turnCommands.byId(messageId, chatId);
     if (!command) throw ApiError.notFound("no such message");
     if (!command.invocation_id?.startsWith("sub:")) {
@@ -414,63 +416,36 @@ export function registerChatsRoutes(
     // decode it.
     const raw = (req.params as Record<string, string>)["*"] ?? "";
     const callId = decodeURIComponent(raw);
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     const body = requireJsonBody(req);
     if (typeof body["approved"] !== "boolean") {
       throw ApiError.badRequest("missing approved");
     }
-    const approved = body["approved"] as boolean;
+    const approved = body["approved"];
     const reason = typeof body["reason"] === "string" ? body["reason"] : undefined;
-    void approved;
-    void reason; // live-gate forwarding arrives with the M4 approval lane
 
-    // Recorded decision: echo it verbatim (late clicks are idempotent).
-    const events = await chats.threads.listEvents(user.org_id, chatId);
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]!.event;
-      if (ev.type === "approval_decision" && ev.call_id === callId) {
-        return reply.status(200).send(
-          JSON.stringify(
-            sortedJson({
-              ok: true,
-              settled: true,
-              approved: ev.approved,
-              reason: ev.reason ?? null,
-              expired: ev.expired,
-            }),
-          ),
-        );
-      }
-    }
-
-    // Live turn: the M4 approval gate's tool task polls the journaled
-    // decision (the block/resume contract) — appending it here resolves the
-    // suspended gate within the poll interval.
-    const generating = await chats.chats.isGenerating(user.org_id, chatId);
-    if (generating) {
-      await chats.threads.appendEvent(chatId, {
-        type: "approval_decision",
-        call_id: callId,
-        approved,
-        ...(reason !== undefined ? { reason } : {}),
-        expired: false,
-      });
+    // The call settles once. A recorded decision is echoed verbatim (late
+    // clicks are idempotent). With a live turn, the decision is journaled
+    // and the suspended approval gate picks it up within its poll interval.
+    // With no live turn the call is orphaned: the expired marker is
+    // journaled so a reload shows the settled card.
+    const { row, appended } = await chats.threads.settleApproval(chatId, callId, (generating) =>
+      generating
+        ? { type: "approval_decision", call_id: callId, approved, ...(reason !== undefined ? { reason } : {}), expired: false }
+        : { type: "approval_decision", call_id: callId, approved: false, reason: APPROVAL_EXPIRED_REASON, expired: true },
+    );
+    const decision = row.event as Extract<ThreadEventRow["event"], { type: "approval_decision" }>;
+    if (appended && !decision.expired) {
       return reply.status(200).send(JSON.stringify(sortedJson({ ok: true, settled: false })));
     }
-    // Orphaned call (no recorded decision, no live turn): journal the
-    // expired marker so a reload shows the settled card.
-    const APPROVAL_EXPIRED_REASON = "expired — no turn was waiting for this approval";
-    await chats
-      .threads
-      .appendEvent(chatId, { type: "approval_decision", call_id: callId, approved: false, reason: APPROVAL_EXPIRED_REASON, expired: true });
     return reply.status(200).send(
       JSON.stringify(
         sortedJson({
           ok: true,
           settled: true,
-          approved: false,
-          reason: APPROVAL_EXPIRED_REASON,
-          expired: true,
+          approved: decision.approved,
+          reason: decision.reason ?? null,
+          expired: decision.expired,
         }),
       ),
     );
@@ -482,7 +457,7 @@ export function registerChatsRoutes(
   const compactTurn = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
     const taskId = await chats.runtime.compactChat(chatId);
     return reply.status(200).send({ ok: true, task_id: taskId });
   };
@@ -548,7 +523,7 @@ export async function submitTurn(
   // Every conversation belongs to an agent. A plain chat is adopted by the
   // caller's personal agent on its first turn; from then on the turn runs
   // with the agent's model and tools, and the run lifecycle closes the run.
-  const chatRow = preloadedChat ?? (await chats.chats.getChat(user.org_id, chatId, user));
+  const chatRow = preloadedChat ?? (await chats.chats.getOwnChat(user.org_id, chatId, user));
   const requestedAgent = typeof body["agent_id"] === "string" ? body["agent_id"] : null;
   const adopted =
     requestedAgent === null

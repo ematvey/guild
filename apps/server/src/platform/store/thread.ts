@@ -6,7 +6,7 @@
 // exact contracts.
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
@@ -41,6 +41,37 @@ function toRow(r: EventRowDb): ThreadEventRow | undefined {
   // unparsable payloads are dropped.
   if (!event) return undefined;
   return { id: r.id, chat_id: r.chat_id, seq: Number(r.seq), event, created_at: pgTimestampToRfc3339(r.created_at) };
+}
+
+/** Inserts one event row (an id conflict returns the existing row) and
+ *  notifies `guild_thread_committed` inside the caller's transaction. */
+async function insertEvent(client: PoolClient, chatId: string, eventId: string, event: ThreadEvent): Promise<ThreadEventRow> {
+  const res = await client.query<EventRowDb>(
+    `INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4::jsonb)
+     ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+     RETURNING id, chat_id, seq, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+    [eventId, chatId, event.type, jsonbText(event)],
+  );
+  const row = res.rows[0];
+  if (!row) throw new ApiError(500, "internal", "thread event append returned no row");
+  await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
+  const normalized = toRow(row);
+  if (!normalized) throw new ApiError(500, "internal", "appended thread event does not parse");
+  return normalized;
+}
+
+/** The first decision journaled for one approval call, if any. */
+async function recordedDecision(client: PoolClient, chatId: string, callId: string): Promise<ThreadEventRow | undefined> {
+  const res = await client.query<EventRowDb>(
+    `SELECT id, chat_id, seq, payload,
+            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+     FROM thread_events
+     WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
+     ORDER BY seq ASC LIMIT 1`,
+    [chatId, callId],
+  );
+  const row = res.rows[0];
+  return row === undefined ? undefined : toRow(row);
 }
 
 export class ThreadStore {
@@ -81,11 +112,35 @@ export class ThreadStore {
    *  and a conflicting re-append returns the existing row unchanged. The
    *  approval gate re-runs recoverably and re-appends its card with a
    *  fresh judge timestamp in the payload — the re-append must keep the
-   *  shown card, never fail the tool. Notifies `guild_thread_committed`
-   *  in the same transaction (the member-socket sync channel; the M5
-   *  lane's listener consumes it). */
+   *  shown card, never fail the tool. An approval decision settles its call
+   *  once: when the call already has one, that row is returned unchanged.
+   *  Notifies `guild_thread_committed` in the same transaction (the
+   *  member-socket sync channel). */
   appendEvent(chatId: string, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
     return this.persistEvent({ chatId, event, id });
+  }
+
+  /** Settles one approval call from the client's decision. Under the chat
+   *  row lock the call's recorded decision, if any, is returned unchanged
+   *  (`appended: false`); otherwise `decide` builds the decision from the
+   *  chat's generating flag and it is appended. Concurrent resolves of one
+   *  call therefore journal exactly one decision. */
+  async settleApproval(
+    chatId: string,
+    callId: string,
+    decide: (generating: boolean) => Extract<ThreadEvent, { type: "approval_decision" }>,
+  ): Promise<{ row: ThreadEventRow; appended: boolean }> {
+    return withTransaction(this.pool, async (client) => {
+      const chat = await client.query<{ generating: boolean }>(
+        "SELECT generating FROM chats WHERE id = $1 FOR UPDATE",
+        [chatId],
+      );
+      if (chat.rows.length === 0) throw new ApiError(404, "not_found", "no such chat");
+      const recorded = await recordedDecision(client, chatId, callId);
+      if (recorded !== undefined) return { row: recorded, appended: false };
+      const row = await insertEvent(client, chatId, uuidv7(), decide(chat.rows[0]!.generating));
+      return { row, appended: true };
+    });
   }
 
   private async persistEvent(input: {
@@ -102,9 +157,12 @@ export class ThreadStore {
     const payload = jsonbText(event);
     const eventType = event.type;
     const eventId = id ?? uuidv7();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
+      if (event.type === "approval_decision" && sourceId === undefined) {
+        await client.query("SELECT id FROM chats WHERE id=$1 FOR UPDATE", [chatId]);
+        const recorded = await recordedDecision(client, chatId, event.call_id);
+        if (recorded !== undefined) return recorded;
+      }
       if (sourceId !== undefined) {
         // The chat lock serializes adoption of pre-projection legacy rows.
         await client.query("SELECT id FROM chats WHERE id=$1 FOR UPDATE", [chatId]);
@@ -131,20 +189,12 @@ export class ThreadStore {
             `INSERT INTO ${table}(${column},chat_id,event_id) VALUES($1,$2,$3) ON CONFLICT(${column}) DO NOTHING`,
             [sourceId, chatId, found.id],
           );
-          await client.query("COMMIT");
           const normalized = toRow(found);
           if (!normalized) throw new ApiError(500, "internal", "projected event does not parse");
           return normalized;
         }
       }
-      const res = await client.query<EventRowDb>(
-        `INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4::jsonb)
-         ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-         RETURNING id, chat_id, seq, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
-        [eventId, chatId, eventType, payload],
-      );
-      const row = res.rows[0];
-      if (!row) throw new ApiError(500, "internal", "thread event append returned no row");
+      const row = await insertEvent(client, chatId, eventId, event);
       if (sourceId !== undefined) {
         await client.query(`INSERT INTO ${table}(${column},chat_id,event_id) VALUES($1,$2,$3)`, [
           sourceId,
@@ -152,17 +202,8 @@ export class ThreadStore {
           eventId,
         ]);
       }
-      await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
-      await client.query("COMMIT");
-      const normalized = toRow(row);
-      if (!normalized) throw new ApiError(500, "internal", "appended thread event does not parse");
-      return normalized;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+      return row;
+    });
   }
 
   /** One delivery row in the parent thread. It stays unconsumed until a

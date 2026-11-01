@@ -21,3 +21,21 @@ export function createPlatformPool(databaseUrl: string, poolMax = 10): pg.Pool {
   // promptly on the shared dev server's connection budget.
   return new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
 }
+
+/** Runs `fn` inside one transaction on a dedicated pooled client: COMMIT
+ *  when it resolves, ROLLBACK (best effort; the original error wins) when it
+ *  throws. */
+export async function withTransaction<T>(pool: PlatformPool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}

@@ -877,3 +877,144 @@ describe("gateway/chat turn flow", () => {
     expect(ack.user_message_id).toBe(userMessageId);
   }, TEST_TIMEOUT);
 });
+
+describe("chat access rule", () => {
+  const memberChat = async (title = "member chat"): Promise<string> => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(stack.memberToken),
+      payload: { title },
+    });
+    expect(created.statusCode).toBe(200);
+    return (JSON.parse(created.body) as { id: string }).id;
+  };
+  const chatRow = async (id: string) =>
+    (
+      await stack.env.db.query<{ title: string | null; archived: boolean; deleted_at: Date | null; project_id: string | null; approval: unknown }>(
+        "SELECT title, archived_at IS NOT NULL AS archived, deleted_at, project_id, approval FROM chats WHERE id = $1",
+        [id],
+      )
+    ).rows[0]!;
+  const writes = (chatId: string) => [
+    { method: "PATCH" as const, url: `/api/v1/threads/${chatId}`, payload: { title: "renamed", archived: true } },
+    { method: "DELETE" as const, url: `/api/v1/threads/${chatId}` },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/project`, payload: { project_id: null } },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/approval`, payload: { default: "full_access" } },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/events`, payload: { type: "system_message", content: "forged" } },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/turns`, payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hi" }] } },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/approvals/call-1`, payload: { approved: true } },
+    { method: "POST" as const, url: `/api/v1/threads/${chatId}/stop`, payload: {} },
+  ];
+
+  const headersFor = (write: { payload?: unknown }, token: string): Record<string, string> =>
+    write.payload === undefined ? { authorization: `Bearer ${token}` } : auth(token);
+
+  it("an admin reads a member's chat but cannot write to it", async () => {
+    const chatId = await memberChat();
+    for (const url of [`/api/v1/threads/${chatId}`, `/api/v1/threads/${chatId}/approval`, `/api/v1/threads/${chatId}/events`]) {
+      const read = await stack.env.app.inject({ method: "GET", url, headers: auth(stack.adminToken) });
+      expect(read.statusCode, url).toBe(200);
+    }
+    const before = await chatRow(chatId);
+    for (const write of writes(chatId)) {
+      const res = await stack.env.app.inject({ ...write, headers: headersFor(write, stack.adminToken) });
+      expect(res.statusCode, `${write.method} ${write.url}: ${res.body}`).toBe(404);
+    }
+    expect(await chatRow(chatId)).toEqual(before);
+    const events = await stack.env.db.query("SELECT 1 FROM thread_events WHERE chat_id = $1", [chatId]);
+    expect(events.rowCount).toBe(0);
+  });
+
+  it("the owner's write answers the row it changed; a blank or null title clears it", async () => {
+    const chatId = await memberChat("named");
+    for (const title of ["", null]) {
+      await stack.env.db.query("UPDATE chats SET title = 'named' WHERE id = $1", [chatId]);
+      const res = await stack.env.app.inject({
+        method: "PATCH",
+        url: `/api/v1/threads/${chatId}`,
+        headers: auth(stack.memberToken),
+        payload: { title },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = JSON.parse(res.body) as { id: string; title?: string | null };
+      expect(body.id).toBe(chatId);
+      expect(body.title ?? null).toBeNull();
+      expect((await chatRow(chatId)).title).toBeNull();
+    }
+    // An absent title keeps the current one.
+    await stack.env.db.query("UPDATE chats SET title = 'kept' WHERE id = $1", [chatId]);
+    const archived = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chatId}`,
+      headers: auth(stack.memberToken),
+      payload: { archived: false },
+    });
+    expect(JSON.parse(archived.body)).toMatchObject({ id: chatId, title: "kept" });
+  });
+
+  it("a deleted chat refuses writes; deleting again keeps the first deletion", async () => {
+    const chatId = await memberChat("doomed");
+    const first = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/threads/${chatId}`, headers: headersFor({}, stack.memberToken) });
+    expect(first.statusCode).toBe(200);
+    const stamped = (await chatRow(chatId)).deleted_at;
+    expect(stamped).not.toBeNull();
+
+    for (const write of writes(chatId).filter((w) => w.method !== "DELETE")) {
+      const res = await stack.env.app.inject({ ...write, headers: headersFor(write, stack.memberToken) });
+      expect(res.statusCode, `${write.method} ${write.url}: ${res.body}`).toBe(404);
+    }
+    const legacyTurn = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(stack.memberToken),
+      payload: { chat_id: chatId, model: "GLM-Test-Model", messages: [{ role: "user", content: "hi" }] },
+    });
+    expect(legacyTurn.statusCode).toBe(404);
+    const commands = await stack.env.db.query("SELECT 1 FROM turn_commands WHERE chat_id = $1", [chatId]);
+    expect(commands.rowCount).toBe(0);
+
+    const again = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/threads/${chatId}`, headers: headersFor({}, stack.memberToken) });
+    expect(again.statusCode).toBe(200);
+    expect(JSON.parse(again.body)).toMatchObject({ id: chatId, deleted: true });
+    expect((await chatRow(chatId)).deleted_at).toEqual(stamped);
+
+    // The transcript stays readable by link.
+    const read = await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${chatId}`, headers: auth(stack.memberToken) });
+    expect(read.statusCode).toBe(200);
+  });
+
+  it("concurrent approval resolves settle the call once", async () => {
+    const chatId = await memberChat("racing approvals");
+    // A live turn: the decision is journaled for the suspended gate.
+    await stack.env.db.query("UPDATE chats SET generating = true WHERE id = $1", [chatId]);
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          stack.env.app.inject({
+            method: "POST",
+            url: `/api/v1/threads/${chatId}/approvals/call-race`,
+            headers: auth(stack.memberToken),
+            payload: { approved: i % 2 === 0, reason: `click ${i}` },
+          }),
+        ),
+      );
+      const bodies = responses.map((r) => {
+        expect(r.statusCode, r.body).toBe(200);
+        return JSON.parse(r.body) as { settled: boolean; approved?: boolean; reason?: string };
+      });
+      const decisions = await stack.env.db.query<{ payload: { approved: boolean; reason: string } }>(
+        "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision'",
+        [chatId],
+      );
+      expect(decisions.rowCount).toBe(1);
+      const winner = decisions.rows[0]!.payload;
+      expect(bodies.filter((b) => !b.settled)).toHaveLength(1);
+      for (const echoed of bodies.filter((b) => b.settled)) {
+        expect(echoed).toMatchObject({ approved: winner.approved, reason: winner.reason });
+      }
+    } finally {
+      await stack.env.db.query("UPDATE chats SET generating = false WHERE id = $1", [chatId]);
+    }
+  });
+});

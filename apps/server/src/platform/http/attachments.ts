@@ -7,7 +7,7 @@ import type { InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
-import { getChatOwned } from "../store/chats.js";
+import type { ChatStore } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
 
 const MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
@@ -27,7 +27,7 @@ function queryOne(req: { url: string }, name: string): string | undefined {
   return value === null ? undefined : value;
 }
 
-export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext): void {
+export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext, chats: ChatStore): void {
   // Deprecated alias: /api/v1/chats/:chatId/attachments (the thread-domain
   // rename — /api/v1/threads/:chatId/attachments is primary).
   const uploadAttachment = async (req: FastifyRequest, reply: FastifyReply) => {
@@ -37,8 +37,8 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     const filename = rawFilename === undefined ? null : safeFilename(rawFilename);
     if (filename === null) throw ApiError.badRequest("bad filename");
     const contentType = safeContentType(queryOne(req, "content_type") ?? "application/octet-stream");
-    // chat must belong to the caller's org
-    const chat = await getChatOwned(infra.pool, user.org_id, chatId, user);
+    // An upload writes into the conversation: the owner's alone.
+    const chat = await chats.getOwnChat(user.org_id, chatId, user);
     const id = uuidv7();
     const key = attachmentObjectKey(user.org_id, id, filename);
     const bytes = Buffer.isBuffer(req.body)
@@ -68,7 +68,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
   const listAttachments = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
-    await getChatOwned(infra.pool, user.org_id, chatId, user);
+    await chats.getChat(user.org_id, chatId, user);
     const rows = await ctx.attachments.list(user.org_id, chatId);
     return reply
       .status(200)
@@ -81,9 +81,9 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     const user = await requireUser(ctx, req);
     const id = parseUuidParam(req, "id");
     const row = await ctx.attachments.get(user.org_id, id);
-    // The attachment rides a chat, so the chat's owner predicate applies:
-    // org scoping alone would let a member pull another member's uploads.
-    await getChatOwned(infra.pool, user.org_id, row.chat_id, user);
+    // The attachment rides a chat, so the chat's read gate applies: org
+    // scoping alone would let a member pull another member's uploads.
+    await chats.getChat(user.org_id, row.chat_id, user);
     const key = attachmentObjectKey(row.org_id, row.id, row.filename);
     let bytes: Buffer;
     try {

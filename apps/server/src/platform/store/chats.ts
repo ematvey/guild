@@ -1,12 +1,13 @@
-import { generationWorkSql } from "./work.js";
-// Chat store: chat CRUD with the
-// owner/admin gate, the sidebar list with its unread projection (chat_reads
+// Chat store: chat CRUD with its access rule (the owner reads and writes;
+// an org admin reads any member's chat but writes only their own), the
+// sidebar list with its unread projection (chat_reads
 // watermark — UI state stays as-is, spec decision 6), project-derived
 // machine binding, the approval-mode override, and the generating flag with
 // its same-transaction `guild_chat_status` notify.
 
+import { generationWorkSql } from "./work.js";
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
@@ -264,9 +265,7 @@ export class ChatStore {
    *  transaction as the INSERT, so a concurrent re-pair adoption can never
    *  slip a retired machine id between the read and the write. */
   async createChatForProject(orgId: string, userId: string, title: string | null, projectId: string): Promise<ChatRow> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const binding = await client.query<{ machine_id: string; label: string | null }>(
         `SELECT p.machine_id, coalesce(m.label, p.machine_id) AS label
          FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id
@@ -284,14 +283,8 @@ export class ChatStore {
         [id, orgId, userId, title, projectId, row.machine_id, row.label],
       );
       await notifyChatCreated(client, orgId, userId, id);
-      await client.query("COMMIT");
       return rowToChat(res.rows[0]!);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listChats(orgId: string, userId: string): Promise<ChatListRow[]> {
@@ -353,13 +346,28 @@ export class ChatStore {
     return row ? rowToList(row) : null;
   }
 
-  /** Org-scoped fetch with the owner/admin gate (members must not read
-   *  other members' threads, forge events, or spend the org's tokens). */
+  /** The read gate: the chat's owner, or an admin of its org. Members must
+   *  not read other members' threads. A deleted chat still resolves (its
+   *  transcript stays reachable by link). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
     const isAdmin = caller.role === "admin";
     const res = await this.pool.query<Record<string, unknown>>(
       `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)`,
       [orgId, chatId, caller.id, isAdmin],
+    );
+    const row = res.rows[0];
+    if (!row) throw new ApiError(404, "not_found", "no such chat");
+    return rowToChat(row);
+  }
+
+  /** The write gate: the caller owns the chat and it is not deleted.
+   *  Renames, archiving, project binding, turns, appends, approvals and
+   *  stops are the owner's alone — an admin's read access does not extend
+   *  to acting inside a member's conversation. */
+  async getOwnChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+      [orgId, chatId, caller.id],
     );
     const row = res.rows[0];
     if (!row) throw new ApiError(404, "not_found", "no such chat");
@@ -379,10 +387,11 @@ export class ChatStore {
     return rowToChat(row);
   }
 
-  /** Renames and/or archives the chat (owner-scoped, admin bypass).
-   *  Archiving stamps archived_at and settles every waiting command as
-   *  cancelled in the same transaction; the chats row lock is taken BEFORE
-   *  the settle so the ordering serializes against turn acceptance. */
+  /** Renames and/or archives the caller's own chat. `title` undefined keeps
+   *  the title, null clears it. Archiving stamps archived_at and settles
+   *  every waiting command as cancelled in the same transaction; the chats
+   *  row lock is taken BEFORE the settle so the ordering serializes against
+   *  turn acceptance. */
   async updateChat(
     orgId: string,
     chatId: string,
@@ -390,85 +399,70 @@ export class ChatStore {
     title: string | null | undefined,
     archived: boolean | null | undefined,
   ): Promise<ChatRow> {
-    const isAdmin = caller.role === "admin";
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    const row = await withTransaction(this.pool, async (client) => {
       const locked = await client.query(
-        "SELECT id FROM chats WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4) FOR UPDATE",
-        [orgId, chatId, caller.id, isAdmin],
+        "SELECT id FROM chats WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL FOR UPDATE",
+        [orgId, chatId, caller.id],
       );
       if (locked.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
       const res = await client.query<Record<string, unknown>>(
-        `UPDATE chats SET title = COALESCE($3, title),
+        `UPDATE chats SET title = CASE WHEN $5::bool THEN $3 ELSE title END,
            archived_at = CASE
              WHEN $4::bool IS NULL THEN archived_at
              WHEN $4::bool THEN now()
              ELSE NULL END
-         WHERE org_id = $1 AND id = $2 AND (user_id = $5 OR $6)
+         WHERE org_id = $1 AND id = $2
          RETURNING id, org_id, user_id, title,
            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
            machine_id, machine_label, generating, project_id`,
-        [orgId, chatId, title, archived, caller.id, isAdmin],
+        [orgId, chatId, title ?? null, archived ?? null, title !== undefined],
       );
-      if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
       if (archived === true) {
         await client.query(
           "UPDATE turn_commands SET status = 'cancelled', finished_at = now() WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
           [chatId],
         );
       }
-      await client.query("COMMIT");
-      const row = res.rows[0]!;
-      // A rename or archive moves the sidebar lists: the workspace push
-      // carries the new title, or the row's move into the archived list.
-      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
-      ]);
-      return rowToChat(row);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+      return res.rows[0]!;
+    });
+    // A rename or archive moves the sidebar lists: the workspace push
+    // carries the new title, or the row's move into the archived list.
+    await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+      JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
+    ]);
+    return rowToChat(row);
   }
 
-  /** Soft-deletes the chat (owner-scoped, admin bypass). A deleted chat
-   *  drops out of every list but keeps its row and transcript; deletion is
+  /** Soft-deletes the caller's own chat. A deleted chat drops out of every
+   *  list and refuses writes but keeps its row and transcript; deletion is
    *  separate from archiving and does not unarchive. Waiting commands settle
-   *  as cancelled in the same transaction. */
+   *  as cancelled in the same transaction. Deleting again answers the same
+   *  row and keeps the first deletion time. */
   async deleteChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
-    const isAdmin = caller.role === "admin";
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    const row = await withTransaction(this.pool, async (client) => {
       const res = await client.query<Record<string, unknown>>(
-        `UPDATE chats SET deleted_at = now()
-         WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)
+        `UPDATE chats SET deleted_at = COALESCE(deleted_at, now())
+         WHERE org_id = $1 AND id = $2 AND user_id = $3
          RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,
+           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
            machine_id, machine_label, generating, project_id,
-           archived_at IS NOT NULL AS archived, true AS deleted`,
-        [orgId, chatId, caller.id, isAdmin],
+           archived_at IS NOT NULL AS archived, true AS deleted,
+           deleted_at = now() AS newly_deleted`,
+        [orgId, chatId, caller.id],
       );
       if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
       await client.query(
         "UPDATE turn_commands SET status = 'cancelled', finished_at = now() WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
         [chatId],
       );
-      await client.query("COMMIT");
-      const row = res.rows[0]!;
+      return res.rows[0]!;
+    });
+    if (row.newly_deleted === true) {
       await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
         JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId }),
       ]);
-      return rowToChat(row);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
     }
+    return rowToChat(row);
   }
 
   /** Sets (or clears) the chat's machine binding — only the
@@ -476,9 +470,7 @@ export class ChatStore {
    *  the write tx so a stale cached machine can never be reinstated over an
    *  adopted binding. */
   async setMachine(orgId: string, chatId: string, machineId: string | null, machineLabel: string | null): Promise<ChatRow> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       if (machineId !== null) {
         const known = await client.query(
           "SELECT machine_id FROM machines WHERE machine_id = $1 AND org_id = $2 FOR UPDATE",
@@ -494,24 +486,16 @@ export class ChatStore {
            machine_id, machine_label, generating, project_id`,
         [orgId, chatId, machineId, machineLabel],
       );
-      await client.query("COMMIT");
       return rowToChat(res.rows[0]!);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
-  /** Sets (or clears, with null) the chat's project; the machine binding is
-   *  project-derived and rides the same UPDATE (a chat runs where its
-   *  project's folder lives); clearing the project clears the machine. */
+  /** Sets (or clears, with null) the caller's own chat's project; the
+   *  machine binding is project-derived and rides the same UPDATE (a chat
+   *  runs where its project's folder lives); clearing the project clears the
+   *  machine. The project must be the caller's too. */
   async setProject(orgId: string, chatId: string, caller: UserRow, projectId: string | null): Promise<ChatRow> {
-    const isAdmin = caller.role === "admin";
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       let machine: { machine_id: string | null; label: string | null } | undefined;
       if (projectId !== null) {
         const res = await client.query<{ machine_id: string | null; label: string | null }>(
@@ -524,30 +508,16 @@ export class ChatStore {
         if (!machine) throw new ApiError(404, "not_found", "no such project");
       }
       const res = await client.query<Record<string, unknown>>(
-        `UPDATE chats SET project_id = $7, machine_id = $5, machine_label = $6
-         WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)
+        `UPDATE chats SET project_id = $6, machine_id = $4, machine_label = $5
+         WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL
          RETURNING id, org_id, user_id, title,
            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
            machine_id, machine_label, generating, project_id`,
-        [
-          orgId,
-          chatId,
-          caller.id,
-          isAdmin,
-          machine?.machine_id ?? null,
-          machine?.label ?? null,
-          projectId,
-        ],
+        [orgId, chatId, caller.id, machine?.machine_id ?? null, machine?.label ?? null, projectId],
       );
       if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
-      await client.query("COMMIT");
       return rowToChat(res.rows[0]!);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** The caller-visible project binding (projects().get): name, folder,
@@ -587,24 +557,25 @@ export class ChatStore {
     return res.rows[0];
   }
 
-  /** Sets (or clears, with null) the chat's approval-mode override —
-   *  the composer's per-chat policy (chats.approval, migration 0043/0044). */
-  async setApproval(orgId: string, userId: string, chatId: string, policy: Record<string, unknown> | null): Promise<void> {
+  /** Sets (or clears, with null) the caller's own chat's approval-mode
+   *  override — the composer's per-chat policy (chats.approval). */
+  async setApproval(orgId: string, caller: UserRow, chatId: string, policy: Record<string, unknown> | null): Promise<void> {
     const res = await this.pool.query(
-      "UPDATE chats SET approval = $4::jsonb WHERE org_id = $1 AND id = $2 AND user_id = $3",
-      [orgId, chatId, userId, policy === null ? null : jsonbText(policy)],
+      "UPDATE chats SET approval = $4::jsonb WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL",
+      [orgId, chatId, caller.id, policy === null ? null : jsonbText(policy)],
     );
     if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
   }
 
-  /** The chat's approval-mode override (owner-scoped; null = account
-   *  default applies). */
-  async approval(orgId: string, userId: string, chatId: string): Promise<{ default?: string } | null> {
+  /** The chat's approval-mode override behind the read gate (null = the
+   *  account default applies). */
+  async approval(orgId: string, caller: UserRow, chatId: string): Promise<{ default?: string } | null> {
     const res = await this.pool.query<{ approval: { default?: string } | null }>(
-      "SELECT approval FROM chats WHERE org_id = $1 AND id = $3 AND user_id = $2",
-      [orgId, userId, chatId],
+      "SELECT approval FROM chats WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
+      [orgId, chatId, caller.id, caller.role === "admin"],
     );
-    return res.rows[0]?.approval ?? null;
+    if (res.rows.length === 0) throw new ApiError(404, "not_found", "no such chat");
+    return res.rows[0]!.approval ?? null;
   }
 
   /** Flips the generating flag and notifies the status channel in the same
@@ -681,9 +652,7 @@ export class ChatStore {
   ): Promise<void> {
     const clean = title.trim();
     if (clean === "") return;
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    const ownerId = await withTransaction(this.pool, async (client) => {
       const chat = await client.query<{ user_id: string }>(
         `UPDATE chats SET title = $3
          WHERE org_id = $1 AND id = $2 AND (title IS NULL OR title = '')
@@ -691,26 +660,20 @@ export class ChatStore {
         [orgId, chatId, clean],
       );
       const row = chat.rows[0];
-      if (row === undefined) {
-        await client.query("ROLLBACK");
-        return;
-      }
+      // An already-named chat wrote nothing: the empty transaction commits.
+      if (row === undefined) return null;
       await client.query(
         `UPDATE agent_threads SET title = $3
          WHERE id = $1 AND chat_id = $2 AND title_locked = false
            AND (title IS NULL OR title = '')`,
         [threadId, chatId, clean],
       );
-      await client.query("COMMIT");
-      await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-        JSON.stringify({ org_id: orgId, user_id: row.user_id, chat_id: chatId }),
-      ]);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+      return row.user_id;
+    });
+    if (ownerId === null) return;
+    await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
+      JSON.stringify({ org_id: orgId, user_id: ownerId, chat_id: chatId }),
+    ]);
   }
 
   /** Marks the chat read for the caller: the marker moves to the newest
@@ -762,19 +725,4 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),
   };
-}
-
-/** Fetches one chat the caller owns. Admins may access any chat in the
- *  org; everyone else only their own — org scoping alone would let a
- *  member read another member's thread, forge its events, rebind its
- *  machine, or spend the org's tokens through it. (Attachment-route
- *  helper, kept from the M1 store shape.) */
-export async function getChatOwned(
-  pool: PlatformPool,
-  orgId: string,
-  chatId: string,
-  caller: UserRow,
-): Promise<ChatRow> {
-  const store = new ChatStore(pool);
-  return store.getChat(orgId, chatId, caller);
 }

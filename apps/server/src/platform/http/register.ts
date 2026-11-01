@@ -120,7 +120,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAuthRoutes(scope, auth, ctx.pool);
     registerOrgRoutes(scope, auth, ctx.objects);
     registerEventRoutes(scope, auth);
-    registerAttachmentRoutes(scope, auth, infra);
+    registerAttachmentRoutes(scope, auth, infra, chats.chats);
     registerOidcRoutes(scope, auth);
     registerGatewayAdminRoutes(scope, gateway, auth);
     registerApiKeyRoutes(scope, auth);

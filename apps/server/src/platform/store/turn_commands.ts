@@ -6,7 +6,7 @@
 // admission is synchronous and durable).
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText, jsonValue } from "../domain/text.js";
 
 export interface TurnCommand {
@@ -74,9 +74,7 @@ export class TurnCommandStore {
     payload: unknown,
     userEvent: { content: string; attachments: unknown[]; queued?: boolean; mode?: "steer" | "queue" },
   ): Promise<TurnCommand> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const requestedProject =
         typeof (request as Record<string, unknown>)["project_id"] === "string"
           ? ((request as Record<string, unknown>)["project_id"] as string)
@@ -103,7 +101,7 @@ export class TurnCommandStore {
         machine_label: string | null;
         archived_at: string | null;
       }>(
-        "SELECT project_id, machine_id, machine_label, archived_at FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        "SELECT project_id, machine_id, machine_label, archived_at FROM chats WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR UPDATE",
         [chat, org],
       );
       if (!chatRow.rows[0]) throw new ApiError(404, "not_found", "no such chat");
@@ -160,14 +158,8 @@ export class TurnCommandStore {
         }
         await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chat]);
       }
-      await client.query("COMMIT");
       return row;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Marks the command submitted to the durable conversation
@@ -182,54 +174,42 @@ export class TurnCommandStore {
   /** The command enters its run (the bridge's run_start). None = unknown
    *  command (legacy); Some(false) = someone else's / already finished. */
   async begin(id: string, chat: string, invocation: string): Promise<boolean | undefined> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const res = await client.query<{ status: string; invocation_id: string | null }>(
         "SELECT status, invocation_id FROM turn_commands WHERE id = $1 AND chat_id = $2 FOR UPDATE",
         [id, chat],
       );
       const row = res.rows[0];
       if (!row) {
-        await client.query("COMMIT");
         return undefined;
       }
       if (row.status === "running") {
-        await client.query("COMMIT");
         return row.invocation_id === invocation;
       }
-      const archived = await client.query<{ archived: boolean }>(
-        "SELECT archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
+      // An archived or deleted chat runs nothing: the command settles cancelled.
+      const closed = await client.query<{ closed: boolean }>(
+        "SELECT (archived_at IS NOT NULL OR deleted_at IS NOT NULL) AS closed FROM chats WHERE id = $1",
         [chat],
       );
-      if (archived.rows[0]?.archived) {
+      if (closed.rows[0]?.closed) {
         await client.query(
           "UPDATE turn_commands SET status = 'cancelled', finished_at = coalesce(finished_at, now()) WHERE id = $1 AND finished_at IS NULL",
           [id],
         );
-        await client.query("COMMIT");
         return false;
       }
       if (row.status !== "pending" && row.status !== "submitted") {
-        await client.query("COMMIT");
         return false;
       }
       if (row.invocation_id !== null && row.invocation_id !== invocation) {
-        await client.query("COMMIT");
         return false;
       }
       await client.query(
         "UPDATE turn_commands SET status = 'running', invocation_id = $2, started_seq = coalesce(started_seq, nextval(pg_get_serial_sequence('thread_events','seq'))) WHERE id = $1",
         [id, invocation],
       );
-      await client.query("COMMIT");
       return true;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Request identity is durable before the HTTP acknowledgement updates invocation_id. */
