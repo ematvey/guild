@@ -612,6 +612,8 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
     let mut instance_id = uuid::Uuid::now_v7();
     let mut current: Option<MachineLinkConfig> = None;
     let mut shutdown_rx = shared.shutdown.subscribe();
+    // Consecutive short-lived sessions; drives the reconnect backoff.
+    let mut attempt: u32 = 0;
     loop {
         if *shutdown_rx.borrow_and_update() {
             return; // socket host retired: this process runs no link
@@ -637,7 +639,8 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
             }
         };
         crate::dtrace::dtrace(&format!("machine-link connecting as {}", cfg.machine_id));
-        match ws_session(
+        let started = tokio::time::Instant::now();
+        let end = ws_session(
             &shared,
             &cfg,
             &meta,
@@ -645,16 +648,17 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
             &mut cfg_rx,
             &mut shutdown_rx,
         )
-        .await
-        {
+        .await;
+        if started.elapsed() >= STABLE_SESSION {
+            attempt = 0;
+        }
+        match end {
             LinkEnd::Displaced => {
                 crate::dtrace::dtrace("machine link ended: displaced");
                 // A newer connection took the slot — often the same
-                // install's GUI-embedded daemon. Parking here stranded the
-                // machine forever once that displacer closed (GUI quit):
-                // retry after a long backoff instead. A genuinely competing
-                // instance just re-displaces us; the slow cadence keeps
-                // that fight visible without leaving the machine dead.
+                // install's GUI-embedded daemon. Retry after a long backoff:
+                // the displacer may close (GUI quit), and a genuinely
+                // competing instance just re-displaces us at a slow cadence.
                 if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300, &mut shutdown_rx).await
                 {
                     return;
@@ -671,18 +675,18 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                     return;
                 }
             }
-            LinkEnd::Closed => {
-                crate::dtrace::dtrace("machine link ended: closed");
-                // Clean close — config change (handled at loop top), the
-                // server dropping us, or daemon shutdown: brief backoff,
-                // then reconnect unless the host was retired.
-                if shutdown_backoff(&mut shutdown_rx, 1).await {
-                    return;
+            // Clean close (config change, the server dropping us, daemon
+            // shutdown) or a failed connect: back off with jitter, then
+            // reconnect unless the host was retired.
+            LinkEnd::Closed | LinkEnd::Failed(_) => {
+                if let LinkEnd::Failed(reason) = &end {
+                    crate::dtrace::dtrace(&format!("machine link: {reason}"));
+                } else {
+                    crate::dtrace::dtrace("machine link ended: closed");
                 }
-            }
-            LinkEnd::Failed(reason) => {
-                crate::dtrace::dtrace(&format!("machine link: {reason}"));
-                if shutdown_backoff(&mut shutdown_rx, 3).await {
+                let delay = reconnect_delay(attempt, jitter_unit());
+                attempt = attempt.saturating_add(1);
+                if shutdown_backoff(&mut shutdown_rx, delay).await {
                     return;
                 }
             }
@@ -690,14 +694,37 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
     }
 }
 
+/// First reconnect backoff ceiling; doubles per consecutive short session.
+const RECONNECT_BASE: Duration = Duration::from_secs(1);
+/// Upper bound of the reconnect backoff ceiling.
+const RECONNECT_CAP: Duration = Duration::from_secs(60);
+/// A session that stayed up this long resets the backoff.
+const STABLE_SESSION: Duration = Duration::from_secs(60);
+
+/// Exponential backoff with full jitter: a uniform pick (`unit` in [0, 1))
+/// from zero up to `min(RECONNECT_CAP, RECONNECT_BASE * 2^attempt)`. Full
+/// jitter spreads a fleet's reconnects after a server restart.
+fn reconnect_delay(attempt: u32, unit: f64) -> Duration {
+    let ceiling = RECONNECT_BASE
+        .checked_mul(1u32.checked_shl(attempt.min(16)).unwrap_or(u32::MAX))
+        .unwrap_or(RECONNECT_CAP)
+        .min(RECONNECT_CAP);
+    ceiling.mul_f64(unit.clamp(0.0, 1.0))
+}
+
+/// A uniform sample in [0, 1) from the OS-seeded v4 UUID generator.
+fn jitter_unit() -> f64 {
+    (uuid::Uuid::new_v4().as_u128() >> 75) as f64 / (1u64 << 53) as f64
+}
+
 /// Shutdown-aware sleep: true when the daemon's host cycle ended — the
 /// shutdown watch moved at all (retirement flips it true; a reclaiming host
 /// relatches it false afterwards) or its sender went away. The caller must
 /// stop relinking: a link that outlives its host cycle would double-link
 /// against the next cycle's.
-async fn shutdown_backoff(shutdown_rx: &mut watch::Receiver<bool>, secs: u64) -> bool {
+async fn shutdown_backoff(shutdown_rx: &mut watch::Receiver<bool>, delay: Duration) -> bool {
     tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(secs)) => false,
+        _ = tokio::time::sleep(delay) => false,
         _ = shutdown_rx.changed() => true,
     }
 }
@@ -934,7 +961,7 @@ async fn wait_for_config_change_or_backoff(
         Some(c) if c != *current => false, // new config: outer loop reconnects with it
         // Same config or signed out: park briefly, then let the outer loop
         // decide (it re-checks shutdown before relinking).
-        _ => shutdown_backoff(shutdown_rx, 1).await,
+        _ => shutdown_backoff(shutdown_rx, Duration::from_secs(1)).await,
     }
 }
 
@@ -1671,6 +1698,21 @@ mod tests {
         assert!(!wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
         shutdown.send(true).unwrap();
         assert!(wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
+    }
+
+    #[test]
+    fn reconnect_delay_grows_exponentially_with_full_jitter_and_caps() {
+        assert_eq!(reconnect_delay(0, 0.0), Duration::ZERO);
+        assert_eq!(reconnect_delay(0, 1.0), Duration::from_secs(1));
+        assert_eq!(reconnect_delay(1, 1.0), Duration::from_secs(2));
+        assert_eq!(reconnect_delay(3, 0.5), Duration::from_secs(4));
+        assert_eq!(reconnect_delay(6, 1.0), RECONNECT_CAP);
+        assert_eq!(reconnect_delay(40, 1.0), RECONNECT_CAP);
+        assert_eq!(reconnect_delay(u32::MAX, 0.25), RECONNECT_CAP / 4);
+        for _ in 0..1000 {
+            let unit = jitter_unit();
+            assert!((0.0..1.0).contains(&unit), "{unit}");
+        }
     }
 
     #[test]
