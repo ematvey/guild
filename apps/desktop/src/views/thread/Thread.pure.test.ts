@@ -12,6 +12,7 @@ import {
   statusAfterGenerating,
   statusFromThreads,
   offlineMachine,
+  remoteMachine,
   tabPaneLayout,
 } from "./status";
 import { chatRoutePath, isImeEnter, parseChatRoute } from "./route";
@@ -971,6 +972,22 @@ describe("pruneStopping (a stop click lifts when the chat's own generating settl
   });
 });
 
+describe("remoteMachine (one rule for the chip and the banner)", () => {
+  const machines = [{ machine_id: "m1", name: "BOX", connected: true }] as any;
+  it("names a remote machine with its presence", () => {
+    expect(remoteMachine({ machineId: "m1", machines, localMachineId: "local" }))
+      .toEqual({ machineId: "m1", online: true, label: "BOX" });
+    expect(remoteMachine({ machineId: "m1", rowLabel: "Row label", machines, localMachineId: undefined })?.label)
+      .toBe("Row label");
+  });
+  it("is null for no machine or this client's own engine; presence unknown stays undefined", () => {
+    expect(remoteMachine({ machineId: null, machines, localMachineId: "local" })).toBeNull();
+    expect(remoteMachine({ machineId: "local", machines, localMachineId: "local" })).toBeNull();
+    expect(remoteMachine({ machineId: "m2", machines, localMachineId: undefined }))
+      .toEqual({ machineId: "m2", online: undefined, label: "m2" });
+  });
+});
+
 describe("offlineMachine (offline bound-machine banner)", () => {
   const base = { id: "chat-1", title: "t", created_at: "x" } as any;
   const bound = (
@@ -983,24 +1000,24 @@ describe("offlineMachine (offline bound-machine banner)", () => {
     [{ machine_id, name, connected }] as any;
 
   it("shows the label when the open chat's project-bound machine is offline", () => {
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", "local")).toEqual({ label: "WORKSTATION" });
     // no label: fall back to the machine name, then the raw machine id
-    expect(offlineMachine([bound("m1", false)], machines(false), "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
-    expect(offlineMachine([bound("m1", false)], [{ machine_id: "m1", name: "", connected: false }] as any, "chat-1", true, "local")).toEqual({ label: "m1" });
+    expect(offlineMachine([bound("m1", false)], machines(false), "chat-1", "local")).toEqual({ label: "WORKSTATION" });
+    expect(offlineMachine([bound("m1", false)], [{ machine_id: "m1", name: "", connected: false }] as any, "chat-1", "local")).toEqual({ label: "m1" });
   });
 
   it("stays hidden for unbound chats, machine-bound-without-project rows, and online/unknown machines", () => {
-    expect(offlineMachine([base], machines(false), "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], machines(false), "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(true), "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], [], "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), null, true, "local")).toBeNull();
+    expect(offlineMachine([base], machines(false), "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], machines(false), "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(true), "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], [], "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), null, "local")).toBeNull();
   });
 
   it("skips the local machine on desktop, but banners every project binding on web", () => {
-    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", true, "local")).toBeNull();
-    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", false, undefined)).toEqual({ label: "SELF" });
+    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", "local")).toBeNull();
+    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", undefined)).toEqual({ label: "SELF" });
   });
 });
 

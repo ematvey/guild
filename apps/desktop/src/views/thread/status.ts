@@ -77,24 +77,48 @@ export function clearSubagentTrees(): Record<string, ChatSubagentNode[]> {
   return {};
 }
 
+/** A machine that runs a chat's tools somewhere else, with its live
+ *  presence from the machines store (undefined while unknown). Null when
+ *  there is no machine, or it is this client's own engine: a local engine
+ *  executes its own tools and has no presence to show. */
+export interface RemoteMachine {
+  machineId: string;
+  online: boolean | undefined;
+  label: string;
+}
+
+export function remoteMachine(input: {
+  machineId: string | null | undefined;
+  /** The chat row's denormalised label, preferred over the registry name. */
+  rowLabel?: string | null;
+  machines: MachineInfo[] | null;
+  /** This client's engine machine id; undefined on a client without one. */
+  localMachineId: string | undefined;
+}): RemoteMachine | null {
+  const { machineId, rowLabel, machines, localMachineId } = input;
+  if (!machineId || machineId === localMachineId) return null;
+  const machine = machines?.find((m) => m.machine_id === machineId);
+  return {
+    machineId,
+    online: machine?.connected,
+    label: rowLabel ?? (machine?.name || machineId),
+  };
+}
+
 /** The open chat's remote bound machine when its socket is down — the
  * offline warning banner's subject. Machine binding is project-derived, so
  * only project-bound chats can have one. Null when unbound, bound to this
- * machine (desktop executes its own tools), online, or presence unknown.
- * Presence comes from the machines store, the only live source. */
+ * client's engine, online, or presence unknown. */
 export function offlineMachine(
   chats: ChatSummary[] | null,
   machines: MachineInfo[] | null,
   chatId: string | null,
-  isTauri: boolean,
   localMachineId: string | undefined,
 ): { label: string } | null {
   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  if (!row?.machine_id || !row.project_id) return null;
-  if (isTauri && row.machine_id === localMachineId) return null;
-  const machine = machines?.find((m) => m.machine_id === row.machine_id);
-  if (machine?.connected !== false) return null;
-  return { label: row.machine_label ?? (machine.name || row.machine_id) };
+  if (!row?.project_id) return null;
+  const remote = remoteMachine({ machineId: row.machine_id, rowLabel: row.machine_label, machines, localMachineId });
+  return remote?.online === false ? { label: remote.label } : null;
 }
 
 /** The three independent facts about a thread: what it is, and whether the

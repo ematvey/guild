@@ -108,7 +108,7 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
-import { busyFrom, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
+import { busyFrom, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { isImeEnter } from "./route";
 import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
@@ -307,6 +307,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const currentProjectRef = useRef(currentProject);
   currentProjectRef.current = currentProject;
   const outgoingScope = `${apiUrl("")}\n${email}`;
+  // This client's own engine: its machine runs its own tools, so it is never
+  // a remote machine with presence to show.
+  const localMachineId = IS_TAURI ? machineId() : undefined;
   const {
     pendingSubmitId, steeringMessage, settleOutgoing, deliverOutgoing, send,
     steerChip, withdrawChip, requestStop,
@@ -811,13 +814,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     }
     return { entries, finalAgent, lastAgent };
   }, [blocks]);
-  const offlineMachineBanner = offlineMachine(
-    chats,
-    machines,
-    viewChatId,
-    IS_TAURI,
-    IS_TAURI ? machineId() : undefined,
-  );
+  const offlineMachineBanner = offlineMachine(chats, machines, viewChatId, localMachineId);
 
   // Restore the visible chat's saved reading position once per swap. A chat
   // that was at the bottom (or was never opened) pins to the bottom; one
@@ -2015,23 +2012,21 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   // local machine executes its own tools) whose live socket
                   // state is known in the machines store (hidden while
                   // unknown).
-                  const chipMachineId =
-                    row?.machine_id && row.project_id
-                      ? row.machine_id
-                      : projects?.find((p) => p.id === currentProject?.id)?.machine_id;
-                  const remoteMachine =
-                    !!chipMachineId && (!IS_TAURI || chipMachineId !== machineId());
+                  const bound = !!(row?.machine_id && row.project_id);
                   // The chat row may be absent right after a create (route
                   // pushed before the refetched list lands) — the chip then
                   // renders without a live socket state instead of crashing.
-                  const machineOnline: boolean | undefined = remoteMachine
-                    ? machines?.find((m) => m.machine_id === chipMachineId)?.connected
-                    : undefined;
-                  const showMachine = remoteMachine && machineOnline !== undefined;
-                  const machineLabel =
-                    row?.machine_label ??
-                    machines?.find((m) => m.machine_id === chipMachineId)?.name ??
-                    chipMachineId;
+                  const remote = remoteMachine({
+                    machineId: bound
+                      ? row?.machine_id
+                      : projects?.find((p) => p.id === currentProject?.id)?.machine_id,
+                    rowLabel: bound ? row?.machine_label : undefined,
+                    machines,
+                    localMachineId,
+                  });
+                  const machineOnline = remote?.online;
+                  const showMachine = remote !== null && machineOnline !== undefined;
+                  const machineLabel = remote?.label;
                   return (
                     currentProject && (
                       <span
