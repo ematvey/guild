@@ -77,6 +77,10 @@ runtime.setStreamSink({
   },
 });
 
+runtime.setTurnEnded(async (chatId, failed) => {
+  send({ t: "turn-ended", chatId, failed });
+});
+
 let heartbeat: NodeJS.Timeout | undefined;
 
 async function shutdown(): Promise<void> {

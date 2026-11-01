@@ -10,7 +10,10 @@ export type WorkerStreamEvent =
   | { t: "stream"; action: "open"; generationId: string }
   | { t: "stream"; action: "event"; event: StreamWireEvent }
   | { t: "stream"; action: "dirty" | "close" }
-  | { t: "stream"; action: "buffers"; text?: BufferUpdate; thinking?: BufferUpdate };
+  | { t: "stream"; action: "buffers"; text?: BufferUpdate; thinking?: BufferUpdate }
+  /** A turn ended in this worker: the server's push lane decides whether the
+   *  owner needs a notification (the worker has no sockets of its own). */
+  | { t: "turn-ended"; chatId: string; failed: boolean };
 
 /** One machine-tool dispatch, proxied from a worker to the server's
  *  hub-backed registry (the same shape MachineDispatch.dispatch takes). */

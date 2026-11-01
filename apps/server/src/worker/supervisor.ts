@@ -127,9 +127,16 @@ export class ForkSupervisor {
   private readonly maxWorkers = Math.max(1, Number(process.env.GUILD_WORKER_LIMIT) || 16);
   private readonly idleMs = Math.max(1, Number(process.env.GUILD_WORKER_IDLE_MS) || 300_000);
   private streamSink: GenerationStreamSink | null = null;
+  private turnEnded: ((chatId: string, failed: boolean) => Promise<void>) | null = null;
   private submitRemote: ((chatId: string, input: SubmitTurnWireInput) => Promise<number>) | null = null;
 
   setStreamSink(sink: GenerationStreamSink | null): void { this.streamSink = sink; }
+
+  /** A turn ended in a worker: the server's push lane runs here, where the
+   *  member sockets are. */
+  setTurnEnded(hook: ((chatId: string, failed: boolean) => Promise<void>) | null): void {
+    this.turnEnded = hook;
+  }
 
   /** Worker-initiated admission for another chat (delegation): the server
    *  runtime owns every worker, so it forwards the turn to the target
@@ -349,6 +356,10 @@ export class ForkSupervisor {
           }
           break;
       }
+      return;
+    }
+    if (message.t === "turn-ended") {
+      void this.turnEnded?.(message.chatId, message.failed).catch(() => {});
       return;
     }
     if (message.t === "ready") {
