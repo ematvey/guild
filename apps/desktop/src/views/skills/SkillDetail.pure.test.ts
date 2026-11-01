@@ -70,7 +70,7 @@ describe("updateAvailable", () => {
 describe("detailActions", () => {
   it("offers Install when not installed, regardless of session kind", () => {
     // Installs are server-side records (Task 6-C): browser sessions install
-    // exactly like the Tauri app — no IS_TAURI special-casing exists here.
+    // exactly like the Tauri app — no HAS_ENGINE special-casing exists here.
     const actions = detailActions(base, other);
     expect(actions).toContain("Install");
     expect(actions).not.toContain("Update pin to latest");

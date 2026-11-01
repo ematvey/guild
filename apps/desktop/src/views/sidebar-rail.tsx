@@ -18,7 +18,7 @@ import {
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
 import { ServerRailButton } from "./server-menu";
-import { IS_TAURI } from "../lib/session";
+import { HAS_SHELL } from "../lib/session";
 import type { ChatRoute } from "./thread/route";
 
 /** A rail entry is a projection of the route, never stored panel state: the
@@ -153,8 +153,8 @@ export function SidebarRail({
             <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
             {/* Browser only: the desktop sign-out lives on the workspace rows
                 (inline ×). */}
-            {!IS_TAURI && <DropdownMenuSeparator />}
-            {!IS_TAURI && (
+            {!HAS_SHELL && <DropdownMenuSeparator />}
+            {!HAS_SHELL && (
               <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
                 Sign out
               </DropdownMenuItem>

@@ -1,7 +1,7 @@
 // Desktop release manifest and downloads.
 
 import { openExternal } from "../open-external";
-import { IS_TAURI, apiUrl, getToken, serverUrl } from "../session";
+import { HAS_SHELL, apiUrl, getToken, serverUrl } from "../session";
 
 export interface Release {
   id: string;
@@ -40,7 +40,7 @@ export async function downloadRelease(id: string): Promise<void> {
   // a programmatic cross-origin <a download> click either navigates the
   // webview or does nothing (no download handler).
   const url = String(v.url).startsWith("/") ? `${serverUrl()}${v.url}` : v.url;
-  if (IS_TAURI) {
+  if (HAS_SHELL) {
     openExternal(url);
     return;
   }

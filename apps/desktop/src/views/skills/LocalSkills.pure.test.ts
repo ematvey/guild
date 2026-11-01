@@ -2,7 +2,7 @@
 // installs list's view model (pinned versions + update availability), the
 // local skill rows' provenance badge, the disable toggle's rpc wiring,
 // and the panel tabs (the "On this machine" tab exists only in Tauri —
-// the IS_TAURI=false fixture hides it).
+// the HAS_ENGINE=false fixture hides it).
 
 import { describe, expect, it, vi } from "vitest";
 import { installRow, sourceBadge, toggleDisabled, uninstallSkill, type LocalSkillRow } from "./LocalSkills";
@@ -94,7 +94,7 @@ describe("toggleDisabled (the enable/disable rpc wiring)", () => {
   });
 });
 
-describe("panelTabs (the IS_TAURI fixture)", () => {
+describe("panelTabs (the HAS_ENGINE fixture)", () => {
   it("offers On this machine only in Tauri sessions", () => {
     const tauri = panelTabs(true).map(([value]) => value);
     expect(tauri).toEqual(["catalog", "activity", "machine"]);

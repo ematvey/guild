@@ -1,7 +1,7 @@
 // Chat reads and writes: the sidebar lists, the thread turns (send, stop,
 // steer, withdraw, compact), attachments, and the chat's agent binding.
 
-import { IS_TAURI, apiUrl, getToken } from "../session";
+import { HAS_ENGINE, apiUrl, getToken } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta, StreamEvent } from "../thread-events";
 import type { Chat, SubagentNode, ThreadType } from "@guild/wire/rest";
@@ -200,7 +200,7 @@ export async function sendChatNoStream(
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
         "x-guild-client-id": clientId(),
-        ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
+        ...(HAS_ENGINE ? { "x-guild-machine-id": machineId() } : {}),
       },
       body: JSON.stringify({
         user_message_id: messageId,

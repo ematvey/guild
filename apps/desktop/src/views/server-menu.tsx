@@ -13,7 +13,7 @@ import {
 import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { Plus, X } from "lucide-react";
 import { DesktopTooltip } from "../components/desktop-tooltip";
-import { IS_TAURI } from "../lib/session";
+import { HAS_ENGINE } from "../lib/session";
 import {
   serverList,
   serverSignOut,
@@ -31,10 +31,10 @@ function shortOrigin(base: string): string {
  * failure resolves to an empty list, the UI still renders). */
 function useServerList(): ServerList | null {
   const [list, setList] = useState<ServerList | null>(
-    IS_TAURI ? null : { active: null, workspaces: [] },
+    HAS_ENGINE ? null : { active: null, workspaces: [] },
   );
   useEffect(() => {
-    if (!IS_TAURI) return;
+    if (!HAS_ENGINE) return;
     let cancelled = false;
     serverList()
       .then((v) => !cancelled && setList(v))
@@ -164,7 +164,7 @@ export function ServerRailButton({
   onReload: () => void;
 }) {
   const list = useServerList();
-  if (!IS_TAURI) return null;
+  if (!HAS_ENGINE) return null;
   const activeRow = (list?.workspaces ?? []).find(
     (w) => w.base_url === (list?.active ?? null),
   );

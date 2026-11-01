@@ -1,7 +1,7 @@
 // The org-skills HTTP surface the client-side context assembly consumes
 // (spec §2.3), and the turn preparation built on it.
 
-import { IS_TAURI } from "../session";
+import { HAS_ENGINE } from "../session";
 import { rpcCall } from "../machine-rpc";
 import { browserFs, daemonFs } from "../fs-bridge";
 import type { OrgSkillsApi } from "../skills";
@@ -37,7 +37,7 @@ export async function prepareTurn(
 ): Promise<{ prompt: string; index: string; instructions?: string }> {
   // Context assembly lives in the client (lib/turn-context.ts) over the fs
   // bridge; browser mode has no local files and passes through untouched.
-  const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;
+  const fs = HAS_ENGINE ? daemonFs(rpcCall) : browserFs;
   const scopes = await fs.scopes();
   return assembleTurn(fs, scopes, prompt, projectDir, orgSkillsApi());
 }

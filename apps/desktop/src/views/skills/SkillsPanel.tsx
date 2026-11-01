@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Lock, Plus, Search } from "lucide-react";
-import { IS_TAURI } from "../../lib/session";
+import { HAS_ENGINE } from "../../lib/session";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Avatar } from "@guild/ui/components/avatar";
@@ -340,7 +340,7 @@ export function SkillsPanel({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
-            {panelTabs(IS_TAURI).map(([value, label]) => (
+            {panelTabs(HAS_ENGINE).map(([value, label]) => (
               <button
                 key={value}
                 role="tab"
@@ -396,7 +396,7 @@ export function SkillsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
           {tab === "activity" && <ActivityFeed />}
-          {tab === "machine" && IS_TAURI && <LocalSkills />}
+          {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
             <div className="flex flex-col gap-1.5">
               {loadFailed && (

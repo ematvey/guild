@@ -9,7 +9,7 @@
 /** The page runs inside the Tauri webview. Today that shell is the desktop
  *  app, which has both a native shell and a local engine; code asks one of
  *  the two questions below instead. */
-export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** A native shell hosts the page: the bundled UI is not served by the
  *  server (HTTP goes to the paired server URL), and the shell owns window

@@ -5,7 +5,8 @@ import { AssistantSection } from "./AssistantSection";
 import { AboutSection } from "./AboutSection";
 
 vi.mock("../../../lib/session", () => ({
-  IS_TAURI: false,
+  HAS_SHELL: false,
+  HAS_ENGINE: false,
   apiUrl: (path: string) => path,
   serverUrl: () => "http://localhost:18080",
   serverBase: () => "",

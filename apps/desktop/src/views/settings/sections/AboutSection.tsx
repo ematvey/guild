@@ -9,7 +9,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
-import { IS_TAURI, serverBase } from "../../../lib/session";
+import { HAS_SHELL, serverBase } from "../../../lib/session";
 import { telemetryEnabled } from "../../../lib/telemetry";
 
 async function fetchJson(url: string): Promise<unknown | null> {
@@ -34,7 +34,7 @@ export function AboutSection() {
   } | null>(null);
 
   useEffect(() => {
-    if (IS_TAURI) {
+    if (HAS_SHELL) {
       void invoke<{ enabled: boolean; path: string }>("daemon_trace_state")
         .then(setTrace)
         .catch(() => {});
@@ -46,9 +46,9 @@ export function AboutSection() {
       const v = (h as { version?: string } | null)?.version ?? null;
       setServerVersion(v);
       // The web UI is the server's own build — its version is the app version.
-      if (!IS_TAURI) setAppVersion(v);
+      if (!HAS_SHELL) setAppVersion(v);
     });
-    if (IS_TAURI) {
+    if (HAS_SHELL) {
       getVersion().then(setAppVersion).catch(() => setAppVersion(null));
     }
     void fetchJson(`${serverBase()}/api/v1/updates/latest.json`).then((m) => {
@@ -85,14 +85,14 @@ export function AboutSection() {
       </FactCard>
       <FactCard label="Newest published release">{latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : latestRelease ?? "none"}</FactCard>
       </FactGrid>
-      {IS_TAURI && (
+      {HAS_SHELL && (
         <p className="text-sm text-muted-foreground">
           The desktop app embeds its own UI build — after an update, fully quit
           (tray → Quit) and relaunch. The web UI is served by the paired
           server; a browser reload always picks up its current build.
         </p>
       )}
-      {IS_TAURI && trace && (
+      {HAS_SHELL && trace && (
         <FactCard label="Daemon trace">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">

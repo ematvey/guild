@@ -1,7 +1,7 @@
 // Signed-in servers and sign-in (desktop only — the browser is
 // single-server), plus the account-level reads the shell needs.
 
-import { IS_TAURI, apiUrl, clearToken, getToken, setToken } from "../session";
+import { HAS_ENGINE, apiUrl, clearToken, getToken, setToken } from "../session";
 import { rpcCall } from "../machine-rpc";
 
 // ---- Signed-in servers (desktop only — the browser is single-server) ----
@@ -24,7 +24,7 @@ export type ServerList = {
 
 /** Every signed-in server plus the active pointer (the switcher's data). */
 export async function serverList(): Promise<ServerList | null> {
-  if (!IS_TAURI) return null;
+  if (!HAS_ENGINE) return null;
   const res = await rpcCall("workspace.list", {}, 20_000);
   if (res.error) throw new Error(res.error.message ?? "workspace.list failed");
   return res.result as ServerList;
