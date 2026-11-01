@@ -1,7 +1,7 @@
 // The thread view: transcript, composer and sidebar for one chat. State
 // lives in the hooks under thread/hooks/, pure derivations in the sibling
 // modules, and this file assembles the component tree.
-import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import {
@@ -62,8 +62,6 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { FrameToggleContext } from "../frame";
 import { WorkedForBlock, viewEntries } from "../worked-for-block";
-import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../lib/sidebar-width";
-import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../../lib/chat-width";
 import { readDraft, writeDraft } from "../../lib/drafts";
 import { HAS_ENGINE, HAS_SHELL } from "../../lib/session";
 import { apiUrl } from "../../lib/session";
@@ -107,7 +105,6 @@ import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
-import { useVisualViewportPin } from "./use-visual-viewport-pin";
 import { busyFrom, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { isImeEnter } from "./route";
 import type { RenderBlock } from "../../lib/thread-reducer";
@@ -119,6 +116,9 @@ import { useOutgoing } from "./hooks/use-outgoing";
 import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
 import { useChatActions } from "./hooks/use-chat-actions";
+import { useChatColumnWidth, useSidebarWidth } from "./hooks/use-column-resize";
+import { useMobileGestures } from "./hooks/use-mobile-gestures";
+import { useScrollPin } from "./hooks/use-scroll-pin";
 
 type ThreadProps = {
   email: string;
@@ -338,103 +338,14 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     resetSubagentTrees, cancelPending,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
-  // The composer floats over the chat content; the scroll pane needs its
-  // live height as bottom padding — a fixed guess breaks as soon as the
-  // composer stack grows (queued chips, attachments, a taller textarea).
-  // The element arrives via callback ref: the Skills/Settings routes swap
-  // the whole chat column out, so the composer remounts and an
-  // observe-once effect would keep watching the detached node while the
-  // padding froze at a stale height (the reported clipped-last-line bug).
-  const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null);
-  const [composerH, setComposerH] = useState(128);
-  // The content column is observed together with the pane: any change in
-  // either height re-pins the bottom while the reader is at the bottom.
-  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
-  const anchorGuard = useRef(false);
-  useEffect(() => {
-    if (!composerEl) return;
-    const ro = new ResizeObserver(() => setComposerH(composerEl.offsetHeight));
-    ro.observe(composerEl);
-    setComposerH(composerEl.offsetHeight);
-    return () => ro.disconnect();
-  }, [composerEl]);
-  // Central column width (drag handle on its right edge).
-  const [chatWidth, setChatWidth] = useState<number>(() => storedChatWidth());
-  const [chatResizing, setChatResizing] = useState(false);
-  useEffect(() => {
-    const resync = () => setChatWidth(storedChatWidth());
-    window.addEventListener("guild:chat-width-changed", resync);
-    return () => window.removeEventListener("guild:chat-width-changed", resync);
-  }, []);
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
-  // A drag from the left opens the drawer. iOS owns the first ~20px of that
-  // edge with its own back gesture, and a page cannot cancel it — so the drag
-  // must start past that band. The system keeps the edge; the drawer takes
-  // the rest; one swipe never does both.
-  useEffect(() => {
-    if (!isMobile) return;
-    let startX = 0;
-    let startY = 0;
-    let armed = false;
-    const onStart = (e: TouchEvent) => {
-      const t = e.touches[0];
-      armed = t.clientX > 24 && t.clientX <= 96;
-      startX = t.clientX;
-      startY = t.clientY;
-    };
-    const onEnd = (e: TouchEvent) => {
-      if (!armed) return;
-      armed = false;
-      const t = e.changedTouches[0];
-      if (t.clientX - startX > 60 && Math.abs(t.clientY - startY) < 40) setOpen(true);
-    };
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("touchend", onEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("touchend", onEnd);
-    };
-  }, [isMobile]);
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
-  const [width, setWidth] = useState<number>(() => storedSidebarWidth());
-  // settings may resize the shared width while this sidebar stays mounted
-  useEffect(() => {
-    const resync = () => setWidth(storedSidebarWidth());
-    window.addEventListener("guild:sidebar-width-changed", resync);
-    return () => window.removeEventListener("guild:sidebar-width-changed", resync);
-  }, []);
-  // The app shell root: pinned to the visual viewport while the on-screen
-  // keyboard is up (see useVisualViewportPin) so the header stays visible.
+  const { width, resizing, startDrag } = useSidebarWidth();
+  const { chatWidth, chatResizing, startChatDrag, resetChatWidth, nudgeChatWidth } = useChatColumnWidth(pane);
   const shell = useRef<HTMLDivElement>(null);
-  useVisualViewportPin(shell);
-  // Only surfaces marked `data-scrollable` scroll by touch. Anywhere else a
-  // drag must not pan the page over the fixed shell — iOS Safari pans the
-  // visual viewport even under a `position: fixed` root (header, composer
-  // and banners would all move with the content). A scroller already at its
-  // edge in the drag direction is blocked too: WebKit turns that surplus
-  // drag into pull-to-refresh / rubber-band, which pans the whole shell.
-  useEffect(() => {
-    const el = shell.current;
-    if (!el) return;
-    let startY: number | null = null;
-    const touchStart = (e: TouchEvent) => { startY = e.touches[0]?.clientY ?? null; };
-    const block = (e: TouchEvent) => {
-      const target = e.target as Element | null;
-      const scroller = target?.closest?.("[data-scrollable]") as HTMLElement | null;
-      if (!scroller) { e.preventDefault(); return; }
-      const dy = startY === null ? 0 : (e.touches[0]?.clientY ?? 0) - startY;
-      const atTop = scroller.scrollTop <= 0;
-      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
-      if ((dy > 0 && atTop) || (dy < 0 && atBottom)) e.preventDefault();
-    };
-    el.addEventListener("touchstart", touchStart, { passive: true });
-    el.addEventListener("touchmove", block, { passive: false });
-    return () => {
-      el.removeEventListener("touchstart", touchStart);
-      el.removeEventListener("touchmove", block);
-    };
-  }, []);
+  const openDrawer = useCallback(() => setOpen(true), []);
+  useMobileGestures({ isMobile, shell, onEdgeSwipe: openDrawer });
 
   // Reload the page once the served bundle hash differs from the running
   // one — never while a turn is streaming or a thread is loading.
@@ -823,74 +734,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [blocks]);
   const offlineMachineBanner = offlineMachine(chats, machines, viewChatId, localMachineId);
 
-  // Restore the visible chat's saved reading position once per swap. A chat
-  // that was at the bottom (or was never opened) pins to the bottom; one
-  // that was scrolled up returns to the same offset.
-  useLayoutEffect(() => {
-    const restore = scrollRestoreRef.current;
-    if (!restore) return;
-    const el = pane.current;
-    if (!el) return;
-    scrollRestoreRef.current = null;
-    if (restore.atBottom) {
-      stick.current = true;
-      setAtBottom(true);
-      el.scrollTop = el.scrollHeight;
-    } else {
-      stick.current = false;
-      setAtBottom(false);
-      el.scrollTop = restore.top;
-    }
-  }, [displayedChatId, blocks, scrollRestoreRef]);
+  const loadEarlierNearTop = useCallback(() => { void loadEarlier(); }, [loadEarlier]);
+  const {
+    composerH, setComposerEl, setContentEl, onScroll: onPaneScroll, scrollToBottom, onFrameToggle,
+  } = useScrollPin({
+    pane, stick, setAtBottom, scrollRestoreRef, earlierAnchor, displayedChatId, blocks,
+    repinKeys: [subagentNodes, compacting, busy, hasMore, offlineMachineBanner?.label],
+    onNearTop: loadEarlierNearTop,
+  });
 
-  // Scroll anchor for the older-page prepend: keep the reader on the same
-  // content after blocks are inserted above the viewport. The guard keeps
-  // the observer's bottom pin from running over this restore in the same
-  // frame.
-  useLayoutEffect(() => {
-    const anchor = earlierAnchor.current;
-    const el = pane.current;
-    if (!anchor || !el) return;
-    earlierAnchor.current = null;
-    el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
-    anchorGuard.current = true;
-    requestAnimationFrame(() => { anchorGuard.current = false; });
-  }, [blocks]);
-
-  // State-only height changes (the subagent tree, compaction line, working
-  // indicator, banners, hasMore, the live turn) have no block change to trigger
-  // the observer. Re-pin them explicitly; the observer covers the rest.
-  useLayoutEffect(() => {
-    if (!stick.current || anchorGuard.current) return;
-    const el = pane.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [subagentNodes, compacting, busy, hasMore, offlineMachineBanner?.label, composerH, displayedChatId]);
-
-  // Geometry pin: observe the content column and the pane. The observer
-  // catches late blocks, removed tail blocks, window/sidebar/column resizes
-  // and the mobile keyboard's visual-viewport shrink. One rAF coalesces a
-  // burst of resize callbacks into one scroll write.
-  useEffect(() => {
-    const paneEl = pane.current;
-    if (!paneEl || !contentEl) return;
-    let raf = 0;
-    const pin = () => {
-      if (!stick.current || anchorGuard.current) return;
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (!stick.current || anchorGuard.current) return;
-        paneEl.scrollTop = paneEl.scrollHeight;
-      });
-    };
-    const observer = new ResizeObserver(pin);
-    observer.observe(contentEl);
-    observer.observe(paneEl);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      observer.disconnect();
-    };
-  }, [contentEl, displayedChatId, blocks.length === 0]);
   // The transcript is the expensive subtree: every keystroke in the
   // composer re-renders the whole view, and a long thread holds thousands
   // of markdown blocks. Memoizing the element list keeps those elements
@@ -1244,92 +1096,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     </div>
   ) : null;
 
-  // desktop: draggable resize handle. While dragging, the width transition
-  // is suspended — an animated width chases the cursor and reads as lag.
-  const [resizing, setResizing] = useState(false);
-  const startDrag = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = width;
-      setResizing(true);
-      const move = (ev: MouseEvent) => {
-        const w = clampSidebarWidth(startW + ev.clientX - startX);
-        setWidth(w);
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        setResizing(false);
-        setWidth((w) => {
-          saveSidebarWidth(w);
-          return w;
-        });
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    },
-    [width],
-  );
-
-  // Chat column drag handles (one per edge): the column is centered, so one
-  // pixel of cursor travel moves both edges — the width follows the doubled
-  // delta, outward for the handle being dragged. Dragging stops at the pane
-  // edge, not at the stored maximum, so a handle never runs away.
-  const startChatDrag = useCallback(
-    (e: React.MouseEvent, side: "left" | "right") => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = chatWidth;
-      const paneW = pane.current?.clientWidth ?? window.innerWidth;
-      const dir = side === "right" ? 1 : -1;
-      setChatResizing(true);
-      const move = (ev: MouseEvent) => {
-        const w = startW + (ev.clientX - startX) * 2 * dir;
-        setChatWidth(clampChatWidth(Math.min(w, paneW)));
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        setChatResizing(false);
-        setChatWidth((w) => {
-          saveChatWidth(w);
-          return w;
-        });
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    },
-    [chatWidth],
-  );
-  const resetChatWidth = useCallback(() => {
-    setChatWidth(CHAT_DEFAULT_W);
-    saveChatWidth(CHAT_DEFAULT_W);
-  }, []);
-  // Keyboard nudge: the key that moves a handle outward grows the column.
-  const nudgeChatWidth = useCallback((key: string, side: "left" | "right") => {
-    const outward = side === "right" ? key === "ArrowRight" : key === "ArrowLeft";
-    setChatWidth((w) => {
-      const next = clampChatWidth(w + (outward ? 64 : -64));
-      saveChatWidth(next);
-      return next;
-    });
-  }, []);
-  const scrollToBottom = useCallback(() => {
-    const el = pane.current;
-    if (!el) return;
-    stick.current = true;
-    setAtBottom(true);
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, []);
-  // A frame toggle grows the content under the reader. Stop following the
-  // bottom, or the pin scrolls the row that was just clicked out from under
-  // the pointer one frame after the click.
-  const onFrameToggle = useCallback(() => {
-    stick.current = false;
-    setAtBottom(false);
-  }, []);
-
   return (
     <div ref={shell} data-shell className="fixed inset-0 flex bg-background text-foreground">
       {/* icon rail: desktop only, always visible — it switches the sidebar
@@ -1613,17 +1379,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
             ref={pane}
             data-scrollable
             className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [overflow-anchor:none] [scrollbar-gutter:stable]"
-            onScroll={() => {
-              const el = pane.current;
-              if (!el) return;
-              // near-bottom counts as bottom (sub-pixel/rounding slack)
-              const near = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
-              stick.current = near;
-              setAtBottom(near);
-              // Scroll-to-top loads the page before the loaded window; the
-              // loader ignores a call while one is in flight or none is left.
-              if (el.scrollTop < 120 && hasMore) void loadEarlier();
-            }}
+            onScroll={onPaneScroll}
           >
             <div
               ref={setContentEl}
