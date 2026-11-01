@@ -196,6 +196,7 @@
       "canonical": "crates/protocol/src/registry.rs",
       "types": [
         "BundleManifest",
+        "ManifestError",
         "McpManifest",
         "SettingsManifest",
         "AuthManifest",

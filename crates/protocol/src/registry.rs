@@ -134,20 +134,34 @@ pub struct TriggerSpec {
 const TOOL_CLASSES: [&str; 3] = ["read", "write", "admin"];
 const AUTH_KINDS: [&str; 3] = ["org_secret", "org_secret_impersonated", "per_user_token"];
 
+/// A bundle manifest that fails validation; the message names the field.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct ManifestError(pub String);
+
+/// Returns `ManifestError` with the formatted message unless `cond` holds.
+macro_rules! ensure {
+    ($cond:expr, $($msg:tt)+) => {
+        if !$cond {
+            return Err(ManifestError(format!($($msg)+)));
+        }
+    };
+}
+
 /// Validates a manifest's shape and allowed kinds.
-pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
+pub fn validate_manifest(m: &BundleManifest) -> Result<(), ManifestError> {
     // Slugs land in namespaced tool names and filesystem paths: keep them to
     // lowercase letters, digits and dashes.
-    anyhow::ensure!(!m.slug.is_empty(), "manifest slug is empty");
-    anyhow::ensure!(m.slug.len() <= 64, "manifest slug is too long");
-    anyhow::ensure!(
+    ensure!(!m.slug.is_empty(), "manifest slug is empty");
+    ensure!(m.slug.len() <= 64, "manifest slug is too long");
+    ensure!(
         m.slug
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'),
         "manifest slug must be [a-z0-9_-]"
     );
-    anyhow::ensure!(!m.version.is_empty(), "manifest version is empty");
-    anyhow::ensure!(
+    ensure!(!m.version.is_empty(), "manifest version is empty");
+    ensure!(
         matches!(m.kind.as_str(), "skill" | "mcp" | "integration"),
         "manifest kind must be skill, mcp, or integration"
     );
@@ -157,20 +171,20 @@ pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
 /// Validates v2 integration manifest fields (mcp url, auth shape, tool
 /// classes and namespaced-name length, trigger shape). v1 manifests with no
 /// v2 fields pass unchanged.
-pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
+pub fn validate_v2(m: &BundleManifest) -> Result<(), ManifestError> {
     validate_manifest(m)?;
     if let Some(mcp) = &m.mcp {
-        anyhow::ensure!(
+        ensure!(
             mcp.url.starts_with("http://") || mcp.url.starts_with("https://"),
             "mcp.url must be an absolute http(s) URL"
         );
     }
     if let Some(auth) = &m.auth {
-        anyhow::ensure!(
+        ensure!(
             AUTH_KINDS.contains(&auth.kind.as_str()),
             "auth.kind must be org_secret, org_secret_impersonated, or per_user_token"
         );
-        anyhow::ensure!(
+        ensure!(
             auth.identity_key == "email" || auth.identity_key.is_empty(),
             "auth.identity_key supports only email in v1"
         );
@@ -178,19 +192,19 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
     if let Some(settings) = &m.settings {
         let mut seen = std::collections::BTreeSet::new();
         for f in &settings.fields {
-            anyhow::ensure!(!f.name.is_empty(), "settings field name is empty");
-            anyhow::ensure!(
+            ensure!(!f.name.is_empty(), "settings field name is empty");
+            ensure!(
                 f.name.len() <= 64
                     && f.name
                         .chars()
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
                 "settings field name {f:?} must be [a-z0-9_] and <= 64 chars"
             );
-            anyhow::ensure!(
+            ensure!(
                 FIELD_KINDS.contains(&f.kind.as_str()),
                 "settings field {f:?} kind must be one of {FIELD_KINDS:?}"
             );
-            anyhow::ensure!(
+            ensure!(
                 seen.insert(f.name.clone()),
                 "duplicate settings field {f:?}"
             );
@@ -205,7 +219,7 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
                         _ => d.is_string(),
                     }
             });
-            anyhow::ensure!(
+            ensure!(
                 default_ok,
                 "settings field {f:?} kind {} needs a default of the same JSON type",
                 f.kind
@@ -214,11 +228,11 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
     }
     if let Some(tools) = &m.tools {
         for (name, class) in &tools.classes {
-            anyhow::ensure!(
+            ensure!(
                 TOOL_CLASSES.contains(&class.as_str()),
                 "tool class for {name} must be read, write, or admin"
             );
-            anyhow::ensure!(
+            ensure!(
                 name.len() < 64 - m.slug.len(),
                 "tool name {name} too long for namespacing under {}",
                 m.slug
@@ -226,12 +240,12 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
         }
     }
     for t in &m.triggers {
-        anyhow::ensure!(
+        ensure!(
             matches!(t.kind.as_str(), "webhook" | "interval"),
             "trigger kind must be webhook or interval"
         );
-        anyhow::ensure!(!t.prompt.is_empty(), "trigger prompt is empty");
-        anyhow::ensure!(!t.model.is_empty(), "trigger model is empty");
+        ensure!(!t.prompt.is_empty(), "trigger prompt is empty");
+        ensure!(!t.model.is_empty(), "trigger model is empty");
     }
     Ok(())
 }
