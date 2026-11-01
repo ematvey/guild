@@ -3,14 +3,15 @@ import pg from "pg";
 import type { PostgresExecutor } from "./executor.js";
 
 /**
- * Admin connection settings for disposable test databases.
+ * Admin connection for disposable test databases: `GUILD_TEST_PG_URL`, the
+ * same Postgres every server test suite and the storage benchmark use.
  *
- * Tests never write to the configured database itself; it only hosts
+ * Tests never write to that database itself; it only hosts
  * `CREATE DATABASE` / `DROP DATABASE` for throwaway `guild_durable_test_*`
- * databases. Override with `DURABLE_TEST_DATABASE_URL`.
+ * databases.
  */
 export const DURABLE_TEST_ADMIN_URL =
-  process.env.DURABLE_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
+  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
 
 export interface DisposableDatabase {
   readonly name: string;

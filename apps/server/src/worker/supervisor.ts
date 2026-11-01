@@ -359,7 +359,8 @@ export class ForkSupervisor {
       return;
     }
     if (message.t === "turn-ended") {
-      void this.turnEnded?.(message.chatId, message.failed).catch(() => {});
+      void this.turnEnded?.(message.chatId, message.failed).catch((error: unknown) =>
+        this.log.warn({ err: error, chatId: message.chatId }, "turn-end hook failed"));
       return;
     }
     if (message.t === "ready") {
