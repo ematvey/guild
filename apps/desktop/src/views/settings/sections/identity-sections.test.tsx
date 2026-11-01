@@ -18,7 +18,7 @@ import GeneralSection, { followPushedName } from "./GeneralSection";
 import { AboutSection } from "./AboutSection";
 
 function identity(name: string, telemetry: boolean): WorkspaceIdentity {
-  return { name, logo_url: null, telemetry } as WorkspaceIdentity;
+  return { name, telemetry };
 }
 
 beforeEach(() => {
