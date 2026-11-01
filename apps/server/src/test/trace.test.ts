@@ -238,7 +238,8 @@ describe("gateway emission + activity API", () => {
         method: "POST",
         url: "/openai/v1/chat/completions",
         headers: {
-          authorization: `Bearer ${stack.apiKey}`,
+          authorization: `Bearer ${stack.env.config.internalKey}`,
+          "x-guild-org-id": stack.orgId,
           "content-type": "application/json",
           "x-guild-run-id": runId,
           "x-guild-chat-id": chatId,
@@ -309,7 +310,8 @@ describe("gateway emission + activity API", () => {
         method: "POST",
         url: "/openai/v1/chat/completions",
         headers: {
-          authorization: `Bearer ${stack.apiKey}`,
+          authorization: `Bearer ${stack.env.config.internalKey}`,
+          "x-guild-org-id": stack.orgId,
           "content-type": "application/json",
           "x-guild-internal-caller": "judge",
           "x-guild-request-id": judgeReqId,
@@ -321,6 +323,41 @@ describe("gateway emission + activity API", () => {
       expect(spans.some((span) => span["span_id"] === judgeReqId)).toBe(false);
       const usage = await stack.usageRows();
       expect(usage.some((row) => row["request_id"] === judgeReqId)).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "a public key's trace headers are ignored: its call is traced under its own request id",
+    async () => {
+      const pinnedId = crypto.randomUUID();
+      const foreignRun = crypto.randomUUID();
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: "/openai/v1/chat/completions",
+        headers: {
+          authorization: `Bearer ${stack.apiKey}`,
+          "content-type": "application/json",
+          "x-guild-internal-caller": "judge",
+          "x-guild-request-id": pinnedId,
+          "x-guild-run-id": foreignRun,
+          "x-guild-chat-id": crypto.randomUUID(),
+        },
+        payload: { model: "trace-model", messages: [{ role: "user", content: "public" }] },
+      });
+      expect(res.statusCode).toBe(200);
+      const requestId = String(res.headers["x-guild-request-id"]);
+      expect(requestId).not.toBe(pinnedId);
+      const spans = await drainedCount(
+        "agent_spans",
+        `org_id = toUUID('${stack.orgId}') AND request_id = toUUID('${requestId}')`,
+        1,
+      );
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!["run_id"] ?? null).not.toBe(foreignRun);
+      expect(spans[0]!["chat_id"] ?? null).toBeNull();
+      const usage = await stack.usageRows();
+      expect(usage.some((row) => row["request_id"] === pinnedId)).toBe(false);
     },
     TEST_TIMEOUT,
   );

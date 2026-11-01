@@ -50,7 +50,7 @@ import type { NotifyHub } from "./notify.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { FeedForwarder } from "../hub/feed.js";
 import type { MachineDispatch } from "../machines/dispatch.js";
-import type { GatewayContext, GatewayCredential } from "./http/llm.js";
+import type { GatewayContext, GatewayCredential } from "./llm-gateway.js";
 
 /** Process-level infrastructure (pool, object store, ClickHouse, usage
  *  sink). Frozen: shared by reference, never rebuilt. */

@@ -46,7 +46,7 @@ import { SkillReadSink } from "./skillReads.js";
 import { UsageSink } from "./usage.js";
 import { TraceStore } from "./trace.js";
 import { ApiError } from "./errors.js";
-import type { GatewayCredential } from "./http/llm.js";
+import type { GatewayCredential } from "./llm-gateway.js";
 import type { ChatsCtx } from "./route-contexts.js";
 import type { Logger } from "pino";
 
@@ -295,6 +295,7 @@ export class PlatformContext {
         orgId: row.org_id,
         userId: row.user_id ?? row.created_by,
         sessionId: row.id,
+        internal: false,
       };
     }
     if (this.config.internalKey !== null && constantTimeEquals(token, this.config.internalKey)) {
@@ -310,6 +311,7 @@ export class PlatformContext {
         orgId,
         userId: headerOr("x-guild-user-id") ?? INTERNAL_CALLER_UUID,
         sessionId: headerOr("x-guild-session-id") ?? INTERNAL_KEY_UUID,
+        internal: true,
       };
     }
     throw new ApiError(401, "unauthorized", "invalid api key");

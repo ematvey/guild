@@ -1,14 +1,14 @@
-// Shared pipeline for the public LLM gateway endpoints: API key auth
-// (per-shape extractor) → org route
-// resolution → quota → provider stream. Each surface renders errors in its
-// own wire contract (OpenAI `{"error": …}` vs Anthropic `{"type":"error",…}`)
-// and records usage against the key's owner.
+// The LLM gateway pipeline shared by the /openai and /anthropic surfaces:
+// the resolved credential, trace context, org route resolution → quota →
+// provider stream, and usage/trace recording against the key's owner. Each
+// surface renders errors in its own wire contract (OpenAI `{"error": …}` vs
+// Anthropic `{"type":"error",…}`).
 
-import { ApiError } from "../errors.js";
-import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
-import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
-import type { TraceStore } from "../trace.js";
-import type { GatewayStore } from "../store/gateway.js";
+import { ApiError } from "./errors.js";
+import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "./provider/types.js";
+import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "./usage.js";
+import type { TraceStore } from "./trace.js";
+import type { GatewayStore } from "./store/gateway.js";
 
 /** Request body ceiling for the gateway surfaces. A chat-completions call
  *  carries the whole conversation on every step, including base64 images
@@ -23,11 +23,11 @@ export interface GatewayContext {
   trace: TraceStore;
 }
 
-/** The trace-context request headers the internal callers set:
- *  `x-guild-internal-caller` (self-reported calls — the gateway records no
- *  llm_calls row for them), plus the chat/conversation/turn/cause context
- *  and an optional caller-minted request id so a judge's llm_calls row and
- *  its usage_events row join. */
+/** The trace-context request headers the in-app harness sets on internal
+ *  key calls: `x-guild-internal-caller` (self-reported calls — the gateway
+ *  records no llm_calls row for them), plus the run/chat/conversation/turn/
+ *  cause context and an optional caller-minted request id so a judge's
+ *  llm_calls row and its usage_events row join. */
 export interface GatewayTraceHeaders {
   internalCaller: boolean;
   requestId: string | null;
@@ -44,9 +44,22 @@ const headerOr = (headers: Record<string, unknown>, name: string): string | null
   return typeof value === "string" && value !== "" ? value : null;
 };
 
-/** Reads the trace-context headers off a gateway request. Malformed values
- *  degrade to null — tracing must never reject a call. */
-export function readTraceHeaders(headers: Record<string, unknown>): GatewayTraceHeaders {
+const NO_TRACE_HEADERS: GatewayTraceHeaders = {
+  internalCaller: false,
+  requestId: null,
+  runId: null,
+  chatId: null,
+  conversationId: null,
+  turn: null,
+  cause: "",
+};
+
+/** Reads the trace-context headers off a gateway request. Only the internal
+ *  credential's headers count: a public key cannot suppress its own trace
+ *  row, pin a request id, or file its call under another run or chat.
+ *  Malformed values degrade to null — tracing must never reject a call. */
+export function readTraceHeaders(headers: Record<string, unknown>, credential: GatewayCredential): GatewayTraceHeaders {
+  if (!credential.internal) return NO_TRACE_HEADERS;
   const conversation = headerOr(headers, "x-guild-conversation-id");
   const turn = headerOr(headers, "x-guild-turn");
   return {
@@ -73,6 +86,9 @@ export interface GatewayCredential {
   /** session_id on usage rows: the key's id (internal: harness-provided
    *  session or the fixed internal-key id). */
   sessionId: string;
+  /** The config-minted internal key: its x-guild-* trace headers are
+   *  trusted. */
+  internal: boolean;
 }
 
 /** Endpoint-neutral failure; each gateway surface renders it in its own

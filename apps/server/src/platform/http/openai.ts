@@ -22,7 +22,7 @@ import {
   type GatewayContext,
   type GatewayCredential,
   type GatewayTraceEmission,
-} from "./llm.js";
+} from "../llm-gateway.js";
 import type { GatewayCtx } from "../route-contexts.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import type { Json } from "@guild/wire/rest";
@@ -309,7 +309,7 @@ async function handleChatCompletions(
           kind: "generic",
         }))
       : null;
-  const traceHeaders = readTraceHeaders(req.headers as Record<string, unknown>);
+  const traceHeaders = readTraceHeaders(req.headers as Record<string, unknown>, credential);
   const startedAt = Date.now();
   // One request id across the usage event, the llm_calls row, and the
   // payload rows; internal callers may pin their own (the judge's

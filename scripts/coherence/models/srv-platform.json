@@ -100,7 +100,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/http/llm.ts",
+     "where": "apps/server/src/platform/llm-gateway.ts",
      "role": "domain"
     },
     {
@@ -123,7 +123,7 @@
   {
    "id": "gateway-credential",
    "definition": "The org, user and session identity one LLM gateway request runs as, derived from an API key or the internal key.",
-   "canonical": "apps/server/src/platform/http/llm.ts",
+   "canonical": "apps/server/src/platform/llm-gateway.ts",
    "types": [
     "GatewayCredential",
     "GatewayTraceHeaders"
@@ -133,7 +133,7 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/http/llm.ts",
+     "where": "apps/server/src/platform/llm-gateway.ts",
      "role": "domain"
     },
     {
@@ -627,17 +627,17 @@
    "role": "wire"
   },
   {
-   "where": "apps/server/src/platform/http/llm.ts",
+   "where": "apps/server/src/platform/llm-gateway.ts",
    "concept": "usage-event",
    "role": "wire"
   },
   {
-   "where": "apps/server/src/platform/http/llm.ts",
+   "where": "apps/server/src/platform/llm-gateway.ts",
    "concept": "gateway-route",
    "role": "domain"
   },
   {
-   "where": "apps/server/src/platform/http/llm.ts",
+   "where": "apps/server/src/platform/llm-gateway.ts",
    "concept": "api-key",
    "role": "domain"
   },
