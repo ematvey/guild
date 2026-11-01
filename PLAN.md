@@ -12,6 +12,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A view frame goes only where the chat is shown (2026-11-02).** The final
+  browser pass caught a socket on /activity receiving 1.9 MB of another
+  tab's compaction. Each socket records the chat its latest `sync` named;
+  `thread_state`, `thread_events`, `live_frame` and `context_usage` go only
+  to the owner's sockets showing that chat, while sidebar facts
+  (`chat_status`, chat rows, trees) still reach every socket. A socket that
+  never syncs (the engine's turn stream) keeps receiving everything. A
+  changed chat republishes once per quiet 100 ms tick (300 ms at most),
+  and the forced compaction republish rides the same tick, so one
+  `/compact` sends at most two views. `AgentRun` carries optional
+  `call_count`/`tool_count` from the trace spans. The composer names its
+  agent from pushed state, and a member's address for an admin-only
+  settings section is replaced by Account.
+
 - **A push carries only what changed, and every display fact has one
   (2026-11-02).** Browser verification of the push work found a socket that
   re-sent the whole workspace bracket on every chat flip (about 90 KB per
