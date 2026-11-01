@@ -2023,7 +2023,7 @@ export class GuildRuntime {
   setTurnEnded(hook: ((chatId: string, failed: boolean) => Promise<void>) | null): void {
     this.bridge.setTurnEnded(hook);
     // Worker mode: the turn ends in a forked process, which forwards it here.
-    this.supervisor?.setTurnEnded(hook);
+    this.forker?.setTurnEnded(hook);
   }
 
   /** Live streaming buffers of a conversation (the ThreadState frame's
