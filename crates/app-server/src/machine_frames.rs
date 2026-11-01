@@ -1,9 +1,4 @@
-// The executor-relevant subset of the server frames, extracted by tag-peeking
-// the raw JSON first: the link's liveness must not depend on the display
-// event vocabulary (`StreamEvent` gains variants regularly, and machine
-// sockets receive the same live feed as browser sockets). Only the frames
-// this socket acts on are parsed strictly; everything else — display frames,
-// unknown variants, unparseable text — is ignored.
+//! Classifies the server frames a machine link acts on.
 
 use protocol::ws::WsServerMsg;
 use uuid::Uuid;

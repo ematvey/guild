@@ -833,9 +833,9 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// Starts an agent turn in the background: the shim (agent_start.rs) —
 /// validates params, binds the machine-bound project, and drives the same
 /// durable gateway workflow the GUI uses; progress streams as agent.*
-/// events mapped from the workflow's frames. Acks immediately (the old
-/// contract); failures before the ack are RPC errors, failures during the
-/// run arrive as agent.error events.
+/// events mapped from the workflow's frames. Acks once the chat is bound;
+/// failures before the ack are RPC errors, failures during the run arrive
+/// as agent.error events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     // 1. Engine state under the lock; context assembly and all HTTP after.
     let (cloud, project_dir, model, prompt, machine_id, epoch) = match (|| {
@@ -945,7 +945,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     );
 
     // 3. Ack before the run: progress arrives as events, run failures as
-    //    agent.error — the old agent.start contract.
+    //    agent.error.
     let _ = out_tx.send(response_value(
         req.id,
         Ok(Response::ok(
@@ -1162,8 +1162,8 @@ async fn registry_install(
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-/// Lists locally discovered skills with provenance, scope, and disabled
-/// flag — the desktop skills manager's data source.
+/// `registry.uninstall`: removes a Guild-installed skill from the project
+/// (or, with `global`, the home) skill scope.
 async fn registry_uninstall(
     session: Arc<Mutex<EngineState>>,
     req: Request,

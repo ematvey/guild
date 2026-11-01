@@ -1,9 +1,8 @@
 //! The machine link: the daemon's executor connection to the server
-//! (spec 2026-09-18 agent-loop unification §3.1). One WS per daemon,
-//! registered as the machine's executor slot — the same role the Tauri
-//! host held before the link moved here. The durable workflow dispatches
-//! client tools to this socket; the daemon executes them with the builtin
-//! registry and returns the result over the same socket.
+//! (spec 2026-09-18 agent-loop unification §3.1). One WS per workspace,
+//! registered as the machine's executor slot. The durable workflow
+//! dispatches client tools to this socket; the daemon executes them with
+//! the builtin registry and returns the result over the same socket.
 //!
 //! Lifecycle: the link config (server + token + machine identity) rides a
 //! watch channel; login, pair, `machine.identify`, and sign-out publish
@@ -28,12 +27,10 @@ use url::Url;
 use uuid::Uuid;
 
 /// Heartbeat cadence and the dead-link verdict: the server pings every
-/// socket ~15 s (challenge-pong in ws.rs), so a link with no inbound frame
-/// for IDLE_SECS is a half-open route (suspend, NAT expiry, Wi-Fi blip) —
-/// no TCP error will ever arrive on it, and without this watchdog the
-/// session sat "connected" forever while the server had long freed the
-/// slot (machine offline until the daemon restarted). Env-overridable for
-/// tests.
+/// socket ~15 s, so a link with no inbound frame for IDLE_SECS is a
+/// half-open route (suspend, NAT expiry, Wi-Fi blip) on which no TCP error
+/// will ever arrive: the session drops it and reconnects. Env-overridable
+/// for tests.
 // coherence:seam owner=@maintainer until=2027-01-31 reason="test hook shortens the heartbeat"
 fn heartbeat_secs() -> u64 {
     std::env::var("GUILD_LINK_HEARTBEAT_SECS")
@@ -228,13 +225,12 @@ async fn ws_session(
                 match msg {
                     Ok(WsMessage::Text(text)) => match classify_server_frame(&text) {
                         ServerFrame::ToolDispatch { chat_id, call_id, name, arguments, workdir } => {
-                            // Execution rides a task: the reader must keep
-                            // reading (and ponging) while a dispatch runs — a
-                            // tool slower than the server's 10 s pong deadline
-                            // used to tear the link down mid-command and lose
-                            // the result. Responses are matched by call_id/
-                            // request_id on the server, so completion order is
-                            // free to interleave.
+                            // Execution rides a task: the reader keeps
+                            // reading (and ponging) while a dispatch runs, so
+                            // a tool slower than the server's pong deadline
+                            // never tears the link down. Responses are
+                            // matched by call_id/request_id on the server, so
+                            // completion order is free to interleave.
                             let outbound = outbound_tx.clone();
                             let hooks = hooks.clone();
                             executions.spawn(call_id.clone(), async move {
@@ -547,8 +543,8 @@ fn builtin_registry() -> &'static guild_core::tools::ToolRegistry {
     REGISTRY.get_or_init(guild_core::tools::ToolRegistry::builtins)
 }
 
-/// The executor: one builtin tool call in the dispatch's workspace folder —
-/// the exact semantics the Tauri host used before the link moved here.
+/// The outcome of one dispatched tool call, as the ToolResult frame
+/// carries it.
 struct ExecOutcome {
     content: String,
     is_error: bool,
@@ -556,6 +552,7 @@ struct ExecOutcome {
     images: Vec<String>,
 }
 
+/// Runs one builtin tool call in the dispatch's workspace folder.
 async fn execute_client_tool(
     name: &str,
     arguments: &str,
