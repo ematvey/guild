@@ -123,6 +123,23 @@ describe("applyPlatformMigrations", () => {
     }
   });
 
+  it("concurrent runners apply each file once", async () => {
+    const { url } = await bareDatabase();
+    // A second execution of the file would fail (the table already exists).
+    const dir = tempMigrations({
+      "0001_a.sql": "CREATE TABLE pm_race (id INT); SELECT pg_sleep(0.2)",
+      "0002_b.sql": "CREATE TABLE pm_race_b (id INT)",
+    });
+    const pools = [0, 1, 2].map(() => new pg.Pool({ connectionString: url, max: 2 }));
+    try {
+      await Promise.all(pools.map((pool) => applyPlatformMigrations(pool, { dir })));
+      expect((await history(url)).map((row) => row.name)).toEqual(["0001_a", "0002_b"]);
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("honors pre-existing schema_history rows (hand-run deployments, hash optional)", async () => {
     const { url } = await bareDatabase();
     // The file must not execute — the row says it was already applied.
