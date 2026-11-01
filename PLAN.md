@@ -12,6 +12,16 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Delete closes the subtree; a deleting agent is read-only; list pushes
+  coalesce (2026-11-02).** Deleting a chat cancels, closes and deletes its
+  agent-thread subtree in one transaction, and the user whose run spawned a
+  child chat may delete it directly (it takes its own subtree, never the
+  parent). Turns and bindings to an agent in `deleting` answer 409
+  `agent_deleting`; its threads stay listed read-only through the grace
+  period, and restoring the agent lifts it. Agent-list and skill-catalog
+  pushes send one frame per write burst (50 ms quiet window, 250 ms at
+  most).
+
 - **A view frame goes only where the chat is shown (2026-11-02).** The final
   browser pass caught a socket on /activity receiving 1.9 MB of another
   tab's compaction. Each socket records the chat its latest `sync` named;
