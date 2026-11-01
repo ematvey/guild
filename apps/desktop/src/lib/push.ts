@@ -16,6 +16,14 @@ const DEVICE_KEY = "guild.push.device_id";
 /** The reason this device cannot use Web Push, or null. iOS only delivers
  *  push to a web app added to the Home Screen, so a Safari tab reads as
  *  "install first" instead of a silent no-op. */
+/** Register the worker on boot in the browser app. The registration must
+ *  outlive a reload — a push subscription dies with it — and an installed
+ *  app needs it for installability and offline launches. */
+export function ensureServiceWorker(): void {
+  if (IS_TAURI || !("serviceWorker" in navigator)) return;
+  void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+}
+
 export function pushBlocker(): PushBlocker | null {
   if (IS_TAURI) return "desktop";
   if (typeof window === "undefined") return "unsupported";

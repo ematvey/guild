@@ -1,11 +1,45 @@
-// Guild service worker: Web Push only. It caches nothing — the app has its
-// own freshness check, and a cached shell would serve a stale bundle.
+// Guild service worker: Web Push delivery plus an app-shell fallback for
+// offline launches. The shell is network-first, so an online launch always
+// gets the current bundle; the cache only answers when the network is gone.
 //
-// The payload is a hint: the click opens the thread and the app syncs. No
-// message content is stored here.
+// The push payload is a hint: the click opens the thread and the app syncs.
+// No message content is stored here.
+
+const SHELL = "guild-shell-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      for (const key of await caches.keys()) {
+        if (key.startsWith("guild-shell") && key !== SHELL) await caches.delete(key);
+      }
+      await self.clients.claim();
+    })(),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  // API routes and streams pass through untouched.
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  event.respondWith(
+    (async () => {
+      try {
+        const res = await fetch(req);
+        if (res.ok) await (await caches.open(SHELL)).put(req, res.clone());
+        return res;
+      } catch {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        return new Response("offline", { status: 503, statusText: "offline" });
+      }
+    })(),
+  );
+});
 
 self.addEventListener("push", (event) => {
   let data = {};
