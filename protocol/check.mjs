@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Validate every protocol fixture against its schema, and prove fixture
-// coverage of every frame variant.
+// Validate every protocol fixture against its schema, prove fixture
+// coverage of every frame variant, compare the schemas with the TypeScript
+// declarations, and hold the schemas compatible with the last shipped client
+// (the newest `client-v*` tag).
 //
 // A fixture file is named <schema>.<Root>.json. It holds a JSON array. The
 // checker compiles $defs.<Root> from <schema>.schema.json and validates every
 // element. The coverage rule requires one fixture for every oneOf variant.
 
+import { execFileSync } from 'node:child_process';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +30,9 @@ function resolveVariant(schema, variant) {
   const name = variant.$ref.replace('#/$defs/', '');
   return schema.$defs?.[name] ?? variant;
 }
+
+// Every loaded schema, by file stem, for cross-file $ref resolution.
+const schemasById = new Map();
 
 // The tag key every frame uses. A frame is an object tagged by `type`, and
 // the tag is a `const` in each variant.
@@ -60,13 +66,21 @@ async function main() {
     fail(`cannot read ${DIR}`);
   }
 
-  const schemas = new Map();
+  const schemas = schemasById;
   for (const name of entries.filter((n) => n.endsWith('.schema.json')).sort()) {
     const schemaName = name.slice(0, -'.schema.json'.length);
     const raw = await readFile(join(DIR, name), 'utf8');
     schemas.set(schemaName, JSON.parse(raw));
   }
   if (schemas.size === 0) fail('no *.schema.json files found');
+
+  // Compatibility first: a break against a shipped client is the finding
+  // that matters most, and fixtures edited to match it would hide nothing.
+  const compat = compatibility(schemas);
+  if (compat.problems.length > 0) {
+    for (const item of compat.problems) console.error(item);
+    fail(`${compat.problems.length} change(s) break a client shipped as ${compat.tag}`);
+  }
 
   let fixtureNames;
   try {
@@ -208,9 +222,11 @@ async function main() {
     fail(`${typeProblems.length} TypeScript declaration mismatch(es)`);
   }
 
+  console.log(`protocol: ${compat.note}`);
   console.log(
     `protocol: ${schemas.size} schema(s), ${fixtureNames.length} fixture file(s), ` +
-      `${seen.size} frame root(s), ${frames} frame(s), coverage complete`,
+      `${seen.size} frame root(s), ${frames} frame(s), coverage complete, ` +
+      `${typedProperties} property type(s) match TypeScript`,
   );
 }
 
@@ -220,12 +236,18 @@ async function main() {
 // variant), or a string union (an enum).
 // ---------------------------------------------------------------------------
 
+// Every type alias by name, so a property typed `Uuid` resolves to `string`.
+const aliasNodes = new Map();
+let declarationsByName = new Map();
+
 async function loadDeclarations(dir) {
   const out = new Map();
+  declarationsByName = out;
   for (const name of (await readdir(dir)).filter((n) => n.endsWith('.ts')).sort()) {
     const file = join(dir, name);
     const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     for (const statement of source.statements) {
+      if (ts.isTypeAliasDeclaration(statement)) aliasNodes.set(statement.name.text, statement.type);
       if (ts.isInterfaceDeclaration(statement)) {
         out.set(statement.name.text, { kind: 'object', props: propsOf(source, statement.members) });
       } else if (ts.isTypeAliasDeclaration(statement)) {
@@ -265,7 +287,7 @@ function propsOf(source, members) {
   for (const member of members) {
     if (!ts.isPropertySignature(member) || member.name === undefined) continue;
     const name = member.name.getText(source).replace(/^['"]|['"]$/g, '');
-    out.set(name, member.questionToken !== undefined);
+    out.set(name, { optional: member.questionToken !== undefined, type: member.type });
   }
   return out;
 }
@@ -305,7 +327,7 @@ function compareRoot(name, schema, def, declaration, problems) {
         problems.push(`${name}.${tag}: the schema has this variant, TypeScript does not`);
         continue;
       }
-      compareProps(`${name}.${tag}`, resolved, tsProps, problems);
+      compareProps(`${name}.${tag}`, schema, resolved, tsProps, problems);
     }
     for (const tag of declaration.variants.keys()) {
       if (!tags.includes(tag)) problems.push(`${name}.${tag}: TypeScript has this variant, the schema does not`);
@@ -326,10 +348,10 @@ function compareRoot(name, schema, def, declaration, problems) {
     problems.push(`${name}: schema is an object, TypeScript is ${declaration.kind}`);
     return;
   }
-  compareProps(name, def, declaration.props, problems);
+  compareProps(name, schema, def, declaration.props, problems);
 }
 
-function compareProps(name, def, tsProps, problems) {
+function compareProps(name, schema, def, tsProps, problems) {
   const schemaProps = Object.keys(def.properties ?? {});
   const required = new Set(def.required ?? []);
   for (const key of schemaProps) {
@@ -337,7 +359,8 @@ function compareProps(name, def, tsProps, problems) {
       problems.push(`${name}.${key}: in the schema, missing in TypeScript`);
       continue;
     }
-    const tsOptional = tsProps.get(key);
+    const tsOptional = tsProps.get(key).optional;
+    compareTypes(`${name}.${key}`, schema, def.properties[key], tsProps.get(key).type, problems);
     if (required.has(key) === tsOptional) {
       problems.push(
         `${name}.${key}: TypeScript is ${tsOptional ? 'optional' : 'required'}, ` +
@@ -348,6 +371,296 @@ function compareProps(name, def, tsProps, problems) {
   for (const key of tsProps.keys()) {
     if (!schemaProps.includes(key)) problems.push(`${name}.${key}: in TypeScript, missing in the schema`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Scalar type conformance. Each side reduces a property's type to a set of
+// categories: string, number, boolean, null, array, object (an inline map or
+// struct) and ref (a named object or tagged union). `any` (Json, unknown)
+// matches everything. An enum is a string.
+// ---------------------------------------------------------------------------
+
+function resolveRef(schema, ref) {
+  const [file, pointer] = ref.split('#');
+  const owner = file === '' ? schema : [...schemasById.values()].find((s) => s.$id === file);
+  const name = pointer?.replace('/$defs/', '');
+  return { owner, name, def: owner?.$defs?.[name] };
+}
+
+function schemaCategories(schema, prop, depth = 0) {
+  const out = new Set();
+  if (prop === undefined || depth > 8) return new Set(['any']);
+  if (prop.$ref !== undefined) {
+    const { owner, def } = resolveRef(schema, prop.$ref);
+    if (def === undefined) return new Set(['any']);
+    if (def.oneOf !== undefined || def.properties !== undefined) out.add('ref');
+    else for (const c of schemaCategories(owner, def, depth + 1)) out.add(c);
+  }
+  if (typeof prop.const === 'string') out.add('string');
+  if (prop.type !== undefined) {
+    for (const t of [prop.type].flat()) {
+      if (t === 'integer' || t === 'number') out.add('number');
+      else out.add(t);
+    }
+  }
+  for (const variant of [...(prop.oneOf ?? []), ...(prop.anyOf ?? [])]) {
+    for (const c of schemaCategories(schema, variant, depth + 1)) out.add(c);
+  }
+  if (out.size === 0) out.add('any');
+  return out;
+}
+
+function tsCategories(node, depth = 0) {
+  const out = new Set();
+  if (node === undefined || depth > 8) return new Set(['any']);
+  const add = (set) => { for (const c of set) out.add(c); };
+  switch (node.kind) {
+    case ts.SyntaxKind.StringKeyword: out.add('string'); break;
+    case ts.SyntaxKind.NumberKeyword: out.add('number'); break;
+    case ts.SyntaxKind.BooleanKeyword: out.add('boolean'); break;
+    case ts.SyntaxKind.NullKeyword: out.add('null'); break;
+    case ts.SyntaxKind.UndefinedKeyword: break;
+    case ts.SyntaxKind.UnknownKeyword:
+    case ts.SyntaxKind.AnyKeyword: out.add('any'); break;
+    case ts.SyntaxKind.ArrayType:
+    case ts.SyntaxKind.TupleType: out.add('array'); break;
+    case ts.SyntaxKind.TypeLiteral: out.add('object'); break;
+    case ts.SyntaxKind.ParenthesizedType: add(tsCategories(node.type, depth + 1)); break;
+    case ts.SyntaxKind.UnionType: for (const m of node.types) add(tsCategories(m, depth + 1)); break;
+    case ts.SyntaxKind.LiteralType: {
+      const lit = node.literal;
+      if (lit.kind === ts.SyntaxKind.NullKeyword) out.add('null');
+      else if (ts.isStringLiteral(lit)) out.add('string');
+      else if (ts.isNumericLiteral(lit)) out.add('number');
+      else if (lit.kind === ts.SyntaxKind.TrueKeyword || lit.kind === ts.SyntaxKind.FalseKeyword) out.add('boolean');
+      else out.add('any');
+      break;
+    }
+    case ts.SyntaxKind.TypeReference: {
+      const name = node.typeName.getText();
+      if (name === 'Array' || name === 'ReadonlyArray') out.add('array');
+      else if (name === 'Record') out.add('object');
+      else {
+        const declaration = declarationsByName.get(name);
+        if (declaration?.kind === 'strings') out.add('string');
+        else if (declaration?.kind === 'object' || declaration?.kind === 'union') out.add('ref');
+        else if (aliasNodes.has(name)) add(tsCategories(aliasNodes.get(name), depth + 1));
+        else out.add('any');
+      }
+      break;
+    }
+    default: out.add('any');
+  }
+  return out;
+}
+
+let typedProperties = 0;
+
+function compareTypes(name, schema, prop, typeNode, problems) {
+  const want = schemaCategories(schema, prop);
+  const have = tsCategories(typeNode);
+  if (want.has('any') || have.has('any')) return;
+  typedProperties += 1;
+  const a = [...want].sort().join('|');
+  const b = [...have].sort().join('|');
+  if (a !== b) problems.push(`${name}: TypeScript type is ${b}, the schema is ${a}`);
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility with the last shipped client. The baseline is the newest
+// `client-v*` tag; its `protocol/*.schema.json` is what an installed client
+// was built against. Direction decides the rule:
+//
+//   server -> client  (socket ServerFrame, REST rows and responses): the old
+//     client reads it. No variant, property, enum value or definition may
+//     disappear, no type may change, and a required property may not become
+//     optional.
+//   client -> server  (socket ClientFrame, REST *Request bodies): the old
+//     client writes it. No property may become required that the old client
+//     could omit, no variant or enum value may disappear, no type may change.
+//
+// rpc.schema.json is skipped: the UI and the engine ship in one binary.
+// ---------------------------------------------------------------------------
+
+const COMPAT_SCHEMAS = ['socket', 'rest'];
+const TO_CLIENT = 'server->client';
+const TO_SERVER = 'client->server';
+
+function runGit(args) {
+  return execFileSync('git', args, { cwd: DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
+function compatibility(current) {
+  let tag;
+  try {
+    tag = runGit(['tag', '--list', 'client-v*', '--sort=-v:refname'])
+      .split('\n')
+      .find((t) => t.trim() !== '');
+  } catch {
+    return { problems: [], note: 'not a git checkout; compatibility check skipped' };
+  }
+  if (tag === undefined) return { problems: [], note: 'no client-v* tag; compatibility check skipped' };
+
+  const old = new Map();
+  for (const name of COMPAT_SCHEMAS) {
+    try {
+      old.set(name, JSON.parse(runGit(['show', `${tag}:protocol/${name}.schema.json`])));
+    } catch {
+      // The schema did not exist at the tag: nothing shipped to break.
+    }
+  }
+
+  const idsOf = (map) => new Map([...map].map(([name, schema]) => [schema.$id, name]));
+  const ids = new Map([[old, idsOf(old)], [current, idsOf(current)]]);
+  // `file.Def` for a $ref written inside `file`.
+  const refKey = (map, file, ref) => {
+    const [target, pointer] = ref.split('#');
+    const owner = target === '' ? file : ids.get(map).get(target);
+    return `${owner}.${(pointer ?? '').replace('/$defs/', '')}`;
+  };
+  const defOf = (map, key) => {
+    const [file, name] = key.split('.');
+    return map.get(file)?.$defs?.[name];
+  };
+
+  // Directions, computed on the old schemas: what the shipped client knew.
+  const reach = (roots) => {
+    const out = new Set();
+    const stack = [...roots];
+    while (stack.length > 0) {
+      const key = stack.pop();
+      if (out.has(key)) continue;
+      const def = defOf(old, key);
+      if (def === undefined) continue;
+      out.add(key);
+      const file = key.split('.')[0];
+      JSON.stringify(def, (k, v) => {
+        if (k === '$ref' && typeof v === 'string') stack.push(refKey(old, file, v));
+        return v;
+      });
+    }
+    return out;
+  };
+  const restDefs = Object.keys(old.get('rest')?.$defs ?? {});
+  const requests = reach(restDefs.filter((n) => n.endsWith('Request')).map((n) => `rest.${n}`));
+  const toServer = reach(['socket.ClientFrame', ...requests]);
+  const toClient = reach([
+    'socket.ServerFrame',
+    ...restDefs.map((n) => `rest.${n}`).filter((k) => !requests.has(k)),
+  ]);
+
+  const problems = [];
+  const report = (dir, where, message) => problems.push(`compat ${dir} ${where}: ${message}`);
+  const typeSet = (node) => [node.type ?? []].flat().sort().join('|');
+
+  const compareNode = (dirs, where, oldFile, o, newFile, n) => {
+    if (o === undefined || n === undefined) return;
+    if (o.$ref !== undefined || n.$ref !== undefined) {
+      const same =
+        o.$ref !== undefined && n.$ref !== undefined && refKey(old, oldFile, o.$ref) === refKey(current, newFile, n.$ref);
+      if (!same) {
+        for (const dir of dirs) report(dir, where, `type changed from ${o.$ref ?? typeSet(o)} to ${n.$ref ?? typeSet(n)}`);
+      }
+      return;
+    }
+    if (typeSet(o) !== typeSet(n)) {
+      for (const dir of dirs) report(dir, where, `type changed from ${typeSet(o) || 'any'} to ${typeSet(n) || 'any'}`);
+    }
+    if (o.const !== undefined && o.const !== n.const) {
+      for (const dir of dirs) report(dir, where, `const changed from ${JSON.stringify(o.const)} to ${JSON.stringify(n.const)}`);
+    }
+    if (Array.isArray(o.enum) && Array.isArray(n.enum)) {
+      const kept = new Set(n.enum);
+      for (const v of o.enum.filter((x) => !kept.has(x))) {
+        for (const dir of dirs) report(dir, where, `enum value ${JSON.stringify(v)} removed`);
+      }
+    }
+    if (o.items !== undefined) compareNode(dirs, `${where}[]`, oldFile, o.items, newFile, n.items ?? {});
+    if (o.properties !== undefined || n.properties !== undefined) compareObject(dirs, where, oldFile, o, newFile, n);
+    if (o.oneOf !== undefined) compareUnion(dirs, where, oldFile, o, newFile, n);
+  };
+
+  const compareObject = (dirs, where, oldFile, o, newFile, n) => {
+    const oldReq = new Set(o.required ?? []);
+    const newReq = new Set(n.required ?? []);
+    const newProps = n.properties ?? {};
+    for (const [key, prop] of Object.entries(o.properties ?? {})) {
+      if (!(key in newProps)) {
+        if (dirs.includes(TO_CLIENT)) report(TO_CLIENT, `${where}.${key}`, 'property removed');
+        continue;
+      }
+      if (dirs.includes(TO_CLIENT) && oldReq.has(key) && !newReq.has(key)) {
+        report(TO_CLIENT, `${where}.${key}`, 'required property became optional');
+      }
+      compareNode(dirs, `${where}.${key}`, oldFile, prop, newFile, newProps[key]);
+    }
+    if (dirs.includes(TO_SERVER)) {
+      for (const key of newReq) {
+        if (!oldReq.has(key)) report(TO_SERVER, `${where}.${key}`, 'property is newly required');
+      }
+    }
+  };
+
+  // A tagged union's variants by their `type` const, or null when untagged.
+  const variantsOf = (map, file, node) => {
+    const out = new Map();
+    for (const variant of node.oneOf ?? []) {
+      let resolved = variant;
+      let at = file;
+      if (variant.$ref !== undefined) {
+        const key = refKey(map, file, variant.$ref);
+        resolved = defOf(map, key) ?? variant;
+        at = key.split('.')[0];
+      }
+      const t = resolved.properties?.type?.const;
+      if (typeof t !== 'string') return null;
+      out.set(t, { file: at, node: resolved, named: variant.$ref !== undefined });
+    }
+    return out;
+  };
+
+  const compareUnion = (dirs, where, oldFile, o, newFile, n) => {
+    const before = variantsOf(old, oldFile, o);
+    const after = variantsOf(current, newFile, n);
+    if (before === null || after === null) {
+      if (JSON.stringify(o.oneOf) !== JSON.stringify(n.oneOf ?? null)) {
+        for (const dir of dirs) report(dir, where, 'untagged union changed');
+      }
+      return;
+    }
+    for (const [t, variant] of before) {
+      const next = after.get(t);
+      if (next === undefined) {
+        for (const dir of dirs) report(dir, `${where}.${t}`, 'variant removed');
+        continue;
+      }
+      // A named variant is compared under its own $defs name.
+      if (!variant.named || !next.named) {
+        compareObject(dirs, `${where}.${t}`, variant.file, variant.node, next.file, next.node);
+      }
+    }
+  };
+
+  let compared = 0;
+  for (const key of [...new Set([...toClient, ...toServer])].sort()) {
+    const dirs = [];
+    if (toClient.has(key)) dirs.push(TO_CLIENT);
+    if (toServer.has(key)) dirs.push(TO_SERVER);
+    const file = key.split('.')[0];
+    const after = defOf(current, key);
+    if (after === undefined) {
+      for (const dir of dirs) report(dir, key, 'definition removed');
+      continue;
+    }
+    compared += 1;
+    compareNode(dirs, key, file, defOf(old, key), file, after);
+  }
+
+  return {
+    tag,
+    problems,
+    note: `compatible with ${tag} (${compared} definition(s) compared)`,
+  };
 }
 
 main().catch((err) => fail(err.stack ?? String(err)));

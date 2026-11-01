@@ -193,6 +193,15 @@ sha256 digest** with a server key (auto-generated once, persisted in
 `server_kv`; override with `GUILD_RELEASE_SIGNING_SEED`). The script asserts
 the server-computed sha256 matches the local file before declaring success.
 
+### The client tag
+After the last upload the script tags HEAD `client-v<VERSION>` (annotated,
+local; push it yourself if other checkouts need it). The newest
+`client-v*` tag is the compatibility baseline: `node protocol/check.mjs`
+loads `protocol/*.schema.json` from it and fails when the working tree
+removes or retypes anything a shipped client reads from the server
+(variants, properties, enum values, required-ness), or requires a property
+a shipped client does not send. With no tag the comparison is skipped.
+
 ## 5. Downloading + verifying clients
 
 - No UI view: desktop releases are dev-controlled, not admin-controlled.

@@ -21,6 +21,9 @@
 # (~/.tauri/guild.key; override with UPDATER_KEY) and published with its
 # signature so /api/v1/updates/latest.json can serve the auto-updater.
 #
+# After publishing, HEAD gets an annotated local tag `client-v<VERSION>`: the
+# compatibility baseline for protocol/check.mjs.
+#
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
 #     VITE_DEFAULT_SERVER_URL=https://guild.example.com \
@@ -211,3 +214,16 @@ build_dmg aarch64
 build_dmg x86_64
 
 echo "==> client distributions published (single binary, production formats)"
+
+# The tag marks the protocol a shipped client speaks: protocol/check.mjs
+# compares the working tree's schemas against the newest client-v* tag and
+# fails on changes an installed client cannot read. Local only; pushing it
+# is a separate, deliberate step. A republish of the same version moves the
+# tag to the commit that was actually built.
+TAG="client-v$VERSION"
+if [[ "$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null)" == "$(git rev-parse HEAD)" ]]; then
+  echo "==> $TAG already marks HEAD"
+else
+  git tag -f -a "$TAG" -m "client release $VERSION" HEAD >/dev/null
+  echo "==> tagged HEAD as $TAG (local; not pushed)"
+fi

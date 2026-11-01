@@ -8,21 +8,26 @@ implementation detail of the server and both ends ship together.
 
 ## What is here
 
+The schemas are the contract. The Rust types (`crates/protocol/src`) and the
+TypeScript types (`packages/wire/src`) are hand-written from them, and both
+sides are tested against the fixtures here.
+
 - `socket.schema.json` — the member and machine socket: every frame, its
-  fields, and its presence rules. Derived from `crates/protocol/src/ws.rs`.
+  fields, and its presence rules. Rust: `crates/protocol/src/ws.rs`.
 - `rest.schema.json` — the data-transfer types that cross the TS/Rust
   boundary over HTTP: the sidebar rows, the account and pairing shapes, the
   machine registry, the turn submission, the thread events and the registry
-  manifests. Derived from `crates/protocol/src/api.rs` and
+  manifests. Rust: `crates/protocol/src/api.rs` and
   `crates/protocol/src/registry.rs`.
 - `rpc.schema.json` — the line-delimited JSON-RPC 2.0 envelope between the
-  desktop UI and the engine, and over the local CLI socket. Derived from
+  desktop UI and the engine, and over the local CLI socket. Rust:
   `crates/protocol/src/rpc.rs`.
 - `fixtures/<schema>.<Root>.json` — one example per variant of `$defs.<Root>`
   in `<schema>.schema.json`. Each file is a JSON array.
 - `check.mjs` — validates every fixture against its schema, requires a
-  fixture for every variant of a tagged union, and compares every named
-  object and union with its TypeScript declaration.
+  fixture for every variant of a tagged union, compares every named
+  object and union with its TypeScript declaration, and compares the
+  schemas with the last shipped client's (see below).
 
 Each file has a root index: an object whose properties are the `$defs`
 names. A payload is validated against a `$defs` entry, never against the
@@ -34,8 +39,30 @@ deserializes every one of them and re-serializes it back to the same JSON;
 the TypeScript suite parses them. A field renamed on one side fails that
 side's test. `check.mjs` reads the TypeScript declarations with the compiler
 and fails when a fixture root has no declaration, when a property name
-differs, or when a required field is optional on one side and required on
-the other.
+differs, when a required field is optional on one side and required on
+the other, or when a property's scalar type differs (string, number,
+boolean, null, array, inline object, named type; `Json`/`unknown` match
+anything).
+
+## Older clients keep working
+
+An installed client was built against the schemas of its release. Each
+client release is tagged `client-v<version>` by `scripts/release-clients.sh`,
+and `check.mjs` loads `socket.schema.json` and `rest.schema.json` from the
+newest such tag and fails on a change that client cannot survive:
+
+- **server → client** (`ServerFrame` and everything it reaches; every REST
+  type that is not a `*Request` body): a removed variant, property, enum
+  value or definition; a changed type or `const`; a required property that
+  became optional.
+- **client → server** (`ClientFrame` and the `*Request` bodies): a newly
+  required property; a removed variant, enum value or definition; a changed
+  type.
+
+Adding an optional request property, a new response property, a new
+variant or a new enum value passes. `rpc.schema.json` is not compared: the
+UI and the engine ship in one binary. With no `client-v*` tag the
+comparison is skipped.
 
 ## Presence is the contract
 
