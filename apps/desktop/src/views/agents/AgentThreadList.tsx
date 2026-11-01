@@ -1,14 +1,16 @@
 // Thread list for an agent: the default thread pinned first, then most
-// recent activity. A thread opens at its canonical chat address.
+// recent activity. A thread opens at its canonical chat address. The list is
+// live: the member socket pushes it whenever one of the threads changes.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { relativeTime } from "../../lib/relative-time";
-import { listAgentThreads, type Agent, type AgentThread } from "./agents-api";
+import type { Agent, AgentThread } from "./agents-api";
 import type { AgentsRoute } from "./agents-route";
-import { ErrorState, Mono, ToneBadge } from "./agent-ui";
+import { Mono, ToneBadge } from "./agent-ui";
+import { useAgentThreads } from "./agents-store";
 
 /** Thread list: default thread pinned first, then most recent activity. */
 export function sortAgentThreads(threads: AgentThread[]): AgentThread[] {
@@ -32,27 +34,8 @@ export function ThreadList({
   /** A thread has one canonical address: its chat. */
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [threads, setThreads] = useState<AgentThread[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const threads = useAgentThreads(agent.id);
   const [creating, setCreating] = useState(false);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    void listAgentThreads(agent.id)
-      .then((rows) => {
-        if (live) setThreads(rows);
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setThreads(null);
-        setError(err instanceof Error ? err.message : "Could not load threads.");
-      });
-    return () => {
-      live = false;
-    };
-  }, [agent.id, tick]);
 
   const create = async () => {
     setCreating(true);
@@ -62,7 +45,6 @@ export function ThreadList({
       if (onOpenChat) onOpenChat(row.chat_id);
       else onNavigate({ view: "agent", agentId: agent.id, tab: "threads" });
     }
-    else setTick((t) => t + 1);
   };
 
   const sorted = threads === null ? null : sortAgentThreads(threads);
@@ -79,15 +61,14 @@ export function ThreadList({
           New thread
         </Button>
       </div>
-      {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-      {error === null && sorted === null && (
+      {sorted === null && (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-14 w-full rounded-lg" />
           ))}
         </div>
       )}
-      {error === null && sorted !== null && sorted.length === 0 && (
+      {sorted !== null && sorted.length === 0 && (
         <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
           <p className="text-sm font-medium">No threads yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -95,7 +76,7 @@ export function ThreadList({
           </p>
         </div>
       )}
-      {error === null && sorted !== null && sorted.length > 0 && (
+      {sorted !== null && sorted.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-border bg-card">
           {sorted.map((thread) => (
             <button

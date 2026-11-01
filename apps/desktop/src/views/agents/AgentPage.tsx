@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Clock,
@@ -13,13 +12,9 @@ import { relativeTime } from "../../lib/relative-time";
 import { count } from "../../lib/format";
 import {
   createAgentThread,
-  getAgent,
-  listAgentRuns,
-  listAgentThreads,
   sendAgentTurn,
   type Agent,
   type AgentRoutine,
-  type AgentRun,
   type AgentThread,
 } from "./agents-api";
 import {
@@ -49,6 +44,7 @@ import { AgentRoutines, humanSchedule } from "./AgentRoutines";
 import { ModelName } from "./agent-model";
 import { ThreadList } from "./AgentThreadList";
 import { AgentActions, AgentSettings } from "./agent-settings";
+import { useAgentList, useAgentRuns, useAgentThreads } from "./agents-store";
 
 export interface Viewer {
   email: string;
@@ -89,26 +85,11 @@ export function AgentPage({
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    void getAgent(agentId)
-      .then((row) => {
-        if (live) setAgent(row);
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setAgent(null);
-        setError(err instanceof Error ? err.message : "Could not load this agent.");
-      });
-    return () => {
-      live = false;
-    };
-  }, [agentId, tick]);
+  // The agent row is live: the pushed agent list carries every agent this
+  // member may see, so an edit, archive or visibility change repaints here.
+  const agents = useAgentList();
+  const agent = agents?.find((row) => row.id === agentId) ?? null;
+  const error = agents !== null && agent === null ? "This agent does not exist or is not shared with you." : null;
 
   const manage = agent !== null && canManageAgent(agent, viewer);
 
@@ -171,7 +152,7 @@ export function AgentPage({
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <PageHeader title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
         <PageBody>
-          <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />
+          <ErrorState message={error} />
         </PageBody>
       </div>
     );
@@ -186,8 +167,6 @@ export function AgentPage({
       </div>
     );
   }
-
-  const refresh = () => setTick((t) => t + 1);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -221,7 +200,6 @@ export function AgentPage({
             <AgentActions
               agent={agent}
               manage={manage}
-              onChanged={refresh}
               onDeleted={() => onNavigate({ view: "directory" })}
             />
           </>
@@ -298,7 +276,6 @@ export function AgentPage({
               agent={agent}
               manage={manage}
               viewer={viewer}
-              onChanged={refresh}
               onDeleted={() => onNavigate({ view: "directory" })}
             />
           )}
@@ -319,12 +296,8 @@ function AgentOverview({
   onNewThread: () => Promise<AgentThread | null>;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [threads, setThreads] = useState<AgentThread[] | null>(null);
-  const [runs, setRuns] = useState<AgentRun[] | null>(null);
-  useEffect(() => {
-    void listAgentThreads(agent.id).then(setThreads).catch(() => setThreads([]));
-    void listAgentRuns(agent.id).then(setRuns).catch(() => setRuns([]));
-  }, [agent.id]);
+  const threads = useAgentThreads(agent.id);
+  const runs = useAgentRuns(agent.id);
   const recent = (threads ?? []).slice(0, 3);
   const recentRuns = [...(runs ?? [])]
     .sort(

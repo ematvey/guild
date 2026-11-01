@@ -4,6 +4,7 @@
 // refetches on mount and whenever the pill changes.
 
 import { useEffect, useState } from "react";
+import { useSkillActivityEvents } from "./skills-store";
 import {
   Download,
   EyeOff,
@@ -182,6 +183,13 @@ export function ActivityFeed() {
       live = false;
     };
   }, [filter]);
+
+  // Live: each skill org event the member socket pushes joins the top of a
+  // loaded feed when it matches the pill.
+  useSkillActivityEvents((event) => {
+    if (!activityMatchesFilter(event, filter)) return;
+    setEvents((prev) => (prev === null ? prev : [event, ...prev]));
+  });
 
   const rows = activityRows(events ?? [], filter);
   const empty = events !== null && events.length === 0 ? activityEmptyState(filter) : null;

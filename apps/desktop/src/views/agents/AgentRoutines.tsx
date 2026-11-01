@@ -6,18 +6,16 @@ import {
   Pencil,
   Play,
   Plus,
-  RefreshCw,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
 import {
-  getRoutine,
   listRoutineRuns,
-  listRoutines,
   runRoutine,
   type AgentRoutine,
   type AgentRun,
 } from "./agents-api";
+import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import {
   EmptyState,
@@ -125,27 +123,11 @@ function RoutineList({
   onNavigate: (routes: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
 }) {
-  const [routines, setRoutines] = useState<AgentRoutine[] | null>(null);
+  // Live: the member socket pushes the routines whenever one is created,
+  // changed, scheduled, run or deleted.
+  const routines = useAgentRoutines(agentId);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    void listRoutines(agentId)
-      .then((rows) => {
-        if (live) setRoutines(rows);
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setRoutines(null);
-        setError(err instanceof Error ? err.message : "The routines API did not answer.");
-      });
-    return () => {
-      live = false;
-    };
-  }, [agentId, tick]);
 
   const start = async () => {
     setStarting(true);
@@ -166,24 +148,14 @@ function RoutineList({
           Routines run on a schedule in an isolated context. Ask the agent to create or change one.
         </p>
         <div className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => setTick((t) => t + 1)}>
-          <RefreshCw />
-          Refresh
-        </Button>
         <Button size="sm" onClick={() => void start()} disabled={starting}>
           {starting ? <Loader2 className="animate-spin" /> : <Plus />}
           New routine
         </Button>
       </div>
-      {error !== null && (
-        <ErrorState
-          title="Could not load routines"
-          message={error}
-          onRetry={() => setTick((t) => t + 1)}
-        />
-      )}
-      {error === null && routines === null && <LoadingRows rows={3} />}
-      {error === null && routines !== null && routines.length === 0 && (
+      {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
+      {routines === null && <LoadingRows rows={3} />}
+      {routines !== null && routines.length === 0 && (
         <EmptyState
           icon={<Clock className="size-5" />}
           title="No routines yet"
@@ -196,7 +168,7 @@ function RoutineList({
           }
         />
       )}
-      {error === null && routines !== null && routines.length > 0 && (
+      {routines !== null && routines.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-border bg-card">
           {routines.map((routine) => (
             <button
@@ -251,43 +223,40 @@ function RoutineDetail({
   onNavigate: (routes: AgentsRoute) => void;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
 }) {
-  const [routine, setRoutine] = useState<AgentRoutine | null>(null);
+  // The routine comes from the agent's pushed routines; its run history is
+  // seeded once and then follows every pushed run of this routine.
+  const routines = useAgentRoutines(agentId);
+  const routine = routines?.find((row) => row.id === routineId) ?? null;
+  const error = routines !== null && routine === null ? "This routine no longer exists." : null;
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
-    setError(null);
-    void getRoutine(agentId, routineId)
-      .then((row) => {
-        if (live) setRoutine(row);
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setError(err instanceof Error ? err.message : "Could not load this routine.");
-      });
+    setRuns(null);
     void listRoutineRuns(agentId, routineId)
+      .catch(() => [] as AgentRun[])
       .then((rows) => {
-        if (live) setRuns(rows);
-      })
-      .catch(() => {
-        if (live) setRuns([]);
+        if (!live) return;
+        setRuns((pushed) => (pushed ?? []).reduce((all, run) => upsertRun(all, run), rows));
       });
     return () => {
       live = false;
     };
-  }, [agentId, routineId, tick]);
+  }, [agentId, routineId]);
+
+  useAgentRunUpdates((run) => {
+    if (run.routine_id !== routineId) return;
+    setRuns((rows) => upsertRun(rows ?? [], run));
+  });
 
   const runNow = async () => {
     setRunning(true);
     setActionError(null);
     try {
       await runRoutine(agentId, routineId);
-      setTick((t) => t + 1);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not start the routine.");
     } finally {
@@ -312,7 +281,7 @@ function RoutineDetail({
     return (
       <div className="space-y-4">
         <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />
+        <ErrorState message={error} />
       </div>
     );
   }

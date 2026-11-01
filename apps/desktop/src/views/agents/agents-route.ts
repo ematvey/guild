@@ -314,7 +314,8 @@ export type RunStatus =
   | "succeeded"
   | "failed"
   | "silent"
-  | "skipped";
+  | "skipped"
+  | "cancelled";
 
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   queued: "Queued",
@@ -323,6 +324,7 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   failed: "Failed",
   silent: "Silent",
   skipped: "Skipped",
+  cancelled: "Cancelled",
 };
 
 export type RunTrigger = "message" | "routine" | "manual" | "delegation";

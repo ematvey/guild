@@ -91,7 +91,8 @@ import {
   agentsRailTab,
   type AgentsRoute,
 } from "../agents/agents-route";
-import { listAgents, type Agent } from "../agents/agents-api";
+import type { Agent } from "../agents/agents-api";
+import { useAgentList } from "../agents/agents-store";
 import { RunningSubagents } from "../agents/RunningSubagents";
 import {
   SubagentClosedRecord,
@@ -246,10 +247,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     contextRevision, updateContextRevision, onThreadStateApplied,
     childTree, stopping, setStopping, pendingSend, setSendPending, retireSendPending,
     pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
-    scrollRestoreRef, childTreeFailed, loadEarlier, openForChat, cancelPending,
+    scrollRestoreRef, loadEarlier, openForChat, cancelPending, applyChatTree,
   } = thread;
   const {
-    blocks, loading: threadLoading, displayedChatId, synced: displayedSynced,
+    blocks, loading: threadLoading, displayedChatId,
     navigating, compacting, hasMore,
   } = view;
   // What the screen shows: the old thread while a swap is pending, the cold
@@ -267,7 +268,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const models = useModelOptions();
   // The agents the caller can use. Every chat runs with one of them; the
   // composer picks which, and the choice binds the chat.
-  const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
+  // The composer's agent picker: the active agents of the pushed list.
+  const allAgents = useAgentList();
+  const agentsList = useMemo(
+    () => allAgents?.filter((a) => a.status === "active") ?? null,
+    [allAgents],
+  );
   const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
   const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);
@@ -332,7 +338,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, store, retireSendPending, openChatIdRef,
     onThreadStateApplied, updateContextRevision, setSubagentTree,
-    resetSubagentTrees, cancelPending,
+    resetSubagentTrees, applyChatTree, cancelPending,
     outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   });
   const isMobile = useIsMobile();
@@ -355,14 +361,11 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     window.location.reload();
   });
 
+  // The first list picks the default agent: the personal one.
   useEffect(() => {
-    void listAgents()
-      .then((rows) => {
-        setAgentsList(rows);
-        setPickedAgent((cur) => cur ?? rows.find((a) => a.is_personal) ?? rows[0] ?? null);
-      })
-      .catch(() => setAgentsList([]));
-  }, []);
+    if (agentsList === null) return;
+    setPickedAgent((cur) => cur ?? agentsList.find((a) => a.is_personal) ?? agentsList[0] ?? null);
+  }, [agentsList]);
 
   useEffect(() => {
     pickedAgentRef.current = pickedAgent;
@@ -632,8 +635,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     chatId: viewChatId,
     chats,
     facts,
-    treeFailed: childTreeFailed,
-    synced: displayedSynced,
     justCreated: justCreatedChat,
   });
   const readOnlyThread = access === "readonly";

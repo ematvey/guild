@@ -2,6 +2,16 @@
 // frames to handlers, and resync the open thread on every reconnect.
 
 import type { ServerFrame } from "@guild/wire/types";
+import type {
+  Agent,
+  AgentRoutine,
+  AgentRun,
+  AgentThread,
+  ChatTree,
+  EventRow,
+  SkillCatalogItem,
+  SkillInstall,
+} from "@guild/wire/rest";
 import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
@@ -49,7 +59,20 @@ export interface SocketHandlers {
   onDisplaced?: () => void;
   onAuthRequired?: () => void;
   onError?: (message: string) => void;
-  onOrgEvent?: (event: unknown) => void;
+  /** One org event row (skill registry and install activity). */
+  onOrgEvent?: (event: EventRow) => void;
+  /** Every agent the member may see. */
+  onAgentList?: (agents: Agent[]) => void;
+  /** One run, created or changed. */
+  onAgentRun?: (run: AgentRun) => void;
+  /** The member's open threads with one agent. */
+  onAgentThreads?: (agent_id: string, threads: AgentThread[]) => void;
+  /** One agent's routines with their newest runs. */
+  onAgentRoutines?: (agent_id: string, routines: AgentRoutine[]) => void;
+  /** The org skill catalog plus the member's own installs. */
+  onSkillCatalog?: (items: SkillCatalogItem[], installs: SkillInstall[]) => void;
+  /** One chat's tree facts for its header. */
+  onChatTree?: (tree: ChatTree) => void;
   /** The workspace's identity (name, logo, telemetry switch, served web
    *  bundle), sent with every workspace push and on every change. */
   onWorkspaceIdentity?: (identity: WorkspaceIdentity) => void;
@@ -130,6 +153,24 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       return;
     case "org_event":
       handlers.onOrgEvent?.(message.event);
+      return;
+    case "agent_list":
+      handlers.onAgentList?.(message.agents);
+      return;
+    case "agent_run":
+      handlers.onAgentRun?.(message.run);
+      return;
+    case "agent_threads":
+      handlers.onAgentThreads?.(message.agent_id, message.threads);
+      return;
+    case "agent_routines":
+      handlers.onAgentRoutines?.(message.agent_id, message.routines);
+      return;
+    case "skill_catalog":
+      handlers.onSkillCatalog?.(message.items, message.installs);
+      return;
+    case "chat_tree":
+      handlers.onChatTree?.(message.tree);
       return;
     case "workspace_identity": {
       const { type: _type, ...identity } = message;

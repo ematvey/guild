@@ -1,9 +1,9 @@
 // The open thread's view state: the visible-thread store (blocks, window,
 // navigation), the live turn's local input, scroll geometry and the
-// thread-tree node.
+// thread-tree node the member socket pushes.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import { fetchChatTree, type ChatTree } from "../../../lib/api/chats";
+import type { ChatTree } from "../../../lib/api/chats";
 import { fetchThreadEventsPage, type ThreadState } from "../../../lib/thread-events";
 import { traceEvent } from "../../../lib/telemetry";
 import { EARLIER_PAGE_SIZE } from "../mentions";
@@ -11,9 +11,10 @@ import type { NavigationEvent } from "../navigation";
 import { pendingAfterFrame } from "../status";
 import { createThreadViewStore } from "../thread-view-store";
 
-/** How long a first visit waits for the child tree after its state is in.
- *  A slow tree must not hold the old thread forever; the header fills in
- *  when the fetch settles. */
+/** How long a first visit waits for the chat's tree facts after its state
+ *  is in. The sync bracket sends the tree first, so this only bounds a
+ *  bracket whose tree read failed; the header fills in when a later push
+ *  lands. */
 const TREE_WAIT_MS = 600;
 /** A first visit that never receives its ThreadState falls back to the old
  *  view instead of holding navigation forever. */
@@ -32,11 +33,11 @@ export function useThreadStore(chatId: string | null) {
   const earlierAnchor = useRef<{ height: number; top: number } | null>(null);
   // The context ring's revision: the displayed chat's newest applied seq.
   const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
-  // The child tree cache: one HTTP request per chat id, including failures
-  // cached as null. A repeat visit reads the cache and never refetches.
-  const childTreesRef = useRef(new Map<string, ChatTree | null>());
-  const [childTrees, setChildTrees] = useState<Record<string, ChatTree | null>>({});
-  const treeControllers = useRef(new Map<string, AbortController>());
+  // Every chat's tree facts the socket pushed: the sync bracket of each
+  // opened chat, then every change to its title, run status, parent or
+  // flags. A repeat visit renders the cached facts at once.
+  const childTreesRef = useRef(new Map<string, ChatTree>());
+  const [childTrees, setChildTrees] = useState<Record<string, ChatTree>>({});
   // Cancellation-in-progress, per chat: a stop click flags the chat the
   // moment it lands so the composer's Stop button and the feed's shimmer
   // acknowledge it immediately. The server's stop is cooperative — the
@@ -106,40 +107,18 @@ export function useThreadStore(chatId: string | null) {
     scrollMemory.current.set(cid, { top: el.scrollTop, atBottom: near });
   };
 
-  const abortTreeFetch = (cid: string | null) => {
-    if (!cid) return;
-    const controller = treeControllers.current.get(cid);
-    if (controller) {
-      controller.abort();
-      treeControllers.current.delete(cid);
-    }
-  };
-
-  const startTreeFetch = (cid: string) => {
-    if (childTreesRef.current.has(cid) || treeControllers.current.has(cid)) return;
-    const controller = new AbortController();
-    treeControllers.current.set(cid, controller);
-    const settle = (tree: ChatTree | null) => {
-      if (controller.signal.aborted) return;
-      childTreesRef.current.set(cid, tree);
-      setChildTrees((prev) => ({ ...prev, [cid]: tree }));
-      dispatchNavRef.current({ type: "tree", chatId: cid, ok: tree !== null });
-    };
-    void fetchChatTree(cid, controller.signal)
-      .then(settle)
-      .catch(() => settle(null))
-      .finally(() => {
-        if (treeControllers.current.get(cid) === controller) treeControllers.current.delete(cid);
-      });
-  };
+  /** Applies one chat's pushed tree facts; a pending first visit to that
+   *  chat may swap once its state is also in. */
+  const applyChatTree = useCallback((tree: ChatTree) => {
+    childTreesRef.current.set(tree.chat_id, tree);
+    setChildTrees((prev) => ({ ...prev, [tree.chat_id]: tree }));
+    dispatchNavRef.current({ type: "tree", chatId: tree.chat_id });
+  }, []);
 
   /** Applies one navigation event to the store and runs its side effects:
-   *  the tree fetch, the swap's scroll restore and the wait timers. */
+   *  the swap's scroll restore and the wait timers. */
   const dispatchNav = (event: NavigationEvent) => {
-    const priorPending = store.navigation().pendingChatId;
     const decision = store.navigate(event);
-    if (decision.abortTree) abortTreeFetch(priorPending);
-    if (decision.fetchTree) startTreeFetch(decision.fetchTree);
     if (decision.swapTo !== undefined) {
       clearTreeTimer();
       clearStateTimer();
@@ -236,7 +215,6 @@ export function useThreadStore(chatId: string | null) {
     earlierController.current?.abort();
     clearTreeTimer();
     clearStateTimer();
-    for (const controller of treeControllers.current.values()) controller.abort();
   }, []);
 
   /** Opens a chat: a cached (synced) view swaps at once, a first visit keeps
@@ -262,21 +240,17 @@ export function useThreadStore(chatId: string | null) {
 
   const displayedChatId = view.displayedChatId;
   const childTree = displayedChatId !== null ? childTrees[displayedChatId] ?? null : null;
-  const childTreeFailed =
-    displayedChatId !== null &&
-    Object.prototype.hasOwnProperty.call(childTrees, displayedChatId) &&
-    childTrees[displayedChatId] === null;
 
   return {
     store,
     view,
-    childTreeFailed,
     loadingEarlier,
     earlierAnchor,
     contextRevision,
     updateContextRevision,
     onThreadStateApplied,
     childTree,
+    applyChatTree,
     stopping,
     setStopping,
     pendingSend,

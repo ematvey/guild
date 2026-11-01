@@ -4,7 +4,7 @@
 import { HAS_ENGINE } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta } from "../thread-events";
-import type { Chat, SubagentNode, ThreadType } from "@guild/wire/rest";
+import type { Chat, ChatTree, SubagentNode, ThreadType } from "@guild/wire/rest";
 import { ApiError, request, requestResponse } from "./request";
 
 const thread = (chatId: string) => `/api/v1/threads/${encodeURIComponent(chatId)}`;
@@ -33,32 +33,9 @@ export type ChatSummary = Chat;
 /** The three kinds of thread. Archiving and deletion are flags, not types. */
 export type { ThreadType };
 
-/** One node of the thread tree: the open chat, its type, flags, status and
- *  parent. */
-export interface ChatTree {
-  chat_id: string;
-  type: ThreadType;
-  archived: boolean;
-  deleted: boolean;
-  title: string;
-  agent_id: string | null;
-  agent_name: string | null;
-  status: string | null;
-  depth: number;
-  parent: { chat_id: string; title: string } | null;
-  /** The run thread this one was opened from, when an agent delivered it. */
-  origin: { chat_id: string; title: string } | null;
-}
-
-/** The open chat's position in the thread tree, for the child thread header;
- *  null when it cannot be read. */
-export async function fetchChatTree(chatId: string, signal: AbortSignal): Promise<ChatTree | null> {
-  try {
-    return await request<ChatTree>("GET", `/api/v1/chats/${encodeURIComponent(chatId)}/tree`, undefined, { signal });
-  } catch {
-    return null;
-  }
-}
+/** One chat's place in the thread tree: its type, flags, run status, parent
+ *  and origin. The member socket pushes it (`chat_tree`). */
+export type { ChatTree };
 
 /** One node of the chat's thread subtree, with its latest run status. */
 export type ChatSubagentNode = SubagentNode;

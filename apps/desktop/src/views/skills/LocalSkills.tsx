@@ -1,11 +1,11 @@
 // Local machine tab (Skills panel, Tauri only): the machine's skill
 // folders — provenance badges, enable/disable, publish to the org
 // registry, uninstall (the body once lived in Settings → SkillsSection) —
-// plus the signed-in user's org installs (GET /api/v1/skills/installs)
-// with their pinned versions and Update-pin buttons. Machine-local state
-// talks JSON-RPC to the app-server; org installs talk to the admin API.
+// plus the signed-in user's org installs with their pinned versions and
+// Update-pin buttons. Machine-local state talks JSON-RPC to the app-server;
+// org installs arrive in the pushed skill catalog.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Ban,
   CircleArrowUp,
@@ -20,13 +20,12 @@ import { resolveProjectDir } from "../settings/resolve-project-dir";
 import { daemonFs } from "../../lib/fs-bridge";
 import { listSkills, setSkillDisabled } from "../../lib/skills";
 import {
-  fetchInstalls,
-  skillsList,
   skillsPin,
   skillsUninstall,
   type SkillInstall,
 } from "./skills-api";
 import { formatVersion } from "./version";
+import { useSkillCatalog } from "./skills-store";
 import { Button } from "@guild/ui/components/button";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
@@ -153,8 +152,16 @@ const SCOPE_LABELS: Record<string, string> = {
 
 export default function LocalSkills() {
   const [rows, setRows] = useState<LocalSkillRow[] | null>(null);
-  const [installs, setInstalls] = useState<SkillInstall[] | null>(null);
-  const [latest, setLatest] = useState<Map<string, string>>(new Map());
+  // Org installs and latest versions are live: the skill_catalog frame.
+  const catalog = useSkillCatalog();
+  const installs: SkillInstall[] | null = catalog?.installs ?? null;
+  const latest = useMemo(() => {
+    const versions = new Map<string, string>();
+    for (const item of catalog?.items ?? []) {
+      if (item.latest_version !== null) versions.set(item.slug, item.latest_version);
+    }
+    return versions;
+  }, [catalog]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<LocalSkillRow | null>(null);
@@ -163,24 +170,15 @@ export default function LocalSkills() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      // Discovery moved client-side (lib/context.ts over the fs bridge);
-      // org installs and the catalog come from the admin API.
+      // Discovery is client-side (lib/context.ts over the fs bridge): this
+      // machine's folders, not server state.
       const fs = daemonFs(rpcCall);
       const scopes = await fs.scopes();
-      const [localRows, orgInstalls, catalog] = await Promise.all([
-        listSkills(fs, scopes, (await resolveProjectDir()) ?? undefined),
-        fetchInstalls(),
-        skillsList(),
-      ]);
+      const localRows = await listSkills(fs, scopes, (await resolveProjectDir()) ?? undefined);
       setRows(localRows as LocalSkillRow[]);
-      setInstalls(orgInstalls);
-      const latestVersions = new Map<string, string>();
-      for (const item of catalog ?? []) latestVersions.set(item.slug, item.latest_version);
-      setLatest(latestVersions);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setRows([]);
-      setInstalls(null);
     }
   }, []);
 

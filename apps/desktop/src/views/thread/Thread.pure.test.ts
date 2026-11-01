@@ -116,30 +116,12 @@ describe("thread access", () => {
     })).toBe("readonly");
   });
 
-  it("falls back to read-only when a synced child's tree fetch failed", () => {
-    expect(threadAccess({
-      ...base,
-      treeFailed: true,
-      synced: true,
-    })).toBe("readonly");
-  });
-
   it("keeps the composer editable for a just-created chat whose row is in flight", () => {
     expect(threadAccess({
       ...base,
       chats: [],
-      treeFailed: true,
-      synced: true,
       justCreated: true,
     })).toBe("writable");
-  });
-
-  it("does not use the failed-tree fallback before the view is synced", () => {
-    expect(threadAccess({
-      ...base,
-      treeFailed: true,
-      synced: false,
-    })).toBe("unknown");
   });
 
   it("never marks the scratch composer read-only", () => {

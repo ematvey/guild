@@ -74,6 +74,7 @@ function useHarness() {
     updateContextRevision: thread.updateContextRevision,
     setSubagentTree: data.setSubagentTree,
     resetSubagentTrees: data.resetSubagentTrees,
+    applyChatTree: thread.applyChatTree,
     cancelPending: thread.cancelPending,
     outgoingRef,
     observedUserIdsRef,
@@ -120,9 +121,17 @@ describe("member socket → thread store (integration)", () => {
     act(() => first.open());
     expect(JSON.parse(first.sent[0]!)).toEqual({ type: "sync", chat_id: CHAT });
 
-    // The cold open: the sync's state plus the (failed) tree swap it in.
+    // The cold open: the sync's tree facts plus its state swap it in.
     await act(async () => {
       first.deliver({ type: "sync_begin", chat_id: CHAT });
+      first.deliver({
+        type: "chat_tree",
+        chat_id: CHAT,
+        tree: {
+          chat_id: CHAT, type: "user", title: "Hi", agent_id: null, agent_name: null, status: null,
+          depth: 0, parent: null, origin: null, archived: false, deleted: false,
+        },
+      });
       first.deliver(threadState(1, [echo(1, "hi")], false));
       first.deliver({ type: "sync_done", chat_id: CHAT });
       await vi.advanceTimersByTimeAsync(0);

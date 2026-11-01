@@ -15,6 +15,15 @@ import { statusAfterGenerating, statusFromThreads, type ChatStatus } from "../st
 import type { ThreadViewStore } from "../thread-view-store";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
+import {
+  applyAgentList,
+  applyAgentRoutines,
+  applyAgentRun,
+  applyAgentThreads,
+  resetAgentSlices,
+} from "../../agents/agents-store";
+import { applyOrgEvent, applySkillCatalog } from "../../skills/skills-store";
+import type { ChatTree } from "../../../lib/api/chats";
 
 
 export interface MemberSocketDeps {
@@ -32,6 +41,8 @@ export interface MemberSocketDeps {
   updateContextRevision: (cid: string, events: ThreadState["events"]) => void;
   setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
   resetSubagentTrees: () => void;
+  /** One chat's header facts arrived (inside its sync bracket or live). */
+  applyChatTree: (tree: ChatTree) => void;
   cancelPending: (cid: string) => void;
   outgoingRef: RefObject<Map<string, OutgoingCommand>>;
   observedUserIdsRef: RefObject<Set<string>>;
@@ -43,7 +54,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, store, retireSendPending, openChatIdRef,
-    onThreadStateApplied, updateContextRevision, setSubagentTree, resetSubagentTrees,
+    onThreadStateApplied, updateContextRevision, setSubagentTree, resetSubagentTrees, applyChatTree,
     cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
@@ -157,6 +168,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // The reconnect sync's state re-derives each open view in full.
         store.mutate((r) => r.invalidate());
         resetSubagentTrees();
+        resetAgentSlices();
       },
       onMachineStatus: applyMachineStatus,
       onWorkspaceIdentity: (identity) => {
@@ -169,6 +181,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       onMachineList: applyMachineList,
       onModelList: applyModelList,
+      onAgentList: applyAgentList,
+      onAgentRun: applyAgentRun,
+      onAgentThreads: applyAgentThreads,
+      onAgentRoutines: applyAgentRoutines,
+      onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
+      onOrgEvent: applyOrgEvent,
+      onChatTree: applyChatTree,
       onArchivedThreadList: (next) => setArchivedChats(next),
       onProjectList: (next, archived) => {
         setProjects(next);

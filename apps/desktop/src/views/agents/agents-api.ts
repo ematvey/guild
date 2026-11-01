@@ -77,6 +77,7 @@ export interface AgentRun {
   id: string;
   agent_id: string;
   agent_name?: string | null;
+  user_id?: string | null;
   thread_id?: string | null;
   chat_id?: string | null;
   routine_id?: string | null;

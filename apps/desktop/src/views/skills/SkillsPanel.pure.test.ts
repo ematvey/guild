@@ -16,7 +16,6 @@ import {
   clampSkillsRoute,
   SKILLS_CATALOG,
   skillsPageState,
-  skillsRefetch,
   type SkillsRoute,
 } from "./skills-route";
 import { avatarChip } from "../../lib/format";
@@ -222,21 +221,6 @@ describe("skills-route (the page's URL contract)", () => {
     expect(clampSkillsRoute(machine, true)).toBe(machine);
     const detail: SkillsRoute = { view: "catalog", slug: "x", editor: null };
     expect(clampSkillsRoute(detail, false)).toBe(detail);
-  });
-
-  it("skillsRefetch fires on detail back and editor close, not on tab or forward moves", () => {
-    const detail: SkillsRoute = { view: "catalog", slug: "x", editor: null };
-    const editing: SkillsRoute = { view: "catalog", slug: "x", editor: "x" };
-    expect(skillsRefetch(detail, SKILLS_CATALOG)).toBe(true);
-    // save: editor closes onto the saved slug's detail page
-    expect(skillsRefetch(editing, detail)).toBe(true);
-    // cancel: editor closes onto the bare catalog
-    expect(skillsRefetch(editing, SKILLS_CATALOG)).toBe(true);
-    // catalog tab switches and forward moves into a detail never refetch
-    expect(skillsRefetch(SKILLS_CATALOG, detail)).toBe(false);
-    expect(skillsRefetch(SKILLS_CATALOG, { view: "activity", slug: null, editor: null })).toBe(false);
-    // opening the editor (detail → edit) keeps the page mounted, no refetch
-    expect(skillsRefetch(detail, editing)).toBe(false);
   });
 });
 

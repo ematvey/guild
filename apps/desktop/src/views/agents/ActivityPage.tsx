@@ -46,6 +46,8 @@ import {
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
+import type { AgentRun } from "./agents-api";
+import { traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import {
   AgentGlyph,
   EmptyState,
@@ -77,6 +79,16 @@ const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
+/** True when a run that is new to the traces table belongs in it: same
+ *  agent projection, status and trigger filters, and no text search (the
+ *  search runs over trace-store fields the run frame does not carry). */
+export function runMatchesFilters(run: AgentRun, filters: ActivityFilters, agentId?: string): boolean {
+  if (agentId !== undefined && run.agent_id !== agentId) return false;
+  if (filters.status !== "all" && run.status !== filters.status) return false;
+  if (filters.trigger !== "all" && run.trigger !== filters.trigger) return false;
+  return filters.q.trim() === "";
+}
+
 function windowQuery(period: ActivityPeriod): ActivityQuery {
   const now = Date.now();
   return {
@@ -177,6 +189,22 @@ export function ActivityPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.tab, filters.period, filters.status, filters.trigger, filters.q, filters.caller, filters.model, agentId, tick]);
 
+  // The traces tab is live: a pushed run moves its row, and a new run that
+  // matches the filters joins the top. The calls and chats tabs are span
+  // analytics over the trace store and reload on their Refresh.
+  useAgentRunUpdates((run) => {
+    if (filters.tab !== "traces" || traces === null) return;
+    if (traces.some((row) => row.trace_id === run.id)) {
+      setTraces((rows) => rows?.map((row) => (row.trace_id === run.id ? traceWithRun(row, run) : row)) ?? rows);
+      return;
+    }
+    if (!runMatchesFilters(run, filters, agentId)) return;
+    setTraces((rows) =>
+      rows === null || rows.some((row) => row.trace_id === run.id) ? rows : [traceFromRun(run), ...rows],
+    );
+    setTotal((value) => value + 1);
+  });
+
   const admin = role === "admin";
   const body = (
     <>
@@ -262,15 +290,17 @@ export function ActivityPage({
           <span className="text-xs text-muted-foreground">
             {count(total, filters.tab === "chats" ? "chat" : filters.tab === "calls" ? "call" : "trace")}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Refresh activity"
-            onClick={() => setTick((value) => value + 1)}
-          >
-            <RefreshCw />
-            Refresh
-          </Button>
+          {filters.tab !== "traces" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Refresh activity"
+              onClick={() => setTick((value) => value + 1)}
+            >
+              <RefreshCw />
+              Refresh
+            </Button>
+          )}
         </div>
       </div>
 

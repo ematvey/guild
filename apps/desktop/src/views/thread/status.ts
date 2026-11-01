@@ -161,14 +161,10 @@ export function threadAccess(input: {
   chatId: string | null;
   chats: ReadonlyArray<Pick<ChatSummary, "id">> | null;
   facts: ThreadFacts;
-  /** The child-tree request settled without a tree (cached as null). */
-  treeFailed?: boolean;
-  /** An authoritative ThreadState has built the visible view. */
-  synced?: boolean;
   /** The chat was just created and its sidebar row may still be in flight. */
   justCreated?: boolean;
 }): ThreadAccess {
-  const { chatId, chats, facts, treeFailed, synced, justCreated } = input;
+  const { chatId, chats, facts, justCreated } = input;
   if (chatId === null) return "writable";
   if (facts.type !== "user") return "readonly";
   if (facts.deleted) return "readonly";
@@ -177,10 +173,6 @@ export function threadAccess(input: {
   // A just-created chat keeps its editable composer while its row is still
   // in flight.
   if (justCreated) return "writable";
-  // A child thread is absent from both lists and its tree request can fail.
-  // Once the view is synced, absence plus a failed tree is a child, not an
-  // unknown thread.
-  if (treeFailed && synced) return "readonly";
   return "unknown";
 }
 

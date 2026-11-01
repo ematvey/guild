@@ -8,7 +8,7 @@
 // user action navigates through onNavigate (see skills-route.ts); only the
 // catalog's search/filter/sort stay local component state.
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Lock, Plus, Search } from "lucide-react";
 import { HAS_ENGINE } from "../../lib/session";
 import { Input } from "@guild/ui/components/input";
@@ -30,18 +30,9 @@ import { count } from "../../lib/format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";
-import {
-  skillsPageState,
-  skillsRefetch,
-  type SkillsRoute,
-} from "./skills-route";
-import {
-  fetchInstalls,
-  skillsList,
-  type SkillInstall,
-  type SkillItem,
-  type SkillMe,
-} from "./skills-api";
+import { skillsPageState, type SkillsRoute } from "./skills-route";
+import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
+import { useSkillCatalog } from "./skills-store";
 
 /** One catalog row's view model. */
 export interface SkillRow {
@@ -229,43 +220,16 @@ export function SkillsPanel({
   onNavigate: (next: SkillsRoute) => void;
 }) {
   const { tab, selected, editor } = skillsPageState(route);
-  const [skills, setSkills] = useState<SkillItem[] | null>(null);
-  const [installs, setInstalls] = useState<SkillInstall[] | null>(null);
+  // The catalog and the member's installs are live: the skill_catalog frame
+  // lands on connect and after every publish, gate, unpublish, install,
+  // uninstall or pin, so returning from a detail or the editor shows the
+  // current list without a read.
+  const catalog = useSkillCatalog();
+  const skills: SkillItem[] | null = catalog?.items ?? null;
+  const installs: SkillInstall[] | null = catalog?.installs ?? null;
   const [query, setQuery] = useState("");
   const [filterKind, setFilterKind] = useState<SkillFilterKind>("all");
   const [sortKey, setSortKey] = useState<SkillSortKey>("installs");
-  const [tick, setTick] = useState(0);
-  /** The last load failed (fetch threw or answered !ok — the paired server
-   *  may predate the skills API). Renders a retry row instead of skeletons
-   *  that would otherwise spin forever. */
-  const [loadFailed, setLoadFailed] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    void Promise.all([skillsList(), fetchInstalls()])
-      .catch(() => [null, null] as const)
-      .then(([items, myInstalls]) => {
-        if (!live) return;
-        setSkills(items);
-        setInstalls(myInstalls);
-        setLoadFailed(items === null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [tick]);
-
-  // Arriving at the catalog from a detail page or the editor refetches:
-  // actions that change visibility or versions (unpublish, save) must not
-  // leave a stale row in the list. Route-driven, so the browser's back
-  // button refetches exactly like the page's own Back control.
-  const prevRouteRef = useRef(route);
-  useEffect(() => {
-    const prev = prevRouteRef.current;
-    prevRouteRef.current = route;
-    if (skillsRefetch(prev, route)) setTick((t) => t + 1);
-  }, [route]);
-
   const installedSlugs = new Set((installs ?? []).map((i) => i.slug));
   const search = filterSkills(skills ?? [], query);
   const kind = filterByKind(search, filterKind, { installedSlugs, me });
@@ -298,9 +262,6 @@ export function SkillsPanel({
         <SkillDetail
           slug={selected}
           me={me}
-          // Back refetches the catalog (the route transition drives it):
-          // actions that change visibility (unpublish) must not leave a
-          // stale row in the list.
           onBack={() => onNavigate({ view: "catalog", slug: null, editor: null })}
           onOpenSkill={(slug) => onNavigate({ view: "catalog", slug, editor: null })}
           onEdit={(slug) => onNavigate({ view: "catalog", slug, editor: slug })}
@@ -399,30 +360,7 @@ export function SkillsPanel({
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
             <div className="flex flex-col gap-1.5">
-              {loadFailed && (
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
-                  <div>
-                    <p className="text-sm font-medium">Could not load the skill catalog</p>
-                    <p className="mt-0.5 text-sm text-muted-foreground">
-                      The paired server may be older than this app and lack the skills API.
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setLoadFailed(false);
-                      setSkills(null);
-                      setInstalls(null);
-                      setTick((t) => t + 1);
-                    }}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              )}
-              {!loadFailed &&
-                skills === null &&
+              {skills === null &&
                 [0, 1, 2, 3, 4, 5].map((i) => (
                   <SkeletonRows key={i} rows={1} />
                 ))}

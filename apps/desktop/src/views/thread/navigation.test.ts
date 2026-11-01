@@ -35,9 +35,8 @@ describe("thread navigation transitions", () => {
     expect(pending.state.phase).toBe("pending");
     expect(pending.state.displayedChatId).toBe("parent");
     expect(pending.state.pendingChatId).toBe("child");
-    expect(pending.fetchTree).toBe("child");
 
-    const afterTree = transitionNavigation(pending.state, { type: "tree", chatId: "child", ok: true });
+    const afterTree = transitionNavigation(pending.state, { type: "tree", chatId: "child" });
     expect(afterTree.swapTo).toBeUndefined();
     expect(afterTree.state.phase).toBe("pending");
 
@@ -54,7 +53,7 @@ describe("thread navigation transitions", () => {
     );
     const afterState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
     expect(afterState.swapTo).toBeUndefined();
-    const afterTree = transitionNavigation(afterState.state, { type: "tree", chatId: "child", ok: true });
+    const afterTree = transitionNavigation(afterState.state, { type: "tree", chatId: "child" });
     expect(afterTree.swapTo).toBe("child");
   });
 
@@ -75,17 +74,6 @@ describe("thread navigation transitions", () => {
     );
     const afterState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
     expect(afterState.swapTo).toBe("child");
-  });
-
-  it("still swaps after a failed tree fetch", () => {
-    const pending = transitionNavigation(
-      { ...initialNavigation(), displayedChatId: "parent" },
-      { type: "open", chatId: "child", cached: false, treeKnown: false },
-    );
-    const withState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
-    const afterFailure = transitionNavigation(withState.state, { type: "tree", chatId: "child", ok: false });
-    expect(afterFailure.swapTo).toBe("child");
-    expect(afterFailure.state.phase).toBe("swap");
   });
 
   it("swaps after a slow tree timeout once the state is in", () => {
@@ -109,7 +97,6 @@ describe("thread navigation transitions", () => {
       cached: false,
       treeKnown: false,
     });
-    expect(second.abortTree).toBe(true);
     expect(second.state.pendingChatId).toBe("child-b");
     expect(second.state.displayedChatId).toBe("parent");
     // A late state for the cancelled target does nothing.
@@ -135,7 +122,6 @@ describe("thread navigation transitions", () => {
       { type: "open", chatId: "child", cached: false, treeKnown: false },
     );
     const cancelled = transitionNavigation(pending.state, { type: "cancel" });
-    expect(cancelled.abortTree).toBe(true);
     expect(cancelled.swapTo).toBeUndefined();
     expect(cancelled.state.phase).toBe("idle");
     expect(cancelled.state.displayedChatId).toBe("parent");
@@ -157,7 +143,7 @@ describe("thread navigation transitions", () => {
     expect(cold.state.pendingChatId).toBe("deep");
     const ready = run([
       { type: "open", chatId: "deep", cached: false, treeKnown: false },
-      { type: "tree", chatId: "deep", ok: true },
+      { type: "tree", chatId: "deep" },
       { type: "state", chatId: "deep" },
     ]);
     expect(ready.phase).toBe("swap");
@@ -178,7 +164,6 @@ describe("thread navigation transitions", () => {
       cached: false,
       treeKnown: true,
     });
-    expect(back.abortTree).toBe(true);
     expect(back.swapTo).toBeUndefined();
     expect(back.state.phase).toBe("idle");
     expect(back.state.pendingChatId).toBeNull();

@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Bot, Plus, Search, Sparkles } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
 import { VISIBILITY_LABEL } from "./agents-route";
-import { listAgents, type Agent } from "./agents-api";
+import type { Agent } from "./agents-api";
+import { useAgentList } from "./agents-store";
 import { count } from "../../lib/format";
 import { ModelName } from "./agent-model";
 import {
   AgentGlyph,
   AgentStatusBadge,
   EmptyState,
-  ErrorState,
   LoadingRows,
   PageBody,
   PageHeader,
@@ -48,27 +48,10 @@ export function AgentsDirectory({
 }: {
   onNavigate: (route: AgentsRoute) => void;
 }) {
-  const [agents, setAgents] = useState<Agent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Every agent this member may see, archived ones included: the member
+  // socket pushes the list on connect and on every agent change.
+  const agents = useAgentList();
   const [query, setQuery] = useState("");
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    void listAgents(true)
-      .then((rows) => {
-        if (live) setAgents(rows);
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setAgents(null);
-        setError(err instanceof Error ? err.message : "The agents API did not answer.");
-      });
-    return () => {
-      live = false;
-    };
-  }, [tick]);
 
   const visible = useMemo(
     () => sortAgents(filterAgents(agents ?? [], query)),
@@ -103,18 +86,8 @@ export function AgentsDirectory({
         }
       />
       <PageBody>
-        {error !== null && (
-          <ErrorState
-            title="Could not load agents"
-            message={error}
-            onRetry={() => {
-              setAgents(null);
-              setTick((t) => t + 1);
-            }}
-          />
-        )}
-        {error === null && agents === null && <LoadingRows rows={5} />}
-        {error === null && agents !== null && visible.length === 0 && (
+        {agents === null && <LoadingRows rows={5} />}
+        {agents !== null && visible.length === 0 && (
           <EmptyState
             icon={<Bot className="size-5" />}
             title={query.trim() === "" ? "No agents yet" : `No agents match "${query.trim()}"`}
@@ -133,7 +106,7 @@ export function AgentsDirectory({
             }
           />
         )}
-        {error === null && agents !== null && visible.length > 0 && (
+        {agents !== null && visible.length > 0 && (
           <div className="space-y-6">
             <AgentGroup
               title="Active"

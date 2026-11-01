@@ -46,14 +46,3 @@ export function skillsPageState(route: SkillsRoute): {
 export function clampSkillsRoute(route: SkillsRoute, isTauri: boolean): SkillsRoute {
   return !isTauri && route.view === "machine" ? { ...route, view: "catalog" } : route;
 }
-
-/** True when arriving at `next` from `prev` must refetch the catalog: back
- *  from a detail page (button or browser back), or the editor closing — a
- *  save bumps the version / creates the row, so the list behind must not go
- *  stale. The extra fetch a cancel triggers is idle and harmless. */
-export function skillsRefetch(prev: SkillsRoute, next: SkillsRoute): boolean {
-  return (
-    (prev.slug !== null && next.slug === null) ||
-    (prev.editor !== null && next.editor === null)
-  );
-}

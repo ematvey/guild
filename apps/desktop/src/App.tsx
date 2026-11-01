@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { clearSettingsCaches } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./lib/machines-store";
 import { clearWorkspaceIdentity } from "./lib/workspace-store";
+import { clearAgentState } from "./views/agents/agents-store";
+import { clearSkillCatalog } from "./views/skills/skills-store";
 import { ThemeProvider } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -363,6 +365,8 @@ function DesktopApp() {
     clearSettingsCaches();
     clearMachinesCache();
     clearWorkspaceIdentity();
+    clearAgentState();
+    clearSkillCatalog();
     setUser(null);
     window.location.reload();
   };
@@ -526,6 +530,8 @@ function AppInner() {
       clearSettingsCaches();
       clearMachinesCache();
       clearWorkspaceIdentity();
+      clearAgentState();
+      clearSkillCatalog();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

@@ -107,6 +107,28 @@ describe("routeMessage", () => {
     expect(lists).toEqual([[{ id: "m1", alias: "Auto" }]]);
   });
 
+  it("routes the agent, skill catalog and chat tree frames", () => {
+    const calls: string[] = [];
+    const handlers: SocketHandlers = {
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onAgentList: (agents) => calls.push(`agents:${agents.length}`),
+      onAgentRun: (run) => calls.push(`run:${run.id}`),
+      onAgentThreads: (agentId, threads) => calls.push(`threads:${agentId}:${threads.length}`),
+      onAgentRoutines: (agentId, routines) => calls.push(`routines:${agentId}:${routines.length}`),
+      onSkillCatalog: (items, installs) => calls.push(`skills:${items.length}:${installs.length}`),
+      onChatTree: (tree) => calls.push(`tree:${tree.chat_id}`),
+    };
+    routeMessage({ type: "agent_list", agents: [] }, handlers);
+    routeMessage({ type: "agent_run", run: { id: "r1" } } as never, handlers);
+    routeMessage({ type: "agent_threads", agent_id: "a1", threads: [] }, handlers);
+    routeMessage({ type: "agent_routines", agent_id: "a1", routines: [] }, handlers);
+    routeMessage({ type: "skill_catalog", items: [], installs: [] }, handlers);
+    routeMessage({ type: "chat_tree", chat_id: "c1", tree: { chat_id: "c1" } } as never, handlers);
+    expect(calls).toEqual([
+      "agents:0", "run:r1", "threads:a1:0", "routines:a1:0", "skills:0:0", "tree:c1",
+    ]);
+  });
+
   it("routes incremental thread_events frames to their handler", () => {
     const seen: { chatId: string; seq: number; rows: ThreadEventRow[] }[] = [];
     routeMessage(

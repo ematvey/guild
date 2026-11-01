@@ -19,7 +19,7 @@ export interface SkillOwner {
 export interface SkillItem {
   slug: string;
   description: string;
-  latest_version: string;
+  latest_version: string | null;
   owner: SkillOwner | null;
   maintainer_gated: boolean;
   installs: number;

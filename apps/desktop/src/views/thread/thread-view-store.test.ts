@@ -40,7 +40,7 @@ describe("thread view store", () => {
     deliver(store, state("a", 1, [say("a", 1, "hi")]));
     // The tree is still on its way: the skeleton holds.
     expect(store.getSnapshot().loading).toBe(true);
-    store.navigate({ type: "tree", chatId: "a", ok: true });
+    store.navigate({ type: "tree", chatId: "a" });
     const shown = store.getSnapshot();
     expect(shown).toMatchObject({ loading: false, navigating: false, displayedChatId: "a", synced: true });
     expect(shown.blocks.map((b) => b.text)).toEqual(["hi"]);
@@ -95,7 +95,7 @@ describe("thread view store", () => {
     expect(store.getSnapshot()).toMatchObject({ loading: true, displayedChatId: null });
     expect(store.getSnapshot().blocks.map((b) => b.text)).toEqual(["hello"]);
     deliver(store, state("new", 1, [{ ...say("new", 1, "hello"), id: "k1" }]));
-    store.navigate({ type: "tree", chatId: "new", ok: true });
+    store.navigate({ type: "tree", chatId: "new" });
     expect(store.getSnapshot()).toMatchObject({ displayedChatId: "new", loading: false });
     expect(store.getSnapshot().blocks.map((b) => b.text)).toEqual(["hello"]);
   });

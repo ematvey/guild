@@ -22,6 +22,7 @@ import {
   type TraceRow,
 } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
+import { traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 import { SpanDetail } from "./span-detail";
@@ -95,6 +96,14 @@ export function RunDetailPage({
       live = false;
     };
   }, [runId, traceOnly, tick]);
+
+  // A running run finishes on screen: every pushed change to this run moves
+  // the run row and the trace header (status, summary, end, error).
+  useAgentRunUpdates((pushed) => {
+    if (pushed.id !== runId) return;
+    setRun((prev) => (prev === null ? prev : { ...prev, ...pushed }));
+    setTrace((prev) => (prev === null ? prev : traceWithRun(prev, pushed)));
+  });
 
   const ordered = useMemo(
     () => [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time)),

@@ -66,13 +66,11 @@ export function AgentSettings({
   agent,
   manage,
   viewer,
-  onChanged,
   onDeleted,
 }: {
   agent: Agent;
   manage: boolean;
   viewer: Viewer;
-  onChanged: () => void;
   onDeleted: () => void;
 }) {
   const [name, setName] = useState(agent.name);
@@ -111,7 +109,6 @@ export function AgentSettings({
         team_ids: visibility === "team" ? teamIds : [],
       });
       setSaved(true);
-      onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the agent.");
     } finally {
@@ -374,7 +371,6 @@ export function AgentSettings({
           <AgentActions
             agent={agent}
             manage={manage}
-            onChanged={onChanged}
             onDeleted={onDeleted}
           />
           <span className="text-xs text-muted-foreground">
@@ -434,12 +430,10 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
 export function AgentActions({
   agent,
   manage,
-  onChanged,
   onDeleted,
 }: {
   agent: Agent;
   manage: boolean;
-  onChanged: () => void;
   onDeleted: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -450,7 +444,6 @@ export function AgentActions({
     setBusy(true);
     try {
       await fn();
-      onChanged();
     } finally {
       setBusy(false);
     }
