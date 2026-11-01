@@ -3,8 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::sync::Mutex;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -122,72 +120,9 @@ impl Event {
     }
 }
 
-/// One message per line — any JSON value.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum Message {
-    Request(Request),
-    Response(Response),
-    Event(Event),
-}
-
-/// Framed connection: reads one JSON per line from `R`, writes one JSON per
-/// line to `W`. Shared writer so events can be pushed while a request is
-/// being handled.
-pub struct Connection<R: Read, W: Write> {
-    reader: BufReader<R>,
-    writer: Mutex<W>,
-}
-
-impl<R: Read, W: Write> Connection<R, W> {
-    pub fn new(reader: R, writer: W) -> Self {
-        Self {
-            reader: BufReader::new(reader),
-            writer: Mutex::new(writer),
-        }
-    }
-
-    pub fn write_line(&self, value: &impl Serialize) -> std::io::Result<()> {
-        let mut w = self.writer.lock().expect("writer lock");
-        serde_json::to_writer(&mut *w, value)?;
-        w.write_all(b"\n")?;
-        w.flush()
-    }
-
-    /// Disassembles the connection (used when a loop exits).
-    pub fn into_parts(self) -> (BufReader<R>, Mutex<W>) {
-        (self.reader, self.writer)
-    }
-
-    /// Reads the next line and parses it. `None` on clean EOF.
-    pub fn read_message(&mut self) -> Option<Result<Message, RpcError>> {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match self.reader.read_line(&mut line) {
-                // The buffer is cleared at the top, so EOF always reads as an
-                // empty line — a truncated final line is silently dropped.
-                Ok(0) => return None,
-                Ok(_) => {
-                    if line.trim().is_empty() {
-                        continue; // skip blank separator lines
-                    }
-                    break;
-                }
-                Err(e) => return Some(Err(RpcError::new(RpcError::INTERNAL, e.to_string()))),
-            }
-        }
-        Some(
-            serde_json::from_str::<Message>(line.trim())
-                .map_err(|e| RpcError::new(RpcError::PARSE_ERROR, e.to_string())),
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     #[test]
     fn request_serializes_with_protocol_field() {
@@ -198,30 +133,6 @@ mod tests {
         assert_eq!(v["method"], "chat.send");
         assert_eq!(v["params"]["text"], "hi");
         assert!(r.is_valid());
-    }
-
-    #[test]
-    fn connection_roundtrips_request_and_event() {
-        // Write a request and an event through a connection onto a buffer.
-        let mut wire: Vec<u8> = Vec::new();
-        {
-            let conn = Connection::new(std::io::empty(), &mut wire);
-            conn.write_line(&Request::new(7, "ping", Value::Null))
-                .unwrap();
-            conn.write_line(&Event::new("chat.delta", serde_json::json!({"t": "a"})))
-                .unwrap();
-        }
-        // Read them back.
-        let mut conn = Connection::new(Cursor::new(wire), std::io::sink());
-        match conn.read_message().unwrap().unwrap() {
-            Message::Request(r) => assert_eq!(r.method, "ping"),
-            other => panic!("expected request, got {other:?}"),
-        }
-        match conn.read_message().unwrap().unwrap() {
-            Message::Event(e) => assert_eq!(e.event, "chat.delta"),
-            other => panic!("expected event, got {other:?}"),
-        }
-        assert!(conn.read_message().is_none(), "EOF after last line");
     }
 
     #[test]
