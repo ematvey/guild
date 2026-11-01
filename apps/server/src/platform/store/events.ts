@@ -1,6 +1,6 @@
 // Org event log + emission (spec §4.6/§4.8): emitters insert the record and
 // NOTIFY the guild_events
-// channel; the WebSocket feed (M5) delivers the fan-out.
+// channel; the member-socket feed delivers the fan-out.
 
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";

@@ -1,5 +1,4 @@
-// CORS — the port of the Rust server's tower-http CorsLayer
-//: same-origin requests never hit CORS;
+// CORS: same-origin requests never hit CORS;
 // the desktop webview (tauri://localhost on macOS, http(s)://tauri.localhost
 // elsewhere) and the vite dev server are the only cross-origin clients.
 // Blanket-permissive CORS would let any page drive an authenticated
@@ -7,7 +6,7 @@
 //
 // Preflights (OPTIONS + Access-Control-Request-Method) are answered here
 // before routing; actual responses get the ACAO header when the origin is
-// allowed. `*` values mirror tower-http's `Any` semantics.
+// allowed. `*` header values allow any method or header.
 
 const ALLOWED_ORIGINS = new Set([
   "tauri://localhost",
@@ -47,9 +46,8 @@ export function registerCors(app: FastifyLike): void {
     const originHeader = req.headers["origin"];
     const origin = typeof originHeader === "string" ? originHeader : "";
     if (req.method === "OPTIONS" && req.headers["access-control-request-method"]) {
-      // Preflight: answered in full here (204, like tower-http), before
-      // routing — the retired proxy used to forward these to Rust. ACAO
-      // rides only for allow-listed origins; the rest fail in the browser.
+      // Preflight: answered in full here (204), before routing. ACAO rides
+      // only for allow-listed origins; the rest fail in the browser.
       reply.code(204);
       if (ALLOWED_ORIGINS.has(origin)) {
         for (const [name, value] of Object.entries(corsHeaders(origin))) reply.header(name, value);

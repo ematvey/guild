@@ -2,7 +2,7 @@
 // append-only `thread_events` table stays the client-render surface and the
 // chat_reads read-marker space. The durable pi-durable conversation is the
 // agent state; the bridge (chats/bridge.ts) appends the equivalent events
-// here so GET /thread, the member WS (M5), and unread derivation keep their
+// here so GET /thread, the member WS, and unread derivation keep their
 // exact contracts.
 
 import { ApiError } from "../errors.js";
@@ -36,8 +36,8 @@ interface EventRowDb {
 
 function toRow(r: EventRowDb): ThreadEventRow | undefined {
   const event = normalizeThreadEvent(r.payload as Record<string, unknown>);
-  // Lenient read for log listings (Rust semantics): a payload written by a
-  // NEWER server (unknown type) must not fail the whole chat history —
+  // Lenient read for log listings: a payload written by a NEWER server
+  // (unknown type) must not fail the whole chat history —
   // unparsable payloads are dropped.
   if (!event) return undefined;
   return { id: r.id, chat_id: r.chat_id, seq: Number(r.seq), event, created_at: pgTimestampToRfc3339(r.created_at) };

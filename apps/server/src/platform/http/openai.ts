@@ -1,8 +1,7 @@
 // Public OpenAI-compatible chat completions endpoint:
 // `POST /openai/v1/chat/completions` with `gk_…`
 // API-key auth. No chat persistence; usage is attributed to the key's
-// owner. Streaming frames follow the Rust server's sequence
-// (`data: …\n\n` frames, `[DONE]` end).
+// owner. Streaming frames are `data: …\n\n` chunks ending in `[DONE]`.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, TextError } from "../errors.js";
@@ -34,7 +33,7 @@ import type { UsageSink } from "../usage.js";
 
 /** OpenAI-style error body (this endpoint's error contract): the failure
  *  class maps to an error `type` (quota stays named, everything else is an
- *  invalid_request_error — the Rust ProxyError::openai_type mapping). */
+ *  invalid_request_error — ProxyError.openaiType). */
 export function openaiError(status: number, errType: string, message: string): { status: number; body: string } {
   return { status, body: JSON.stringify({ error: { message, type: errType } }) };
 }
@@ -313,15 +312,16 @@ async function handleChatCompletions(
       : null;
   const traceHeaders = readTraceHeaders(req.headers as Record<string, unknown>, credential);
   const startedAt = Date.now();
-  // One request id across the usage event, the llm_calls row, and the
-  // payload rows; internal callers may pin their own (the judge's
+  // One request id across the usage event, the llm span, and the payload
+  // rows; internal callers may pin their own (the judge's
   // self-reported row joins its usage_events row through it).
   const requestId = traceHeaders.requestId ?? uuidv7();
   const promptChars = rawJsonText(req).length;
-  // Internal callers (the judge) self-report their own llm_calls rows — the
-  // gateway records none (it cannot know the verdict it hasn't parsed).
+  // Internal callers (the judge) self-report their own spans — the gateway
+  // records none (it cannot know the verdict it hasn't parsed).
   // The payload chain key: the run, else the chat, else this call alone.
-  const payloadTraceId = traceHeaders.runId ?? traceHeaders.chatId ?? requestId;  const trace: GatewayTraceEmission | undefined = traceHeaders.internalCaller
+  const payloadTraceId = traceHeaders.runId ?? traceHeaders.chatId ?? requestId;
+  const trace: GatewayTraceEmission | undefined = traceHeaders.internalCaller
     ? undefined
     : {
         sink: gateway.trace,
@@ -419,8 +419,7 @@ interface StreamMeta {
   requestId: string;
   /** stream_options.include_usage (OpenAI semantics): the final usage chunk
    *  (empty choices) rides before [DONE]. Only clients that ask for it see
-   *  the extra frame — the default stream stays the same as the Rust
-   *  gateway's. The internal agent always asks (pi-ai sends
+   *  the extra frame. The internal agent always asks (pi-ai sends
    *  stream_options.include_usage), so usage reaches the durable thread
    *  events through the loopback gateway (decision 7). */
   includeUsage: boolean;
@@ -455,7 +454,7 @@ function streamChunks(
   const completionReasoning: string[] = [];
 
   const frames = async function* (): AsyncIterable<string> {
-    // Guard semantics (the Rust StreamUsageGuard): usage records exactly
+    // Usage records exactly
     // once on every exit path — synchronously on normal completion (before
     // the final frame), on the dropped path otherwise (provider error after
     // frames, client disconnect). A stream that produced nothing records

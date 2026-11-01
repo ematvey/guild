@@ -6,8 +6,8 @@
 //
 // The fallback runs as an onRequest hook (not a route) so it short-circuits
 // before routing without conflicting with the native API routes; every path
-// it skips falls through to routing — the native routes, then the not-found
-// handler (the Rust `not_found` envelope).
+// it skips falls through to routing — the API routes, then the not-found
+// envelope.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -116,16 +116,13 @@ export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDi
   const dist = new ChatDist(cfg);
   const hint = "chat app not built — run `npm --prefix apps/desktop run build`";
   const fallback = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    // The Rust fallback covers every method, but only GET/HEAD reach it in
-    // practice from browsers; other methods answer the not-found handler.
+    // Only GET/HEAD serve pages; other methods answer the not-found handler.
     if (req.method !== "GET" && req.method !== "HEAD") return;
     const path = (req.url.split("?")[0] ?? "/").replace(/^\/+$/, "/");
-    // Unmatched /api routes answer the not-found handler (the Rust 404
-    // envelope).
+    // Unmatched /api routes answer the not-found envelope.
     if (path === "/api" || path.startsWith("/api/")) return;
-    // The LLM gateway surfaces have native routes; unmatched paths under
-    // them fall through the same way (the Rust fallback serves index.html
-    // there too, same bytes either way).
+    // Unmatched paths under the LLM gateway surfaces fall through the same
+    // way.
     if (path.startsWith("/openai/v1") || path.startsWith("/anthropic/v1")) return;
     // A real bundled file wins; every other non-API path is an SPA route
     // and serves index.html — including paths with dots (model ids,

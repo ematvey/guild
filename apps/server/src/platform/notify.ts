@@ -1,7 +1,7 @@
 // Postgres LISTEN hub: one dedicated client per process listening on the
 // NOTIFY channels the stores emit, dispatching payloads to in-process
-// subscribers. The member-socket feed (M5) and the M3 thread-stream SSE
-// endpoint both consume this instead of holding their own connections.
+// subscribers. The member-socket feed and the thread-stream SSE endpoint
+// both consume this instead of holding their own connections.
 
 import pg from "pg";
 import type { Logger } from "pino";

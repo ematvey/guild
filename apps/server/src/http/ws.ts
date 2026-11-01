@@ -4,13 +4,12 @@
 // string leak into access logs — hence the ticket hop over the normal
 // authenticated HTTP session.
 //
-// Frames are byte-compatible with the Rust server (shipped daemons never
-// update): serialization lives in hub/protocol.ts.
+// Frame bytes are a fixed contract with shipped desktop clients and machine
+// daemons: serialization lives in hub/protocol.ts.
 //
-// Deliberately NOT here (other lanes' territory, wired via the ctx seams):
-// the live feed forwarder + state-sync capture (chats/M3), the machine-tool
-// ExecutionEnv (harness/M4/M5-dispatch), the Restate funnel's
-// reconcile_machine_tools (M5-dispatch).
+// Wired in through the ctx seams rather than living here: the live feed
+// forwarder and state-sync capture (chats/), the machine-tool dispatch and
+// the connect-time uncertain-execution sweep (machines/).
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, Server } from "node:http";
@@ -70,8 +69,7 @@ function metaFromQuery(q: UpgradeQuery): MachineConnectMeta {
   };
 }
 
-/** 16 raw bytes of a uuid v7 (the heartbeat challenge — Rust
- *  `Uuid::now_v7().as_bytes()`). */
+/** 16 raw bytes of a uuid v7 (the heartbeat challenge). */
 function uuidv7Bytes(): Buffer {
   return Buffer.from(uuidv7().replaceAll("-", ""), "hex");
 }
@@ -105,11 +103,9 @@ export function registerWsRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: Ide
 // ---------------------------------------------------------------------------
 // Upgrade side
 
-/** Attaches the hub's upgrade listener to the HTTP server. This is the ONLY
- *  'upgrade' listener after the flip: the proxy's `websocket: true` handling
- *  is removed in app.ts, because two listeners double-assign the socket
- *  (ERR_HTTP_SOCKET_ASSIGNED, the M0 trap note). Rollback = re-enable the
- *  proxy flag and delete this attach call. */
+/** Attaches the hub's upgrade listener to the HTTP server. It must stay the
+ *  server's ONLY 'upgrade' listener: two listeners double-assign the socket
+ *  (ERR_HTTP_SOCKET_ASSIGNED). */
 export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityCtx): void {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -201,7 +197,7 @@ export function parseUpgradeQuery(req: IncomingMessage): UpgradeQuery {
 type SocketExitReason = "displaced" | "reader" | "writer" | "heartbeat" | "session";
 
 /** Each challenge has a unique payload. Unrelated traffic cannot renew
- *  liveness. (Rust `session_valid` — 2s timeout on the DB check.) */
+ *  liveness. The session check has a 2s DB timeout. */
 async function sessionValid(auth: IdentityCtx, hash: string): Promise<boolean> {
   try {
     const result = await Promise.race([
@@ -277,8 +273,7 @@ async function registerMachineRecord(
   }
 }
 
-/** Holds live feed messages while one or more state-sync brackets are open.
- *  (Rust SocketGate.) */
+/** Holds live feed messages while one or more state-sync brackets are open. */
 class SocketGate {
   private syncDepth = 0;
   private deferred: WsServerMsg[] = [];
@@ -312,7 +307,7 @@ class SocketGate {
   }
 }
 
-/** The socket supervisor (Rust drive_socket): registration gates, then
+/** The socket supervisor: registration gates, then
  *  reader + writer + heartbeat + session-watch all racing; the first to end
  *  tears the socket down. */
 async function driveSocket(
@@ -369,7 +364,7 @@ async function driveSocket(
     machineRegistered = true;
     await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", sessionHash, hub);
     // Skills convergence at connect is the machine's own HTTP pull
-    // (`GET /api/v1/skills/sync-payload`, Rust machine_link.rs) — no
+    // (`GET /api/v1/skills/sync-payload`) — no
     // sync frame rides the machine-connect stream (the WS golden replay
     // pins it byte-exactly); change-trigger pushes remain server-side.
   } else {
@@ -451,12 +446,12 @@ async function driveSocket(
   })();
   void writerLoop.then(() => finish("writer"));
 
-  // --- client-message processing (Rust client_task, serialized) -------------
+  // --- client-message processing (serialized) --------------------------------
   let processing: Promise<void> = Promise.resolve();
   const processClient = (message: NonNullable<ReturnType<typeof parseClientMsg>>): void => {
     processing = processing.then(async () => {
       if (finished) return;
-      // Per-message revalidation (Rust client_task): an expired or revoked
+      // Per-message revalidation: an expired or revoked
       // session, a deleted user, or an org switch ends processing.
       if (!(await sessionValid(auth, sessionHash))) return;
       let current: UserRow;
@@ -501,8 +496,7 @@ async function driveSocket(
       }
       if (message.type === "tool_result") {
         // The owns_pending_tool + complete_tool path is the dispatch lane's;
-        // without the handler wired, results are dropped (Rust's behavior
-        // when this connection owns no pending call).
+        // without the handler wired, results are dropped.
         await chats.wsToolResult?.({ member, user: current, frame: message });
       }
     });
@@ -522,15 +516,14 @@ async function driveSocket(
     }
     processClient(message);
   });
-  // Client pings: the ws library auto-pongs with the same payload (the Rust
-  // reader queues the Pong through the sink; the wire result is identical).
+  // Client pings: the ws library auto-pongs with the same payload.
   socket.on("pong", (data: Buffer) => {
     sink.notifyPong(data);
   });
   socket.on("close", (code, reason) => { chats.wsLog?.(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
   socket.on("error", (err) => { chats.wsLog?.(`ws socket error: ${err.message}`); finish("reader"); });
 
-  // --- connect bootstrap (Rust reader prologue) ------------------------------
+  // --- connect bootstrap ------------------------------------------------------
   sink.send({ type: "hello" });
   if (machineId !== null) {
     // reconcile_machine_tools (the uncertain-execution sweep) is the
@@ -542,7 +535,7 @@ async function driveSocket(
   // machine lists, so the client never reads them over HTTP.
   await chats.feed.pushWorkspace(user.org_id, user.id);
 
-  // --- heartbeat (Rust heartbeat task) ---------------------------------------
+  // --- heartbeat --------------------------------------------------------------
   const heartbeatLoop = (async (): Promise<void> => {
     let lastRefresh = -1;
     while (!finished) {
@@ -563,7 +556,7 @@ async function driveSocket(
   })();
   void heartbeatLoop.then(() => finish("heartbeat"));
 
-  // --- session watch (Rust watch_session) ------------------------------------
+  // --- session watch ----------------------------------------------------------
   const sessionLoop = (async (): Promise<void> => {
     while (!finished) {
       if (Date.now() >= expiresAt.getTime() - 60_000 || !(await sessionValid(auth, sessionHash))) {
@@ -578,7 +571,7 @@ async function driveSocket(
   void sessionLoop.then(() => finish("session"));
 }
 
-/** One socket write with the Rust TERMINAL_WRITE_TIMEOUT deadline. Returns
+/** One socket write with the terminal-write deadline. Returns
  *  false when the write did not complete in time (stalled socket = dead). */
 async function timedSend(
   socket: WebSocket,
@@ -621,8 +614,7 @@ async function timedSend(
   });
 }
 
-/** Terminal notice flush, bypassing the queued backlog (the Rust writer's
- *  watch-channel path); 1s deadline. `alreadyWrote` dedupes double
+/** Terminal notice flush, bypassing the queued backlog; 1s deadline. `alreadyWrote` dedupes double
  *  notices. */
 async function terminalNotice(
   socket: WebSocket,
@@ -644,8 +636,8 @@ async function sendTerminal(socket: WebSocket, msg: WsServerMsg): Promise<void> 
   }
 }
 
-/** Waits for the sink's matched-pong register to carry this challenge (the
- *  Rust heartbeat's watch loop, 10s deadline). */
+/** Waits for the sink's matched-pong register to carry this challenge (10s
+ *  deadline). */
 async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> {
   const deadline = Date.now() + HEARTBEAT_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -656,8 +648,8 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
   return false;
 }
 
-/** One chat's state-sync bracket (Rust run_sync_started): SyncBegin, the
- *  subtree (small, independent), the authoritative snapshot (the chats
+/** One chat's state-sync bracket: SyncBegin, the subtree (small,
+ *  independent, behind the chat's read gate), the authoritative snapshot (the chats
  *  lane's capture via the ctx seam), then SyncDone — errors ride an Error
  *  frame inside the bracket. */
 async function runSyncStarted(

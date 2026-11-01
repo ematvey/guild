@@ -5,7 +5,7 @@
 // internal message format, resolves the org route for the model, and
 // renders provider output back in Anthropic shape — both non-streaming and
 // as Anthropic SSE events (`message_start` / `content_block_delta` /
-// `message_stop`), the same sequence as the Rust server.
+// `message_stop`).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
@@ -39,8 +39,8 @@ function anthropicErrorShape(errorType: string, message: string): string {
   return JSON.stringify({ type: "error", error: { type: errorType, message } });
 }
 
-/** Renders a caught error in the Anthropic wire shape (the Rust
- *  ProxyError::anthropic_type mapping). */
+/** Renders a caught error in the Anthropic wire shape
+ *  (ProxyError.anthropicType). */
 export function renderAnthropicError(error: unknown): { status: number; body: string } {
   if (error instanceof ProxyError) {
     return { status: error.apiError.status, body: anthropicErrorShape(error.anthropicType, error.apiError.message) };

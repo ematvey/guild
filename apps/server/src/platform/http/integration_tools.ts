@@ -4,8 +4,7 @@
 // can call them with session or org-API-key auth. The execute route
 // dispatches through the connector runtime (platform/integrations/
 // execute.ts): a connector failure is a result (HTTP 200, ok:false), never
-// an HTTP error. The validation prefix of the call (auth, curation,
-// acting-as, body shape) is identical to the Rust route.
+// an HTTP error.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
@@ -101,10 +100,8 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
   });
 
   // `POST /api/v1/integrations/{slug}/tools/{tool}` — executes one tool with
-  // the identity envelope; the body is the JSON arguments object. Auth and
-  // validation match the Rust route exactly; the call then fails like the
-  // Rust connector with its backend unreachable (200, ok:false) — the
-  // integrations runtime is deferred (spec decision 8).
+  // the identity envelope; the body is the JSON arguments object. A
+  // connector failure is a 200 ok:false result.
   app.post("/api/v1/integrations/:slug/tools/:tool", async (req, reply) => {
     const caller = await integrationCaller(auth, req);
     const params = req.params as Record<string, string>;
@@ -149,8 +146,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
       throw ApiError.forbidden();
     }
     // The body is the JSON arguments object (empty body = {}); any JSON
-    // value that is not an object is refused, as in Rust. The route's scope
-    // parses every content type as raw bytes (axum Bytes semantics).
+    // value that is not an object is refused.
     // The body arrives as the route scope's raw buffer for unknown content
     // types, and as the platform parser's already-parsed JSON value for
     // application/json — both shapes carry the arguments object.
@@ -175,10 +171,9 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     if (args === null || typeof args !== "object" || Array.isArray(args)) {
       throw ApiError.badRequest("body must be a JSON object");
     }
-    // Runtime dispatch (M8): the same connector runtime the chat loop
-    // uses — secrets re-resolved at call time, the identity envelope, and
-    // a connector failure surfaces as the ok:false result (never an HTTP
-    // error), exactly like Rust call_plugin.
+    // The same connector runtime the chat loop uses — secrets re-resolved
+    // at call time, the identity envelope, and a connector failure surfaces
+    // as the ok:false result (never an HTTP error).
     const callId = crypto.randomUUID();
     let body: Record<string, unknown>;
     try {
@@ -205,7 +200,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
         via: "script",
       });
     } catch {
-      // Best-effort, as in Rust.
+      // Best-effort.
     }
     sendJson(reply, body);
     return reply;

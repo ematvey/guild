@@ -82,8 +82,8 @@ function rpcRequest(id: number, method: string, params: JsonObject): JsonObject 
 /**
  * Connects to an MCP server over the streamable-HTTP transport and completes
  * the initialize handshake with the given headers (the identity envelope and
- * secret headers ride on the transport, same as the Rust pool). A timeout
- * fails with the Rust pool's "mcp connect timed out"; every other transport
+ * secret headers ride on the transport). A timeout fails with "mcp connect
+ * timed out"; every other transport
  * or handshake failure surfaces as "mcp handshake failed: <detail>".
  */
 export async function mcpConnect(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<McpPeer> {

@@ -634,8 +634,7 @@ export class ChatStore {
   }
 
   private async notifyChatStatus(orgId: string, userId: string, chatId: string, generating: boolean): Promise<void> {
-    // Same channel and payload the Rust notify_chat_status sends (the member
-    // socket's listener flips the sidebar spinner): "generating:<bool>".
+    // The member socket's listener flips the sidebar spinner from it.
     await this.pool.query("SELECT pg_notify('guild_chat_status', $1)", [
       JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId, generating }),
     ]);

@@ -1,5 +1,5 @@
-// UUID v7 generation (Rust Uuid::now_v7 equivalent) and RFC 3339
-// timestamp formatting that matches chrono's serde output: fractional
+// UUID v7/v5 generation and RFC 3339 timestamp formatting in the shape the
+// Rust clients parse (chrono's serde output): fractional
 // seconds are trimmed to 0, 3, 6 or 9 digits (SecondsFormat::AutoSi).
 
 import { createHash, randomBytes } from "node:crypto";
@@ -19,8 +19,8 @@ export function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** RFC 4122 name-based v5 (sha1) — the Rust `Uuid::new_v5` equivalent used
- *  by the deterministic tool-artifact ids. */
+/** RFC 4122 name-based v5 (sha1), used by the deterministic tool-artifact
+ *  ids. */
 export function uuidv5(namespace: string, name: string): string {
   const nsBytes = Buffer.from(namespace.replaceAll("-", ""), "hex");
   const hash = createHash("sha1").update(nsBytes).update(name, "utf8").digest();

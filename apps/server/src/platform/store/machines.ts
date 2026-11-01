@@ -40,8 +40,9 @@ export interface UpsertOutcome {
   adopted_from: string | null;
 }
 
-/** Normalizes the SQL-rendered timestamps into chrono's AutoSi RFC 3339
- *  shape (0/3/6/9 fraction digits), exactly what the Rust row serializes. */
+/** Normalizes the SQL-rendered timestamps into RFC 3339 with 0/3/6/9
+ *  fraction digits — the shape the wire contract and the Rust clients
+ *  parse. */
 function toRow(db: MachineRow): MachineRow {
   return {
     ...db,

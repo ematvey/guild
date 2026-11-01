@@ -247,8 +247,8 @@ export function parseAnthropicFrame(data: string): AnthropicFrame {
   return { ...none, chunk, toolUseStart, inputJsonDelta, blockStopIndex };
 }
 
-/** The usage/text chunks the Rust `parse_frame` extracts (everything else
- *  yields no chunk). */
+/** The usage/text chunks one frame carries (everything else yields no
+ *  chunk). */
 function parseChunkFrame(
   v: Record<string, unknown>,
   type: string,

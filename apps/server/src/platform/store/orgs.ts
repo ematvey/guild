@@ -1,5 +1,5 @@
-// Organization settings: the workspace's display name and logo (crates/
-// server/src/store/orgs.rs). The logo bytes live in object storage under
+// Organization settings: the workspace's display name and logo. The logo
+// bytes live in object storage under
 // `orgs/{org_id}/logo.{ext}`; the row carries the serving URL.
 
 import { ApiError } from "../errors.js";

@@ -1,8 +1,9 @@
 // The integration dispatcher (call_plugin): resolves an integration slug to
 // its execute function, re-resolves the secrets (snapshots never carry
-// values), and runs the built-in integration directly or the MCP peer. One
-// execute function per vendor lives under vendors/; the shared request
-// helpers and the generic `api` tool live in vendors/shared.ts.
+// values), and runs the built-in integration directly or the MCP peer. The
+// built-in connectors live under src/integrations/ (one directory per
+// vendor; shared request helpers in integrations/shared.ts, the generic
+// `api` tool in integrations/api-tool.ts).
 
 import { mcpConnect, type McpPeer } from "./mcp.js";
 import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
@@ -51,7 +52,7 @@ export async function callPlugin(
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
   const masterKey = source.masterKey();
-  if (turn.executor === "rust") {
+  if (turn.executor === "builtin") {
     // Every stored secret of the slug rides to execute — the connector
     // picks what it needs (superproxy's optional gateway token included);
     // values never reach logs or events.
@@ -61,7 +62,7 @@ export async function callPlugin(
     return executeConnectorTool(turn.slug, turn.rowConfig, rawTool, args, secrets, identity.actingAs, signal);
   }
   // MCP plugin: a short-lived call connection keeps caller and call ID
-  // exact (the Rust pool's per-call connect).
+  // exact.
   const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, turn.secretNames, masterKey);
   const url = (turn.rowConfig as JsonObject)["mcp"];
   const mcpUrl = url !== null && typeof url === "object" ? (url as JsonObject)["url"] : undefined;

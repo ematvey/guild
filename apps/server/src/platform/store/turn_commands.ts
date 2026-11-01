@@ -27,8 +27,8 @@ export class TurnCommandStore {
   constructor(private readonly pool: PlatformPool) {}
 
   /** The command row when `id` was accepted for exactly this
-   *  (org, user, chat, request); a reused id with a different command is
-   *  the Rust `command_id_conflict`. */
+   *  (org, user, chat, request); a reused id with a different command is a
+   *  `command_id_conflict`. */
   async existing(
     id: string,
     org: string,
@@ -53,12 +53,11 @@ export class TurnCommandStore {
     return row;
   }
 
-  /** Atomic acceptance (Rust accept, minus the Restate payload fields the
-   *  durable workflow carried — the TS submission path passes its own
-   *  payload): the command row and the visible user_message echo either
-   *  both commit or neither does. Locks the chat row (archived chats
-   *  reject), applies an explicit project binding, inserts the command and
-   *  the thread event under one id, and notifies the thread channel.
+  /** Atomic acceptance: the command row and the visible user_message echo
+   *  either both commit or neither does. Locks the chat row (archived chats
+   *  reject, deleted chats are not found), applies an explicit project
+   *  binding, inserts the command and the thread event under one id, and
+   *  notifies the thread channel.
    *  `userEvent.queued` marks a send admitted while a turn was still
    *  generating: the echo is visible history (the user typed it), but the
    *  model has not seen it yet — the desktop renders it as a queued chip,

@@ -1,7 +1,6 @@
 // Minimal ClickHouse HTTP-interface client over global fetch — the usage
-// sink and the usage/quota queries. Parameter binds mirror the Rust
-// clickhouse crate's `bind()`: each `?` in the SQL is replaced inline with
-// the escaped literal (strings in single quotes, numbers raw).
+// sink and the usage/quota queries. Each `?` in the SQL is replaced inline
+// with the escaped bind literal (strings in single quotes, numbers raw).
 
 export type BindValue = string | number;
 
@@ -18,8 +17,8 @@ export class ClickhouseClient {
   private endpoint(): URL {
     const url = new URL(this.opts.url);
     url.searchParams.set("database", this.opts.database);
-    // 64-bit integers come back quoted by default; the Rust client reads
-    // them as numbers (RowBinary) — keep JSON output numeric.
+    // 64-bit integers come back quoted by default — keep JSON output
+    // numeric.
     url.searchParams.set("output_format_json_quote_64bit_integers", "0");
     if (this.opts.user !== "") {
       url.searchParams.set("user", this.opts.user);
@@ -61,8 +60,7 @@ export class ClickhouseClient {
     await this.execute(`INSERT INTO ${table} FORMAT JSONEachRow\n${body}`);
   }
 
-  /** Ensures the usage_events table exists (the Rust sink creates it on
-   *  connect; same statement). */
+  /** Ensures the usage_events table exists. */
   async ensureUsageTable(): Promise<void> {
     await this.execute(
       "CREATE TABLE IF NOT EXISTS usage_events (" +

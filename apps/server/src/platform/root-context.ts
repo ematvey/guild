@@ -1,12 +1,12 @@
-import { timingSafeEqual } from "node:crypto";
-import { pendingWorkQuery } from "./store/work.js";
 // Platform root context: the composition root. It builds the per-process
 // Postgres pool, object store, ClickHouse usage sink and typed store facades
 // once, then hands each route group a narrow slice from route-contexts.ts.
 
+import { timingSafeEqual } from "node:crypto";
 import type { Config } from "../config.js";
 import { createPlatformPool, type PlatformPool } from "./db.js";
 import { ObjectStore } from "./s3.js";
+import { pendingWorkQuery } from "./store/work.js";
 import { IdentityStore } from "./store/identity.js";
 import { PairingStore } from "./store/pairing.js";
 import { EventStore } from "./store/events.js";
@@ -78,8 +78,8 @@ export class PlatformContext {
   readonly apiKeys: ApiKeyStore;
   readonly gatewayStore: GatewayStore;
   readonly machines: MachineStore;
-  /** M6 long-tail stores (registry, releases, projects, teams, admin
-   *  settings, integration config rows). */
+  /** Registry, releases, projects, teams, admin settings, integration
+   *  config rows. */
   readonly registry: RegistryStore;
   readonly skills: SkillStore;
   readonly releases: ReleaseStore;
@@ -93,9 +93,8 @@ export class PlatformContext {
   readonly userMcp: UserMcpStore;
   readonly push: PushStore;
   readonly pushNotifier: PushNotifier;
-  /** The real machine/member socket registry (M5 hub core). The M3 harness
-   *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
-   *  and casts here in its own tests. */
+  /** The machine/member socket registry. Harness tests inject fakes typed
+   *  against the `Hub` seam interface in hub/index.ts. */
   readonly hub: LiveHub;
   /** The per-hub tool-dispatch registry (machines/dispatch.ts; one per
    *  process, hub-owned lifetime). */
@@ -109,9 +108,9 @@ export class PlatformContext {
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
   readonly clickhouse: ClickhouseClient;
-  /** M3: the chat-side stores and the agent runtime (the harness is owned
-   *  by this process, decision 9; it starts lazily — durable migrations run
-   *  idempotently on first use and at server startup). */
+  /** The chat-side stores and the agent runtime (the harness is owned by
+   *  this process; it starts lazily — durable migrations run idempotently
+   *  on first use and at server startup). */
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
@@ -126,13 +125,12 @@ export class PlatformContext {
   /** Worker-per-chat: the fork supervisor (undefined when worker mode is
    *  off). The runtime routes admission through it and closes it. */
   readonly supervisor: ForkSupervisor | undefined;
-  /** The member-socket feed forwarder (M5/ws-feed lane): notify fan-in →
+  /** The member-socket feed forwarder: notify fan-in →
    *  ThreadState views, LiveFrame generation streams, ChatStatus, org
    *  events, presence-driven ThreadList — all to the chat owner's sinks. */
   readonly feed: FeedForwarder;
 
-  /** Seams for lanes that land after M5-hub-core (all optional, no-op when
-   *  unset):
+  /** Socket seams wired at startup (all optional, no-op when unset):
    *  - wsSync: the chats lane's state-sync capture, called inside the socket
    *    reader's sync bracket (SyncBegin … SyncDone).
    *  - wsSubagentTree: the chat's thread subtree, sent inside the same
@@ -140,8 +138,8 @@ export class PlatformContext {
    *  - wsToolResult: the dispatch lane's tool-result completion (owns_pending_tool
    *    + turn completion).
    *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
-   *    machine connect (Rust reconcile_machine_tools).
-   *  - wsLog: trace sink for the socket supervisor (server log in Rust). */
+   *    machine connect.
+   *  - wsLog: trace sink for the socket supervisor (the server log). */
   wsSync?: ChatsCtx["wsSync"];
   wsSubagentTree?: ChatsCtx["wsSubagentTree"];
   wsToolResult?: ChatsCtx["wsToolResult"];

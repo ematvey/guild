@@ -36,9 +36,9 @@ export interface GatewayContext {
 
 /** The trace-context request headers the in-app harness sets on internal
  *  key calls: `x-guild-internal-caller` (self-reported calls — the gateway
- *  records no llm_calls row for them), plus the run/chat/conversation/turn/
- *  cause context and an optional caller-minted request id so a judge's
- *  llm_calls row and its usage_events row join. */
+ *  records no llm span for them), plus the run/chat/conversation/turn/cause
+ *  context and an optional caller-minted request id so a judge's own span
+ *  and its usage_events row join. */
 export interface GatewayTraceHeaders {
   internalCaller: boolean;
   requestId: string | null;
@@ -447,7 +447,7 @@ export async function recordUsageSync(
 /** Usage recording for a stream that exited without its final frame
  *  (provider error after frames, or a client disconnect): a request that
  *  produced anything is billed; a stream that produced nothing records
- *  nothing. Fire-and-forget like the Rust drop path. */
+ *  nothing. Fire-and-forget. */
 export function recordUsageDropped(
   usage: UsageSink,
   credential: GatewayCredential,

@@ -1,5 +1,5 @@
-// Shared crypto primitives for the platform layer, matching the Rust
-// era's stored formats byte-for-byte (see the migration SQL):
+// Shared crypto primitives for the platform layer, in the stored formats
+// existing rows carry (see the migration SQL):
 //   - passwords: argon2id v19, m=19456 t=2 p=1, PHC string (Argon2::default)
 //   - tokens/codes: 32 random bytes hex-encoded; only sha256 stored
 //   - secrets at rest: AES-256-GCM, hex(nonce || ciphertext+tag)
@@ -33,7 +33,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   try {
     return await argon2.verify(hash, password);
   } catch {
-    // Unparseable hash: no match (Rust PasswordHash::new error path).
+    // Unparseable hash: no match.
     return false;
   }
 }

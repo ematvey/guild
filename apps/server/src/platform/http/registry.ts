@@ -315,8 +315,7 @@ async function installMcpPlugin(
     throw ApiError.badRequest((error as Error).message);
   }
   void parsed;
-  // Rust: manifest.auth.clone().unwrap_or_default() — a missing auth block
-  // becomes the default manifest (org_secret / email / no secrets).
+  // A missing auth block becomes the default manifest (org_secret / email / no secrets).
   const authIn = (manifest.auth ?? null) as Record<string, unknown> | null;
   const auth =
     authIn === null

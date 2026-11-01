@@ -2,7 +2,7 @@
 // assistant / approval-policy prompts (org_kv), and the integration
 // configuration CRUD — including the save path (config validation, secret
 // merge, connection tests) and the tools listing with per-tool curation
-// (M7 wiring; connector catalogs live in src/platform/integrations/).
+// (connector catalogs live in src/integrations/).
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";

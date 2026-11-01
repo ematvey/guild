@@ -1,13 +1,11 @@
-// GET /api/v1/chats/{id}/thread/stream — additive SSE endpoint (M3): the
-// chat's ThreadState as an `data: <frame>\n\n` stream. Frames are
-// byte-compatible with the member WebSocket's WsServerMsg::ThreadState (the
-// M5 member socket reuses the same builders, spec §7 amendment); the SSE
-// transport itself is new surface — desktop clients keep the member socket
-// until the M5 cutover.
+// GET /api/v1/chats/{id}/thread/stream — the chat's ThreadState as a
+// `data: <frame>\n\n` SSE stream. Frames are byte-identical to the member
+// socket's ThreadState (both use the same builders); the desktop uses the
+// member socket.
 //
 // Live updates ride the store NOTIFY channels (guild_thread_committed → the
 // bridge committed durable output; guild_chat_status → generating flips),
-// same events the Rust feed's listener consumes.
+// the same events the member-socket feed consumes.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, IdentityCtx } from "../route-contexts.js";

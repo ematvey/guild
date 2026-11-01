@@ -14,7 +14,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
   const listModels = async (req: FastifyRequest) => {
     const user = await requireUser(ctx, req);
     const list = await gateway.gatewayStore.listModels(user.org_id);
-    // `models` stays the id list for older clients (and the Rust engine);
+    // `models` stays the id list for older clients (and the local engine);
     // `aliases` maps ids to the admin's display name. An absent/empty entry
     // means the client falls back to the id.
     const aliases: Record<string, string> = {};
@@ -58,7 +58,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
     const contextWindow = typeof body["context_window"] === "number" ? body["context_window"] : null;
     const maxOutputTokens = typeof body["max_output_tokens"] === "number" ? body["max_output_tokens"] : null;
     if (maxOutputTokens !== null && maxOutputTokens <= 0) {
-      // A nonpositive cap means "no cap" nowhere in the proxy: through
+      // A nonpositive cap means "no cap" nowhere in the gateway: through
       // min() it would erase a positive client limit — reject it.
       throw ApiError.badRequest("max_output_tokens must be a positive integer");
     }

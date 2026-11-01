@@ -35,8 +35,7 @@ export interface RouteRow {
   temperature: number | null;
 }
 
-/** Admin-facing route row: everything except the decrypted key (serde
- *  field names match the Rust AdminRouteRow). */
+/** Admin-facing route row: everything except the decrypted key. */
 export interface AdminRouteRow {
   model: string;
   /** Display name shown to chat users; empty = use the model id. */

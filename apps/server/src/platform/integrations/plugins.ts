@@ -35,7 +35,7 @@ export interface IntegrationGateway extends PluginSecretSource {
 }
 
 /** How a plugin executes: a compiled-in connector or a remote MCP server. */
-export type IntegrationExecutor = "rust" | "mcp";
+export type IntegrationExecutor = "builtin" | "mcp";
 
 export interface IntegrationToolInfo {
   /** The declaration the model sees. For a trait tool this is the
@@ -189,7 +189,7 @@ export async function resolveIntegrations(
         continue;
       }
       out.push({
-        executor: "rust",
+        executor: "builtin",
         slug: row.name,
         description: catalogDescription(row.name),
         tools: specs.map((spec) => ({
@@ -263,7 +263,7 @@ function assignTraits(turns: IntegrationTurn[]): void {
   for (const turn of turns) {
     // An installed MCP plugin owns its tool names: only a compiled-in
     // integration's manifest declares traits.
-    if (turn.executor !== "rust") continue;
+    if (turn.executor !== "builtin") continue;
     const kept: IntegrationToolInfo[] = [];
     for (const info of turn.tools) {
       const trait = traitForTool(turn.slug, info.raw);

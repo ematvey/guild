@@ -1,6 +1,6 @@
-// SSE reply writer for the gateway streaming endpoints: byte-compatible
-// with axum's Sse response (`data: …\n\n` frames, named `event: …\ndata:
-// …\n\n`, `:\n\n` keep-alive comment every 15s of idle).
+// SSE reply writer for the gateway streaming endpoints: `data: …\n\n`
+// frames, named `event: …\ndata: …\n\n` frames, and a `:\n\n` keep-alive
+// comment every 15s of idle.
 
 import type { FastifyReply } from "fastify";
 

@@ -10,7 +10,7 @@ export function registerEventRoutes(app: FastifyInstance, ctx: IdentityCtx): voi
   app.get("/api/v1/events", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const events = await ctx.events.list(user.org_id, 200);
-    // json! interpolation — serde_json Value keys come out sorted.
+    // Rows render with sorted keys.
     const rows = events.map((e) =>
       sortedJson({
         id: e.id,

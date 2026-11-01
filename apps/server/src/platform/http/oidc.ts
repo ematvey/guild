@@ -27,7 +27,7 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
 }
 
-/** HS256 JWT in the jsonwebtoken default shape (the Rust state token). */
+/** The OIDC state token: an HS256 JWT. */
 function signStateJwt(ctx: IdentityCtx, claims: OidcStateClaims): string {
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = b64url(JSON.stringify(claims));
@@ -117,8 +117,8 @@ function nonceCookie(ctx: IdentityCtx, nonce: string, maxAge: number): string {
   return `${NONCE_COOKIE}=${nonce}; Path=/api/v1/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
-/** Constant-time, exactly-one-cookie nonce check (axum HeaderMap semantics:
- *  every Cookie header splits on ';'). */
+/** Constant-time, exactly-one-cookie nonce check (every Cookie header
+ *  splits on ';'). */
 function verifyBrowserNonce(cookieHeaders: string[], expected: string): void {
   const found: string[] = [];
   for (const header of cookieHeaders) {
@@ -139,7 +139,7 @@ function verifyBrowserNonce(cookieHeaders: string[], expected: string): void {
   }
 }
 
-/** RFC 3986 unreserved characters stay bare (the Rust urlencode). */
+/** RFC 3986 unreserved characters stay bare. */
 function urlencode(s: string): string {
   let out = "";
   for (const b of Buffer.from(s, "utf8")) {

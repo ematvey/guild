@@ -35,8 +35,8 @@ export type ProviderChunk =
   | { kind: "toolCallDone"; call: ToolCall }
   | { kind: "finished"; reason: string };
 
-/** Provider-level failure; the message strings match the Rust Display impls
- *  (they surface verbatim in gateway error bodies). */
+/** Provider-level failure; the message surfaces verbatim in gateway error
+ *  bodies. */
 export class ProviderError extends Error {
   constructor(
     public kind: "auth" | "rateLimited" | "upstream" | "stream",

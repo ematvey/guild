@@ -113,10 +113,9 @@ export interface ChatsCtx {
   /** The dispatch lane's tool-result completion (owns_pending_tool + turn
    *  completion). */
   wsToolResult?: (args: { member: LiveMember; user: UserRow; frame: { type: "tool_result"; chat_id: string; call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] } }) => Promise<void>;
-  /** The dispatch lane's uncertain-execution sweep at machine connect
-   *  (Rust reconcile_machine_tools). */
+  /** The dispatch lane's uncertain-execution sweep at machine connect. */
   wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
-  /** Trace sink for the socket supervisor (server log in Rust). */
+  /** Trace sink for the socket supervisor (the server log). */
   wsLog?: (message: string) => void;
 }
 

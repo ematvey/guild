@@ -1,5 +1,4 @@
-// Faro telemetry collector proxy: the web
-// UI (same origin) and the desktop webview (paired server URL) POST Faro
+// Faro telemetry forwarding: the web UI (same origin) and the desktop webview (paired server URL) POST Faro
 // Web SDK payloads to /faro/collect; the server forwards them to the org's
 // Faro receiver (GUILD_FARO_URL). Intentionally unauthenticated — telemetry
 // must work pre-login and pre-pairing — and fire-and-forget: an
@@ -17,8 +16,8 @@ const MAX_BODY = 1024 * 1024;
 
 export function registerFaroRoute(app: FastifyInstance, config: Config): void {
   void app.register(async (scope) => {
-    // Encapsulated raw-body parsers: the Rust route forwards the exact
-    // request bytes (bytes::Bytes). Both parsers are needed — an inherited
+    // Encapsulated raw-body parsers: the route forwards the exact request
+    // bytes. Both parsers are needed — an inherited
     // exact-match application/json parser would outrank the wildcard.
     scope.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));

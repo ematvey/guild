@@ -59,7 +59,7 @@ function windowOf(req: FastifyRequest): { from: Date; to: Date } {
   };
 }
 
-/** The llm_calls tables do not exist yet (ClickHouse never saw the DDL):
+/** The trace tables do not exist yet (ClickHouse never saw the DDL):
  *  the queries degrade to empty, exactly like the usage routes. */
 function isUnknownTable(error: unknown): boolean {
   const err = error as { unknownTable?: boolean; body?: string };
