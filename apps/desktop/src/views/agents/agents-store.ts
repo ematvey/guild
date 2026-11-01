@@ -149,6 +149,14 @@ export function summaryWithTrace(
   return { ...summary, totals };
 }
 
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "silent", "skipped", "cancelled"]);
+
+/** True when the pushed run reaches a terminal status the screen does not
+ *  show yet: `shown` is the status on screen, null before the first read. */
+export function runFinishes(shown: string | null, pushed: AgentRun): boolean {
+  return shown !== null && !TERMINAL_STATUSES.has(shown) && TERMINAL_STATUSES.has(pushed.status);
+}
+
 /** A new run as an activity trace row, before the trace store has its spans. */
 export function traceFromRun(run: AgentRun): TraceRow {
   const row: TraceRow = {

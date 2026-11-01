@@ -2,11 +2,12 @@
 // the span tree and the time waterfall. The right pane is the selected span:
 // overview, input, output and attributes, with readable JSON.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronRight,
   MessageSquare,
+  RefreshCw,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -22,7 +23,7 @@ import {
   type TraceRow,
 } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
-import { traceWithRun, useAgentRunUpdates } from "./agents-store";
+import { runFinishes, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 import { SpanDetail } from "./span-detail";
@@ -59,6 +60,15 @@ export function RunDetailPage({
   const [run, setRun] = useState<AgentRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const pushedRun = useRef<AgentRun | null>(null);
+  /** The status on screen; frames compare against it without waiting for a
+   *  render. */
+  const shownStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    pushedRun.current = null;
+    shownStatus.current = null;
+  }, [runId]);
 
   useEffect(() => {
     let live = true;
@@ -66,7 +76,12 @@ export function RunDetailPage({
     void getTrace(runId)
       .then((value) => {
         if (!live) return;
-        setTrace(value.trace);
+        // The trace store can lag the run row: the last pushed run still wins
+        // for the fields it carries.
+        const pushed = pushedRun.current;
+        const next = pushed !== null && pushed.id === runId ? traceWithRun(value.trace, pushed) : value.trace;
+        shownStatus.current = next.status;
+        setTrace(next);
         setSpans(value.spans);
         setChildren(value.children);
         setSelected((current) => {
@@ -86,7 +101,9 @@ export function RunDetailPage({
     } else {
       void getRun(runId)
         .then((value) => {
-          if (live) setRun(value);
+          if (!live) return;
+          shownStatus.current ??= value.status;
+          setRun(value);
         })
         .catch(() => {
           if (live) setRun(null);
@@ -98,11 +115,19 @@ export function RunDetailPage({
   }, [runId, traceOnly, tick]);
 
   // A running run finishes on screen: every pushed change to this run moves
-  // the run row and the trace header (status, summary, end, error).
+  // the run row and the trace header (status, summary, end, error, tokens,
+  // duration). The frame carries the run, not its spans or transcript: those
+  // are ClickHouse analytics behind the trace endpoint, so the frame that
+  // moves the run into a terminal status triggers one re-read of the trace
+  // and the run. It is event-driven, once per finish, not a poll.
   useAgentRunUpdates((pushed) => {
     if (pushed.id !== runId) return;
+    const finishes = runFinishes(shownStatus.current, pushed);
+    pushedRun.current = pushed;
+    shownStatus.current = pushed.status;
     setRun((prev) => (prev === null ? prev : { ...prev, ...pushed }));
     setTrace((prev) => (prev === null ? prev : traceWithRun(prev, pushed)));
+    if (finishes) setTick((t) => t + 1);
   });
 
   const ordered = useMemo(
@@ -147,6 +172,10 @@ export function RunDetailPage({
                 {trace.started_at === null ? "—" : relativeTime(trace.started_at)}
               </span>
             )}
+            <Button variant="ghost" size="sm" aria-label="Refresh trace" onClick={() => setTick((t) => t + 1)}>
+              <RefreshCw />
+              Refresh
+            </Button>
             {chatId !== null && onOpenChat !== undefined && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
