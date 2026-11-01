@@ -970,7 +970,12 @@ async fn wait_for_config_change_or_backoff(
 /// both) yields a config; a store without identity parks the link, and a
 /// missing store is a signed-out session.
 pub fn config_from_store(path: &Path) -> Option<MachineLinkConfig> {
-    let stored = session_store::load(path)?;
+    config_from_stored(session_store::load(path)?)
+}
+
+/// The link config one stored session implies (None without the machine
+/// identity).
+fn config_from_stored(stored: session_store::StoredSession) -> Option<MachineLinkConfig> {
     Some(MachineLinkConfig {
         base_url: stored.base_url,
         token: stored.token,
@@ -1012,25 +1017,36 @@ pub async fn watch_token_store(
         if *shutdown_rx.borrow_and_update() {
             return;
         }
-        let sig = Some(store_sig(&path));
+        // Store I/O runs on the blocking pool, never under the session lock.
+        let read_path = path.clone();
+        let Ok(sig) = tokio::task::spawn_blocking(move || store_sig(&read_path)).await else {
+            continue;
+        };
+        let sig = Some(sig);
         if sig == last_sig {
             continue;
         }
         last_sig = sig;
-        let cfg = config_from_store(&path);
+        let read_path = path.clone();
+        let Ok(stored) = tokio::task::spawn_blocking(move || session_store::load(&read_path)).await
+        else {
+            continue;
+        };
+        // Lock order: the session, then the link registry — the same order
+        // every auth transition takes.
         {
             // The in-memory session follows the store too: the daemon built
             // its engine state's auth at boot, and the unit's CLI / agent.start /
             // registry.* read it — a re-pair must not leave stale auth.
             // Memory-only: no persist, and the link send below keeps its
-            // dedup.
-            // A different principal (sign-out, or another account's login)
-            // resets the account-owned execution state like an in-process
-            // transition.
+            // dedup. A different principal (sign-out, or another account's
+            // login) resets the account-owned execution state like an
+            // in-process transition.
             let mut s = session.lock().unwrap();
             let previous = crate::jsonrpc_loop::principal_of(&s);
-            match session_store::load(&path) {
+            match stored {
                 Some(stored) => {
+                    let cfg = config_from_stored(stored.clone());
                     s.auth.adopt_stored(&stored);
                     // The mtime/length signature already filtered repeated
                     // polls; publish only when the implied config changed.
