@@ -28,9 +28,13 @@ you.
   member socket: inside the `sync` bracket for the first view, then on the
   store NOTIFY. Clients do not poll HTTP for state the socket carries, and
   a grandchild's event is pushed to every ancestor chat that displays it.
-  New display state gets a frame variant in `crates/protocol/src/ws.rs`
-  and `packages/wire/src/types.ts`, a serializer arm in
-  `apps/server/src/hub/protocol.ts`, a NOTIFY channel, and a feed handler.
+  New display state gets a frame variant in `protocol/socket.schema.json`
+  (the contract) with a fixture in `protocol/fixtures/socket.ServerFrame.json`,
+  the matching variant in `crates/protocol/src/ws.rs` and
+  `packages/wire/src/types.ts`, its tag in `SERVER_TAG_NAMES`
+  (`packages/wire/src/parse.ts`), a NOTIFY channel, and a feed handler.
+  The server serializer (`apps/server/src/hub/protocol.ts`) is generic and
+  needs no arm.
   The client applies the frame; it never re-fetches.
 - **The server pushes all operational, status and chat state; clients never
   poll for it.** Machine online/offline, run status, unread, approvals,

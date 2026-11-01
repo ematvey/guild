@@ -14,7 +14,6 @@ docker compose up -d --build
 ```
 
 Health check: `curl -s localhost:8080/api/v1/health` → `{"status":"ok"}`.
-Restate admin UI: `http://localhost:9070`.
 
 ## Publish desktop clients
 

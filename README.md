@@ -21,6 +21,9 @@ crates/guild-core   agent loop, tools, provider clients
 crates/app-server   local engine binary
 apps/server         TS cloud server (Fastify + pi-durable) + SQL migrations
 apps/desktop        Tauri desktop client (also the web SPA)
+packages/wire       hand-written TypeScript wire types (server + desktop)
+packages/ui         shared component kit
+protocol            wire schemas (the contract), fixtures, check.mjs
 deploy/compose      docker compose bundle
 docs/specs          design docs
 docs/plans          implementation plans
@@ -79,21 +82,27 @@ cd apps/desktop && npm install
 npm run tauri dev
 ```
 
-## Integrations (routines, M5)
+## Agent routines
 
-User-created routines run as durable ReAct loops on Restate (webhook or
-interval triggers, `http_call` / `storage_put` actions):
+A routine belongs to a persistent agent: a prompt on a schedule. `kind` is
+`cron` (a five-field cron expression, or interval sugar such as
+`every 30m`, minimum one minute, in `timezone`, default UTC) or `once`
+(`run_at`). The scheduler in the server process claims each due occurrence
+and starts an isolated agent run; there are no webhook triggers.
 
 ```bash
-curl -X POST localhost:8080/api/v1/routines -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"slug":"digest","trigger_kind":"webhook","prompt":"Digest it.","model":"gpt-4o-mini"}'
-# fire it:
-curl -X POST localhost:8080/api/v1/hooks/<org>/<slug> \
-  -H "x-guild-hook-token: <webhook_token>" -d '{"headline":"hi"}'
+curl -X POST localhost:8080/api/v1/agents/$AGENT/routines \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"digest","kind":"cron","schedule":"0 9 * * 1-5","prompt":"Digest the inbox."}'
+# run it now, and read its runs:
+curl -X POST localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/run -H "authorization: Bearer $TOKEN"
+curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/runs -H "authorization: Bearer $TOKEN"
 ```
 
-## Public OpenAI-compatible endpoint (M6)
+`GET`/`PATCH`/`DELETE /api/v1/agents/:id/routines/:rid` read, change and
+remove one routine (`routes.ts` in `apps/server/src/agents`).
+
+## Public OpenAI-compatible endpoint
 
 ```bash
 # admins issue an org API key (plaintext shown once):
@@ -117,31 +126,32 @@ NSIS installer, a Linux AppImage, and macOS DMGs — cross-built on Linux,
 published to the server's release registry and updater manifest,
 minisign-signed. Full process: `docs/clients.md`.
 
-## SSO, quotas, attachments, events (M7)
+## SSO, quotas, attachments, events
 
-- **OIDC SSO** (§4.1): admins configure the org IdP via
+- **OIDC SSO**: admins configure the org IdP via
   `PUT /api/v1/admin/oidc {issuer, client_id, client_secret}`; browser login
   starts at `GET /api/v1/auth/oidc/login?org_id=…` (302 to the IdP), the
   callback provisions `identity_type=oidc` members on first login and issues
   a normal session.
-- **Model route quotas** (§4.5): `PUT /api/v1/admin/gateway/routes` accepts
+- **Model route quotas**: `PUT /api/v1/admin/gateway/routes` accepts
   `quota_monthly_usd`; the gateway returns 429 `quota_exceeded` once
   month-to-date ClickHouse spend reaches the cap.
-- **Attachments** (§4.3): `POST /api/v1/chats/{id}/attachments?filename=…`
+- **Attachments**: `POST /api/v1/chats/{id}/attachments?filename=…`
   (raw body), list + org-scoped download via `/api/v1/attachments/{id}`;
   bytes live in object storage.
-- **Registry `integration` items** (§4.4): `POST
-  /api/v1/registry/integration/{slug}/install` reads the bundle's
-  `routine.json` and creates a disabled routine — enable it via the routines
-  API to activate the trigger.
-- **Org events** (§4.6/§4.8): published to the `events` table and fanned out
-  over Postgres LISTEN/NOTIFY; subscribe with
-  `GET /api/v1/events/stream` (SSE) or read recent events from
-  `GET /api/v1/events`. Emitted on skill publish and member join today.
-- **Wire types** (§6): the TypeScript types are hand-written in
-  `packages/wire` from `protocol/*.schema.json`; the Rust types are
-  hand-written in `crates/protocol/src`. Nothing generates TypeScript from
-  Rust.
+- **Registry `integration` items**: `POST
+  /api/v1/registry/integration/{slug}/install` installs an MCP plugin
+  bundle (a `manifest.json` with an `mcp` block) as a disabled org
+  integration; an admin enables it and sets its secrets. A bundle that
+  carries a `routine.json` is refused.
+- **Org events**: written to the `events` table and fanned out over
+  Postgres LISTEN/NOTIFY to the member WebSocket as `org_event` frames;
+  `GET /api/v1/events` returns the latest 200. Emitted on registry
+  publish/update/unpublish/fork, skill install/uninstall/pin, and member
+  join.
+- **Wire types**: `protocol/*.schema.json` is the contract. The TypeScript
+  types are hand-written from it in `packages/wire`, the Rust types in
+  `crates/protocol/src`. Nothing generates either side.
 
 ### Promote a queued message to steering
 

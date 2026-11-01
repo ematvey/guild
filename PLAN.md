@@ -1025,16 +1025,19 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   lives on the host services: Postgres db `guild`, ClickHouse for traces and
   usage, rustfs for objects. Agent workspaces ride a JuiceFS volume; tools
   run in gVisor sandboxes via `sandbox-runner`.
-- **Version:** dev runs 0.5.105. Prod is a separate checkout
-  (branch master, port 18081), runs 0.5.82, and stays in
-  supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
-- **Clients:** desktop 0.5.105 is published on the dev updater manifest for
+- **Version:** dev runs 0.6.42 (branch develop). Prod is a separate
+  checkout (`~/guild-live`, branch master, port 18081), runs 0.6.40, and
+  stays in supervisor mode; dev runs worker mode (`GUILD_WORKER_MODE=on`).
+- **Clients:** desktop 0.6.42 is published on the dev updater manifest for
   all four platforms (six artifacts: Windows NSIS, Linux AppImage, macOS
   aarch64 and x86_64 DMG plus their updater bundles), minisign-signed.
   Installed clients pick it up on relaunch. Releases stay dev-controlled and
   deliberate.
-- **Wire:** the client↔server contract is typed end to end, and the schemas
-  are the record of it. The model itself still carries migration history:
+- **Wire:** the client↔server contract is typed end to end, and
+  `protocol/*.schema.json` is the contract: Rust and TypeScript are
+  hand-written from it. Each client release is tagged `client-v<version>`
+  (the first is `client-v0.6.42`), and `protocol/check.mjs` fails on a
+  schema change that client cannot read. The model itself still carries migration history:
   dead stream variants, one event mapped twice, `Json` where a shape exists.
   A refactor defines the domain model before the wide release; the plan is
   `docs/plans/2026-10-28-wire-domain-model.md`. The wide release waits for
@@ -1048,7 +1051,8 @@ Older decisions (before 2026-10-19): `docs/archive/decisions.md`.
   `cargo nextest run --workspace`, the TS server suite
   (`npm test --workspace apps/server`), desktop vitest, strict clippy
   (`--all-targets`), the Windows compile check (`scripts/check-windows.sh`),
-  `node protocol/check.mjs` and `npm run coherence`.
+  `node protocol/check.mjs`, `npm run coherence` and `tsc --noEmit` over
+  the server, desktop and wire trees.
 
 ## Next steps (ordered)
 
