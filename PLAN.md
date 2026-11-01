@@ -12,6 +12,29 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Agent, skill and operational state is pushed (2026-11-02).** The last
+  one-shot fetches and polls for state that changes while the app is open
+  are gone. Migration 0101 adds NOTIFY triggers on the agent, run, routine,
+  thread, grant, team-member, chat-flag and skill tables: about thirty
+  write sites move that state, and a trigger cannot be forgotten by a new
+  one. `hub/agent-state.ts` turns each notify into a whole-value frame,
+  scoped by the same visibility predicate the agent list uses:
+  `agent_list`, `agent_run`, `agent_routines`, `agent_threads`,
+  `skill_catalog`, and `chat_tree` (the child-thread header, sent inside the
+  sync bracket; the client no longer fetches `GET /tree`). `model_list` is
+  pushed on connect and on every gateway route write. `thread_state` carries
+  `compacting`, read from the durable compaction tasks, so a compaction that
+  writes no summary or fails clears its line live; the 1 s compaction poll
+  is gone. `workspace_identity` names the served web bundle, which replaces
+  the 60 s bundle poll: a browser tab reloads into a new bundle when idle,
+  and a desktop shell never does. HTTP still seeds first paint of an
+  agent's runs, threads and routines, and the windowed ClickHouse analytics
+  (trace spans, Calls and Chats) stay reads with a Refresh: they are
+  queries over a time window, not state. `org_event` now has a subscriber
+  (the skills activity feed). The machine-presence stubs and the "Taken
+  over" banner are gone: a browser socket carries no machine id, so
+  `displaced` there only means the server shut down.
+
 - **Review fixes: access, lifecycle and gates (2026-11-02).** A full review
   of the tree found authorization holes, lifecycle bugs and convention
   drift; this entry records the rules the fixes set.
