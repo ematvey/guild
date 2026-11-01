@@ -79,6 +79,24 @@ describe("chat writes", () => {
     expect(calls[0].init.method).toBe("POST");
   });
 
+  it("reads a refused steer from the error envelope's code", async () => {
+    const calls = setup(() => json({ error: { code: "not_admitted", message: "not yet admitted" } }, 409));
+    const { steerQueued } = await import("./chats");
+    expect(await steerQueued("c1", "m1")).toBe("pending");
+    expect((calls[0].init.headers as Record<string, string>)["x-guild-client-id"]).toBeTruthy();
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer tok");
+  });
+
+  it("fails a rejected rename with the server's message", async () => {
+    setup(() => json({ error: { code: "bad_request", message: "title too long" } }, 400));
+    const { updateChat } = await import("./chats");
+    const { ApiError } = await import("./request");
+    const failure = await updateChat("c1", { title: "x" }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as InstanceType<typeof ApiError>).message).toBe("title too long");
+    expect((failure as InstanceType<typeof ApiError>).status).toBe(400);
+  });
+
   it("withdraws a queued message", async () => {
     const calls = setup(() => new Response(null, { status: 200 }));
     const { withdrawQueued } = await import("./chats");

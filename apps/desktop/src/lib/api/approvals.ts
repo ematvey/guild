@@ -1,6 +1,8 @@
 // Approval policy and prompts (design spec 2026-09-12 sections D + F).
 
-import { apiUrl, getToken } from "../session";
+import { request } from "./request";
+
+const threadPath = (chatId: string) => `/api/v1/threads/${encodeURIComponent(chatId)}`;
 
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
 
@@ -29,17 +31,12 @@ export async function postApproval(
   approved: boolean,
   reason?: string,
 ): Promise<ApprovalPostResult> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approvals/${encodeURIComponent(callId)}`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
-  });
-  const v = (await res.json().catch(() => ({}))) as ApprovalPostResult;
-  if (!res.ok) {
-    throw new Error((v as { error?: { message?: string } })?.error?.message ?? `approval rejected (${res.status})`);
-  }
-  return v;
+  const v = await request<ApprovalPostResult | undefined>(
+    "POST",
+    `${threadPath(chatId)}/approvals/${encodeURIComponent(callId)}`,
+    reason === undefined ? { approved } : { approved, reason },
+  );
+  return v ?? { ok: true };
 }
 
 /// Per-chat approval mode (migration 0043, the composer's selector): the
@@ -47,69 +44,41 @@ export async function postApproval(
 export type ChatApprovalMode = "ask" | "approve_for_me" | "full_access";
 
 export async function getApprovalPolicyPrompt(): Promise<{ prompt: string | null; default: string }> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/admin/approval-policy-prompt"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`approval policy prompt rejected (${res.status})`);
-  const v = await res.json().catch(() => ({}));
-  return { prompt: v.prompt ?? null, default: v.default ?? "" };
+  const v = await request<{ prompt?: string | null; default?: string } | undefined>(
+    "GET",
+    "/api/v1/admin/approval-policy-prompt",
+  );
+  return { prompt: v?.prompt ?? null, default: v?.default ?? "" };
 }
 
 export async function setApprovalPolicyPrompt(prompt: string): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/admin/approval-policy-prompt"), {
-    method: "PUT",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `approval policy prompt rejected (${res.status})`);
-  }
+  await request<unknown>("PUT", "/api/v1/admin/approval-policy-prompt", { prompt });
 }
 
+/** The chat's approval mode; null when the chat has none or it cannot be
+ *  read. */
 export async function getChatApproval(chatId: string): Promise<ChatApprovalMode | null> {
   try {
-    const token = getToken();
-    const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approval`), {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const v = await res.json().catch(() => ({}));
+    const v = await request<{ default?: unknown } | undefined>("GET", `${threadPath(chatId)}/approval`);
     const d = v?.default;
     return d === "ask" || d === "approve_for_me" || d === "full_access" ? d : null;
-    } catch {
-    // A rejected fetch (offline, TLS, server down) is a failure like any
-    // other: the null contract covers it, so call sites only handle null.
+  } catch {
     return null;
   }
 }
-
 
 export async function setChatApproval(
   chatId: string,
   mode: ChatApprovalMode | "default",
 ): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approval`), {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ default: mode }),
-  });
-  if (!res.ok) throw new Error(`approval mode rejected (${res.status})`);
+  await request<unknown>("POST", `${threadPath(chatId)}/approval`, { default: mode });
 }
 
 /// Reads the signed-in user's approval policy (migration 0026: user-scoped,
 /// applies to every chat they run); null = server default.
 export async function getApproval(): Promise<ApprovalPolicy | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/me/approval"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`approval policy rejected (${res.status})`);
-  const v = await res.json();
-  return (v?.approval ?? v) as ApprovalPolicy | null;
+  const v = await request<{ approval?: ApprovalPolicy | null } | ApprovalPolicy | null>("GET", "/api/v1/me/approval");
+  return ((v as { approval?: ApprovalPolicy | null } | null)?.approval ?? v ?? null) as ApprovalPolicy | null;
 }
 
 /// Reads the org's admin-configured assistant system prompt and the
@@ -120,27 +89,12 @@ export interface AssistantPrompt {
 }
 
 export async function getAssistantPrompt(): Promise<AssistantPrompt | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`assistant prompt rejected (${res.status})`);
-  const v = await res.json();
-  return { prompt: (v?.prompt ?? null) as string | null, default: (v?.default ?? "") as string };
+  const v = await request<{ prompt?: string | null; default?: string } | undefined>("GET", "/api/v1/admin/assistant-prompt");
+  return { prompt: v?.prompt ?? null, default: v?.default ?? "" };
 }
 
 /// Saves the org's assistant system prompt (empty string resets to the
 /// built-in default). Throws with the API's validation message on failure.
 export async function setAssistantPrompt(prompt: string): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
-    method: "PUT",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ prompt }),
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `prompt rejected (${res.status})`);
-  }
+  await request<unknown>("PUT", "/api/v1/admin/assistant-prompt", { prompt });
 }
-

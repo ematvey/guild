@@ -41,6 +41,7 @@ export async function apiErrorFrom(res: Response): Promise<ApiError> {
 export interface RawInit {
   body?: BodyInit;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 /** Sends one request and returns the successful response; throws ApiError
@@ -56,6 +57,7 @@ export async function requestResponse(
     return fetch(apiUrl(path), {
       method,
       body: init.body,
+      ...(init.signal !== undefined ? { signal: init.signal } : {}),
       headers: {
         ...init.headers,
         ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -76,14 +78,20 @@ export async function requestResponse(
 }
 
 /** A JSON request: `body` is serialized when given; the answer is parsed as
- *  JSON (an empty answer resolves to undefined). */
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+ *  JSON (an empty answer resolves to undefined). `init` adds headers and an
+ *  abort signal. */
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  init: Omit<RawInit, "body"> = {},
+): Promise<T> {
   const res = await requestResponse(
     method,
     path,
     body === undefined
-      ? {}
-      : { body: JSON.stringify(body), headers: { "content-type": "application/json" } },
+      ? init
+      : { ...init, body: JSON.stringify(body), headers: { ...init.headers, "content-type": "application/json" } },
   );
   const text = await res.text();
   return (text === "" ? undefined : JSON.parse(text)) as T;

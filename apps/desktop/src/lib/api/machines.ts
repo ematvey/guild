@@ -2,7 +2,7 @@
 // member socket's `machine_list` frame; this module declares the type and the
 // one write the page makes (deauthorization).
 
-import { apiUrl, getToken } from "../session";
+import { request } from "./request";
 
 export interface MachineInfo {
   machine_id: string;
@@ -23,12 +23,5 @@ export interface MachineInfo {
  *  executor. A machine with bound projects refuses (409) — the message names
  *  them. */
 export async function deauthorizeMachine(machineId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/v1/machines/${encodeURIComponent(machineId)}`), {
-    method: "DELETE",
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `deauthorize failed (${res.status})`);
-  }
+  await request<unknown>("DELETE", `/api/v1/machines/${encodeURIComponent(machineId)}`);
 }

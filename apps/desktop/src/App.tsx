@@ -511,6 +511,8 @@ function AppInner() {
         setAvatarUrl(u?.avatar_url ?? null);
         setOnboarded(u?.onboarded ?? true);
       })
+      // An unreachable server reads as signed out: the login screen shows.
+      .catch(() => {})
       .finally(() => setReady(true));
   }, []);
 

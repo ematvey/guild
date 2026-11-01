@@ -1,10 +1,30 @@
 // Chat reads and writes: the sidebar lists, the thread turns (send, stop,
 // steer, withdraw, compact), attachments, and the chat's agent binding.
 
-import { HAS_ENGINE, apiUrl, getToken } from "../session";
+import { HAS_ENGINE } from "../session";
 import { clientId, machineId } from "../machine-rpc";
-import type { MessageAttachmentMeta, StreamEvent } from "../thread-events";
+import type { MessageAttachmentMeta } from "../thread-events";
 import type { Chat, SubagentNode, ThreadType } from "@guild/wire/rest";
+import { ApiError, request, requestResponse } from "./request";
+
+const thread = (chatId: string) => `/api/v1/threads/${encodeURIComponent(chatId)}`;
+
+/** The client identity header every turn command carries. */
+const clientHeaders = (): Record<string, string> => ({ "x-guild-client-id": clientId() });
+
+/** True for the 409 the server answers when a turn command lost its race
+ *  (nothing generating, already placed). */
+const conflict = (error: unknown): error is ApiError => error instanceof ApiError && error.status === 409;
+
+/** An authed binary read as a blob URL; null when it cannot be read. */
+async function blobUrl(path: string): Promise<string | null> {
+  try {
+    const res = await requestResponse("GET", path);
+    return URL.createObjectURL(await res.blob());
+  } catch {
+    return null;
+  }
+}
 
 /** One sidebar row: the wire `Chat`. The wire omits `title` when the chat
  *  has none; render it with a fallback. */
@@ -30,55 +50,29 @@ export interface ChatTree {
   origin: { chat_id: string; title: string } | null;
 }
 
-/** The open chat's position in the thread tree, for the child thread header. */
+/** The open chat's position in the thread tree, for the child thread header;
+ *  null when it cannot be read. */
 export async function fetchChatTree(chatId: string, signal: AbortSignal): Promise<ChatTree | null> {
-  const response = await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(chatId)}/tree`), {
-    headers: { authorization: `Bearer ${getToken()}` },
-    signal,
-  });
-  if (!response.ok) return null;
-  return response.json();
+  try {
+    return await request<ChatTree>("GET", `/api/v1/chats/${encodeURIComponent(chatId)}/tree`, undefined, { signal });
+  } catch {
+    return null;
+  }
 }
 
 /** One node of the chat's thread subtree, with its latest run status. */
 export type ChatSubagentNode = SubagentNode;
 
+/** The caller's active chats; null when the list cannot be read (distinct
+ *  from a legitimately empty list). */
 export async function listChats(): Promise<ChatSummary[] | null> {
   try {
-    const token = getToken();
-    const res = await fetch(apiUrl("/api/v1/threads"), {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    // null = request failed (distinguishable from a legitimately empty list)
-    if (!res.ok) return null;
-    const v = await res.json().catch(() => ({}));
-    return v.chats ?? [];
-    } catch {
-    // A rejected fetch (offline, TLS, server down) is a failure like any
-    // other: the null contract covers it, so call sites only handle null.
+    const v = await request<{ chats?: ChatSummary[] }>("GET", "/api/v1/threads");
+    return v?.chats ?? [];
+  } catch {
     return null;
   }
 }
-
-
-/// Lists the archived chats (the sidebar's Archived section). Null on
-/// failure, same contract as `listChats`.
-export async function listArchivedChats(): Promise<ChatSummary[] | null> {
-  try {
-    const token = getToken();
-    const res = await fetch(apiUrl("/api/v1/threads?archived=1"), {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const v = await res.json().catch(() => ({}));
-    return v.chats ?? [];
-    } catch {
-    // A rejected fetch (offline, TLS, server down) is a failure like any
-    // other: the null contract covers it, so call sites only handle null.
-    return null;
-  }
-}
-
 
 /// Renames and/or archives a chat. Archived chats drop out of `listChats`
 /// but direct links still resolve; `archived: false` unarchives.
@@ -86,89 +80,46 @@ export async function updateChat(
   id: string,
   patch: { title?: string; archived?: boolean },
 ): Promise<void> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${id}`), {
-    method: "PATCH",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
-  }
+  await request<unknown>("PATCH", thread(id), patch);
 }
 
 /** Soft-deletes a chat. The thread leaves every list; its transcript stays.
  *  Deletion is separate from archiving and cannot be undone in the app. */
 export async function deleteChat(id: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${id}`), {
-    method: "DELETE",
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
+  await request<unknown>("DELETE", thread(id));
+}
+
+/** Creates a chat; null when the server refuses it. */
+export async function createChat(title: string, projectId?: string | null): Promise<string | null> {
+  try {
+    const v = await request<{ id?: string }>("POST", "/api/v1/threads", {
+      title,
+      ...(projectId ? { project_id: projectId } : {}),
+    });
+    return v?.id ?? null;
+  } catch {
+    return null;
   }
 }
-
-export async function createChat(title: string, projectId?: string | null): Promise<string | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/threads"), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ title, ...(projectId ? { project_id: projectId } : {}) }),
-  });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v.id ?? null;
-}
-
-/// Frame shape passed to stream consumers: loose — the server owns the
-/// protocol (see packages/wire/src/types.ts); consumers
-/// dispatch on `type` and read only the fields they know.
 
 export async function uploadAttachment(
   chatId: string,
   file: File,
 ): Promise<MessageAttachmentMeta> {
-  const res = await fetch(
-    apiUrl(`/api/v1/threads/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`),
-    {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}` },
-      body: file,
-    },
-  );
-  if (!res.ok) throw new Error(`attachment upload failed: ${res.status}`);
+  const query = `filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`;
+  const res = await requestResponse("POST", `${thread(chatId)}/attachments?${query}`, { body: file });
   return (await res.json()) as MessageAttachmentMeta;
 }
 
 /** Fetches an attachment as a blob URL for thumbnails/downloads (authed). */
-export async function attachmentBlobUrl(id: string): Promise<string | null> {
-  try {
-    const res = await fetch(apiUrl(`/api/v1/attachments/${id}`), {
-      headers: { authorization: `Bearer ${getToken()}` },
-    });
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  } catch {
-    return null;
-  }
+export function attachmentBlobUrl(id: string): Promise<string | null> {
+  return blobUrl(`/api/v1/attachments/${encodeURIComponent(id)}`);
 }
 
 /** Fetches a spilled tool artifact as a blob URL for the download card
  * (authed, same mechanism as attachmentBlobUrl). */
-export async function toolArtifactBlobUrl(id: string): Promise<string | null> {
-  try {
-    const res = await fetch(apiUrl(`/api/v1/tool_artifacts/${id}`), {
-      headers: { authorization: `Bearer ${getToken()}` },
-    });
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  } catch {
-    return null;
-  }
+export function toolArtifactBlobUrl(id: string): Promise<string | null> {
+  return blobUrl(`/api/v1/tool_artifacts/${encodeURIComponent(id)}`);
 }
 
 /// Sends a chat command over HTTP. The member WebSocket delivers every
@@ -188,27 +139,18 @@ export async function sendChatNoStream(
   projectInstructions?: string,
   agentId?: string,
 ): Promise<void> {
-  const token = getToken();
-  let res: Response;
+  let acknowledgment: { accepted?: boolean } | undefined;
   try {
-    // The thread API: the chat id rides the path (POST /api/v1/threads/:id/turns);
-    // the old POST /api/v1/gateway/chat (chat_id in the body) is a deprecated
-    // server alias.
-    res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/turns`), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-        "x-guild-client-id": clientId(),
-        ...(HAS_ENGINE ? { "x-guild-machine-id": machineId() } : {}),
-      },
-      body: JSON.stringify({
+    acknowledgment = await request<{ accepted?: boolean }>(
+      "POST",
+      `${thread(chatId)}/turns`,
+      {
         user_message_id: messageId,
         model,
         messages: [{ role: "user", content: prompt }],
         // Tools are declared for every client: desktop turns dispatch to the
         // bound machine, browser turns fall back to the server-side per-chat
-        // sandbox (spec 2026-09-18 unification §4 phase 5b).
+        // sandbox.
         client_tools: true,
         attachment_ids: attachmentIds,
         project_id: projectId || undefined,
@@ -216,24 +158,22 @@ export async function sendChatNoStream(
         send_mode: sendMode,
         skills_index: skillsIndex || undefined,
         agents_md: projectInstructions || undefined,
-      }),
-      // A hung connection (proxy, tunnel, stalled body) must surface as an
-      // error block. Delivery may already have committed; retries must reuse
-      // the same user_message_id and immutable payload.
-      signal: AbortSignal.timeout(30_000),
-    });
+      },
+      {
+        headers: { ...clientHeaders(), ...(HAS_ENGINE ? { "x-guild-machine-id": machineId() } : {}) },
+        // A hung connection (proxy, tunnel, stalled body) must surface as an
+        // error block. Delivery may already have committed; retries must
+        // reuse the same user_message_id and immutable payload.
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
-      throw new Error("send timed out — delivery is unknown; retry this send to check or complete it");
+      throw new ApiError("timeout", "send timed out — delivery is unknown; retry this send to check or complete it", 0);
     }
     throw e;
   }
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
-  }
-  const acknowledgment = await res.json();
-  if (acknowledgment.accepted !== true) throw new Error("Chat command was not accepted");
+  if (acknowledgment?.accepted !== true) throw new ApiError("not_accepted", "Chat command was not accepted", 200);
 }
 
 /// Stops the chat's in-flight turn. The delivered prefix stays in history
@@ -242,115 +182,77 @@ export async function sendChatNoStream(
 /// render and the click) so the caller lifts its optimistic stopping state
 /// at once; true when the server accepted the stop.
 export async function stopChat(chatId: string): Promise<boolean> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/stop`), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "x-guild-client-id": clientId(),
-    },
-  });
-  if (res.status === 409) return false;
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
+  try {
+    await request<unknown>("POST", `${thread(chatId)}/stop`, undefined, { headers: clientHeaders() });
+    return true;
+  } catch (e) {
+    if (conflict(e)) return false;
+    throw e;
   }
-  return true;
 }
 
 /** Promote the existing queued input; placement races preserve its identity. */
 export async function steerQueued(chatId: string, messageId: string): Promise<"steering" | "pending" | "placed"> {
-  const response = await fetch(
-    apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}/steer`),
-    {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}`, "x-guild-client-id": clientId() },
-    },
-  );
-  if (response.status === 409) {
-    const body = await response.json();
-    return body?.error?.code === "not_admitted" ? "pending" : "placed";
+  try {
+    await request<unknown>("POST", `${thread(chatId)}/pending/${encodeURIComponent(messageId)}/steer`, undefined, {
+      headers: clientHeaders(),
+    });
+    return "steering";
+  } catch (e) {
+    if (conflict(e)) return e.code === "not_admitted" ? "pending" : "placed";
+    throw e;
   }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body?.error?.message ?? response.statusText);
-  }
-  return "steering";
 }
 
 /** Withdraws one queued (not yet placed) mid-turn send — the queued-chip
  *  trash button. False = it just got placed (409): refresh, the message is
  *  already transitioning to a delivered transcript bubble. */
 export async function withdrawQueued(chatId: string, messageId: string): Promise<boolean> {
-  const token = getToken();
-  const res = await fetch(
-    apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}`),
-    {
-      method: "DELETE",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "x-guild-client-id": clientId(),
-      },
-    },
-  );
-  if (res.status === 409) return false;
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
+  try {
+    await request<unknown>("DELETE", `${thread(chatId)}/pending/${encodeURIComponent(messageId)}`, undefined, {
+      headers: clientHeaders(),
+    });
+    return true;
+  } catch (e) {
+    if (conflict(e)) return false;
+    throw e;
   }
-  return true;
 }
 
 /** Starts a manual compaction. True when the server started a task; its
  *  outcome reaches the view as the durable compaction event in the thread
  *  state. False when there was nothing to compact. */
 export async function compactChat(chatId: string): Promise<boolean> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compact`), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${getToken()}`,
-      "x-guild-client-id": clientId(),
-    },
+  const started = await request<{ task_id: number | null }>("POST", `${thread(chatId)}/compact`, undefined, {
+    headers: clientHeaders(),
   });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
-  }
-  const started = await res.json() as { task_id: number | null };
   if (started.task_id === null) return false;
-  if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) throw new Error("Invalid compaction task response");
+  if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) {
+    throw new ApiError("invalid_response", "Invalid compaction task response", 200);
+  }
   return true;
 }
-
-/// The org-skills HTTP surface lib/context's assembly consumes (spec §2.3):
-
-export interface ChatSnapshot {
-  running: boolean;
-  seq: number;
-  frames: StreamEvent[];
-}
-
-
 
 /** The chat's agent and whether the picker may move it. A thread belongs to
  *  its agent: shared agents and Main threads keep theirs. */
 export async function chatAgentBinding(
   chatId: string,
 ): Promise<{ agent: unknown | null; switcheable: boolean }> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/agent`), {
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) return { agent: null, switcheable: true };
-  const body = (await res.json().catch(() => ({}))) as { agent?: unknown; switcheable?: boolean };
-  return { agent: body.agent ?? null, switcheable: body.switcheable !== false };
+  try {
+    const body = await request<{ agent?: unknown; switcheable?: boolean } | undefined>("GET", `${thread(chatId)}/agent`);
+    return { agent: body?.agent ?? null, switcheable: body?.switcheable !== false };
+  } catch {
+    return { agent: null, switcheable: true };
+  }
 }
 
-/** Binds a chat to an agent. A chat with a thread keeps its transcript. */
+/** Binds a chat to an agent. A chat with a thread keeps its transcript.
+ *  False when the server refuses the binding. */
 export async function bindChatAgent(chatId: string, agentId: string): Promise<boolean> {
-  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/agent`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify({ agent_id: agentId }),
-  });
-  return res.ok;
+  try {
+    await request<unknown>("POST", `${thread(chatId)}/agent`, { agent_id: agentId });
+    return true;
+  } catch {
+    return false;
+  }
 }

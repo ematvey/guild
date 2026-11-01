@@ -1,8 +1,9 @@
 // Signed-in servers and sign-in (desktop only — the browser is
 // single-server), plus the account-level reads the shell needs.
 
-import { HAS_ENGINE, apiUrl, clearToken, getToken, setToken } from "../session";
+import { HAS_ENGINE, clearToken, getToken, setToken } from "../session";
 import { rpcCall } from "../machine-rpc";
+import { ApiError, apiErrorFrom, request, requestResponse } from "./request";
 
 // ---- Signed-in servers (desktop only — the browser is single-server) ----
 
@@ -59,13 +60,15 @@ export async function apiLogin(
   avatar_url?: string;
   onboarded?: boolean;
 }> {
+  // Sign-in precedes the session: it names its server explicitly and
+  // carries no bearer, so it is the one call that bypasses `request`.
   const res = await fetch(`${url.replace(/\/$/, "")}/api/v1/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
+  if (!res.ok) throw await apiErrorFrom(res);
   const v = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
   setToken(v.token);
   return {
     email: v.user?.email ?? email,
@@ -78,11 +81,7 @@ export async function apiLogin(
 
 export async function apiLogout(): Promise<void> {
   try {
-    await fetch(apiUrl("/api/v1/auth/logout"), {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}` },
-      signal: AbortSignal.timeout(3000),
-    });
+    await requestResponse("POST", "/api/v1/auth/logout", { signal: AbortSignal.timeout(3000) });
   } catch { /* Revocation is best effort; local sign-out must finish. */ }
 }
 
@@ -93,16 +92,18 @@ export async function apiMe(): Promise<{
   avatar_url?: string;
   onboarded?: boolean;
 } | null> {
-  const token = getToken();
-  if (!token) return null;
-  const res = await fetch(apiUrl("/api/v1/auth/me"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (res.status === 401) {
-    clearToken();
-    return null;
+  if (!getToken()) return null;
+  let v: { email: string; role?: string; display_name?: string | null; avatar_url?: string | null; onboarded?: boolean };
+  try {
+    v = await request<typeof v>("GET", "/api/v1/auth/me");
+  } catch (e) {
+    // A session the refresh could not renew is over: drop the token.
+    if (e instanceof ApiError && e.status === 401) {
+      clearToken();
+      return null;
+    }
+    throw e;
   }
-  const v = await res.json().catch(() => ({}));
   return {
     email: v.email,
     role: v.role ?? "member",
@@ -115,11 +116,7 @@ export async function apiMe(): Promise<{
 /** Marks the first-run onboarding wizard as done (finished or skipped). */
 export async function apiOnboarded(): Promise<void> {
   try {
-    await fetch(apiUrl("/api/v1/me/onboarded"), {
-      method: "PUT",
-      headers: { authorization: `Bearer ${getToken()}` },
-      signal: AbortSignal.timeout(5000),
-    });
+    await requestResponse("PUT", "/api/v1/me/onboarded", { signal: AbortSignal.timeout(5000) });
   } catch { /* best effort — the wizard just re-shows on next login */ }
 }
 

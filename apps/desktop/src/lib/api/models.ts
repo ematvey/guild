@@ -1,31 +1,20 @@
 // Model catalog and the caller's API keys.
 
-import { apiUrl, getToken } from "../session";
+import { request } from "./request";
 
 import type { ModelOption } from "@guild/wire/types";
 
 export type { ModelOption };
 
+/** The org's enabled models; null when the list cannot be read. */
 export async function listModels(): Promise<ModelOption[] | null> {
   try {
-    const token = getToken();
-  // /api/v1/models is primary since the 2026-10-15 thread rename; the
-  // server keeps /api/v1/gateway/models as a deprecated alias.
-  const res = await fetch(apiUrl("/api/v1/models"), {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    // null = request failed (distinguishable from a legitimately empty list)
-    if (!res.ok) return null;
-    const v = await res.json().catch(() => ({}));
-    const ids: unknown = v.models ?? [];
-    const aliases: Record<string, string> = v.aliases ?? {};
-    return Array.isArray(ids)
-      ? ids.filter((id): id is string => typeof id === "string")
-          .map((id) => ({ id, alias: aliases[id] ?? "" }))
+    const v = await request<{ models?: unknown; aliases?: Record<string, string> }>("GET", "/api/v1/models");
+    const aliases = v?.aliases ?? {};
+    return Array.isArray(v?.models)
+      ? v.models.filter((id): id is string => typeof id === "string").map((id) => ({ id, alias: aliases[id] ?? "" }))
       : [];
-    } catch {
-    // A rejected fetch (offline, TLS, server down) is a failure like any
-    // other: the null contract covers it, so call sites only handle null.
+  } catch {
     return null;
   }
 }
@@ -45,37 +34,34 @@ export interface ApiKeyInfo {
   revoked_at?: string | null;
 }
 
-/** This user's gateway API keys (Settings → API Keys). */
+/** This user's gateway API keys (Settings → API Keys); null when they
+ *  cannot be read. */
 export async function listMyApiKeys(): Promise<ApiKeyInfo[] | null> {
-  const res = await fetch(apiUrl("/api/v1/api-keys"), {
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v?.keys ?? [];
+  try {
+    const v = await request<{ keys?: ApiKeyInfo[] }>("GET", "/api/v1/api-keys");
+    return v?.keys ?? [];
+  } catch {
+    return null;
+  }
 }
 
-/** Mints a key; the plaintext is shown exactly once, in the response. */
-export async function createMyApiKey(
-  name: string,
-): Promise<{ key: ApiKeyInfo; plaintext: string } | null> {
-  const res = await fetch(apiUrl("/api/v1/api-keys"), {
-    method: "POST",
-    headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  if (!v?.plaintext || !v?.key) return null;
-  return { key: v.key, plaintext: v.plaintext };
+/** Mints a key; the plaintext is shown exactly once, in the response.
+ *  null when the server refuses. */
+export async function createMyApiKey(name: string): Promise<{ key: ApiKeyInfo; plaintext: string } | null> {
+  try {
+    const v = await request<{ key?: ApiKeyInfo; plaintext?: string }>("POST", "/api/v1/api-keys", { name });
+    return v?.plaintext && v?.key ? { key: v.key, plaintext: v.plaintext } : null;
+  } catch {
+    return null;
+  }
 }
 
-/** Revokes one of this user's keys. */
+/** Revokes one of this user's keys; false when the server refuses. */
 export async function revokeMyApiKey(id: string): Promise<boolean> {
-  const res = await fetch(apiUrl(`/api/v1/api-keys/${encodeURIComponent(id)}`), {
-    method: "DELETE",
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  return res.ok;
+  try {
+    await request<unknown>("DELETE", `/api/v1/api-keys/${encodeURIComponent(id)}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
-

@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import { apiUrl, getToken } from "../session";
+import { request } from "./request";
 
 // ---- Folder sources (app-process commands; spec §5) ----
 
@@ -48,14 +48,8 @@ export async function machineFsRequest(
   op: "fs_list" | "fs_home",
   payload: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const res = await fetch(apiUrl(`/api/v1/machines/${machineId}/fs`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify({ op, payload }),
-  });
-  const v = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(v?.error?.message ?? `machine request failed (${res.status})`);
-  return (v as { result: unknown }).result;
+  const v = await request<{ result: unknown }>("POST", `/api/v1/machines/${encodeURIComponent(machineId)}/fs`, { op, payload });
+  return v.result;
 }
 
 /** Directory listing on a remote machine (dirs first, dotfiles included). */
@@ -80,14 +74,7 @@ export interface PairingToken {
 /// composed client-side (`g1|<server_url>|<secret>`): the server URL is
 /// routing info, the secret is the credential.
 export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/auth/pairing-tokens"), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ttl_minutes: ttlMinutes }),
-  });
-  const v = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
+  const v = await request<PairingToken>("POST", "/api/v1/auth/pairing-tokens", { ttl_minutes: ttlMinutes });
   return { id: v.id, secret: v.secret, expires_at: v.expires_at };
 }
 

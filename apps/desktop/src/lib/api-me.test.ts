@@ -29,7 +29,7 @@ describe("apiMe uses the adopted credential", () => {
         url: String(input),
         auth: (init?.headers as Record<string, string>)?.authorization ?? null,
       });
-      return { status: 200, json: async () => ({ email: "a@b.c", role: "admin" }) };
+      return new Response(JSON.stringify({ email: "a@b.c", role: "admin" }), { status: 200 });
     }));
 
     // afterAuth's order: store, then fetch.
