@@ -269,6 +269,9 @@ export interface ChatTree {
   origin: ChatTreeLink | null;
   archived: boolean;
   deleted: boolean;
+  /** The receiving user owns the chat and may write to it; false for a
+   *  chat an admin reads. */
+  own: boolean;
 }
 
 /** The owner a skill is listed under: a user or a team. */

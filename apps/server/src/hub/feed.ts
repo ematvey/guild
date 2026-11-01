@@ -226,7 +226,7 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       const [nodes, tree] = await Promise.all([
         chatSubagentNodes(this.ctx.pool, chatId),
-        chatTreeFacts(this.ctx.pool, chatId),
+        chatTreeFacts(this.ctx.pool, chatId, chat.userId),
       ]);
       const wire = JSON.stringify(nodes);
       if (this.subagentTrees.get(chatId) !== wire) {

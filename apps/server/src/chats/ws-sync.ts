@@ -27,7 +27,7 @@ export function wireWsSync(ctx: PlatformContext): void {
     await ctx.chats.getChat(args.user.org_id, args.chatId, args.user);
     const [nodes, tree] = await Promise.all([
       chatSubagentNodes(ctx.pool, args.chatId),
-      chatTreeFacts(ctx.pool, args.chatId),
+      chatTreeFacts(ctx.pool, args.chatId, args.user.id),
     ]);
     const frames = [subagentTreeMsg(args.chatId, nodes)];
     if (tree !== null) frames.push(chatTreeMsg(tree));

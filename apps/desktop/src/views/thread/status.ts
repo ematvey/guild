@@ -121,23 +121,26 @@ export function offlineMachine(
   return remote?.online === false ? { label: remote.label } : null;
 }
 
-/** The three independent facts about a thread: what it is, and whether the
- *  user archived or deleted it. They are not one state: an archived user
- *  thread stays a user thread, and a deleted thread stays deleted after it
- *  is unarchived. The sidebar lists are the live source for the flags; the
- *  tree supplies the type and is the fallback for a chat that is in no
- *  list (a subagent node). */
+/** The independent facts about a thread: what it is, whether the user
+ *  archived or deleted it, and whether the user owns it. They are not one
+ *  state: an archived user thread stays a user thread, and a deleted thread
+ *  stays deleted after it is unarchived. The sidebar lists are the live
+ *  source for the flags; the tree supplies the type and is the fallback for
+ *  a chat that is in no list (a subagent node, or a member's chat an admin
+ *  reads). `owned` is null until either source speaks: a listed chat is the
+ *  user's own, and the tree's `own` says so for every other chat. */
 export interface ThreadFacts {
   type: ThreadType;
   archived: boolean;
   deleted: boolean;
+  owned: boolean | null;
 }
 
 export function threadFacts(input: {
   chatId: string | null;
   chats: ReadonlyArray<Pick<ChatSummary, "id" | "type" | "archived" | "deleted">> | null;
   archivedChats: ReadonlyArray<Pick<ChatSummary, "id" | "type" | "archived" | "deleted">> | null;
-  childTree: { type: ThreadType; archived: boolean; deleted: boolean } | null;
+  childTree: { type: ThreadType; archived: boolean; deleted: boolean; own?: boolean } | null;
 }): ThreadFacts {
   const { chatId, chats, archivedChats, childTree } = input;
   const active = chatId === null ? undefined : chats?.find((c) => c.id === chatId);
@@ -147,12 +150,14 @@ export function threadFacts(input: {
     type: childTree?.type ?? row?.type ?? "user",
     archived: active !== undefined ? !!active.archived : row !== undefined ? true : childTree?.archived === true,
     deleted: row !== undefined ? !!row.deleted : childTree?.deleted === true,
+    owned: chatId === null || row !== undefined ? true : typeof childTree?.own === "boolean" ? childTree.own : null,
   };
 }
 
 /** What the composer may do for the visible thread. Type and flags are
- *  separate: only a live, active user thread is writable. An active list
- *  membership wins over a late archived list; an unknown thread hides the
+ *  separate: only a live, active user thread the user owns is writable. An
+ *  active list membership wins over a late archived list; another member's
+ *  chat (an admin reading it) is read-only; an unknown thread hides the
  *  composer rather than showing an editable one that would flip a moment
  *  later. */
 export type ThreadAccess = "writable" | "readonly" | "unknown";
@@ -169,6 +174,7 @@ export function threadAccess(input: {
   if (facts.type !== "user") return "readonly";
   if (facts.deleted) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";
+  if (facts.owned === false) return "readonly";
   if (facts.archived) return "readonly";
   // A just-created chat keeps its editable composer while its row is still
   // in flight.

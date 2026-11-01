@@ -506,7 +506,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
-    const tree = await chatTreeFacts(infra.pool, chatId);
+    const tree = await chatTreeFacts(infra.pool, chatId, user.id);
     if (tree === null) throw ApiError.notFound("no such chat");
     return sendJson(reply, tree);
   };

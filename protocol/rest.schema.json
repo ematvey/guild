@@ -958,7 +958,7 @@
     "ChatTree": {
       "description": "One chat's place in the thread tree: what the thread is, its flags, its run status and its parent. The child thread header renders it; a chat with no thread row is a plain user chat.",
       "type": "object",
-      "required": ["chat_id", "type", "title", "agent_id", "agent_name", "status", "depth", "parent", "origin", "archived", "deleted"],
+      "required": ["chat_id", "type", "title", "agent_id", "agent_name", "status", "depth", "parent", "origin", "archived", "deleted", "own"],
       "additionalProperties": false,
       "properties": {
         "chat_id": { "$ref": "#/$defs/Uuid" },
@@ -971,7 +971,8 @@
         "parent": { "oneOf": [{ "$ref": "#/$defs/ChatTreeLink" }, { "type": "null" }] },
         "origin": { "oneOf": [{ "$ref": "#/$defs/ChatTreeLink" }, { "type": "null" }] },
         "archived": { "type": "boolean" },
-        "deleted": { "type": "boolean" }
+        "deleted": { "type": "boolean" },
+        "own": { "type": "boolean", "description": "The receiving user owns the chat and may write to it; false for a chat an admin reads." }
       }
     },
     "SkillOwner": {

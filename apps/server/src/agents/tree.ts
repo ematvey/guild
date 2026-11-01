@@ -55,14 +55,15 @@ export function subagentTreeMsg(chatId: string, nodes: SubagentNode[]): WsServer
 
 /** The chat header's tree facts: the chat's thread node, its latest run
  *  status, its parent and origin chats, and the three independent thread
- *  facts — what it is (type), and whether the user archived or deleted it.
- *  A chat with no thread row is a plain user chat. Null when the chat does
- *  not exist. */
-export async function chatTreeFacts(pool: PlatformPool, chatId: string): Promise<ChatTree | null> {
-  const chat = await pool.query<{ title: string | null; archived: boolean; deleted: boolean }>(
-    `SELECT title, archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted
+ *  facts — what it is (type), and whether the user archived or deleted it —
+ *  plus whether `viewerId` owns it (only the owner writes). A chat with no
+ *  thread row is a plain user chat. Null when the chat does not exist. */
+export async function chatTreeFacts(pool: PlatformPool, chatId: string, viewerId: string): Promise<ChatTree | null> {
+  const chat = await pool.query<{ title: string | null; archived: boolean; deleted: boolean; own: boolean }>(
+    `SELECT title, archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted,
+            user_id = $2 AS own
      FROM chats WHERE id = $1`,
-    [chatId],
+    [chatId, viewerId],
   );
   const flags = chat.rows[0];
   if (flags === undefined) return null;
@@ -91,7 +92,7 @@ export async function chatTreeFacts(pool: PlatformPool, chatId: string): Promise
     [chatId],
   );
   const row = res.rows[0];
-  const state = { archived: flags.archived, deleted: flags.deleted };
+  const state = { archived: flags.archived, deleted: flags.deleted, own: flags.own };
   if (row === undefined) {
     return {
       chat_id: chatId,

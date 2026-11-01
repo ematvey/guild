@@ -77,6 +77,7 @@ describe("chat tree", () => {
       origin: null,
       archived: false,
       deleted: false,
+      own: true,
     });
 
     const alias = await stack.env.app.inject({
@@ -172,6 +173,7 @@ describe("chat tree", () => {
       origin: null,
       archived: false,
       deleted: false,
+      own: true,
     });
 
     const agentId = randomUUID();
@@ -204,6 +206,7 @@ describe("chat tree", () => {
       origin: null,
       archived: false,
       deleted: false,
+      own: true,
     });
   });
 });

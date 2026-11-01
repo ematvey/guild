@@ -50,7 +50,7 @@ describe("thread facts", () => {
     expect(threadFacts({
       ...base,
       childTree: { type: "subagent", archived: false, deleted: false },
-    })).toEqual({ type: "subagent", archived: false, deleted: false });
+    })).toEqual({ type: "subagent", archived: false, deleted: false, owned: null });
     expect(threadFacts({
       ...base,
       chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
@@ -63,26 +63,55 @@ describe("thread facts", () => {
       ...base,
       archivedChats: [{ id: "chat", type: "user", archived: true, deleted: false }],
     });
-    expect(archivedUser).toEqual({ type: "user", archived: true, deleted: false });
+    expect(archivedUser).toEqual({ type: "user", archived: true, deleted: false, owned: true });
     const deletedUser = threadFacts({
       ...base,
       chats: [{ id: "chat", type: "user", archived: false, deleted: true }],
     });
-    expect(deletedUser).toEqual({ type: "user", archived: false, deleted: true });
+    expect(deletedUser).toEqual({ type: "user", archived: false, deleted: true, owned: true });
     expect(threadFacts({
       ...base,
       childTree: { type: "routine", archived: false, deleted: false },
     }).type).toBe("routine");
   });
+
+  it("reads ownership from the lists, then from the tree", () => {
+    expect(threadFacts({
+      ...base,
+      childTree: { type: "user", archived: false, deleted: false, own: false },
+    }).owned).toBe(false);
+    expect(threadFacts({
+      ...base,
+      childTree: { type: "subagent", archived: false, deleted: false, own: true },
+    }).owned).toBe(true);
+    expect(threadFacts({
+      ...base,
+      chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
+      childTree: { type: "user", archived: false, deleted: false, own: false },
+    }).owned).toBe(true);
+    expect(threadFacts(base).owned).toBeNull();
+    expect(threadFacts({ ...base, chatId: null }).owned).toBe(true);
+  });
 });
 
 describe("thread access", () => {
-  const facts = { type: "user" as const, archived: false, deleted: false };
+  const facts = { type: "user" as const, archived: false, deleted: false, owned: null };
   const base = {
     chatId: "child-chat",
     chats: [{ id: "parent-chat" }],
     facts,
   };
+
+  it("makes another member's chat read-only once the tree says so", () => {
+    const facts = threadFacts({
+      chatId: "child-chat",
+      chats: [{ id: "parent-chat", type: "user", archived: false, deleted: false }],
+      archivedChats: [],
+      childTree: { type: "user", archived: false, deleted: false, own: false },
+    });
+    expect(threadAccess({ ...base, facts })).toBe("readonly");
+    expect(threadAccess({ ...base, facts: { ...facts, archived: true } })).toBe("readonly");
+  });
 
   it("treats an unknown thread as unknown, never editable", () => {
     expect(threadAccess(base)).toBe("unknown");
@@ -107,12 +136,12 @@ describe("thread access", () => {
     expect(threadAccess({
       ...base,
       chats: null,
-      facts: { type: "subagent", archived: false, deleted: false },
+      facts: { type: "subagent", archived: false, deleted: false, owned: null },
     })).toBe("readonly");
     expect(threadAccess({
       ...base,
       chats: null,
-      facts: { type: "routine", archived: false, deleted: false },
+      facts: { type: "routine", archived: false, deleted: false, owned: null },
     })).toBe("readonly");
   });
 

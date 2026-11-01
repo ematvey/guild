@@ -646,6 +646,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     : childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread");
   const chatArchived = facts.archived;
   const chatDeleted = facts.deleted;
+  // Another member's chat an admin reads: every write is the owner's.
+  const foreignChat = facts.owned === false;
   // The header menu's rename: a popup dialog around the sidebar's rename
   // transport. Enter or Save commits, Esc/cancel discards.
   const [renameOpen, setRenameOpen] = useState(false);
@@ -1250,32 +1252,40 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    setRenameValue(activeChat?.title ?? "");
-                    setRenameOpen(true);
-                  }}
-                >
-                  <Pencil className="size-4" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void headerArchive()}>
-                  {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-                  {chatArchived ? "Unarchive" : "Archive"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
+                {!foreignChat && (
+                  <>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setRenameValue(activeChat?.title ?? "");
+                        setRenameOpen(true);
+                      }}
+                    >
+                      <Pencil className="size-4" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void headerArchive()}>
+                      {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                      {chatArchived ? "Unarchive" : "Archive"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))}>
                   <Link2 className="size-4" />
                   Copy thread URL
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={() => setDeleteOpen(true)}
-                >
-                  <Trash2 className="size-4" />
-                  Delete
-                </DropdownMenuItem>
+                {!foreignChat && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={() => setDeleteOpen(true)}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -1486,7 +1496,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               style={{ maxWidth: chatWidth }}
             >
               <span className="min-w-0 flex-1">
-                {facts.deleted
+                {facts.type === "user" && foreignChat
+                  ? "Read-only. This thread belongs to another member; only its owner can send messages or change it."
+                  : facts.deleted
                   ? "Deleted. This thread is out of your lists and its runs have stopped."
                   : facts.type === "routine"
                     ? "Routine run. Read-only — the agent wrote this transcript on a schedule."
@@ -1494,7 +1506,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                       ? "Subagent thread. Read-only — the parent agent drives this conversation."
                       : "Archived. Unarchive this thread to send a message."}
               </span>
-              {facts.type === "user" && facts.archived && !facts.deleted && (
+              {facts.type === "user" && facts.archived && !facts.deleted && !foreignChat && (
                 <Button variant="secondary" size="sm" onClick={() => void headerArchive()}>
                   Unarchive
                 </Button>

@@ -8,6 +8,7 @@ const childTree: ChatTree = {
   type: "subagent",
   archived: false,
   deleted: false,
+  own: true,
   title: "market scan",
   agent_id: "a1",
   agent_name: "Echo",

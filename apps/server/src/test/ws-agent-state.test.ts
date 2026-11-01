@@ -269,6 +269,29 @@ describe("agent and skill state frames", () => {
     }
   });
 
+  it("tells the reader whether it owns the chat", { timeout: TEST_TIMEOUT }, async () => {
+    const agentId = await createAgent(stack.memberToken, `own-${crypto.randomUUID().slice(0, 8)}`, "private");
+    const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
+      title: "Whose chat",
+    });
+    const chatId = thread.thread.chat_id;
+    const syncTree = async (token: string): Promise<Frame> => {
+      const ws = await memberSocket(token);
+      try {
+        ws.send(JSON.stringify({ type: "sync", chat_id: chatId }));
+        return await waitFrame(ws, (f) => f.type === "chat_tree" && f.chat_id === chatId);
+      } finally {
+        ws.end();
+      }
+    };
+    expect((await syncTree(stack.memberToken)).tree).toMatchObject({ chat_id: chatId, own: true });
+    expect((await syncTree(stack.adminToken)).tree).toMatchObject({ chat_id: chatId, own: false });
+    const adminRead = await api<{ own: boolean }>(stack.adminToken, "GET", `/api/v1/chats/${chatId}/tree`);
+    expect(adminRead.own).toBe(false);
+    const ownerRead = await api<{ own: boolean }>(stack.memberToken, "GET", `/api/v1/chats/${chatId}/tree`);
+    expect(ownerRead.own).toBe(true);
+  });
+
   it("refuses stop and close on a chat the caller does not own", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `owned-${crypto.randomUUID().slice(0, 8)}`, "private");
     const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
