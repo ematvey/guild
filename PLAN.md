@@ -12,6 +12,27 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A push carries only what changed, and every display fact has one
+  (2026-11-02).** Browser verification of the push work found a socket that
+  re-sent the whole workspace bracket on every chat flip (about 90 KB per
+  turn) and three facts still outside the socket. Workspace pushes are now
+  a per-socket diff (`hub/sent-frames.ts`): a list that keeps its rows and
+  order sends one-row `chat_row` frames to clients that connect with
+  `features=chat_row`, older clients keep the full `thread_list`, and
+  whole-value agent and skill frames are skipped when a user's filtered
+  value did not change. Context usage is a pushed `context_usage` frame
+  (`ModelOption.context_window` rides `model_list`); the meter no longer
+  reads `GET /context`. A compaction task write sends `guild_compaction`
+  and the feed republishes that chat's view, so a compaction that writes no
+  summary, fails or is cancelled clears its line live; the `/compact`
+  answer carries a `seq` so the client can tell whether a lowered state
+  already covered it. A thread is named by its chat's title, and a rename
+  re-pushes every header and subtree that names it (migration 0103). A chat
+  the reader does not own is read-only, and `ChatTree.own` says so. An
+  unknown settings, agents or skills address is replaced by the page shown.
+  The run page re-reads its trace once when the pushed run finishes: the
+  spans are a ClickHouse query, not socket state.
+
 - **Agent, skill and operational state is pushed (2026-11-02).** The last
   one-shot fetches and polls for state that changes while the app is open
   are gone. Migration 0101 adds NOTIFY triggers on the agent, run, routine,
