@@ -23,6 +23,9 @@ export interface ThreadStateCapture {
   projectName: string | undefined;
   projectMachineLabel: string | undefined;
   hasMoreEvents: boolean;
+  /** A compaction of the chat's context is running. Undefined only for
+   *  captures rebuilt from frames that did not carry it. */
+  compacting?: boolean;
 }
 
 /** Events carried by one ThreadState frame: the newest window of the log.
@@ -42,8 +45,20 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
   const events = page.rows;
   const seq = await chats.threads.watermark();
   const buffers = chats.runtime.liveBuffers(chatId);
-  const generatingRow = await pool.query<{ generating: boolean }>(
-    "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
+  // `compacting` reads the durable compaction tasks of the chat's
+  // conversation: a compaction is in flight while its task is not terminal,
+  // or while the summary write it finished with still waits in the inbox
+  // for the running turn to end. Every other outcome (a summary, no
+  // summary, a failure) reads false.
+  const generatingRow = await pool.query<{ generating: boolean; compacting: boolean }>(
+    "SELECT generating, EXISTS (" +
+      "SELECT 1 FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id " +
+      "LEFT JOIN submissions s ON t.status = 'terminal' AND s.conversation_id = t.conversation_id " +
+      "AND s.status = 'queued' " +
+      "AND s.id = (t.record::jsonb #>> '{state,outcome,result,submissionId}')::bigint " +
+      "WHERE c.chat_id = chats.id AND t.kind = '\"pi.compaction\"' " +
+      "AND (t.status <> 'terminal' OR s.id IS NOT NULL)" +
+      ") AS compacting FROM chats WHERE id = $1 AND org_id = $2",
     [chatId, orgId],
   );
   if (generatingRow.rows.length === 0) throw new ApiError(404, "not_found", "chat not found");
@@ -59,6 +74,7 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
     projectName: project?.name,
     projectMachineLabel: project?.label ?? undefined,
     hasMoreEvents: page.hasMore,
+    compacting: generatingRow.rows[0]!.compacting,
   };
 }
 
@@ -83,5 +99,6 @@ export function threadStateMsg(capture: ThreadStateCapture): WsServerMsg {
     project_name: capture.projectName,
     project_machine_label: capture.projectMachineLabel,
     has_more_events: capture.hasMoreEvents,
+    compacting: capture.compacting,
   };
 }

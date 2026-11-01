@@ -1,5 +1,5 @@
 // Workspace snapshots: the sidebar's whole live state — active chats,
-// archived chats, projects, and the machine registry. The feed pushes them
+// archived chats, projects, the machine registry and the model list. The feed pushes them
 // together on every workspace change, so no client reads them over HTTP.
 
 import type { PlatformContext } from "../platform/root-context.js";
@@ -7,6 +7,8 @@ import type { UserRow } from "../platform/store/identity.js";
 import type { MachineRow } from "../platform/store/machines.js";
 import type { ProjectRow } from "../platform/store/projects.js";
 import type { Chat, MachineInfo } from "@guild/wire/rest";
+import type { ModelOption } from "@guild/wire/types";
+import { servedWebBundle } from "../http/web.js";
 import { chatWire } from "../chats/chat-wire.js";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
@@ -42,19 +44,29 @@ export async function projectListSnapshot(
 }
 
 /** The workspace's display identity: the name and logo the app shell shows
- *  in its title, plus the admin-controlled telemetry switch the clients
- *  obey. */
+ *  in its title, the admin-controlled telemetry switch the clients obey,
+ *  and the identity of the web bundle this server serves. */
 export async function workspaceIdentitySnapshot(
   ctx: PlatformContext,
   orgId: string,
-): Promise<{ name: string; logo_url?: string; telemetry: boolean }> {
+): Promise<{ name: string; logo_url?: string; telemetry: boolean; web_bundle?: string }> {
   const [org, telemetry] = await Promise.all([
     ctx.orgs.get(orgId),
     ctx.orgKv.telemetryEnabled(orgId),
   ]);
-  return org.logo_url === null
-    ? { name: org.name, telemetry }
-    : { name: org.name, logo_url: org.logo_url, telemetry };
+  const bundle = servedWebBundle(ctx.config);
+  return {
+    name: org.name,
+    ...(org.logo_url !== null ? { logo_url: org.logo_url } : {}),
+    telemetry,
+    ...(bundle !== null ? { web_bundle: bundle } : {}),
+  };
+}
+
+/** The org's enabled chat models with their display names. */
+export async function modelListSnapshot(ctx: PlatformContext, orgId: string): Promise<ModelOption[]> {
+  const rows = await ctx.gatewayStore.listModels(orgId);
+  return rows.map((row) => ({ id: row.model, alias: row.alias }));
 }
 
 /** MachineInfo wire shape. */

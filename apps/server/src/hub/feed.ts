@@ -15,6 +15,7 @@ import {
   archivedThreadListSnapshot,
   machineListSnapshot,
   workspaceIdentitySnapshot,
+  modelListSnapshot,
   projectListSnapshot,
   threadListSnapshot,
 } from "./workspace.js";
@@ -164,6 +165,17 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       if (typeof parsed.org_id !== "string") return;
       void this.pushWorkspaceIdentity(parsed.org_id).catch((error: unknown) => this.failed(channel, null, error));
+      return;
+    }
+    if (channel === "guild_models") {
+      let parsed: { org_id?: string };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      if (typeof parsed.org_id !== "string") return;
+      void this.pushModelList(parsed.org_id).catch((error: unknown) => this.failed(channel, null, error));
       return;
     }
     if (channel === "guild_events") {
@@ -467,12 +479,13 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.stopped) return;
     if (this.ctx.hub.sinksOfUser(userId).length === 0) return;
     const user = { org_id: orgId, id: userId };
-    const [info, chats, archived, projects, machines] = await Promise.all([
+    const [info, chats, archived, projects, machines, models] = await Promise.all([
       workspaceIdentitySnapshot(this.ctx, orgId),
       threadListSnapshot(this.ctx, user),
       archivedThreadListSnapshot(this.ctx, user),
       projectListSnapshot(this.ctx, user),
       machineListSnapshot(this.ctx, user),
+      modelListSnapshot(this.ctx, orgId),
     ]);
     // The chat list stays first: clients and the local engine wait on it
     // at bootstrap; the rest are additive frames.
@@ -485,6 +498,7 @@ export class FeedForwarder implements GenerationStreamSink {
       archived_projects: projects.archived_projects,
     });
     this.sendToUser(userId, { type: "machine_list", machines });
+    this.sendToUser(userId, { type: "model_list", models });
   }
 
   // -- fan-out ------------------------------------------------------------------
@@ -495,6 +509,14 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.stopped) return;
     const info = await workspaceIdentitySnapshot(this.ctx, orgId);
     this.sendToOrg(orgId, { type: "workspace_identity", ...info });
+  }
+
+  /** The org's model routes moved (an admin added, renamed, toggled or
+   *  removed one): every member socket of the org repaints its pickers. */
+  private async pushModelList(orgId: string): Promise<void> {
+    if (this.stopped) return;
+    const models = await modelListSnapshot(this.ctx, orgId);
+    this.sendToOrg(orgId, { type: "model_list", models });
   }
 
   /** Machine presence flip: the owner's member sockets repaint the online

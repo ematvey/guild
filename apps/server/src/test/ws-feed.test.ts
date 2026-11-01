@@ -344,6 +344,7 @@ describe("member-socket feed", () => {
       projectName: state.project_name as string | undefined,
       projectMachineLabel: state.project_machine_label as string | undefined,
       hasMoreEvents: false,
+      compacting: state.compacting as boolean | undefined,
     });
     expect((stateFrame as { data: string }).data).toBe(rebuilt);
 
@@ -969,6 +970,38 @@ describe("member-socket feed", () => {
       headers: auth(stack.adminToken),
       payload: { enabled: true },
     });
+    ws.end();
+  });
+
+  it("pushes the model list on connect and on every route change", { timeout: TEST_TIMEOUT }, async () => {
+    type Models = { id: string; alias: string }[];
+    const ws = await memberSocket();
+    const initial = await waitFrame(ws, (f) => f.type === "model_list");
+    expect((initial.models as Models).some((m) => m.id === "GLM-Slow-Model")).toBe(true);
+
+    const added = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/gateway/routes",
+      headers: auth(stack.adminToken),
+      payload: { model: "GLM-Pushed-Model", alias: "Pushed", provider: "mock-slow-openai", price_in: 1, price_out: 1, quota_monthly_usd: null },
+    });
+    expect(added.statusCode).toBe(200);
+    const pushed = await waitFrame(
+      ws,
+      (f) => f.type === "model_list" && (f.models as Models).some((m) => m.id === "GLM-Pushed-Model"),
+    );
+    expect((pushed.models as Models).find((m) => m.id === "GLM-Pushed-Model")?.alias).toBe("Pushed");
+
+    const removed = await stack.env.app.inject({
+      method: "DELETE",
+      url: "/api/v1/admin/gateway/routes/GLM-Pushed-Model",
+      headers: { authorization: `Bearer ${stack.adminToken}` },
+    });
+    expect(removed.statusCode).toBe(200);
+    await waitFrame(
+      ws,
+      (f) => f.type === "model_list" && !(f.models as Models).some((m) => m.id === "GLM-Pushed-Model"),
+    );
     ws.end();
   });
 

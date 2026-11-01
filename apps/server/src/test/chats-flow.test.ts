@@ -22,6 +22,7 @@ import type { PlatformContext } from "../platform/root-context.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { guildProviderId } from "../harness/models.js";
 import { UserEntry } from "@earendil-works/pi-durable";
+import { captureThreadState } from "../chats/thread-state.js";
 
 let stack: M2Stack;
 let port: number;
@@ -807,9 +808,15 @@ describe("gateway/chat turn flow", () => {
       return rows.rows[0]?.status === "queued";
     });
     const path = `/api/v1/threads/${id}/compactions/${taskId}`;
+    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+    const compacting = async () => (await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting;
     expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "running" });
+    // The summary write waits for the running turn: the view still reads
+    // as compacting.
+    expect(await compacting()).toBe(true);
     await waitFor(async () => JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body).status === "completed");
     expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "completed", compacted: true });
+    expect(await compacting()).toBe(false);
     await waitFor(async () => (await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}`, headers })).body.includes("summarized old context"));
   }, TEST_TIMEOUT);
 
@@ -833,6 +840,9 @@ describe("gateway/chat turn flow", () => {
     });
     const done = await stack.env.app.inject({ method: "GET", url: path, headers });
     expect(JSON.parse(done.body)).toEqual({ status: "completed", compacted: false });
+    // No summary was written, and the view's compacting flag is down.
+    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+    expect((await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting).toBe(false);
     const other = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "other compaction" } });
     const otherId = JSON.parse(other.body).id;
     expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${otherId}/compactions/${taskId}`, headers })).statusCode).toBe(404);

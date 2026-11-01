@@ -78,6 +78,16 @@ export function providerSlug(name: string): string {
   return parts.length === 0 ? "provider" : parts.join("-");
 }
 
+/** Tells the feed that the org's model list moved: every member socket of
+ *  the org receives the new list. The one place that knows the
+ *  `guild_models` payload shape. */
+async function notifyModels(
+  client: { query: (text: string, values?: unknown[]) => Promise<unknown> },
+  orgId: string,
+): Promise<void> {
+  await client.query("SELECT pg_notify('guild_models', $1)", [JSON.stringify({ org_id: orgId })]);
+}
+
 export class GatewayStore {
   constructor(readonly pool: PlatformPool) {}
 
@@ -173,6 +183,7 @@ export class GatewayStore {
 
   async deleteRoute(orgId: string, model: string): Promise<void> {
     await this.pool.query("DELETE FROM model_routes WHERE org_id = $1 AND model = $2", [orgId, model]);
+    await notifyModels(this.pool, orgId);
   }
 
   /** Enabled routes selectable in chats; the alias is the user-visible
@@ -264,6 +275,7 @@ export class GatewayStore {
             [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
           );
         }
+        await notifyModels(client, orgId);
       });
     } catch (error) {
       const code = (error as { code?: string }).code;

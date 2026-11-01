@@ -454,7 +454,17 @@ export class ChatBridge {
       case "inbox_update":
         await this.syncQueuedModes(state, event.items);
         return;
+      case "compaction_start":
+      case "compaction_end":
+        // The view's `compacting` flag moved: the feed re-captures and
+        // republishes it. A compaction that ends without a summary or fails
+        // appends no row, so this is the only push that lowers the flag.
+        this.streamSink?.dirty(state.chatId);
+        return;
       case "submission": {
+        // A write leaving the inbox can be a compaction's queued summary:
+        // the view's `compacting` flag may have moved.
+        if (event.record.type === "write" && event.record.status !== "queued") this.streamSink?.dirty(state.chatId);
         // Placement (queued → placed): the durable inbox actually handed
         // the input to a run — the Codex-style queued chip becomes a real
         // transcript message. The accept-time echo was flagged `queued`

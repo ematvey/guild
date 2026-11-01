@@ -45,6 +45,27 @@ export class ChatDist {
   }
 }
 
+/** The identity of the served web bundle: the content hash in the entry
+ *  script's name (`assets/index-<hash>.js`) that index.html loads. null
+ *  when no bundle is served. A browser client compares it with the bundle
+ *  it runs. */
+export function webBundleId(dist: Pick<ChatDist, "file">): string | null {
+  const index = dist.file("index.html");
+  if (index === null) return null;
+  return /\/assets\/index-([^"'/]+)\.js/.exec(index.toString("utf8"))?.[1] ?? null;
+}
+
+const bundleIds = new Map<string, string | null>();
+
+/** The served bundle's identity for a config, read once per dist directory:
+ *  the bundle is baked into the image and does not change while the
+ *  process runs. */
+export function servedWebBundle(cfg: Pick<Config, "webDistDir">): string | null {
+  const key = cfg.webDistDir ?? "";
+  if (!bundleIds.has(key)) bundleIds.set(key, webBundleId(new ChatDist(cfg)));
+  return bundleIds.get(key) ?? null;
+}
+
 /** mime_guess::from_path().first_or_octet_stream() for the extensions the
  *  frontend bundle carries. */
 const MIME: Record<string, string> = {
