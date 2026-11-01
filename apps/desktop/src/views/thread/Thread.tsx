@@ -1010,7 +1010,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const mobileNavBar = (title?: string) =>
     isMobile ? (
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
-        <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)}>
+        <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)} aria-label="Open sidebar">
           <Menu />
         </Button>
         {title !== undefined && <span className="min-w-0 flex-1 truncate font-medium">{title}</span>}
@@ -1199,7 +1199,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           <>
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
           {isMobile ? (
-            <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)}>
+            <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={() => setOpen(true)} aria-label="Open sidebar">
               <Menu />
             </Button>
           ) : (
@@ -1247,6 +1247,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   size="icon"
                   className="-mr-1.5 size-9 shrink-0 pointer-coarse:size-10 text-muted-foreground"
                   title="Chat options"
+                  aria-label="Chat options"
                 >
                   <EllipsisVertical />
                 </Button>
@@ -1746,6 +1747,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   onClick={() => fileInput.current?.click()}
                   disabled={busy || navigating}
                   title="Attach images, audio, or files"
+                  aria-label="Attach files"
                 >
                   <Plus className="size-4" />
                 </Button>
