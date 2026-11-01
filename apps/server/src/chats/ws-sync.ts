@@ -1,8 +1,9 @@
 // The member socket's state-sync capture (Rust feed::run_sync_started's
 // capture_thread): one chat's durable history + in-flight buffers as the
 // authoritative ThreadState frame, owner/admin gated (the caller argument).
-// The same bracket carries the chat's thread subtree, so a (re)connect
-// renders the running tree without an HTTP fetch.
+// The same bracket carries the chat's thread subtree, behind the same
+// access gate, so a (re)connect renders the running tree without an HTTP
+// fetch.
 // Wired onto PlatformContext.wsSync / wsSubagentTree inside the socket's sync
 // bracket.
 
@@ -20,7 +21,10 @@ export function wireWsSync(ctx: PlatformContext): void {
     const capture = await captureThreadState(ctx, ctx.pool, args.user.org_id, args.chatId, args.user);
     return threadStateMsg(capture);
   };
-  ctx.wsSubagentTree = async (args: { chatId: string }): Promise<WsServerMsg> => {
+  ctx.wsSubagentTree = async (args: { chatId: string; user: UserRow }): Promise<WsServerMsg> => {
+    // The same owner/admin gate as the state capture: a chat the caller
+    // cannot read yields no tree.
+    await ctx.chats.getChat(args.user.org_id, args.chatId, args.user);
     return subagentTreeMsg(args.chatId, await chatSubagentNodes(ctx.pool, args.chatId));
   };
 }

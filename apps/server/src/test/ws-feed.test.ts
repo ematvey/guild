@@ -143,12 +143,12 @@ async function eventually(probe: () => Promise<boolean>, timeoutMs = 10_000): Pr
 }
 
 /** A second member user + live session token (org-scoped stranger). */
-async function strangerToken(email: string): Promise<string> {
+async function strangerToken(email: string, orgId = stack.orgId): Promise<string> {
   const token = crypto.randomBytes(24).toString("hex");
   await stack.env.db.query(
     `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
      VALUES (gen_random_uuid(), $1, $2, '', 'member', 'managed')`,
-    [stack.orgId, email],
+    [orgId, email],
   );
   await stack.env.db.query(
     `INSERT INTO sessions (token_hash, user_id, expires_at, auth_generation)
@@ -357,6 +357,26 @@ describe("member-socket feed", () => {
     void errDone;
     foreignWs.end();
     ws.end();
+  });
+
+  it("sends no subagent tree for a chat the caller cannot read", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("tree gate");
+    const otherOrg = crypto.randomUUID();
+    await stack.env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'tree gate org')", [otherOrg]);
+    const tokens = [
+      await strangerToken("tree-gate-member@example.test"),
+      await strangerToken("tree-gate-foreign@example.test", otherOrg),
+    ];
+    for (const token of tokens) {
+      const ws = await memberSocket(token);
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chat.id);
+      const frames = textFrames(ws);
+      expect(frames.some((f) => f.type === "subagent_tree")).toBe(false);
+      expect(frames.some((f) => f.type === "thread_state" && f.chat_id === chat.id)).toBe(false);
+      expect(frames.some((f) => f.type === "error" && f.message === "no such chat")).toBe(true);
+      ws.end();
+    }
   });
 
   it("sends ThreadState even when the child-tree read rejects", { timeout: TEST_TIMEOUT }, async () => {
