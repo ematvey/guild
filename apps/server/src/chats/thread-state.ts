@@ -45,24 +45,13 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
   const events = page.rows;
   const seq = await chats.threads.watermark();
   const buffers = chats.runtime.liveBuffers(chatId);
-  // `compacting` reads the durable compaction tasks of the chat's
-  // conversation: a compaction is in flight while its task is not terminal,
-  // or while the summary write it finished with still waits in the inbox
-  // for the running turn to end. Every other outcome (a summary, no
-  // summary, a failure) reads false.
-  const generatingRow = await pool.query<{ generating: boolean; compacting: boolean }>(
-    "SELECT generating, EXISTS (" +
-      "SELECT 1 FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id " +
-      "LEFT JOIN submissions s ON t.status = 'terminal' AND s.conversation_id = t.conversation_id " +
-      "AND s.status = 'queued' " +
-      "AND s.id = (t.record::jsonb #>> '{state,outcome,result,submissionId}')::bigint " +
-      "WHERE c.chat_id = chats.id AND t.kind = '\"pi.compaction\"' " +
-      "AND (t.status <> 'terminal' OR s.id IS NOT NULL)" +
-      ") AS compacting FROM chats WHERE id = $1 AND org_id = $2",
+  const generatingRow = await pool.query<{ generating: boolean }>(
+    "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
     [chatId, orgId],
   );
   if (generatingRow.rows.length === 0) throw new ApiError(404, "not_found", "chat not found");
   const project = await chats.chats.projectOf(orgId, chatId);
+  const compacting = await compactionInFlight(pool, chatId);
   return {
     chatId,
     seq,
@@ -74,8 +63,37 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
     projectName: project?.name,
     projectMachineLabel: project?.label ?? undefined,
     hasMoreEvents: page.hasMore,
-    compacting: generatingRow.rows[0]!.compacting,
+    compacting,
   };
+}
+
+/** Whether a compaction of the chat's conversation is in flight: its task
+ *  is not terminal yet, or the summary it produced is a queued write that
+ *  waits for the running turn to end. Every other outcome (a summary, no
+ *  summary, a failure) reads false. The only writes a conversation queues
+ *  are compaction summaries. Records are JSON text and parse here, never as
+ *  jsonb. */
+async function compactionInFlight(pool: PlatformPool, chatId: string): Promise<boolean> {
+  const res = await pool.query<{ running: boolean; queued: string[] }>(
+    "SELECT EXISTS (" +
+      "SELECT 1 FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id " +
+      "WHERE c.chat_id = $1 AND t.kind = '\"pi.compaction\"' AND t.status <> 'terminal'" +
+      ") AS running, ARRAY(" +
+      "SELECT s.record FROM submissions s JOIN chat_conversations c ON c.conversation_id = s.conversation_id " +
+      "WHERE c.chat_id = $1 AND s.status = 'queued'" +
+      ") AS queued",
+    [chatId],
+  );
+  const row = res.rows[0];
+  if (row === undefined) return false;
+  if (row.running) return true;
+  return row.queued.some((record) => {
+    try {
+      return (JSON.parse(record) as { type?: unknown }).type === "write";
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Byte-exact ThreadState frame (`{"type":"thread_state",…}`). */
