@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { PushStore } from "../platform/store/push.js";
 import { PushNotifier, pushTopic, turnEndedPayload } from "../push/notifier.js";
-import type { PushResult, PushSender } from "../push/sender.js";
+import { isPushServiceEndpoint, type PushResult, type PushSender } from "../push/sender.js";
 
 let stack: M2Stack;
 let store: PushStore;
@@ -19,6 +19,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await stack?.env.cleanup();
 });
+
+const ROUTE_ENDPOINT = "https://fcm.googleapis.com/fcm/send/route-device";
 
 const sub = (device: string, endpoint: string) => ({
   device_id: device,
@@ -149,7 +151,7 @@ describe("the route surface", () => {
       method: "POST",
       url: "/api/v1/push/subscribe",
       headers: { ...auth(stack.memberToken), "content-type": "application/json" },
-      payload: { device_id: "route-device", endpoint: "https://push/route", keys: { p256dh: "k", auth: "a" } },
+      payload: { device_id: "route-device", endpoint: ROUTE_ENDPOINT, keys: { p256dh: "k", auth: "a" } },
     });
     expect(added.statusCode).toBe(200);
 
@@ -161,13 +163,13 @@ describe("the route surface", () => {
     const devices = (JSON.parse(listed.body) as { subscriptions: { device_id: string }[] }).subscriptions;
     expect(devices.map((d) => d.device_id)).toContain("route-device");
     // The endpoint is a capability: it never leaves the server.
-    expect(listed.body).not.toContain("https://push/route");
+    expect(listed.body).not.toContain(ROUTE_ENDPOINT);
 
     const removed = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/push/unsubscribe",
       headers: { ...auth(stack.memberToken), "content-type": "application/json" },
-      payload: { endpoint: "https://push/route" },
+      payload: { endpoint: ROUTE_ENDPOINT },
     });
     expect(removed.statusCode).toBe(200);
     expect((JSON.parse(removed.body) as { removed: boolean }).removed).toBe(true);
@@ -178,8 +180,42 @@ describe("the route surface", () => {
       method: "POST",
       url: "/api/v1/push/subscribe",
       headers: { ...auth(stack.memberToken), "content-type": "application/json" },
-      payload: { device_id: "d", endpoint: "https://push/x" },
+      payload: { device_id: "d", endpoint: ROUTE_ENDPOINT },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects an endpoint that is not a known push service", async () => {
+    for (const endpoint of [
+      "http://fcm.googleapis.com/fcm/send/x",
+      "https://169.254.169.254/latest/meta-data",
+      "https://localhost/push",
+      "https://fcm.googleapis.com:8443/fcm/send/x",
+      "https://user:pw@fcm.googleapis.com/fcm/send/x",
+      "https://fcm.googleapis.com.evil.example/x",
+      "https://evilpush.apple.com.example/x",
+      "not a url",
+    ]) {
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/push/subscribe",
+        headers: { ...auth(stack.memberToken), "content-type": "application/json" },
+        payload: { device_id: "ssrf", endpoint, keys: { p256dh: "k", auth: "a" } },
+      });
+      expect(res.statusCode, endpoint).toBe(400);
+    }
+    expect((await store.forUser(stack.memberId)).some((r) => r.device_id === "ssrf")).toBe(false);
+  });
+
+  it("accepts every known push service host", () => {
+    for (const endpoint of [
+      "https://fcm.googleapis.com/fcm/send/abc",
+      "https://updates.push.services.mozilla.com/wpush/v2/abc",
+      "https://web.push.apple.com/abc",
+      "https://api.push.apple.com/abc",
+      "https://wns2-par02p.notify.windows.com/w/?token=abc",
+    ]) {
+      expect(isPushServiceEndpoint(endpoint), endpoint).toBe(true);
+    }
   });
 });

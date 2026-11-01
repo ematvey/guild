@@ -35,9 +35,41 @@ export interface PushSender {
   ): Promise<PushResult>;
 }
 
-export function webPushSender(keys: VapidKeys, subject: string): PushSender {
+/** Hosts of the browser push services: Chrome/Edge-on-Android (FCM),
+ *  Firefox (Mozilla autopush), Safari (Apple), and Edge/Windows (WNS). An
+ *  endpoint is a URL the client hands the server to POST to; anything else
+ *  would let a member point the server's requests at internal hosts. */
+const PUSH_SERVICE_HOSTS: readonly RegExp[] = [
+  /^fcm\.googleapis\.com$/,
+  /^([a-z0-9-]+\.)*push\.services\.mozilla\.com$/,
+  /^([a-z0-9-]+\.)*push\.apple\.com$/,
+  /^([a-z0-9-]+\.)*notify\.windows\.com$/,
+];
+
+/** True when `endpoint` is an https URL on a known push service, on the
+ *  default port, without credentials. */
+export function isPushServiceEndpoint(endpoint: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "") return false;
+  const host = url.hostname.toLowerCase();
+  return PUSH_SERVICE_HOSTS.some((pattern) => pattern.test(host));
+}
+
+/** `allowEndpoint` gates every send; a refused endpoint reports `gone`, so
+ *  the row is dropped instead of retried. */
+export function webPushSender(
+  keys: VapidKeys,
+  subject: string,
+  allowEndpoint: (endpoint: string) => boolean = isPushServiceEndpoint,
+): PushSender {
   return {
     async send(sub, payload, topic) {
+      if (!allowEndpoint(sub.endpoint)) return { outcome: "gone", error: "endpoint is not a known push service" };
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

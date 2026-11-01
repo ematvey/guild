@@ -7,6 +7,7 @@ import type { IdentityCtx } from "../route-contexts.js";
 import type { PushNotifier } from "../../push/notifier.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";
+import { isPushServiceEndpoint } from "../../push/sender.js";
 
 /** The VAPID public key is minted on first use, so the settings page can
  *  always ask for it without an admin step. */
@@ -22,6 +23,9 @@ export function registerPushRoutes(app: FastifyInstance, ctx: IdentityCtx, notif
     const body = requireJsonBody(req);
     const deviceId = text(body.device_id, "device_id", 200);
     const endpoint = text(body.endpoint, "endpoint", 2000);
+    if (!isPushServiceEndpoint(endpoint)) {
+      throw ApiError.badRequest("endpoint must be an https URL on a known push service");
+    }
     const keys = body.keys;
     if (keys === null || typeof keys !== "object" || Array.isArray(keys)) {
       throw ApiError.badRequest("keys must be an object with p256dh and auth");

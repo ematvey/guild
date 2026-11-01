@@ -143,7 +143,7 @@ describe("webPushSender", () => {
     const { endpoint, next } = await listen();
     const keys = browserKeys();
     const vapid = webpush.generateVAPIDKeys();
-    const sender = webPushSender(vapid, "https://guild.example");
+    const sender = webPushSender(vapid, "https://guild.example", () => true);
 
     const pending = sender.send(
       { endpoint, p256dh: b64url(keys.publicRaw), auth: b64url(keys.auth) },
@@ -181,7 +181,7 @@ describe("webPushSender", () => {
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as AddressInfo).port;
     const keys = browserKeys();
-    const sender = webPushSender(webpush.generateVAPIDKeys(), "https://guild.example");
+    const sender = webPushSender(webpush.generateVAPIDKeys(), "https://guild.example", () => true);
     const result = await sender.send(
       { endpoint: `https://127.0.0.1:${port}/push`, p256dh: b64url(keys.publicRaw), auth: b64url(keys.auth) },
       { title: "t", body: "b", url: "/chats" },
@@ -194,7 +194,7 @@ describe("webPushSender", () => {
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as AddressInfo).port;
     const keys = browserKeys();
-    const sender = webPushSender(webpush.generateVAPIDKeys(), "https://guild.example");
+    const sender = webPushSender(webpush.generateVAPIDKeys(), "https://guild.example", () => true);
     const result = await sender.send(
       { endpoint: `https://127.0.0.1:${port}/push`, p256dh: b64url(keys.publicRaw), auth: b64url(keys.auth) },
       { title: "t", body: "b", url: "/chats" },
@@ -213,5 +213,16 @@ describe("pushSubject", () => {
     // VAPID rejects an http subject; the container's own base is http.
     expect(pushSubject({ apiUrl: "http://localhost:18080" })).toBe("mailto:guild@localhost");
     expect(pushSubject({ apiUrl: "not a url" })).toBe("mailto:guild@localhost");
+  });
+});
+
+describe("webPushSender endpoint gate", () => {
+  it("refuses an endpoint off the push-service allowlist without sending", async () => {
+    const sender = webPushSender(webpush.generateVAPIDKeys(), "https://guild.example");
+    const result = await sender.send(
+      { endpoint: "https://127.0.0.1:9/push", p256dh: "k", auth: "a" },
+      { title: "t", body: "b", url: "/" },
+    );
+    expect(result.outcome).toBe("gone");
   });
 });
