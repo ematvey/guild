@@ -368,6 +368,38 @@ describe("agent and skill state frames", () => {
     }
   });
 
+  it("sends one skill catalog frame per user for one write burst", { timeout: TEST_TIMEOUT }, async () => {
+    const owner = await memberSocket(stack.memberToken);
+    const slug = `burst-${crypto.randomUUID().slice(0, 8)}`;
+    try {
+      const catalogs = () => textFrames(owner).filter((f) => f.type === "skill_catalog").length;
+      const before = catalogs();
+      const gap = () => new Promise((resolve) => setTimeout(resolve, 20));
+      // A publish's shape: the item row, then follow-up writes in their own
+      // statements a few milliseconds apart.
+      await stack.env.db.query(
+        `INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version, owner_user_id)
+         VALUES (gen_random_uuid(), $1, 'skill', $2, 'A burst skill.', '1.0.0', $3)`,
+        [stack.orgId, slug, stack.memberId],
+      );
+      await gap();
+      await stack.env.db.query(
+        "UPDATE registry_items SET description = 'A burst skill, described.' WHERE org_id = $1 AND slug = $2",
+        [stack.orgId, slug],
+      );
+      await gap();
+      await stack.env.db.query(
+        `INSERT INTO skill_installs (id, org_id, user_id, slug, pinned_version) VALUES (gen_random_uuid(), $1, $2, $3, NULL)`,
+        [stack.orgId, stack.memberId, slug],
+      );
+      await waitFrame(owner, (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug));
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(catalogs()).toBe(before + 1);
+    } finally {
+      owner.end();
+    }
+  });
+
   it("sends no agent list to a member whose visible agents did not change", { timeout: TEST_TIMEOUT }, async () => {
     const other = await memberToken(`agent-quiet-${crypto.randomUUID()}@example.test`);
     const owner = await memberSocket(stack.memberToken);

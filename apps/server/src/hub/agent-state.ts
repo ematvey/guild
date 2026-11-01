@@ -7,7 +7,8 @@
 // Table triggers NOTIFY every write (migrations/0101_agent_notify.sql, and
 // 0102 for an agent rename, which moves its threads' chat trees); each
 // key's pushes run on one chain, so a snapshot read before a write never
-// lands after the one read after it. A whole-value frame reaches a socket
+// lands after the one read after it. The org-wide lists coalesce a write
+// burst into one re-read. A whole-value frame reaches a socket
 // only when it differs from the one that socket holds: a write another member
 // cannot see sends that member nothing.
 
@@ -31,6 +32,13 @@ type Failed = (channel: string, error: unknown) => void;
 
 /** How long a finished run's frame waits for its call counts. */
 const COUNTS_TIMEOUT_MS = 2_000;
+
+/** An org-wide list (agents, skill catalog) re-reads once per write burst:
+ *  the push waits for a quiet window after the latest notify, and never
+ *  longer than the cap after the first. One skill publish writes several
+ *  rows in separate statements; its notifies become one frame per user. */
+export const BURST_QUIET_MS = 50;
+export const BURST_MAX_MS = 250;
 
 /** An agent row on the wire: every joined field is always present. */
 export function agentWire(agent: StoreAgent): Agent {
@@ -61,6 +69,7 @@ function stringField(payload: Record<string, unknown>, name: string): string | n
 export class AgentStateFeed {
   private agentStore: AgentStore | null = null;
   private readonly chains = new Map<string, Promise<void>>();
+  private readonly bursts = new Map<string, { first: number; timer: NodeJS.Timeout }>();
   private stopped = false;
 
   constructor(
@@ -77,6 +86,24 @@ export class AgentStateFeed {
 
   stop(): void {
     this.stopped = true;
+    for (const burst of this.bursts.values()) clearTimeout(burst.timer);
+    this.bursts.clear();
+  }
+
+  /** Runs `push` once per write burst on `key` (BURST_QUIET_MS after the
+   *  latest call, at most BURST_MAX_MS after the first). */
+  private coalesce(key: string, push: () => Promise<void>): void {
+    if (this.stopped) return;
+    const now = Date.now();
+    const burst = this.bursts.get(key);
+    const first = burst?.first ?? now;
+    if (burst !== undefined) clearTimeout(burst.timer);
+    const delay = Math.max(0, Math.min(BURST_QUIET_MS, first + BURST_MAX_MS - now));
+    const timer = setTimeout(() => {
+      this.bursts.delete(key);
+      void push();
+    }, delay);
+    this.bursts.set(key, { first, timer });
   }
 
   /** Handles one NOTIFY; false when the channel is not an agent or skill
@@ -95,13 +122,17 @@ export class AgentStateFeed {
     const agentId = stringField(parsed, "agent_id");
     switch (channel) {
       case "guild_agents":
-        void this.enqueue(`agents:${orgId}`, channel, () =>
-          this.sendAgentLists(orgId, this.ctx.hub.memberUsersOfOrg(orgId), false),
+        this.coalesce(`agents:${orgId}`, () =>
+          this.enqueue(`agents:${orgId}`, channel, () =>
+            this.sendAgentLists(orgId, this.ctx.hub.memberUsersOfOrg(orgId), false),
+          ),
         );
         break;
       case "guild_skills":
-        void this.enqueue(`skills:${orgId}`, channel, () =>
-          this.sendSkillCatalogs(orgId, this.ctx.hub.memberUsersOfOrg(orgId)),
+        this.coalesce(`skills:${orgId}`, () =>
+          this.enqueue(`skills:${orgId}`, channel, () =>
+            this.sendSkillCatalogs(orgId, this.ctx.hub.memberUsersOfOrg(orgId)),
+          ),
         );
         break;
       case "guild_agent_runs": {
