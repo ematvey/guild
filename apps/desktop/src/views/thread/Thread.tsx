@@ -1055,14 +1055,17 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // The agents surface is another full main-column page. Its route owns the
   // whole column right of the rail; the chat comes back on any chat route.
   const agentsRoute = route.agents;
+  const agentsNavigate = useCallback(
+    (next: AgentsRoute, options?: { replace?: boolean }) =>
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next }, options),
+    [pushRoute],
+  );
   const inlineAgents = agentsRoute !== null ? (
     <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
       <AgentsPanel
         route={agentsRoute}
         viewer={{ email, displayName, role }}
-        onNavigate={(next) =>
-          pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next })
-        }
+        onNavigate={agentsNavigate}
         onOpenChat={openChat}
       />
     </div>

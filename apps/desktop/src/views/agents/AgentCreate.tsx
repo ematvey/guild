@@ -121,7 +121,7 @@ export function AgentCreate({
 }: {
   /** The step the URL names. */
   step: Step;
-  onNavigate: (route: AgentsRoute) => void;
+  onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onCreated?: (agent: Agent) => void;
 }) {
   const [name, setName] = useState("");
@@ -156,6 +156,13 @@ export function AgentCreate({
   const step = reachableStep(requestedStep, form);
   const stepIndex = STEPS.findIndex(([id]) => id === step);
   const currentError = validateAgentStep(step, form);
+
+  // A deep link or reload past an unfinished step shows the first step that
+  // still needs input; the URL is replaced to name it, so the address, the
+  // page and back/forward agree.
+  useEffect(() => {
+    if (step !== requestedStep) onNavigate({ view: "new", step }, { replace: true });
+  }, [step, requestedStep, onNavigate]);
 
   const go = (next: Step) => {
     setError(null);

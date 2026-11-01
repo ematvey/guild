@@ -14,7 +14,8 @@ export function AgentsPanel({
 }: {
   route: AgentsRoute;
   viewer: Viewer;
-  onNavigate: (route: AgentsRoute) => void;
+  /** `replace` corrects the current address instead of adding a step. */
+  onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
   switch (route.view) {
