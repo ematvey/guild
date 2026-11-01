@@ -14,6 +14,8 @@ import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
 import { notifySubagentTree } from "../agents/tree.js";
 import type { PlatformContext } from "../platform/root-context.js";
+import { FeedForwarder } from "../hub/feed.js";
+import type { NotifyHandler } from "../platform/notify.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;
@@ -1009,5 +1011,119 @@ describe("member-socket feed", () => {
         (f.projects as { id: string }[]).some((p) => p.id === project.id),
     );
     ws.end();
+  });
+});
+
+// The per-chat caches follow the connected owners: a chat whose owner has
+// no socket loses its cached tree and view, the identity cache is bounded,
+// and a failed push is logged with its channel and chat.
+interface Internals {
+  chats: Map<string, unknown>;
+  subagentTrees: Map<string, string>;
+}
+
+function fakeContext(options: { failQueries?: boolean } = {}) {
+  const connected = new Set<string>();
+  const frames: { userId: string; frame: unknown }[] = [];
+  let handler: NotifyHandler | null = null;
+  const ownerOf = (chatId: string) => `owner-${chatId}`;
+  const ctx = {
+    notify: {
+      subscribe: (h: NotifyHandler) => {
+        handler = h;
+        return () => {};
+      },
+    },
+    hub: {
+      sinksOfUser: (userId: string) =>
+        connected.has(userId) ? [{ send: (frame: unknown) => frames.push({ userId, frame }) }] : [],
+      sinksOfOrg: () => [],
+      memberSinksOfUser: () => [],
+    },
+    pool: {
+      query: async (sql: string, params: unknown[]) => {
+        if (options.failQueries) throw new Error("db down");
+        if (sql.includes("FROM chats WHERE id")) {
+          const chatId = String(params[0]);
+          return { rows: [{ org_id: "org", user_id: ownerOf(chatId), machine_id: null }] };
+        }
+        return { rows: [] };
+      },
+    },
+  };
+  return {
+    ctx: ctx as unknown as PlatformContext,
+    connected,
+    frames,
+    ownerOf,
+    notify: (channel: string, payload: string) => handler!(channel, payload),
+  };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+describe("feed forwarder caches", () => {
+  it("evicts a chat's cached tree once its owner has no socket", async () => {
+    const fake = fakeContext();
+    const feed = new FeedForwarder(fake.ctx);
+    feed.start();
+    const internals = feed as unknown as Internals;
+    fake.connected.add(fake.ownerOf("a"));
+    fake.connected.add(fake.ownerOf("b"));
+    fake.notify("guild_subagent_tree", "a");
+    fake.notify("guild_subagent_tree", "b");
+    await settle();
+    expect([...internals.subagentTrees.keys()].sort()).toEqual(["a", "b"]);
+    expect(fake.frames).toHaveLength(2);
+
+    fake.connected.delete(fake.ownerOf("a"));
+    feed.sweep();
+    expect([...internals.subagentTrees.keys()]).toEqual(["b"]);
+
+    // A later tree change for an unwatched chat caches nothing.
+    fake.notify("guild_subagent_tree", "a");
+    await settle();
+    expect(internals.subagentTrees.has("a")).toBe(false);
+    feed.stop();
+  });
+
+  it("bounds the chat identity cache", async () => {
+    const fake = fakeContext();
+    const feed = new FeedForwarder(fake.ctx);
+    feed.start();
+    for (let index = 0; index < 4_200; index += 1) {
+      fake.notify(
+        "guild_chat_status",
+        JSON.stringify({ org_id: "org", user_id: "u", chat_id: `c${index}`, generating: false }),
+      );
+    }
+    const chats = (feed as unknown as Internals).chats;
+    expect(chats.size).toBe(4_096);
+    expect(chats.has("c0")).toBe(false);
+    expect(chats.has("c4199")).toBe(true);
+    feed.stop();
+  });
+
+  it("logs a failed push with its channel and chat id", async () => {
+    const fake = fakeContext({ failQueries: true });
+    const warnings: { channel: string; chatId: string | null }[] = [];
+    const feed = new FeedForwarder(fake.ctx, {
+      warn: ((fields: { channel: string; chatId: string | null }) => {
+        warnings.push({ channel: fields.channel, chatId: fields.chatId });
+      }) as never,
+    });
+    feed.start();
+    fake.notify("guild_thread_committed", "chat-1");
+    fake.notify("guild_subagent_tree", "chat-2");
+    feed.open("chat-3", "gen-1");
+    await settle();
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        { channel: "guild_thread_committed", chatId: "chat-1" },
+        { channel: "guild_subagent_tree", chatId: "chat-2" },
+        { channel: "open", chatId: "chat-3" },
+      ]),
+    );
+    feed.stop();
   });
 });

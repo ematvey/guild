@@ -1,14 +1,12 @@
-// The member-socket feed forwarder: pushes
-// thread views, live generation frames, chat-status flips, org events, and
-// presence-driven thread lists to every connected socket of a chat's owner.
-//
-// Topology differs from Rust by design (one shared Postgres LISTEN via the
-// NotifyHub + in-process fan-out instead of one feed task per user); the
-// observable behavior mirrors the Rust contract: views republish only when
-// the capture changes (seq-zeroed content compare), live frames carry the
-// generation identity the turn ack issues, and a machine presence flip pushes
-// the thread list so the connection dot moves live.
+// The member-socket feed forwarder: pushes thread views, live generation
+// frames, chat-status flips, org events, and presence-driven thread lists to
+// every connected socket of a chat's owner. One shared Postgres LISTEN (the
+// NotifyHub) feeds an in-process fan-out. Views republish only when the
+// capture changes (seq-zeroed content compare), live frames carry the
+// generation identity the turn ack issues, and a machine presence flip
+// pushes the thread list so the connection dot moves live.
 
+import type { Logger } from "pino";
 import type { PlatformContext } from "../platform/root-context.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
@@ -24,6 +22,13 @@ import type { GenerationStreamSink } from "../chats/bridge.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
 
 const VIEW_POLL_MS = 100;
+/** Ticks between sweeps of per-chat state whose owner has no socket. */
+const SWEEP_EVERY_TICKS = 300;
+/** Chat identities kept in the LRU. */
+const MAX_CACHED_CHATS = 4_096;
+
+type FeedLog = Pick<Logger, "warn">;
+const SILENT: FeedLog = { warn: () => {} };
 
 interface ChatIdentity {
   orgId: string;
@@ -36,13 +41,15 @@ export class FeedForwarder implements GenerationStreamSink {
   private unsubscribe: (() => void) | null = null;
   private viewTimer: NodeJS.Timeout | undefined;
   private stopped = false;
+  private ticks = 0;
 
-  /** Cached chat identities (org/owner/machine binding); the committed
-   *  path re-reads the row every notification (Rust refresh_bindings). */
+  /** Chat identities (org/owner/machine binding), least recently used
+   *  first and bounded; the committed path re-reads the row every
+   *  notification. */
   private readonly chats = new Map<string, ChatIdentity>();
   private readonly chatLookups = new Map<string, Promise<ChatIdentity | null>>();
-  /** Last broadcast view per chat, as the seq-zeroed wire bytes (Rust
-   *  `views` with content["seq"]=0). */
+  /** Last broadcast view per chat, as the seq-zeroed wire bytes. Views,
+   *  trees and baselines are kept only while the owner has a socket. */
   private readonly views = new Map<string, string>();
   /** Chats whose streaming buffers moved since the last view capture. */
   private readonly dirtyChats = new Set<string>();
@@ -64,8 +71,16 @@ export class FeedForwarder implements GenerationStreamSink {
    *  carries it. */
   private readonly workspaceChains = new Map<string, Promise<void>>();
 
-  constructor(ctx: PlatformContext) {
+  constructor(
+    ctx: PlatformContext,
+    private readonly log: FeedLog = SILENT,
+  ) {
     this.ctx = ctx;
+  }
+
+  /** Logs one dropped push: the frame is lost, the next change re-sends. */
+  private failed(channel: string, chatId: string | null, error: unknown): void {
+    this.log.warn({ err: error, channel, chatId }, "feed push failed");
   }
 
   /** Subscribes the notify fan-out and starts the poll timers. */
@@ -73,7 +88,10 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.unsubscribe !== null || this.stopped) return;
     const off = this.ctx.notify.subscribe(this.onNotify);
     this.unsubscribe = off;
-    this.viewTimer = setInterval(() => void this.publishDirtyViews(), VIEW_POLL_MS);
+    this.viewTimer = setInterval(() => {
+      if (++this.ticks % SWEEP_EVERY_TICKS === 0) this.sweep();
+      void this.publishDirtyViews().catch((error: unknown) => this.failed("view_poll", null, error));
+    }, VIEW_POLL_MS);
     this.viewTimer.unref?.();
   }
 
@@ -84,13 +102,13 @@ export class FeedForwarder implements GenerationStreamSink {
     this.unsubscribe = null;
   }
 
-  // -- notify fan-in (Rust Feed::handle_notification) ------------------------
+  // -- notify fan-in ------------------------------------------------------------
 
   private onNotify: NotifyHandler = (channel, payload) => {
     if (this.stopped) return;
     if (channel === "guild_thread_committed") {
       if (payload === "") return;
-      void this.committed(payload).catch(() => {});
+      void this.committed(payload).catch((error: unknown) => this.failed(channel, payload, error));
       return;
     }
     if (channel === "guild_chat_status") {
@@ -108,7 +126,7 @@ export class FeedForwarder implements GenerationStreamSink {
       ) {
         return;
       }
-      // Owner-scoped: other members' feeds filter the frame out (Rust).
+      // Owner-scoped: only the owner's sockets get the frame.
       const frame: WsServerMsg = {
         type: "chat_status",
         chat_id: parsed.chat_id,
@@ -116,14 +134,9 @@ export class FeedForwarder implements GenerationStreamSink {
       };
       this.sendToUser(parsed.user_id, frame);
       // A generating flip changes the chat's view content: the next view
-      // poll re-captures and broadcasts it if it differs (Rust's poll finds
-      // the changed view on its next 100ms tick).
-      if (this.chats.get(parsed.chat_id) === undefined) {
-        this.chats.set(parsed.chat_id, {
-          orgId: parsed.org_id,
-          userId: parsed.user_id,
-          machineId: null,
-        });
+      // poll re-captures and broadcasts it if it differs.
+      if (!this.chats.has(parsed.chat_id)) {
+        this.remember(parsed.chat_id, { orgId: parsed.org_id, userId: parsed.user_id, machineId: null });
       }
       this.dirtyChats.add(parsed.chat_id);
       return;
@@ -139,7 +152,7 @@ export class FeedForwarder implements GenerationStreamSink {
       // Every sidebar list (chats, archived, projects, machines) rides one
       // serialized push, so a snapshot taken before a write can never land
       // after the one that carries it.
-      void this.pushWorkspace(parsed.org_id, parsed.user_id).catch(() => {});
+      void this.pushWorkspace(parsed.org_id, parsed.user_id);
       return;
     }
     if (channel === "guild_org") {
@@ -150,7 +163,7 @@ export class FeedForwarder implements GenerationStreamSink {
         return;
       }
       if (typeof parsed.org_id !== "string") return;
-      void this.pushWorkspaceIdentity(parsed.org_id).catch(() => {});
+      void this.pushWorkspaceIdentity(parsed.org_id).catch((error: unknown) => this.failed(channel, null, error));
       return;
     }
     if (channel === "guild_events") {
@@ -161,12 +174,12 @@ export class FeedForwarder implements GenerationStreamSink {
         return;
       }
       if (typeof parsed.org_id !== "string" || typeof parsed.event_id !== "string") return;
-      void this.orgEvent(parsed.org_id, parsed.event_id).catch(() => {});
+      void this.orgEvent(parsed.org_id, parsed.event_id).catch((error: unknown) => this.failed(channel, null, error));
       return;
     }
     if (channel === "guild_subagent_tree") {
       if (payload === "") return;
-      void this.subagentTree(payload).catch(() => {});
+      this.subagentTree(payload);
     }
   };
 
@@ -174,12 +187,12 @@ export class FeedForwarder implements GenerationStreamSink {
    *  The tree is display state, not log state, so the frame carries the whole
    *  node list and the client replaces its view. Frames ride the chat's send
    *  chain so an older snapshot never lands after a newer one. */
-  private async subagentTree(chatId: string): Promise<void> {
-    this.enqueue(chatId, async () => {
+  private subagentTree(chatId: string): void {
+    this.enqueue(chatId, "guild_subagent_tree", async () => {
       const chat = await this.ensureChat(chatId, false);
       if (chat === null) return;
       if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
-        this.subagentTrees.delete(chatId);
+        this.evict(chatId);
         return;
       }
       const nodes = await chatSubagentNodes(this.ctx.pool, chatId);
@@ -193,12 +206,10 @@ export class FeedForwarder implements GenerationStreamSink {
   private async committed(chatId: string): Promise<void> {
     const chat = await this.ensureChat(chatId, true);
     if (chat === null) return;
-    // Nobody is listening: drop the cached view so the next connection
-    // re-captures (Rust's feed dies with its last receiver and comes back
-    // with empty state).
+    // Nobody is listening: drop the chat's cached state so the next
+    // connection re-captures from scratch.
     if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
-      this.views.delete(chatId);
-      this.dirtyChats.delete(chatId);
+      this.evict(chatId);
       return;
     }
     this.dirtyChats.delete(chatId);
@@ -217,7 +228,7 @@ export class FeedForwarder implements GenerationStreamSink {
       lastType === "approval_decision" ||
       lastType === "assistant_message"
     ) {
-      void this.pushWorkspace(chat.orgId, chat.userId).catch(() => {});
+      void this.pushWorkspace(chat.orgId, chat.userId);
     }
     // An open turn owns the view: instead of re-broadcasting the whole
     // thread per append, fan out only the rows committed since the last
@@ -234,17 +245,12 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   private async orgEvent(orgId: string, eventId: string): Promise<void> {
-    let event;
-    try {
-      event = await this.ctx.events.get(orgId, eventId);
-    } catch {
-      return;
-    }
+    const event = await this.ctx.events.get(orgId, eventId);
     if (event === null) return;
     this.sendToOrg(orgId, { type: "org_event", event });
   }
 
-  // -- view captures (Rust Feed::publish_views) -------------------------------
+  // -- view captures --------------------------------------------------------------
 
   private async publishDirtyViews(): Promise<void> {
     if (this.dirtyChats.size === 0) return;
@@ -253,26 +259,23 @@ export class FeedForwarder implements GenerationStreamSink {
     for (const chatId of chatIds) {
       const chat = this.chats.get(chatId);
       if (chat === undefined) {
-        void this.ensureChat(chatId, false);
+        this.lookup(chatId, "view_poll");
         continue;
       }
       if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
-        this.views.delete(chatId);
+        this.evict(chatId);
         continue;
       }
-      await this.publishView(chatId, chat.orgId, chat.userId);
+      await this.publishView(chatId, chat.orgId, chat.userId).catch((error: unknown) =>
+        this.failed("view_poll", chatId, error),
+      );
     }
   }
 
   /** One capture → broadcast if the seq-zeroed content differs from the
-   *  last view (Rust's dedupe: the frame itself carries the real seq). */
+   *  last view (the frame itself carries the real seq). */
   private async publishView(chatId: string, orgId: string, userId: string): Promise<void> {
-    let capture;
-    try {
-      capture = await captureThreadState(this.ctx, this.ctx.pool, orgId, chatId);
-    } catch {
-      return;
-    }
+    const capture = await captureThreadState(this.ctx, this.ctx.pool, orgId, chatId);
     const dedupe = threadStateWire({ ...capture, seq: 0 });
     if (this.views.get(chatId) === dedupe) return;
     this.views.set(chatId, dedupe);
@@ -284,15 +287,15 @@ export class FeedForwarder implements GenerationStreamSink {
     this.sentSeqs.set(chatId, Math.max(this.sentSeqs.get(chatId) ?? 0, maxRow));
   }
 
-  // -- live generation frames (Rust Feed::drain_events) -----------------------
+  // -- live generation frames ---------------------------------------------------
 
   open(chatId: string, generationId: string): void {
     this.generations.set(chatId, generationId);
-    void this.ensureChat(chatId, false);
+    this.lookup(chatId, "open");
     // Baseline on the chat's send chain (ordered before any incremental
     // this turn commits): everything already durable reached clients via
     // sync; the turn fans out only rows appended after this max.
-    this.enqueue(chatId, async () => {
+    this.enqueue(chatId, "open", async () => {
       if (this.generations.get(chatId) !== generationId) return;
       try {
         const res = await this.ctx.pool.query<{ max: string | null }>(
@@ -300,8 +303,10 @@ export class FeedForwarder implements GenerationStreamSink {
           [chatId],
         );
         this.sentSeqs.set(chatId, Number(res.rows[0]?.max ?? 0));
-      } catch {
+      } catch (error) {
+        // Without a baseline, committed() falls back to full-view publishes.
         this.sentSeqs.delete(chatId);
+        this.failed("open", chatId, error);
       }
     });
   }
@@ -311,17 +316,12 @@ export class FeedForwarder implements GenerationStreamSink {
     if (generationId === undefined) return;
     // The generation identity and the frame order are captured now; the
     // async owner lookup + watermark ride the per-chat chain.
-    this.enqueue(chatId, async () => {
+    this.enqueue(chatId, "live_frame", async () => {
       const chat = await this.ensureChat(chatId, false);
       if (chat === null) return;
       const sinks = this.ctx.hub.sinksOfUser(chat.userId);
       if (sinks.length === 0) return;
-      let seq: number;
-      try {
-        seq = await this.ctx.threads.watermark();
-      } catch {
-        return;
-      }
+      const seq = await this.ctx.threads.watermark();
       const frame: WsServerMsg = {
         type: "live_frame",
         chat_id: chatId,
@@ -342,14 +342,9 @@ export class FeedForwarder implements GenerationStreamSink {
    *  `since`, as a thread_events frame (same serialized chain as the live
    *  frames, so a committed row never overtakes its own stream frames). */
   private publishIncremental(chatId: string, userId: string, since: number): void {
-    this.enqueue(chatId, async () => {
+    this.enqueue(chatId, "guild_thread_committed", async () => {
       if (this.generations.get(chatId) === undefined) return;
-      let rows;
-      try {
-        rows = await this.ctx.threads.listEventsSince(chatId, since);
-      } catch {
-        return;
-      }
+      const rows = await this.ctx.threads.listEventsSince(chatId, since);
       if (rows.length === 0) return;
       const maxRow = rows.reduce((max, row) => Math.max(max, row.seq), since);
       this.sentSeqs.set(chatId, Math.max(this.sentSeqs.get(chatId) ?? 0, maxRow));
@@ -364,29 +359,71 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   close(chatId: string): void {
-    const generationId=this.generations.get(chatId);
-    this.enqueue(chatId,async()=>{
-      if(this.generations.get(chatId)===generationId) this.generations.delete(chatId);
+    const generationId = this.generations.get(chatId);
+    this.enqueue(chatId, "close", async () => {
+      if (this.generations.get(chatId) === generationId) this.generations.delete(chatId);
       this.dirtyChats.add(chatId);
     });
   }
 
-  /** Serializes one chat's async sends (order preserved, failures skipped). */
-  private enqueue(chatId: string, op: () => Promise<void>): void {
+  /** Serializes one chat's async sends: order preserved, a failed op is
+   *  logged and the chain moves on. */
+  private enqueue(chatId: string, channel: string, op: () => Promise<void>): void {
     const prev = this.chains.get(chatId) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(op);
-    this.chains.set(
-      chatId,
-      next.catch(() => {}).then(() => {
-        if (this.chains.get(chatId) === next) this.chains.delete(chatId);
-      }),
+    const settled: Promise<void> = prev.then(op).then(
+      () => {
+        if (this.chains.get(chatId) === settled) this.chains.delete(chatId);
+      },
+      (error: unknown) => {
+        this.failed(channel, chatId, error);
+        if (this.chains.get(chatId) === settled) this.chains.delete(chatId);
+      },
     );
+    this.chains.set(chatId, settled);
+  }
+
+  /** Drops a chat's cached view, tree and baseline. The next capture for
+   *  a connected owner starts from a full view. */
+  private evict(chatId: string): void {
+    this.views.delete(chatId);
+    this.subagentTrees.delete(chatId);
+    this.sentSeqs.delete(chatId);
+    this.dirtyChats.delete(chatId);
+  }
+
+  /** Evicts every chat whose owner has no socket (or whose identity left
+   *  the LRU), so cached state follows the connected users, not history. */
+  sweep(): void {
+    const chatIds = new Set([...this.views.keys(), ...this.subagentTrees.keys(), ...this.sentSeqs.keys()]);
+    for (const chatId of chatIds) {
+      const chat = this.chats.get(chatId);
+      if (chat === undefined || this.ctx.hub.sinksOfUser(chat.userId).length === 0) this.evict(chatId);
+    }
+  }
+
+  /** Caches one identity as the most recently used, evicting the oldest
+   *  past the bound. */
+  private remember(chatId: string, identity: ChatIdentity): void {
+    this.chats.delete(chatId);
+    this.chats.set(chatId, identity);
+    if (this.chats.size > MAX_CACHED_CHATS) {
+      const oldest = this.chats.keys().next().value;
+      if (oldest !== undefined) this.chats.delete(oldest);
+    }
+  }
+
+  /** Warms the identity cache without waiting on it. */
+  private lookup(chatId: string, channel: string): void {
+    void this.ensureChat(chatId, false).catch((error: unknown) => this.failed(channel, chatId, error));
   }
 
   private async ensureChat(chatId: string, refresh: boolean): Promise<ChatIdentity | null> {
     if (!refresh) {
       const cached = this.chats.get(chatId);
-      if (cached !== undefined) return cached;
+      if (cached !== undefined) {
+        this.remember(chatId, cached);
+        return cached;
+      }
       const inFlight = this.chatLookups.get(chatId);
       if (inFlight !== undefined) return inFlight;
     }
@@ -398,7 +435,7 @@ export class FeedForwarder implements GenerationStreamSink {
       const row = res.rows[0];
       if (!row) return null;
       const identity: ChatIdentity = { orgId: row.org_id, userId: row.user_id, machineId: row.machine_id };
-      this.chats.set(chatId, identity);
+      this.remember(chatId, identity);
       return identity;
     })();
     this.chatLookups.set(chatId, lookup);
@@ -416,7 +453,9 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.stopped) return Promise.resolve();
     const key = `${orgId}:${userId}`;
     const previous = this.workspaceChains.get(key) ?? Promise.resolve();
-    const next = previous.then(() => this.sendWorkspace(orgId, userId)).catch(() => {});
+    const next = previous
+      .then(() => this.sendWorkspace(orgId, userId))
+      .catch((error: unknown) => this.failed("guild_workspace", null, error));
     this.workspaceChains.set(key, next);
     void next.finally(() => {
       if (this.workspaceChains.get(key) === next) this.workspaceChains.delete(key);
@@ -435,8 +474,8 @@ export class FeedForwarder implements GenerationStreamSink {
       projectListSnapshot(this.ctx, user),
       machineListSnapshot(this.ctx, user),
     ]);
-    // The legacy chat list stays first for old clients (and the Rust
-    // daemon's bootstrap wait); the rest are additive frames.
+    // The chat list stays first: clients and the local engine wait on it
+    // at bootstrap; the rest are additive frames.
     this.sendToUser(userId, { type: "workspace_identity", ...info });
     this.sendToUser(userId, { type: "thread_list", chats });
     this.sendToUser(userId, { type: "archived_thread_list", chats: archived });
@@ -466,7 +505,7 @@ export class FeedForwarder implements GenerationStreamSink {
     for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sink.send(frame);
     // A claim can be a new registration or a re-pair (the rows and the
     // chats' machine labels move), so the registry list repaints too.
-    void this.pushWorkspace(orgId, userId).catch(() => {});
+    void this.pushWorkspace(orgId, userId);
   }
 
   private sendToUser(userId: string, frame: WsServerMsg): void {
