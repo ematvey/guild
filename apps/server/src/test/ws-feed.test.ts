@@ -861,10 +861,13 @@ describe("member-socket feed", () => {
       .chats.find((row) => row.id === chat.id);
     expect(workingRow?.working).toBe(true);
 
+    // The thread insert pushes the new node before its run exists; the run
+    // pushes it again with its status.
     const pushed = await waitFrame(
       ws,
       (f) => f.type === "subagent_tree" && f.chat_id === chat.id
-        && (f.nodes as unknown[]).length === 2,
+        && (f.nodes as { status: string | null }[]).length === 2
+        && (f.nodes as { status: string | null }[])[1]!.status === "running",
     );
     const nodes = pushed.nodes as { thread_id: string; parent_thread_id: string | null; status: string | null }[];
     expect(nodes.map((n) => [n.thread_id, n.parent_thread_id, n.status])).toEqual([
@@ -1127,7 +1130,9 @@ describe("feed forwarder caches", () => {
     fake.notify("guild_subagent_tree", "b");
     await settle();
     expect([...internals.subagentTrees.keys()].sort()).toEqual(["a", "b"]);
-    expect(fake.frames).toHaveLength(2);
+    // Each chat gets its subtree and its header facts.
+    const types = fake.frames.map(({ frame }) => (frame as { type: string }).type).sort();
+    expect(types).toEqual(["chat_tree", "chat_tree", "subagent_tree", "subagent_tree"]);
 
     fake.connected.delete(fake.ownerOf("a"));
     feed.sweep();

@@ -375,20 +375,7 @@ export function registerSkillRoutes(
   app.get("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
     const q = queryParam(req, "q") ?? null;
-    const rows = await skills.catalog(user.org_id, q);
-    const items = await Promise.all(
-      rows.map(async (r) => ({
-        slug: r.slug,
-        description: r.description,
-        latest_version: r.latest_version,
-        owner: await ownerEntry(skills, user.org_id, r.owner_user_id, r.owner_team_id),
-        maintainer_gated: r.maintainer_gated,
-        installs: r.installs,
-        installs_latest: r.installs_latest,
-        tombstoned: false,
-      })),
-    );
-    sendJson(reply, { items });
+    sendJson(reply, { items: await skills.catalog(user.org_id, q) });
     return reply;
   });
 

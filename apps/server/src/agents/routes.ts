@@ -17,7 +17,7 @@ import { resolveIntegrations } from "../platform/integrations/plugins.js";
 import { toolCurate } from "../platform/integrations/policy.js";
 import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
-import { chatSubagentNodes } from "./tree.js";
+import { chatSubagentNodes, chatTreeFacts } from "./tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
 import { installSpecialists } from "./specialists.js";
 import type {
@@ -501,80 +501,14 @@ export function registerAgentRoutes(
     return agentTurn(req, reply, user, agent, await store.ensureDefaultThread(agentId, user.id));
   });
 
-  /** The chat header's tree facts: the chat's thread node, its latest run
-   *  status, its parent chat, and the three independent thread facts — what
-   *  it is (type), and whether the user archived or deleted it. A chat with
-   *  no thread row is a plain user chat. */
+  /** The chat header's tree facts, behind the chat's read gate. */
   const chatTree = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    const chat = await chats.chats.getChat(user.org_id, chatId, user);
-    const flags = await infra.pool.query<{ archived: boolean; deleted: boolean }>(
-      `SELECT archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted
-       FROM chats WHERE id = $1`,
-      [chatId],
-    );
-    const res = await infra.pool.query<{
-      type: string;
-      title: string;
-      depth: number;
-      agent_id: string;
-      agent_name: string;
-      run_status: string | null;
-      parent_chat_id: string | null;
-      parent_title: string | null;
-      origin_chat_id: string | null;
-      origin_title: string | null;
-    }>(
-      `SELECT t.type, t.title, t.depth, t.agent_id, a.name AS agent_name,
-              (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
-               ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
-              p.chat_id AS parent_chat_id, p.title AS parent_title,
-              o.chat_id AS origin_chat_id, o.title AS origin_title
-       FROM agent_threads t
-       JOIN agents a ON a.id = t.agent_id
-       LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
-       LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
-       WHERE t.chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    const state = {
-      archived: flags.rows[0]?.archived ?? false,
-      deleted: flags.rows[0]?.deleted ?? false,
-    };
-    if (row === undefined) {
-      return sendJson(reply, {
-        chat_id: chatId,
-        type: "user",
-        title: chat.title ?? "",
-        agent_id: null,
-        agent_name: null,
-        status: null,
-        depth: 0,
-        parent: null,
-        origin: null,
-        ...state,
-      });
-    }
-    return sendJson(reply, {
-      chat_id: chatId,
-      type: row.type,
-      title: row.title,
-      agent_id: row.agent_id,
-      agent_name: row.agent_name,
-      status: row.run_status,
-      depth: Number(row.depth),
-      parent:
-        row.parent_chat_id === null
-          ? null
-          : { chat_id: row.parent_chat_id, title: row.parent_title ?? "" },
-      origin:
-        row.origin_chat_id === null
-          ? null
-          : { chat_id: row.origin_chat_id, title: row.origin_title ?? "" },
-      ...state,
-    });
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const tree = await chatTreeFacts(infra.pool, chatId);
+    if (tree === null) throw ApiError.notFound("no such chat");
+    return sendJson(reply, tree);
   };
   app.get("/api/v1/chats/:id/tree", chatTree);
   app.get("/api/v1/threads/:id/tree", chatTree);
@@ -592,14 +526,15 @@ export function registerAgentRoutes(
   };
   app.get("/api/v1/chats/:id/subagents", chatSubagents);
 
-  /** Stop or close the thread behind a chat, from the chat's own UI. The
-   *  chat is authorized first; a chat with no thread row has nothing to act
-   *  on. `close` marks the subtree closed, which also drops late results. */
+  /** Stop or close the thread behind a chat, from the chat's own UI. Both
+   *  are writes: only the chat's owner passes the gate, as for every other
+   *  chat write. A chat with no thread row has nothing to act on. `close`
+   *  marks the subtree closed, which also drops late results. */
   const threadAction =
     (action: "cancel" | "close") => async (req: FastifyRequest, reply: FastifyReply) => {
       const user = await requireUser(auth, req);
       const chatId = parseUuidParam(req, "id");
-      await chats.chats.getChat(user.org_id, chatId, user);
+      await chats.chats.getOwnChat(user.org_id, chatId, user);
       const thread = await store.threadByChatId(chatId);
       if (thread === null) throw ApiError.notFound("no such thread");
       // Closing is a child-only act: the root thread is the conversation the

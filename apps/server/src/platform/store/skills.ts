@@ -7,12 +7,32 @@ import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
+import type { SkillCatalogItem, SkillOwner } from "@guild/wire/rest";
 
 export interface InstallRow {
   slug: string;
   /** The version the user pinned, or null to follow the latest. */
   pinned_version: string | null;
   installed_at: string;
+}
+
+/** A catalog row's owner, the same entry `ownerEntry` resolves: the owner
+ *  user in the org, else the owner team, else none. */
+function catalogOwner(r: Record<string, unknown>): SkillOwner | null {
+  if (r.owner_user_id !== null) {
+    return typeof r.owner_label === "string"
+      ? {
+          kind: "user",
+          id: r.owner_user_id as string,
+          label: r.owner_label,
+          avatar_url: (r.owner_avatar_url as string | null) ?? null,
+        }
+      : null;
+  }
+  if (r.owner_team_id !== null && typeof r.team_label === "string") {
+    return { kind: "team", id: r.owner_team_id as string, label: r.team_label, avatar_url: null };
+  }
+  return null;
 }
 
 const INSTALLED_AT_TEXT =
@@ -100,31 +120,19 @@ export class SkillStore {
    *  version; q filters over description and the latest version's SKILL.md
    *  text. Tombstoned items never appear (provenance lives on the detail
    *  page only). */
-  async catalog(
-    orgId: string,
-    q: string | null,
-    limit = 200,
-  ): Promise<Array<{
-    slug: string;
-    description: string;
-    latest_version: string | null;
-    owner_user_id: string | null;
-    owner_team_id: string | null;
-    owner_label: string | null;
-    maintainer_gated: boolean;
-    installs: number;
-    installs_latest: number;
-  }>> {
+  async catalog(orgId: string, q: string | null, limit = 200): Promise<SkillCatalogItem[]> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT i.slug, i.description, i.latest_version, i.owner_user_id, i.owner_team_id, i.maintainer_gated,
-              COALESCE(NULLIF(u.display_name, ''), u.email) AS owner_label,
+              COALESCE(NULLIF(u.display_name, ''), u.email) AS owner_label, u.avatar_url AS owner_avatar_url,
+              t.name AS team_label,
               (SELECT count(*)::text FROM skill_installs si
                WHERE si.org_id = i.org_id AND si.slug = i.slug) AS installs,
               (SELECT count(*)::text FROM skill_installs si
                WHERE si.org_id = i.org_id AND si.slug = i.slug
                  AND (si.pinned_version = i.latest_version OR si.pinned_version IS NULL)) AS installs_latest
        FROM registry_items i
-       LEFT JOIN users u ON u.id = i.owner_user_id
+       LEFT JOIN users u ON u.id = i.owner_user_id AND u.org_id = i.org_id
+       LEFT JOIN teams t ON t.id = i.owner_team_id AND t.org_id = i.org_id
        LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version
        WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL
          AND ($2::text IS NULL OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%')
@@ -136,12 +144,11 @@ export class SkillStore {
       slug: r.slug as string,
       description: r.description as string,
       latest_version: (r.latest_version as string | null) ?? null,
-      owner_user_id: (r.owner_user_id as string | null) ?? null,
-      owner_team_id: (r.owner_team_id as string | null) ?? null,
-      owner_label: (r.owner_label as string | null) ?? null,
+      owner: catalogOwner(r),
       maintainer_gated: r.maintainer_gated === true,
       installs: Number(r.installs ?? "0"),
       installs_latest: Number(r.installs_latest ?? "0"),
+      tombstoned: false,
     }));
   }
 

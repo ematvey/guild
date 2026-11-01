@@ -1,10 +1,10 @@
-// The chat's thread subtree: the read used by the REST route and the member
-// socket, plus the NOTIFY that tells every ancestor chat's viewers to
-// re-push it.
+// The chat's thread subtree and its header facts: the reads used by the REST
+// routes and the member socket, plus the NOTIFY that tells every ancestor
+// chat's viewers to re-push them.
 
 import type { PlatformPool } from "../platform/db.js";
 import type { WsServerMsg } from "../hub/protocol.js";
-import type { SubagentNode } from "@guild/wire/rest";
+import type { ChatTree, SubagentNode } from "@guild/wire/rest";
 
 /** One node of a chat's thread subtree, with its latest run status. */
 export type { SubagentNode };
@@ -51,6 +51,77 @@ export async function chatSubagentNodes(
 
 export function subagentTreeMsg(chatId: string, nodes: SubagentNode[]): WsServerMsg {
   return { type: "subagent_tree", chat_id: chatId, nodes };
+}
+
+/** The chat header's tree facts: the chat's thread node, its latest run
+ *  status, its parent and origin chats, and the three independent thread
+ *  facts — what it is (type), and whether the user archived or deleted it.
+ *  A chat with no thread row is a plain user chat. Null when the chat does
+ *  not exist. */
+export async function chatTreeFacts(pool: PlatformPool, chatId: string): Promise<ChatTree | null> {
+  const chat = await pool.query<{ title: string | null; archived: boolean; deleted: boolean }>(
+    `SELECT title, archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted
+     FROM chats WHERE id = $1`,
+    [chatId],
+  );
+  const flags = chat.rows[0];
+  if (flags === undefined) return null;
+  const res = await pool.query<{
+    type: ChatTree["type"];
+    title: string;
+    depth: number;
+    agent_id: string;
+    agent_name: string;
+    run_status: string | null;
+    parent_chat_id: string | null;
+    parent_title: string | null;
+    origin_chat_id: string | null;
+    origin_title: string | null;
+  }>(
+    `SELECT t.type, t.title, t.depth, t.agent_id, a.name AS agent_name,
+            (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
+             ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
+            p.chat_id AS parent_chat_id, p.title AS parent_title,
+            o.chat_id AS origin_chat_id, o.title AS origin_title
+     FROM agent_threads t
+     JOIN agents a ON a.id = t.agent_id
+     LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+     LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
+     WHERE t.chat_id = $1`,
+    [chatId],
+  );
+  const row = res.rows[0];
+  const state = { archived: flags.archived, deleted: flags.deleted };
+  if (row === undefined) {
+    return {
+      chat_id: chatId,
+      type: "user",
+      title: flags.title ?? "",
+      agent_id: null,
+      agent_name: null,
+      status: null,
+      depth: 0,
+      parent: null,
+      origin: null,
+      ...state,
+    };
+  }
+  return {
+    chat_id: chatId,
+    type: row.type,
+    title: row.title,
+    agent_id: row.agent_id,
+    agent_name: row.agent_name,
+    status: row.run_status,
+    depth: Number(row.depth),
+    parent: row.parent_chat_id === null ? null : { chat_id: row.parent_chat_id, title: row.parent_title ?? "" },
+    origin: row.origin_chat_id === null ? null : { chat_id: row.origin_chat_id, title: row.origin_title ?? "" },
+    ...state,
+  };
+}
+
+export function chatTreeMsg(tree: ChatTree): WsServerMsg {
+  return { type: "chat_tree", chat_id: tree.chat_id, tree };
 }
 
 /** Tells every ancestor chat (and the thread's own chat) that its subtree

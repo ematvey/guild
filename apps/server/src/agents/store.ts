@@ -218,21 +218,25 @@ function decodeThreadCursor(cursor: string, sort: ThreadSort): { at: string; id:
   }
 }
 
-/** Visibility predicate over an `agents` alias. Fixed placeholders:
- *  $1 = org id, $2 = caller is admin, $3 = caller user id. */
-function visiblePredicate(alias: string): string {
+/** Visibility predicate over an `agents` alias. The viewer defaults to the
+ *  fixed placeholders $1 = org id, $2 = caller is admin, $3 = caller user
+ *  id; a `users` alias can stand in for them. */
+function visiblePredicate(
+  alias: string,
+  viewer: { org: string; admin: string; user: string } = { org: "$1", admin: "$2::boolean", user: "$3" },
+): string {
   // A personal agent belongs to exactly one user: no admin override, no
   // org or team visibility. Everything else follows the grant rules.
-  return `(${alias}.org_id = $1 AND (
-    ${alias}.owner_user_id = $3
+  return `(${alias}.org_id = ${viewer.org} AND (
+    ${alias}.owner_user_id = ${viewer.user}
     OR (${alias}.is_personal = false AND (
-      $2::boolean
+      ${viewer.admin}
       OR ${alias}.visibility = 'org'
-      OR EXISTS (SELECT 1 FROM agent_grants g WHERE g.agent_id = ${alias}.id AND g.user_id = $3)
+      OR EXISTS (SELECT 1 FROM agent_grants g WHERE g.agent_id = ${alias}.id AND g.user_id = ${viewer.user})
       OR (${alias}.visibility = 'team' AND EXISTS (
         SELECT 1 FROM agent_team_grants tg
         JOIN team_members tm ON tm.team_id = tg.team_id
-        WHERE tg.agent_id = ${alias}.id AND tm.user_id = $3))
+        WHERE tg.agent_id = ${alias}.id AND tm.user_id = ${viewer.user}))
     ))
   ))`;
 }
@@ -516,6 +520,20 @@ export class AgentStore {
       params,
     );
     return res.rows.map(toAgent);
+  }
+
+  /** The users among `userIds` who may see the agent: the same predicate as
+   *  the list, evaluated per user. The socket feed scopes agent frames by
+   *  it. */
+  async visibleUserIds(agentId: string, userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const res = await this.pool.query<{ id: string }>(
+      `SELECT u.id FROM users u JOIN agents a ON a.id = $1
+       WHERE u.id = ANY($2::uuid[])
+         AND ${visiblePredicate("a", { org: "u.org_id", admin: "(u.role = 'admin')", user: "u.id" })}`,
+      [agentId, userIds],
+    );
+    return res.rows.map((row) => row.id);
   }
 
   /** Loads one visible agent; invisible and missing agents are the same 404. */

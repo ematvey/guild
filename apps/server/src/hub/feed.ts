@@ -4,13 +4,15 @@
 // NotifyHub) feeds an in-process fan-out. Views republish only when the
 // capture changes (seq-zeroed content compare), live frames carry the
 // generation identity the turn ack issues, and a machine presence flip
-// pushes the thread list so the connection dot moves live.
+// pushes the thread list so the connection dot moves live. Agent and skill
+// state rides the same LISTEN through AgentStateFeed.
 
 import type { Logger } from "pino";
 import type { PlatformContext } from "../platform/root-context.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
-import { chatSubagentNodes, subagentTreeMsg } from "../agents/tree.js";
+import { chatSubagentNodes, chatTreeFacts, chatTreeMsg, subagentTreeMsg } from "../agents/tree.js";
+import { AgentStateFeed } from "./agent-state.js";
 import {
   archivedThreadListSnapshot,
   machineListSnapshot,
@@ -59,6 +61,10 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Last pushed subtree per chat, as JSON: a run-status write that leaves
    *  the rendered tree unchanged sends nothing. */
   private readonly subagentTrees = new Map<string, string>();
+  /** Last pushed header facts per chat, as JSON: same dedupe as the tree. */
+  private readonly chatTrees = new Map<string, string>();
+  /** The agent list, runs, routines, thread lists and skill catalog. */
+  private readonly agentState: AgentStateFeed;
   /** Per-chat fan-out baseline: rows at/below this seq already reached the
    *  client (full-view publishes re-baseline to the capture's max row).
    *  Undefined = the open() baseline hasn't run yet — committed() falls
@@ -77,6 +83,7 @@ export class FeedForwarder implements GenerationStreamSink {
     private readonly log: FeedLog = SILENT,
   ) {
     this.ctx = ctx;
+    this.agentState = new AgentStateFeed(ctx, (channel, error) => this.failed(channel, null, error));
   }
 
   /** Logs one dropped push: the frame is lost, the next change re-sends. */
@@ -98,6 +105,7 @@ export class FeedForwarder implements GenerationStreamSink {
 
   stop(): void {
     this.stopped = true;
+    this.agentState.stop();
     if (this.viewTimer !== undefined) clearInterval(this.viewTimer);
     this.unsubscribe?.();
     this.unsubscribe = null;
@@ -192,13 +200,22 @@ export class FeedForwarder implements GenerationStreamSink {
     if (channel === "guild_subagent_tree") {
       if (payload === "") return;
       this.subagentTree(payload);
+      return;
     }
+    this.agentState.onNotify(channel, payload);
   };
 
-  /** One chat's thread subtree, pushed to its owner's sockets when it moves.
-   *  The tree is display state, not log state, so the frame carries the whole
-   *  node list and the client replaces its view. Frames ride the chat's send
-   *  chain so an older snapshot never lands after a newer one. */
+  /** A member socket connected: its agent list and skill catalog. */
+  connectMember(orgId: string, userId: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return this.agentState.connect(orgId, userId);
+  }
+
+  /** One chat's thread subtree and header facts, pushed to its owner's
+   *  sockets when they move. Both are display state, not log state, so each
+   *  frame carries the whole value and the client replaces its view. Frames
+   *  ride the chat's send chain so an older snapshot never lands after a
+   *  newer one. */
   private subagentTree(chatId: string): void {
     this.enqueue(chatId, "guild_subagent_tree", async () => {
       const chat = await this.ensureChat(chatId, false);
@@ -207,11 +224,20 @@ export class FeedForwarder implements GenerationStreamSink {
         this.evict(chatId);
         return;
       }
-      const nodes = await chatSubagentNodes(this.ctx.pool, chatId);
+      const [nodes, tree] = await Promise.all([
+        chatSubagentNodes(this.ctx.pool, chatId),
+        chatTreeFacts(this.ctx.pool, chatId),
+      ]);
       const wire = JSON.stringify(nodes);
-      if (this.subagentTrees.get(chatId) === wire) return;
-      this.subagentTrees.set(chatId, wire);
-      this.sendToUser(chat.userId, subagentTreeMsg(chatId, nodes));
+      if (this.subagentTrees.get(chatId) !== wire) {
+        this.subagentTrees.set(chatId, wire);
+        this.sendToUser(chat.userId, subagentTreeMsg(chatId, nodes));
+      }
+      if (tree === null) return;
+      const treeWire = JSON.stringify(tree);
+      if (this.chatTrees.get(chatId) === treeWire) return;
+      this.chatTrees.set(chatId, treeWire);
+      this.sendToUser(chat.userId, chatTreeMsg(tree));
     });
   }
 
@@ -399,6 +425,7 @@ export class FeedForwarder implements GenerationStreamSink {
   private evict(chatId: string): void {
     this.views.delete(chatId);
     this.subagentTrees.delete(chatId);
+    this.chatTrees.delete(chatId);
     this.sentSeqs.delete(chatId);
     this.dirtyChats.delete(chatId);
   }
@@ -406,7 +433,12 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Evicts every chat whose owner has no socket (or whose identity left
    *  the LRU), so cached state follows the connected users, not history. */
   sweep(): void {
-    const chatIds = new Set([...this.views.keys(), ...this.subagentTrees.keys(), ...this.sentSeqs.keys()]);
+    const chatIds = new Set([
+      ...this.views.keys(),
+      ...this.subagentTrees.keys(),
+      ...this.chatTrees.keys(),
+      ...this.sentSeqs.keys(),
+    ]);
     for (const chatId of chatIds) {
       const chat = this.chats.get(chatId);
       if (chat === undefined || this.ctx.hub.sinksOfUser(chat.userId).length === 0) this.evict(chatId);

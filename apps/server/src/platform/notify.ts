@@ -17,6 +17,11 @@ export const NOTIFY_CHANNELS = [
   "guild_workspace",
   "guild_org",
   "guild_models",
+  "guild_agents",
+  "guild_agent_runs",
+  "guild_agent_routines",
+  "guild_agent_threads",
+  "guild_skills",
 ] as const;
 
 export class NotifyHub {

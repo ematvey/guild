@@ -362,6 +362,21 @@ export class LiveHub {
     return sinks;
   }
 
+  /** Returns the users of one organization with a browser socket open: the
+   *  recipients the agent and skill frames are scoped among. */
+  memberUsersOfOrg(orgId: string): string[] {
+    const users: string[] = [];
+    for (const [userId, perUser] of this.members) {
+      for (const member of perUser.values()) {
+        if (member.org_id === orgId) {
+          users.push(userId);
+          break;
+        }
+      }
+    }
+    return users;
+  }
+
   /** Returns browser sockets of one user (no machine sockets: presence
    *  frames are for the UI, not the executor). */
   memberSinksOfUser(userId: string): SocketSink[] {

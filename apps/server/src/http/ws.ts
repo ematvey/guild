@@ -283,6 +283,7 @@ class SocketGate {
       message.type === "live_frame" ||
       message.type === "chat_status" ||
       message.type === "subagent_tree" ||
+      message.type === "chat_tree" ||
       message.type === "org_event" ||
       message.type === "error"
     );
@@ -534,6 +535,9 @@ async function driveSocket(
   // rides. It sends the legacy thread_list plus the archived, project and
   // machine lists, so the client never reads them over HTTP.
   await chats.feed.pushWorkspace(user.org_id, user.id);
+  // A member socket also paints the agent directory and the skill catalog
+  // from pushed frames; a machine socket has no view for them.
+  if (machineId === null) await chats.feed.connectMember(user.org_id, user.id);
 
   // --- heartbeat --------------------------------------------------------------
   const heartbeatLoop = (async (): Promise<void> => {
@@ -671,8 +675,7 @@ async function runSyncStarted(
     // rethrows through this bracket's catch.
     stateRead?.catch(() => {});
     try {
-      const tree = await treeRead;
-      if (tree !== undefined && tree !== null) sink.sendSync(tree);
+      for (const frame of (await treeRead) ?? []) sink.sendSync(frame);
     } catch {
       // The child tree is auxiliary; the authoritative state still goes.
     }
