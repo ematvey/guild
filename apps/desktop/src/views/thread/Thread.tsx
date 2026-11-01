@@ -108,7 +108,8 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { busyFrom, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
-import { isImeEnter } from "./route";
+import { canonicalSurfacePath, isImeEnter } from "./route";
+import { canonicalSettings } from "../settings/section-nav";
 import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
@@ -401,14 +402,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [models]);
 
 
-  // The folded Observability deep link is served as Activity; make the URL
-  // say so (replaceState: the redirect is not a step back).
-  useEffect(() => {
-    if (route.agents === null) return;
-    if (!window.location.pathname.startsWith("/settings/observability")) return;
-    window.history.replaceState(null, "", `/activity${window.location.search}`);
-  }, [route.agents]);
-
   // Activity is an admin surface. A member who lands on one of its
   // addresses (deep link, old history entry) is moved to the agents
   // directory without adding a history step.
@@ -426,14 +419,25 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     pushRoute({ agents: next }, { replace: true });
   }, [role, route.agents, pushRoute]);
 
-  // A bare /settings arrival (deep link, old bookmark, back/forward)
-  // normalizes to the default section — the Settings tab always has a
-  // sectioned address. replaceState: the normalization is not a step back.
+  // A settings arrival (deep link, old bookmark, back/forward) lands on the
+  // address of the page the pane shows: a bare /settings or an unknown
+  // section is the default section, and a sub-page its section does not
+  // have is dropped. replaceState: the normalization is not a step back.
   useEffect(() => {
-    if (route.tab !== "settings" || route.settingsSection !== null) return;
+    if (route.tab !== "settings") return;
     if (route.overlay !== null || route.skills !== null || route.agents !== null) return;
-    pushRoute({ tab: "settings", settingsSection: "account", settingsDetail: null }, { replace: true });
-  }, [route.tab, route.settingsSection, route.overlay, route.skills, route.agents, pushRoute]);
+    const shown = canonicalSettings(route.settingsSection, route.settingsDetail);
+    if (shown.section === route.settingsSection && shown.detail === route.settingsDetail) return;
+    pushRoute({ tab: "settings", settingsSection: shown.section, settingsDetail: shown.detail }, { replace: true });
+  }, [route.tab, route.settingsSection, route.settingsDetail, route.overlay, route.skills, route.agents, pushRoute]);
+
+  // An agents or skills address the parser read past (an unknown tab or a
+  // trailing segment) is rewritten to the page it shows.
+  useEffect(() => {
+    const canonical = canonicalSurfacePath(route, window.location.pathname);
+    if (canonical === null) return;
+    window.history.replaceState(null, "", `${canonical}${window.location.search}`);
+  }, [route]);
 
   // First-run onboarding auto-show: a user the server flags as not yet
   // onboarded is pushed to /onboard, so the wizard owns the URL like any

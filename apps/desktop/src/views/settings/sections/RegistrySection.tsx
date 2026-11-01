@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import type { DetailCodec, SectionDetailProps } from "../section-nav";
+import { REGISTRY_KINDS, registryDetailCodec, type RegistryKind, type SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
 import {
   registryItemPath,
@@ -37,28 +37,8 @@ interface VersionRow {
   bundle_sha256: string | null;
 }
 
-const KINDS = ["mcp", "integration"] as const;
-type Kind = (typeof KINDS)[number];
-
-type RegistryDetail = { kind: "list" } | { kind: "item"; itemKind: Kind; slug: string };
-
-/** The section's sub-page grammar: "<kind>/<slug>" or the list. */
-const registryDetailCodec: DetailCodec<RegistryDetail> = {
-  parse(detail) {
-    const [itemKind, slug] = (detail ?? "").split("/");
-    if (
-      detail &&
-      (KINDS as readonly string[]).includes(itemKind) &&
-      slug
-    ) {
-      return { kind: "item", itemKind: itemKind as Kind, slug };
-    }
-    return { kind: "list" };
-  },
-  format(view) {
-    return view.kind === "list" ? null : `${view.itemKind}/${view.slug}`;
-  },
-};
+const KINDS = REGISTRY_KINDS;
+type Kind = RegistryKind;
 
 const KIND_LABELS: Record<Kind, string> = {
   mcp: "MCP server",

@@ -315,6 +315,26 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   return { chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail, usage: "usage" in next ? (next.usage as UsageQuery) : route.usage };
 };
 
+/** Path segments, decoded, with empty segments dropped; null when an escape
+ *  is malformed. */
+const pathSegments = (pathname: string): string[] | null => {
+  const decoded = pathname.split("/").filter(Boolean).map(decodeSegment);
+  return decoded.some((s) => s === null) ? null : (decoded as string[]);
+};
+
+/** The canonical pathname of an agents or skills route when the address
+ *  spells it differently — an unknown tab, a trailing segment the parser
+ *  read past, or an old alias. Null when the address already is the
+ *  canonical one, or the route is neither surface. */
+export const canonicalSurfacePath = (route: ChatRoute, pathname: string): string | null => {
+  if (route.agents === null && route.skills === null) return null;
+  const canonical = chatRoutePath(null, null, null, route.skills, "chats", null, null, false, route.agents).split("?")[0];
+  const want = pathSegments(canonical);
+  const have = pathSegments(pathname);
+  if (want === null || have === null) return null;
+  return want.length === have.length && want.every((s, i) => s === have[i]) ? null : canonical;
+};
+
 export const chatRoutePath = (
   chatId: string | null,
   projectId: string | null,

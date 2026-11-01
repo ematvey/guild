@@ -19,6 +19,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import type { UsageQuery } from "./usage-route";
+import type { SettingsSectionId } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
@@ -37,25 +38,9 @@ import SsoSection from "./sections/SsoSection";
 import RegistrySection from "./sections/RegistrySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 
-type SectionId =
-  | "account"
-  | "appearance"
-  | "notifications"
-  | "machine"
-  | "gateway"
-  | "general"
-  | "usage"
-  | "assistant"
-  | "users"
-  | "teams"
-  | "models"
-  | "integrations"
-  | "mcp"
-  | "sso"
-  | "registry"
-  | "about";
-  // No "releases" pane: desktop releases are dev-controlled, not
-  // admin-controlled.
+// No "releases" pane: desktop releases are dev-controlled, not
+// admin-controlled.
+type SectionId = SettingsSectionId;
 
 export interface SectionDef {
   id: SectionId;

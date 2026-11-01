@@ -40,3 +40,68 @@ export const rowDetailCodec: DetailCodec<string | null> = {
   parse: (detail) => detail,
   format: (view) => view,
 };
+
+export const REGISTRY_KINDS = ["mcp", "integration"] as const;
+export type RegistryKind = (typeof REGISTRY_KINDS)[number];
+
+export type RegistryDetail =
+  | { kind: "list" }
+  | { kind: "item"; itemKind: RegistryKind; slug: string };
+
+/** The registry section's sub-page grammar: "<kind>/<slug>" or the list. */
+export const registryDetailCodec: DetailCodec<RegistryDetail> = {
+  parse(detail) {
+    const [itemKind, slug] = (detail ?? "").split("/");
+    if (detail && (REGISTRY_KINDS as readonly string[]).includes(itemKind) && slug) {
+      return { kind: "item", itemKind: itemKind as RegistryKind, slug };
+    }
+    return { kind: "list" };
+  },
+  format(view) {
+    return view.kind === "list" ? null : `${view.itemKind}/${view.slug}`;
+  },
+};
+
+/** Every settings section the pane renders, with its sub-page grammar: a
+ *  codec for a section with addressed sub-pages, null for a single page. */
+const SECTION_DETAILS = {
+  account: null,
+  appearance: null,
+  notifications: null,
+  machine: null,
+  gateway: null,
+  general: null,
+  usage: null,
+  assistant: null,
+  users: entityDetailCodec,
+  teams: entityDetailCodec,
+  models: rowDetailCodec,
+  integrations: rowDetailCodec,
+  mcp: rowDetailCodec,
+  sso: null,
+  registry: registryDetailCodec,
+  about: null,
+} as const;
+
+export type SettingsSectionId = keyof typeof SECTION_DETAILS;
+
+export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = "account";
+
+export function isSettingsSection(id: string): id is SettingsSectionId {
+  return Object.prototype.hasOwnProperty.call(SECTION_DETAILS, id);
+}
+
+/** The settings address the pane shows for a section/detail pair: an absent
+ *  or unknown section is the default one, a single-page section has no
+ *  sub-page, and a sub-page id reads back through its section's codec (a
+ *  malformed one is the section's list page). */
+export function canonicalSettings(
+  section: string | null,
+  detail: string | null,
+): { section: SettingsSectionId; detail: string | null } {
+  if (section === null || !isSettingsSection(section)) {
+    return { section: DEFAULT_SETTINGS_SECTION, detail: null };
+  }
+  const codec = SECTION_DETAILS[section] as DetailCodec<unknown> | null;
+  return { section, detail: codec === null ? null : codec.format(codec.parse(detail)) };
+}
