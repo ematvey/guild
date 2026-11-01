@@ -4,8 +4,10 @@
 Decoherence is the accumulation of locally valid but incompatible designs.
 It lives in two places, and this tool checks both.
 
-  Counters   Files, lines, shims, copies. Cheap symptoms. They may go down,
-             never up. This stops the cheapest rot.
+  Counters   Shims, copies, seams, model gaps. Cheap symptoms. They may go
+             down, never up. This stops the cheapest rot. Size counters
+             (files, lines, tests, milestone tags in comments) are reported
+             with their delta and never fail the check.
 
   Model      A committed map of the domain: one record per concept, its
              canonical home, and every other place that represents it.
@@ -64,8 +66,6 @@ SOURCE_EXTS = {".rs", ".ts", ".tsx"}
 
 # Counters that must not rise. Everything here is a symptom of decoherence.
 FLOOR_COUNTERS = (
-    "files",
-    "loc",
     "seams",
     "shims",
     "duplicate_files",
@@ -73,6 +73,21 @@ FLOOR_COUNTERS = (
     "unmodeled_types",
     "unmapped_files",
 )
+
+# Counters printed with their delta against the last `update`, never gated.
+# Size is not decoherence: a new feature or a new test adds files and lines.
+# `files`/`loc` count production sources only; tests have their own pair.
+REPORT_COUNTERS = (
+    "files",
+    "loc",
+    "test_files",
+    "test_loc",
+    "milestone_tags",
+)
+
+# A milestone label ("M3", "M7") in a comment narrates history the code does
+# not carry; the comment should say what the code is now.
+MILESTONE_COMMENT_RE = re.compile(r"(?://|/\*|^\s*\*).*\bM[0-9]{1,2}\b")
 
 SEAM_RE = re.compile(r"coherence:seam\s+(.*)$")
 KV_RE = re.compile(r'(\w+)=("([^"]*)"|\S+)')
@@ -98,6 +113,19 @@ MIN_DUPLICATE_BYTES = 200
 
 def rel(p: Path) -> str:
     return str(p.relative_to(REPO))
+
+
+def is_test(path: str) -> bool:
+    """Test sources: `*.test.ts(x)`, anything under a `src/test/` tree, and
+    Rust integration tests under `crates/*/tests/`. Inline `#[cfg(test)]`
+    modules stay in their production file."""
+    name = path.rsplit("/", 1)[-1]
+    if name.endswith((".test.ts", ".test.tsx")):
+        return True
+    if "/src/test/" in path:
+        return True
+    parts = path.split("/")
+    return len(parts) > 3 and parts[0] == "crates" and parts[2] == "tests"
 
 
 def iter_sources():
@@ -216,19 +244,29 @@ def load_model() -> dict:
 def scan():
     files = 0
     loc = 0
+    test_files = 0
+    test_loc = 0
+    milestone_tags = 0
     shims = 0
     seams: list[dict] = []
     by_digest: dict[str, list[str]] = {}
 
     for path in iter_sources():
-        files += 1
+        test = is_test(rel(path))
         try:
             raw = path.read_bytes()
         except OSError:
             continue
         text = raw.decode("utf-8", errors="replace")
         lines = text.splitlines()
-        loc += sum(1 for line in lines if line.strip())
+        nonblank = sum(1 for line in lines if line.strip())
+        if test:
+            test_files += 1
+            test_loc += nonblank
+        else:
+            files += 1
+            loc += nonblank
+        milestone_tags += sum(1 for line in lines if MILESTONE_COMMENT_RE.search(line))
 
         if len(raw) >= MIN_DUPLICATE_BYTES:
             by_digest.setdefault(hashlib.sha256(raw).hexdigest(), []).append(rel(path))
@@ -248,6 +286,9 @@ def scan():
     counts = {
         "files": files,
         "loc": loc,
+        "test_files": test_files,
+        "test_loc": test_loc,
+        "milestone_tags": milestone_tags,
         "seams": len(seams),
         "shims": shims,
         "duplicate_files": sum(len(g) - 1 for g in duplicate_groups),
@@ -425,7 +466,8 @@ def cmd_report() -> int:
     counts["unmodeled_types"] = unmodeled
     _areas, unmapped = coverage(model)
     counts["unmapped_files"] = len(unmapped)
-    floor = load_floor().get("counts", {})
+    saved = load_floor()
+    floor = {**saved.get("report", {}), **saved.get("counts", {})}
     today = dt.date.today()
 
     width = max(len(k) for k in counts)
@@ -511,6 +553,14 @@ def cmd_check() -> int:
         for collision in collisions:
             print(f"  {collision}")
 
+    report = load_floor().get("report", {})
+    sizes = []
+    for key in REPORT_COUNTERS:
+        value = counts.get(key, 0)
+        base = report.get(key)
+        sizes.append(f"{key}={value}" + ("" if base is None else f" ({value - base:+d})"))
+    print("size (reported, not gated): " + ", ".join(sizes))
+
     rises = []
     if not floor:
         print("note: no floor.json yet, counters are not ratcheted. Run `update`.")
@@ -548,14 +598,15 @@ def cmd_update() -> int:
     _areas, unmapped = coverage(model)
     counts["unmapped_files"] = len(unmapped)
     payload = {
-        "comment": "Coherence floor. Counters may go down, never up. See README.md.",
+        "comment": "Coherence floor. `counts` may go down, never up; `report` is the baseline for size deltas, never gated. See README.md.",
         "updated": dt.date.today().isoformat(),
         "counts": {k: counts.get(k, 0) for k in FLOOR_COUNTERS},
+        "report": {k: counts.get(k, 0) for k in REPORT_COUNTERS},
         "declared_seams": len(seams),
     }
     FLOOR.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {rel(FLOOR)}")
-    for key in FLOOR_COUNTERS:
+    for key in FLOOR_COUNTERS + REPORT_COUNTERS:
         print(f"  {key}: {counts.get(key, 0)}")
     return 0
 

@@ -6,7 +6,9 @@ It grows only when the system changes. A frozen system does not decay.
 This directory holds two mechanisms.
 
 **A floor.** Committed counters that may go down, never up. This stops the
-cheap rot: more files, more lines, more shims, more copies.
+cheap rot: more shims, more copies, more undeclared seams, more unmapped
+code. Size (files, lines, tests) is reported beside the floor, with its
+delta, but never gated: growth is not decoherence.
 
 **A model.** A committed map of the domain: one record per concept, its
 canonical home, every place it appears, and how those places convert. This
@@ -35,16 +37,27 @@ Scanned roots are `apps/`, `crates/` and `packages/`; scanned suffixes are
 
 ## Counters
 
+Gated (stored under `counts` in `floor.json`; a rise fails `check`):
+
 | Counter | What it catches |
 | --- | --- |
-| `files` | The system getting bigger. |
-| `loc` | The system getting longer. |
 | `seams` | Declared places where two designs meet. |
 | `shims` | Declarations that carry a second design: `Legacy*`, `Compat*`, `Shim*`, `Deprecated*`, `@deprecated`. |
 | `duplicate_files` | Two files with identical content. One design kept in two places. |
 | `translation_gaps` | Representations of a concept with no declared conversion. |
 | `unmodeled_types` | Exported types under `model_roots` that no concept owns. |
 | `unmapped_files` | Source files that no concept names and no `no_concept` entry excuses. |
+
+Reported (stored under `report` in `floor.json`; `check` prints each value
+with its delta against the last `update` and never fails on them):
+
+| Counter | What it shows |
+| --- | --- |
+| `files` | Production source files — tests excluded. |
+| `loc` | Non-blank lines in production sources. |
+| `test_files` | Test sources: `*.test.ts(x)`, anything under `src/test/`, and `crates/*/tests/`. Inline Rust `#[cfg(test)]` modules count as production. |
+| `test_loc` | Non-blank lines in test sources. |
+| `milestone_tags` | Comment lines naming a milestone (`M3`, `M7`). Comments say what the code is now; milestone labels narrate history. |
 
 `duplicate_files` counts the *extra* copies, not the groups.
 
