@@ -6,7 +6,7 @@
 
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
-import type { PlatformPool, PoolClient } from "../db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 
 /** One project row joined with its machine's registry label (the machines
  *  table is the durable label source; the live hub refines it at render
@@ -81,9 +81,7 @@ export class ProjectStore {
 
   async create(orgId: string, userId: string, name: string, folder: string, machineId: string): Promise<ProjectRow> {
     const id = uuidv7();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       await this.lockBindableMachine(client, machineId, userId, orgId);
       try {
         await client.query(
@@ -99,14 +97,8 @@ export class ProjectStore {
         }
         throw error;
       }
-      await client.query("COMMIT");
       await this.notifyWorkspace(client, orgId, userId);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
     return this.fetchById(id);
   }
 
@@ -155,10 +147,8 @@ export class ProjectStore {
     machineId: string | null,
     archived: boolean | null,
   ): Promise<ProjectRow> {
-    let updated: string;
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    const updated = await withTransaction(this.pool, async (client) => {
+      let id: string;
       if (machineId !== null) {
         await this.lockBindableMachine(client, machineId, userId, orgId);
       }
@@ -176,7 +166,7 @@ export class ProjectStore {
           [orgId, projectId, name, folder, machineId, archived, userId],
         );
         if (updRes.rows.length === 0) throw ApiError.notFound("no such project");
-        updated = updRes.rows[0]!.id as string;
+        id = updRes.rows[0]!.id as string;
       } catch (error) {
         if ((error as { code?: string }).code === "23505") {
           throw ApiError.conflict(
@@ -190,16 +180,11 @@ export class ProjectStore {
         "UPDATE chats SET machine_id = p.machine_id, machine_label = coalesce(m.label, p.machine_id) " +
         "FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id " +
         "WHERE p.id = $1 AND chats.project_id = p.id",
-        [updated],
+        [id],
       );
-      await client.query("COMMIT");
       await this.notifyWorkspace(client, orgId, userId);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+      return id;
+    });
     return this.fetchById(updated);
   }
 
@@ -207,9 +192,7 @@ export class ProjectStore {
    *  chats keep their history and become folderless (project_id = NULL).
    *  The machine binding is project-derived, so the unlink clears it too. */
   async delete(orgId: string, projectId: string, userId: string): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const res = await client.query(
         "DELETE FROM projects WHERE org_id = $1 AND id = $2 AND user_id = $3",
         [orgId, projectId, userId],
@@ -219,14 +202,8 @@ export class ProjectStore {
         "UPDATE chats SET project_id = NULL, machine_id = NULL, machine_label = NULL WHERE project_id = $1",
         [projectId],
       );
-      await client.query("COMMIT");
       await this.notifyWorkspace(client, orgId, userId);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** The joined row by id — after a write the caller is already scoped, so

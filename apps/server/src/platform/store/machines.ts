@@ -4,7 +4,7 @@
 // adoption) and on a 30s-throttled ping heartbeat (last_seen).
 
 import { ApiError } from "../errors.js";
-import type { PlatformPool, PoolClient } from "../db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 
 export interface MachineRow {
@@ -96,7 +96,7 @@ export class MachineStore {
    *  row is the untouched foreign row and the connect is not registered. */
   /** Tells the feed that the owner's registry rows moved. Runs inside the
    *  writing transaction, so the notify lands with the commit. */
-  private async notifyWorkspace(client: PoolClient, orgId: string, userId: string): Promise<void> {
+  private async notifyWorkspace(client: Pick<PoolClient, "query">, orgId: string, userId: string): Promise<void> {
     await client.query("SELECT pg_notify('guild_workspace', $1)", [
       JSON.stringify({ org_id: orgId, user_id: userId }),
     ]);
@@ -122,9 +122,7 @@ export class MachineStore {
     ip = nonEmpty(ip);
     sessionHash = nonEmpty(sessionHash);
 
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    const { outcome, notify } = await withTransaction(this.pool, async (client) => {
       const existingRes = await client.query<MachineRow>(
         `SELECT ${DB_COLUMNS} FROM machines WHERE machine_id = $1 FOR UPDATE`,
         [machineId],
@@ -132,15 +130,13 @@ export class MachineStore {
       const existing = existingRes.rows[0] ?? null;
 
       if (existing !== null && existing.org_id !== orgId) {
-        await client.query("ROLLBACK");
-        return { row: toRow(existing), adopted_from: null };
+        return { outcome: { row: toRow(existing), adopted_from: null }, notify: false };
       }
 
       if (existing !== null && existing.user_id !== userId) {
         // Same-org machine id claimed by another user: refuse. The
         // fingerprint is plaintext registry metadata any member can read, so
         // the id alone proves nothing about who may connect.
-        await client.query("ROLLBACK");
         throw ApiError.forbidden();
       }
 
@@ -161,9 +157,7 @@ export class MachineStore {
            RETURNING ${DB_COLUMNS}`,
           [machineId, label, fingerprint, os, osVersion, appVersion, ip, sessionHash],
         );
-        await client.query("COMMIT");
-        await this.notifyWorkspace(client, orgId, userId);
-        return { row: toRow(rowRes.rows[0]!), adopted_from: null };
+        return { outcome: { row: toRow(rowRes.rows[0]!), adopted_from: null }, notify: true };
       }
 
       // New registration: fingerprint adoption within the same org AND same
@@ -203,9 +197,7 @@ export class MachineStore {
               [old.machine_id, machineId, orgId],
             );
           }
-          await client.query("COMMIT");
-          await this.notifyWorkspace(client, orgId, userId);
-          return { row: toRow(rowRes.rows[0]!), adopted_from: old.machine_id };
+          return { outcome: { row: toRow(rowRes.rows[0]!), adopted_from: old.machine_id }, notify: true };
         }
       }
 
@@ -216,19 +208,10 @@ export class MachineStore {
          RETURNING ${DB_COLUMNS}`,
         [machineId, orgId, userId, label, fingerprint, os, osVersion, appVersion, ip, sessionHash],
       );
-      await client.query("COMMIT");
-      await this.notifyWorkspace(client, orgId, userId);
-      return { row: toRow(rowRes.rows[0]!), adopted_from: null };
-    } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // rollback after an already-rolled-back transaction is fine
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
+      return { outcome: { row: toRow(rowRes.rows[0]!), adopted_from: null }, notify: true };
+    });
+    if (notify) await this.notifyWorkspace(this.pool, orgId, userId);
+    return outcome;
   }
 
   /** Removes a machine from the registry for good: the row goes, chats that
@@ -237,25 +220,19 @@ export class MachineStore {
    *  Projects keep their binding — deleting a project is the user's call —
    *  so a machine with bound projects refuses instead. */
   async deauthorize(orgId: string, userId: string, machineId: string): Promise<DeauthorizeResult> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client): Promise<DeauthorizeResult> => {
       const rowRes = await client.query<{ session_hash: string | null }>(
         `SELECT session_hash FROM machines
          WHERE machine_id = $1 AND org_id = $2 AND user_id = $3 FOR UPDATE`,
         [machineId, orgId, userId],
       );
       const row = rowRes.rows[0];
-      if (row === undefined) {
-        await client.query("ROLLBACK");
-        return { kind: "missing" };
-      }
+      if (row === undefined) return { kind: "missing" };
       const boundRes = await client.query<{ name: string }>(
         "SELECT name FROM projects WHERE machine_id = $1 AND org_id = $2 ORDER BY name",
         [machineId, orgId],
       );
       if (boundRes.rows.length > 0) {
-        await client.query("ROLLBACK");
         return { kind: "blocked", projects: boundRes.rows.map((r) => r.name) };
       }
       await client.query(
@@ -264,18 +241,8 @@ export class MachineStore {
       );
       await client.query("DELETE FROM machines WHERE machine_id = $1", [machineId]);
       await this.notifyWorkspace(client, orgId, userId);
-      await client.query("COMMIT");
       return { kind: "removed", session_hash: row.session_hash };
-    } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // rollback after an already-rolled-back transaction is fine
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Refreshes the liveness timestamp; called off the ping heartbeat on a

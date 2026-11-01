@@ -3,7 +3,7 @@
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../errors.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 
@@ -58,16 +58,13 @@ export class IdentityStore {
    *  check-and-insert runs under an advisory lock inside one transaction:
    *  two concurrent bootstraps must not both pass the "no users yet" check. */
   async ensureBootstrapAdmin(email: string, password: string): Promise<string> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('guild:bootstrap'))");
       const existing = await client.query<UserRow>(
         `SELECT ${USER_COLUMNS} FROM users WHERE email = $1`,
         [email],
       );
       if (existing.rows.length > 0) {
-        await client.query("COMMIT");
         return existing.rows[0]!.id;
       }
       const count = await client.query<{ count: number }>("SELECT COUNT(*) AS count FROM users");
@@ -86,14 +83,8 @@ export class IdentityStore {
           "VALUES ($1, $2, $3, $4, 'admin', 'managed')",
         [userId, orgId, email, hash],
       );
-      await client.query("COMMIT");
       return userId;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Finds an existing user by email within an org (any identity type). */
@@ -339,9 +330,7 @@ export class IdentityStore {
     password: string | null,
   ): Promise<UserListRow> {
     const hash = password === null ? null : await hashPassword(password);
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       // All admin removals serialize on the same org row, including deletes.
       await client.query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE", [orgId]);
       const targetRes = await client.query("SELECT role FROM users WHERE id = $1 AND org_id = $2", [userId, orgId]);
@@ -373,7 +362,6 @@ export class IdentityStore {
         );
         await client.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1", [userId]);
       }
-      await client.query("COMMIT");
       const r = res.rows[0] as Record<string, unknown>;
       return {
         id: r.id as string,
@@ -382,20 +370,13 @@ export class IdentityStore {
         identity_type: r.identity_type as string,
         created_at: pgTimestampToRfc3339(r.created_at as string),
       };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Deletes a user inside one transaction; refuses to remove the org's
    *  last admin. The org lock serializes all removals and demotions. */
   async deleteUser(orgId: string, userId: string): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       await client.query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE", [orgId]);
       const targetRes = await client.query(
         "SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE",
@@ -416,12 +397,6 @@ export class IdentityStore {
       if (deleted === 0) {
         throw ApiError.conflict("last_admin", "cannot delete the last admin");
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }

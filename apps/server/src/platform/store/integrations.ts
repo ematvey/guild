@@ -5,7 +5,7 @@
 import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339 } from "../time.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
 /** IntegrationRow declaration order (serde). */
@@ -67,9 +67,7 @@ export class IntegrationStore {
     enabled: boolean,
     approval: string,
   ): Promise<string> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const rowRes = await client.query(
         "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
         [orgId, id],
@@ -91,14 +89,8 @@ export class IntegrationStore {
         "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
         [orgId, jsonbText(config), id],
       );
-      await client.query("COMMIT");
       return name;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async get(orgId: string, id: string): Promise<IntegrationRow | null> {
@@ -139,22 +131,14 @@ export class IntegrationStore {
    *  re-added integration with the same slug must not silently revive the
    *  old credentials). */
   async delete(orgId: string, id: string): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const nameRes = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);
       const name = nameRes.rows[0]?.name as string | undefined;
       if (name !== undefined) {
         await client.query("DELETE FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);
         await client.query("DELETE FROM integration_secrets WHERE org_id = $1 AND integration = $2", [orgId, name]);
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }
 

@@ -234,9 +234,7 @@ export class ThreadStore {
    *  with the consuming run id. The lock makes concurrent drains safe: one
    *  batch belongs to exactly one run. */
   async consumeChildResults(chatId: string, runId: string): Promise<ChildResultRecord[]> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const res = await client.query<EventRowDb>(
         `SELECT id, chat_id, seq, payload,
                 to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
@@ -255,14 +253,8 @@ export class ThreadStore {
           [rows.map((row) => row.id), runId],
         );
       }
-      await client.query("COMMIT");
       return rows;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Returns a batch to the unconsumed pool when its steer could not be
@@ -345,16 +337,13 @@ export class ThreadStore {
     // compaction runs use "compaction:<taskId>" request ids: a non-UUID id
     // must not reach the uuid-typed id column (the cast would throw).
     if (!isUuid(id)) return undefined;
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const res = await client.query<EventRowDb>(
         "SELECT id, chat_id, seq, type, payload, created_at FROM thread_events WHERE id = $1 AND chat_id = $2 FOR UPDATE",
         [id, chatId],
       );
       const row = res.rows[0];
       if (!row || (row.payload as Record<string, unknown> | null)?.queued !== true) {
-        await client.query("COMMIT");
         return undefined;
       }
       const payload = { ...(row.payload as Record<string, unknown>) };
@@ -371,15 +360,9 @@ export class ThreadStore {
         [id, chatId, row.type, jsonbText(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
-      await client.query("COMMIT");
       const moved = inserted.rows[0]!;
       return toRow(moved);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async setQueuedMode(chatId: string, id: string, mode: "steer" | "queue"): Promise<void> {

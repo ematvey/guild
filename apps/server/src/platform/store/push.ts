@@ -3,7 +3,7 @@
 // encrypt the payload; the sender deletes a row when the push service says
 // the endpoint is gone (404/410), so stale devices do not accumulate.
 
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { uuidv7 } from "../time.js";
 
 export interface PushSubscriptionRow {
@@ -46,9 +46,7 @@ export class PushStore {
    *  for that device, and an endpoint already owned by another user moves to
    *  the caller (a shared browser that switched accounts). */
   async upsert(orgId: string, userId: string, input: PushSubscriptionInput): Promise<PushSubscriptionRow> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       // This device's previous endpoint is dead by definition (the browser
       // minted a new one). It must go first: the (user, device) unique index
       // would otherwise reject the insert.
@@ -84,14 +82,8 @@ export class PushStore {
           input.user_agent ?? null,
         ],
       );
-      await client.query("COMMIT");
       return res.rows[0]!;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Removes one endpoint. Scoped to the caller: an endpoint is a capability,

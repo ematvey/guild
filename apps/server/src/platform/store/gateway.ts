@@ -3,7 +3,7 @@
 import { decryptSecret, encryptSecret } from "../crypto.js";
 import { ApiError } from "../errors.js";
 import { uuidv7 } from "../time.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 
 /** Resolved route for a model call. */
 export interface RouteRow {
@@ -239,36 +239,34 @@ export class GatewayStore {
     temperature: number | null,
     modalities: string[],
   ): Promise<void> {
-    const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      if (originalModel !== model) {
-        const res = await client.query(
-          "UPDATE model_routes SET model = $3, alias = $4, provider = $5, enabled = $6, " +
-            "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
-            "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
-            "modalities = $14 WHERE org_id = $1 AND model = $2",
-          [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
-        );
-        if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
-      } else {
-        await client.query(
-          "INSERT INTO model_routes (org_id, model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
-            "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) " +
-            "ON CONFLICT (org_id, model) " +
-            "DO UPDATE SET alias = EXCLUDED.alias, provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
-            "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
-            "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
-            "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
-            "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
-            "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
-          [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
-        );
-      }
-      await client.query("COMMIT");
+      await withTransaction(this.pool, async (client) => {
+        if (originalModel !== model) {
+          const res = await client.query(
+            "UPDATE model_routes SET model = $3, alias = $4, provider = $5, enabled = $6, " +
+              "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
+              "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
+              "modalities = $14 WHERE org_id = $1 AND model = $2",
+            [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+          );
+          if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
+        } else {
+          await client.query(
+            "INSERT INTO model_routes (org_id, model, alias, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
+              "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
+              "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) " +
+              "ON CONFLICT (org_id, model) " +
+              "DO UPDATE SET alias = EXCLUDED.alias, provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
+              "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
+              "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
+              "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
+              "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
+              "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
+            [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+          );
+        }
+      });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
       const code = (error as { code?: string }).code;
       if (code === "23505") {
         throw ApiError.conflict(
@@ -279,8 +277,6 @@ export class GatewayStore {
         );
       }
       throw error;
-    } finally {
-      client.release();
     }
   }
 

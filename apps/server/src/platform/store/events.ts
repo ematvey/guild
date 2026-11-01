@@ -2,7 +2,7 @@
 // NOTIFY the guild_events
 // channel; the WebSocket feed (M5) delivers the fan-out.
 
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 import type { EventRow } from "@guild/wire/rest";
@@ -18,9 +18,7 @@ export class EventStore {
   /** Records an event and notifies subscribers in one transaction. */
   async emit(orgId: string, kind: string, payload: unknown): Promise<EventRow> {
     const id = uuidv7();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const inserted = await client.query<EventRow>(
         `INSERT INTO events (id, org_id, kind, payload) VALUES ($1, $2, $3, $4)
          RETURNING id, org_id, kind, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
@@ -28,15 +26,9 @@ export class EventStore {
       );
       const notifyPayload = JSON.stringify({ org_id: orgId, event_id: id, kind });
       await client.query("SELECT pg_notify($1, $2)", [NOTIFY_CHANNEL, notifyPayload]);
-      await client.query("COMMIT");
       const row = inserted.rows[0]!;
       return { ...row, created_at: pgTimestampToRfc3339(row.created_at) };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async list(orgId: string, limit: number): Promise<EventRow[]> {

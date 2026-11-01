@@ -4,7 +4,7 @@
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
 export interface RegistryItemRow {
@@ -139,9 +139,7 @@ export class RegistryStore {
     skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null,
     gate: { userId: string; role: string; isTeamMember: boolean } | null = null,
   ): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const itemRes = await client.query<{
         id: string;
         latest_version: string | null;
@@ -232,13 +230,7 @@ export class RegistryStore {
           skill === null ? null : jsonbText(skill.files),
         ],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listItems(orgId: string, kind: string): Promise<RegistryItemRow[]> {
@@ -477,9 +469,7 @@ export class RegistryStore {
     reviewedVersion: string | null,
     reviewedBundleSha256: string | null,
   ): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return withTransaction(this.pool, async (client) => {
       const itemRes = await client.query<{ id: string; latest_version: string | null }>(
         "SELECT id, latest_version FROM registry_items WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
         [orgId, kind, slug],
@@ -516,12 +506,6 @@ export class RegistryStore {
         "UPDATE registry_items SET review_status = $2, reviewed_version = $3, reviewed_bundle_sha256 = $4 WHERE id = $1",
         [item.id, status, stampedVersion, stampedSha],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }
