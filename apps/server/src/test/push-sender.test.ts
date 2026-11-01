@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import webpush from "web-push";
 import { webPushSender } from "../push/sender.js";
+import { pushSubject } from "../push/vapid.js";
 
 const b64url = (buf: Buffer): string =>
   buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -200,5 +201,17 @@ describe("webPushSender", () => {
     );
     expect(result.outcome).toBe("failed");
     expect(result.error).toContain("503");
+  });
+});
+
+describe("pushSubject", () => {
+  it("uses the public origin when it is https", () => {
+    expect(pushSubject({ apiUrl: "https://guild.example/" })).toBe("https://guild.example");
+  });
+
+  it("falls back to a mailto for a plain-http deployment", () => {
+    // VAPID rejects an http subject; the container's own base is http.
+    expect(pushSubject({ apiUrl: "http://localhost:18080" })).toBe("mailto:guild@localhost");
+    expect(pushSubject({ apiUrl: "not a url" })).toBe("mailto:guild@localhost");
   });
 });

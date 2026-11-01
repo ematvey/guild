@@ -37,11 +37,15 @@ async function read(kv: KvStore): Promise<VapidKeys | null> {
 }
 
 /** The push subject: a contact the push services can reach about this
- *  sender. VAPID requires a mailto: or https: URL. */
-export function pushSubject(config: { selfBaseUrl: string }): string {
+ *  sender. VAPID accepts only an https: or mailto: URL, so a plain-http
+ *  deployment (a container's own loopback base) falls back to a mailto built
+ *  from the public host — the contact is informational, the scheme is not. */
+export function pushSubject(config: { apiUrl: string }): string {
   try {
-    return new URL(config.selfBaseUrl).origin;
+    const url = new URL(config.apiUrl);
+    if (url.protocol === "https:") return url.origin;
+    return `mailto:guild@${url.hostname === "" ? "localhost" : url.hostname}`;
   } catch {
-    return "https://localhost";
+    return "mailto:guild@localhost";
   }
 }
