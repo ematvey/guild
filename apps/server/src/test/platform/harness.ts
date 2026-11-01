@@ -3,6 +3,7 @@
 // instance. Database name is namespaced `guild_m1_test_*` so the durable
 // storage suite (guild_durable_test_*) can run concurrently.
 
+import { dropTestDatabase } from "../../storage/postgres/test-support.js";
 import path from "node:path";
 import pg from "pg";
 import {
@@ -112,20 +113,7 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
     s3.destroy();
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
-      // WITH (FORCE) can transiently fail ("permission denied to terminate
-      // process") when a backend exits as the signal lands under load —
-      // retry (the m2-harness cleanup does the same).
-      for (let attempt = 1; ; attempt++) {
-        try {
-          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
-          break;
-        } catch (error) {
-          if (attempt >= 4) throw error;
-          const message = error instanceof Error ? error.message : String(error);
-          if (!message.includes("terminate process")) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-        }
-      }
+      await dropTestDatabase(dropper, databaseName);
     } finally {
       await dropper.end();
     }

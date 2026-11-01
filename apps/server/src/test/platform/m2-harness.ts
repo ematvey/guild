@@ -4,6 +4,7 @@
 // same server (usage/quota tests) + a scripted mock provider upstream and a
 // built app instance.
 
+import { dropTestDatabase } from "../../storage/postgres/test-support.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,20 +149,7 @@ export async function createM2TestEnv(
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
-      // WITH (FORCE) can transiently fail ("permission denied to terminate
-      // process") when a backend exits as the signal lands under parallel
-      // load — retry.
-      for (let attempt = 1; ; attempt++) {
-        try {
-          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
-          break;
-        } catch (error) {
-          if (attempt >= 4) throw error;
-          const message = error instanceof Error ? error.message : String(error);
-          if (!message.includes("terminate process")) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-        }
-      }
+      await dropTestDatabase(dropper, databaseName);
     } finally {
       await dropper.end();
     }

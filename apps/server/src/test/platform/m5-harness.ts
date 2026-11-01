@@ -2,6 +2,7 @@
 // migrations applied in order, namespaced `guild_m5_test_*`) + a listening
 // app instance so the ws client can dial a real upgrade.
 
+import { dropTestDatabase } from "../../storage/postgres/test-support.js";
 import pg from "pg";
 import WebSocket from "ws";
 import { buildApp } from "../../app.js";
@@ -66,20 +67,7 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     await dbPool.end();
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
-      // WITH (FORCE) can transiently fail ("permission denied to terminate
-      // process") when a backend exits as the signal lands under load —
-      // retry (the m2-harness cleanup does the same).
-      for (let attempt = 1; ; attempt++) {
-        try {
-          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
-          break;
-        } catch (error) {
-          if (attempt >= 4) throw error;
-          const message = error instanceof Error ? error.message : String(error);
-          if (!message.includes("terminate process")) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-        }
-      }
+      await dropTestDatabase(dropper, databaseName);
     } finally {
       await dropper.end();
     }

@@ -35,24 +35,29 @@ export async function createDisposableDatabase(): Promise<DisposableDatabase> {
   return { name, url: url.toString() };
 }
 
+/** Drops a test database. WITH (FORCE) terminates blocking backends; under
+ *  parallel-suite load a backend can exit as the signal lands, or be one the
+ *  test role may not signal (an autovacuum worker on a freshly migrated
+ *  database), and the drop fails with "permission denied to terminate
+ *  process". That failure is transient: retry with a short backoff. */
+export async function dropTestDatabase(admin: { query(sql: string): Promise<unknown> }, name: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+      return;
+    } catch (error) {
+      if (attempt >= 8) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("terminate process")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
+  }
+}
+
 export async function dropDisposableDatabase(name: string): Promise<void> {
   const admin = new pg.Pool({ connectionString: DURABLE_TEST_ADMIN_URL, max: 1 });
   try {
-    // WITH (FORCE) terminates blocking backends; under parallel-suite load a
-    // backend can exit while the signal lands — the drop then fails with
-    // "permission denied to terminate process" once. Retry, then force
-    // terminate + drop explicitly.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-        return;
-      } catch (error) {
-        if (attempt >= 4) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("terminate process")) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-      }
-    }
+    await dropTestDatabase(admin, name);
   } finally {
     await admin.end();
   }

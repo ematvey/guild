@@ -2,6 +2,7 @@
 // migrations applied in order, namespaced `guild_m7_test_*`) + a disposable
 // rustfs bucket, mirroring the M1 harness with M7 names.
 
+import { dropTestDatabase } from "../../storage/postgres/test-support.js";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -108,7 +109,7 @@ export async function createM7TestEnv(logLevel = "error", extraEnv: Record<strin
     s3.destroy();
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      await dropTestDatabase(dropper, databaseName);
     } finally {
       await dropper.end();
     }

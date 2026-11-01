@@ -18,5 +18,10 @@ export default defineConfig({
     fileParallelism: true,
     maxWorkers: 14,
     minWorkers: 1,
+    // A test or hook that builds its own stack (disposable database, every
+    // migration, a built app) runs beside thirteen others on the shared
+    // server; the 5 s / 10 s defaults measure that contention, not the code.
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
 });
