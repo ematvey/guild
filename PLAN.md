@@ -12,6 +12,50 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Review fixes: access, lifecycle and gates (2026-11-02).** A full review
+  of the tree found authorization holes, lifecycle bugs and convention
+  drift; this entry records the rules the fixes set.
+  - *Chat access.* Admins may read a member's chat; every write (rename,
+    archive, delete, project, approval mode, turns, appends, approval
+    decisions, stop, compact, steer, attachments) is owner-only through
+    `getOwnChat`, and a deleted chat refuses writes. The sync bracket checks
+    access before it sends the subagent tree. An approval call settles once:
+    the first decision wins under the chat row lock.
+  - *Trust boundaries.* Push endpoints must be https on a known push-service
+    host. `x-guild-*` trace headers count only on the internal key. An
+    integration logo renders as an image, never as markup; the desktop CSP
+    has no `'unsafe-inline'` script source; `rpc_submit` forwards only the
+    engine methods the webview calls, and app commands are opt-in. The
+    engine no longer serves `fs_read`.
+  - *One shape per concern.* `/api/v1` errors are always the JSON envelope;
+    only the OpenAI/Anthropic gateway keeps wire-shaped errors. The desktop
+    has one REST client (`lib/api/request.ts`, one `ApiError`, one 401
+    policy). Stores use one `withTransaction`; routes share one admin gate.
+    `submitTurn` lives in `chats/`, the gateway pipeline in
+    `platform/llm-gateway.ts`, usage SQL in `store/usage.ts`.
+  - *Desktop state.* The visible thread is one store (`thread-view-store`)
+    read through `useSyncExternalStore`; generating/unread live only in the
+    per-chat status map, and `chat_status` moves every chat but the open one
+    without retiring a pending send. A normalising route rewrite replaces
+    its history entry. `HAS_SHELL`/`HAS_ENGINE` replace `IS_TAURI`. The
+    Tauri shell holds no member socket of its own.
+  - *Server runtime.* Project instructions persist on
+    `chat_conversations.project_instructions`, so a resumed run keeps them.
+    Startup attaches only chats with pending work. The feed keeps per-chat
+    state only while the owner has a socket and logs every dropped push.
+    Spawn checks the child limit under the parent row lock. Turns route
+    through a `TurnBackend`; "supervisor" names only the reopen loop.
+  - *Engine.* Each daemon host cycle opens its own link spawn feed, so a
+    reclaimed host relinks. Reconnects back off exponentially with full
+    jitter (1 s to 60 s). The JSON-RPC loop never awaits a handler in its
+    read loop, and a lagging subscriber gets `rpc.lagged`. A turn stream
+    ends only on its own terminal frame, auth loss or socket failure.
+    guild-core is the local tool executor only.
+  - *Gates.* `scripts/check.sh` type-checks the server, desktop and wire.
+    The coherence `files`/`loc` counters are reported, not gated, and leave
+    tests out. `protocol/check.mjs` holds the schemas compatible with the
+    newest `client-v*` tag and checks TS scalar types.
+
 - **A finished run reaches the phone (2026-11-01).** The socket cannot carry a
   result to a closed app, so the server now has a second transport beside it,
   not a second event system: `run_end` asks the push lane, which asks presence
@@ -130,8 +174,8 @@ first. Code comments describe only the present.
   therefore keep an installed client working. New fields are additive. A
   field or a variant is never renamed or removed without a version step. A
   reader ignores what it does not know instead of failing the frame. The
-  schemas and the fixtures are the record of that promise. No gate enforces
-  it yet; this entry is the rule a gate will enforce.
+  schemas and the fixtures are the record of that promise, and
+  `protocol/check.mjs` enforces it against the newest `client-v*` tag.
 
 - **One chat row, one builder (2026-10-28).** `Chat` is now the list row and
   the body of every chat read and write: `type`, `archived` and `deleted` are
