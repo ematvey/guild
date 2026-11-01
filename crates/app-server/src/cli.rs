@@ -48,7 +48,7 @@ pub fn cmd_login(args: &[String]) -> anyhow::Result<()> {
 
 pub fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
     let text = args.last().context("missing prompt text")?.clone();
-    let model = flag(args, "--model").unwrap_or_else(|_| "gpt-4o-mini".into());
+    let model = flag(args, "--model").unwrap_or_else(|_| crate::jsonrpc_loop::DEFAULT_MODEL.into());
     let mut client = DaemonClient::attach(&this_bin()?)?;
     let (res, events) = client.call_until_event(
         "chat.send",

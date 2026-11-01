@@ -22,6 +22,10 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
+/// The model a `chat.send` / `agent.start` uses when neither the request
+/// nor the session names one.
+pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
+
 #[derive(Default)]
 pub struct EngineState {
     /// Auth fields — the cloud session, the signed-in email, and the
@@ -761,7 +765,7 @@ fn finish_agent_run(shared: &Shared, epoch: u64) {
 /// one, the session model stands, falling back to the default.
 fn resolve_chat_model(session_model: &str) -> String {
     if session_model.is_empty() {
-        "gpt-4o-mini".to_string()
+        DEFAULT_MODEL.to_string()
     } else {
         session_model.to_string()
     }
@@ -863,7 +867,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             s.model = m.to_string();
         }
         if s.model.is_empty() {
-            s.model = "gpt-4o-mini".into();
+            s.model = DEFAULT_MODEL.into();
         }
         anyhow::ensure!(
             !s.agent_running,
@@ -1490,7 +1494,7 @@ mod machine_link_tests {
     #[test]
     fn chat_send_model_applies_over_an_existing_session_model() {
         assert_eq!(resolve_chat_model("kept"), "kept");
-        assert_eq!(resolve_chat_model(""), "gpt-4o-mini");
+        assert_eq!(resolve_chat_model(""), DEFAULT_MODEL);
         // the same override logic chat_send_task applies under the lock:
         let mut session_model = "m1".to_string();
         let requested: Option<&str> = Some("m2");

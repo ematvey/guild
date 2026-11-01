@@ -343,15 +343,28 @@ fn fill_sync_urls(payload: &mut serde_json::Value, base: &str) {
                 .map(str::trim)
                 .filter(|u| !u.is_empty())
                 .is_none();
-            if missing {
-                let slug = entry["slug"].as_str().unwrap_or_default();
-                let version = entry["version"].as_str().unwrap_or_default();
+            let slug = entry["slug"].as_str().unwrap_or_default();
+            let version = entry["version"].as_str().unwrap_or_default();
+            // Only well-formed path segments reach the URL; an entry left
+            // without one fails on its own in the sync.
+            if missing && crate::registry_client::valid_slug(slug) && valid_version(version) {
                 entry["url"] = serde_json::json!(format!(
                     "{base}/api/v1/registry/skill/{slug}/{version}/bundle"
                 ));
             }
         }
     }
+}
+
+/// A registry version usable as one URL path segment: 1–64 ASCII
+/// alphanumerics, `.`, `-`, `_` or `+`, and not a dot segment.
+fn valid_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 64
+        && !matches!(version, "." | "..")
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'))
 }
 
 /// One `skills.sync_v1` request over the link: fills in each entry's
@@ -1711,6 +1724,32 @@ mod tests {
         assert!(!wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
         shutdown.send(true).unwrap();
         assert!(wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
+    }
+
+    #[test]
+    fn fill_sync_urls_builds_urls_only_from_valid_segments() {
+        let mut payload = serde_json::json!({"skills": [
+            {"slug": "demo", "version": "1.2.0"},
+            {"slug": "demo", "version": "../../admin"},
+            {"slug": "../x", "version": "1"},
+            {"slug": "kept", "version": "1", "url": "https://signed/url"},
+        ]});
+        fill_sync_urls(&mut payload, "http://hub");
+        let urls: Vec<_> = payload["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["url"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            urls,
+            vec![
+                Some("http://hub/api/v1/registry/skill/demo/1.2.0/bundle".to_owned()),
+                None,
+                None,
+                Some("https://signed/url".to_owned()),
+            ]
+        );
     }
 
     #[test]
