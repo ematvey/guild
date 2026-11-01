@@ -93,6 +93,20 @@ describe("routeMessage", () => {
     expect(calls.at(-1)).toBe("info:Acme");
   });
 
+  it("hands the identity's web bundle and the model list to their handlers", () => {
+    const identities: unknown[] = [];
+    const lists: unknown[] = [];
+    const handlers: SocketHandlers = {
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onWorkspaceIdentity: (identity) => identities.push(identity),
+      onModelList: (models) => lists.push(models),
+    };
+    routeMessage({ type: "workspace_identity", name: "Acme", telemetry: false, web_bundle: "abc123" }, handlers);
+    routeMessage({ type: "model_list", models: [{ id: "m1", alias: "Auto" }] }, handlers);
+    expect(identities).toEqual([{ name: "Acme", telemetry: false, web_bundle: "abc123" }]);
+    expect(lists).toEqual([[{ id: "m1", alias: "Auto" }]]);
+  });
+
   it("routes incremental thread_events frames to their handler", () => {
     const seen: { chatId: string; seq: number; rows: ThreadEventRow[] }[] = [];
     routeMessage(

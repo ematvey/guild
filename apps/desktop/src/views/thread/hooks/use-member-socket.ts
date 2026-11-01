@@ -1,19 +1,18 @@
 // The member socket: one connection per view that owns thread
 // reconciliation in both browser and Tauri webview mode. The Tauri app
 // process keeps the separate machine socket.
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { toast } from "sonner";
-import { machineId, watchMachinePresence } from "../../../lib/machine-rpc";
-import { setMachineIdentity } from "../../../lib/api/folders";
 import { startSocket } from "../../../lib/socket-client";
 import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
+import { applyModelList } from "../../../lib/models-store";
+import { applyWorkspaceIdentity } from "../../../lib/workspace-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import { statusAfterGenerating, statusFromThreads, type ChatStatus } from "../status";
 import type { ThreadViewStore } from "../thread-view-store";
-import { HAS_ENGINE } from "../../../lib/session";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 
@@ -47,19 +46,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     onThreadStateApplied, updateContextRevision, setSubagentTree, resetSubagentTrees,
     cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
-  const [machineTakenOver, setMachineTakenOver] = useState(false);
-  useEffect(() => {
-    if (!HAS_ENGINE) return;
-    let disposed = false;
-    let stop: (() => void) | undefined;
-    void watchMachinePresence(presence => {
-      if (disposed) return;
-      setMachineTakenOver(!!presence.displaced);
-      if (presence.auth_required) signOut();
-    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
-    return () => { disposed = true; stop?.(); };
-  }, []);
-
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
   // The newest event id whose read-marker POST already fired per chat:
@@ -161,7 +147,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
-    if (HAS_ENGINE) void setMachineIdentity(machineId()).catch(() => {});
     const connection = startSocket({
       onConnect: () => {
         syncingChatsRef.current.clear();
@@ -175,6 +160,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       onMachineStatus: applyMachineStatus,
       onWorkspaceIdentity: (identity) => {
+        applyWorkspaceIdentity(identity);
         // The org's telemetry switch rides the identity frame: the client
         // obeys it and never decides on its own.
         applyTelemetrySetting(identity.telemetry);
@@ -182,6 +168,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         applyWindowTitle(identity.name);
       },
       onMachineList: applyMachineList,
+      onModelList: applyModelList,
       onArchivedThreadList: (next) => setArchivedChats(next),
       onProjectList: (next, archived) => {
         setProjects(next);
@@ -321,5 +308,5 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { socketRef, syncingChatsRef, machineTakenOver };
+  return { socketRef, syncingChatsRef };
 }

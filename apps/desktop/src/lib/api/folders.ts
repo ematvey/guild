@@ -70,10 +70,6 @@ export async function remoteHome(machineId: string): Promise<string | null> {
   return v.home || null;
 }
 
-/** The app shell keeps no per-machine server link, so there is no identity
- *  to hand over; callers are due for removal. */
-export async function setMachineIdentity(_machineId: string): Promise<void> {}
-
 export interface PairingToken {
   id: string;
   secret: string;

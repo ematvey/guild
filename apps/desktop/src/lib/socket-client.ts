@@ -11,6 +11,8 @@ import { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
 import { ChatSubagentNode, ChatSummary } from "./api/chats";
 import type { Project } from "./api/projects";
 import type { MachineInfo } from "./api/machines";
+import type { ModelOption } from "./api/models";
+import type { WorkspaceIdentity } from "./workspace-store";
 
 export interface SocketLike {
   readonly readyState: number;
@@ -48,9 +50,12 @@ export interface SocketHandlers {
   onAuthRequired?: () => void;
   onError?: (message: string) => void;
   onOrgEvent?: (event: unknown) => void;
-  /** The workspace's display identity (name, logo), sent with every
-   *  workspace push and on every rename. */
-  onWorkspaceIdentity?: (identity: { name: string; logo_url?: string; telemetry: boolean }) => void;
+  /** The workspace's identity (name, logo, telemetry switch, served web
+   *  bundle), sent with every workspace push and on every change. */
+  onWorkspaceIdentity?: (identity: WorkspaceIdentity) => void;
+  /** The org's enabled models, sent with every workspace push and on every
+   *  route change. */
+  onModelList?: (models: ModelOption[]) => void;
 }
 
 /** Converts the current HTTP origin into the WebSocket origin. */
@@ -126,12 +131,13 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     case "org_event":
       handlers.onOrgEvent?.(message.event);
       return;
-    case "workspace_identity":
-      handlers.onWorkspaceIdentity?.({
-        name: message.name,
-        logo_url: message.logo_url,
-        telemetry: message.telemetry,
-      });
+    case "workspace_identity": {
+      const { type: _type, ...identity } = message;
+      handlers.onWorkspaceIdentity?.(identity);
+      return;
+    }
+    case "model_list":
+      handlers.onModelList?.(message.models);
       return;
     default: {
       // A new frame variant must get a route here before it compiles.

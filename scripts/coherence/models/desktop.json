@@ -274,6 +274,43 @@
           "at": "apps/desktop/src/views/thread/hooks/use-member-socket.ts"
         }
       ]
+    },
+    {
+      "id": "workspace-identity",
+      "definition": "The workspace's pushed identity: its name and logo, the admin's telemetry switch, and the web bundle the server serves.",
+      "canonical": "apps/desktop/src/lib/workspace-store.ts",
+      "types": [
+        "WorkspaceIdentity"
+      ],
+      "aliases": [
+        "org-identity"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/lib/workspace-store.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/desktop/src/lib/socket-client.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/GeneralSection.tsx",
+          "role": "ui"
+        }
+      ],
+      "translations": [
+        {
+          "from": "wire",
+          "to": "domain",
+          "at": "apps/desktop/src/lib/socket-client.ts"
+        },
+        {
+          "from": "domain",
+          "to": "ui",
+          "at": "apps/desktop/src/views/settings/sections/GeneralSection.tsx"
+        }
+      ]
     }
   ],
   "no_concept": [

@@ -2,10 +2,9 @@
 
 import { apiUrl, getToken } from "../session";
 
-export interface ModelOption {
-  id: string;
-  alias: string;
-}
+import type { ModelOption } from "@guild/wire/types";
+
+export type { ModelOption };
 
 export async function listModels(): Promise<ModelOption[] | null> {
   try {

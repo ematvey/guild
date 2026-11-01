@@ -1,49 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
+import { clearModelList, modelsSnapshot, seedModelList, subscribeModels } from "../../lib/models-store";
 import { cacheEpochChanged, currentCacheEpoch, registerCacheClear } from "../settings/use-cached-api";
 
-/** The org's enabled models, fetched once per session (sign-out clears the
- *  cache; a failed fetch is not cached, so the next mount retries). Model
- *  ids are provider names; the app shows the admin's alias (e.g. "Auto"). */
-let cached: ModelOption[] | null = null;
-let inflight: Promise<ModelOption[] | null> | null = null;
+registerCacheClear(clearModelList);
 
-registerCacheClear(() => {
-  cached = null;
-  inflight = null;
-});
+/** One HTTP seed per empty store: the member socket pushes the list on
+ *  connect, so the read only covers a mount that lands before that frame.
+ *  A failed read is not remembered; the next mount retries. */
+let seeding: Promise<void> | null = null;
 
-function loadModels(): Promise<ModelOption[] | null> {
-  if (inflight !== null) return inflight;
+function seedModels(): void {
+  if (seeding !== null || modelsSnapshot() !== null) return;
   const epoch = currentCacheEpoch();
-  const pending = listModels().then((rows) => {
-    if (cacheEpochChanged(epoch)) return rows;
-    if (rows === null) inflight = null;
-    else cached = rows;
-    return rows;
+  seeding = listModels().then((rows) => {
+    seeding = null;
+    // A read that outlived its session seeds nothing.
+    if (rows !== null && !cacheEpochChanged(epoch)) seedModelList(rows);
   });
-  inflight = pending;
-  return pending;
 }
 
-/** The model list; null while it loads. A failed fetch reads as an empty
- *  list for this mount. */
+/** The org's enabled models; null while none has arrived. Model ids are
+ *  provider names; the app shows the admin's alias (e.g. "Auto"). The list
+ *  is the socket's `model_list` push, so an admin's route change repaints
+ *  every picker live. `enabled = false` reads the store without seeding
+ *  it. */
 export function useModelOptions(enabled = true): ModelOption[] | null {
-  const [models, setModels] = useState<ModelOption[] | null>(cached);
+  const models = useSyncExternalStore(subscribeModels, modelsSnapshot, modelsSnapshot);
   useEffect(() => {
-    if (!enabled) return;
-    if (cached !== null) {
-      setModels(cached);
-      return;
-    }
-    let live = true;
-    void loadModels().then((rows) => {
-      if (live) setModels(rows ?? []);
-    });
-    return () => {
-      live = false;
-    };
-  }, [enabled]);
+    if (enabled && models === null) seedModels();
+  }, [enabled, models]);
   return models;
 }
 

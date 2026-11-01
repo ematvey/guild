@@ -1,8 +1,9 @@
 //! GeneralSection — workspace identity: display name, logo, and the
 //! workspace telemetry switch. Admin-only (the section only appears for
-//! admins). The logo rides a public GET, but changes require the bearer.
-//! Telemetry is the org's decision: members have no local control, and the
-//! clients obey the value the server pushes on the workspace-identity frame.
+//! admins). The values are the member socket's workspace-identity frame:
+//! every write here comes back as a push, to this pane and to every other
+//! member's client. Telemetry is the org's decision: members have no local
+//! control, and the clients obey the pushed value.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -13,37 +14,27 @@ import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { ApiError } from "../../../lib/api/request";
 import { apiUrl, serverUrl } from "../../../lib/session";
-import {
-  deleteOrgLogo,
-  getOrg,
-  putOrgName,
-  putOrgTelemetry,
-  uploadOrgLogo,
-} from "../../../lib/api/settings";
-
-interface OrgSettings {
-  name: string;
-  logo_url: string | null;
-  telemetry: boolean;
-}
+import { deleteOrgLogo, putOrgName, putOrgTelemetry, uploadOrgLogo } from "../../../lib/api/settings";
+import { useWorkspaceIdentity } from "../../../lib/workspace-store";
 
 export default function GeneralSection() {
-  const [org, setOrg] = useState<OrgSettings | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const identity = useWorkspaceIdentity();
+  const org = identity === null ? null : { name: identity.name, logo_url: identity.logo_url ?? null, telemetry: identity.telemetry };
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [logoTick, setLogoTick] = useState(0); // busts the img cache on change
   const [telemetryBusy, setTelemetryBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // The field follows the pushed name until the admin edits it: a rename
+  // from another client lands here unless a draft would be overwritten.
+  const pushedName = identity?.name ?? null;
+  const shownNameRef = useRef<string | null>(null);
   useEffect(() => {
-    getOrg<OrgSettings>()
-      .then((v) => {
-        setOrg(v);
-        setName(v.name);
-      })
-      .catch((e) => setLoadError(`Could not load workspace settings: ${e.message}`));
-  }, []);
+    if (pushedName === null) return;
+    setName((current) => (shownNameRef.current === null || current === shownNameRef.current ? pushedName : current));
+    shownNameRef.current = pushedName;
+  }, [pushedName]);
 
   const saveName = async () => {
     const trimmed = name.trim();
@@ -51,7 +42,6 @@ export default function GeneralSection() {
     setBusy(true);
     try {
       await putOrgName(trimmed);
-      setOrg((o) => (o ? { ...o, name: trimmed } : o));
       toast.success("Workspace name saved");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
@@ -68,8 +58,7 @@ export default function GeneralSection() {
       }
       setBusy(true);
       try {
-        const v = await uploadOrgLogo(file);
-        setOrg((o) => (o ? { ...o, logo_url: v.logo_url } : o));
+        await uploadOrgLogo(file);
         setLogoTick((t) => t + 1);
         toast.success("Logo updated");
       } catch (e) {
@@ -87,7 +76,6 @@ export default function GeneralSection() {
     setTelemetryBusy(true);
     try {
       await putOrgTelemetry(next);
-      setOrg((o) => (o ? { ...o, telemetry: next } : o));
       toast.success(next ? "Telemetry on for this workspace" : "Telemetry off for this workspace");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
@@ -100,7 +88,6 @@ export default function GeneralSection() {
     setBusy(true);
     try {
       await deleteOrgLogo();
-      setOrg((o) => (o ? { ...o, logo_url: null } : o));
       toast.success("Logo removed");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
@@ -115,10 +102,9 @@ export default function GeneralSection() {
         title="General"
         description="The workspace's name and logo, shown across the app."
       />
-      {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
-      <div className="flex items-center gap-5" aria-busy={!org && !loadError}>
+      <div className="flex items-center gap-5" aria-busy={!org}>
         <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
-          {!org && !loadError ? (
+          {!org ? (
             <Skeleton className="size-full" />
           ) : org?.logo_url ? (
             <img
@@ -127,7 +113,7 @@ export default function GeneralSection() {
               className="size-full object-contain"
             />
           ) : (
-            <span className="text-sm text-muted-foreground">{org ? "no logo" : "Unavailable"}</span>
+            <span className="text-sm text-muted-foreground">no logo</span>
           )}
         </div>
         <div className="flex flex-col gap-2">
@@ -150,7 +136,7 @@ export default function GeneralSection() {
               onClick={() => fileRef.current?.click()}
             >
               <ImagePlus className="size-4" />
-              {!org && !loadError ? <Skeleton className="h-3 w-20" /> : org?.logo_url ? "Replace logo" : "Upload logo"}
+              {!org ? <Skeleton className="h-3 w-20" /> : org.logo_url ? "Replace logo" : "Upload logo"}
             </Button>
             {org?.logo_url && (
               <Button size="sm" variant="outline" disabled={busy || !org} onClick={() => void removeLogo()}>
@@ -167,7 +153,7 @@ export default function GeneralSection() {
           Workspace name
         </label>
         <div className="flex gap-2">
-          {!org && !loadError ? <div role="status" aria-label="Loading workspace name" className="flex h-9 flex-1 items-center rounded-md border border-border px-3"><Skeleton className="h-3 w-36" /></div> : <Input
+          {!org ? <div role="status" aria-label="Loading workspace name" className="flex h-9 flex-1 items-center rounded-md border border-border px-3"><Skeleton className="h-3 w-36" /></div> : <Input
             disabled={!org}
             id="workspace-name"
             value={name}

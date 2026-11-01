@@ -144,12 +144,3 @@ export function clientId(): string {
   return id;
 }
 
-export type MachinePresence = { connected: boolean; displaced?: boolean; auth_required?: boolean };
-
-/** The app shell holds no server connection, so it reports no presence:
- *  displacement and auth expiry reach the UI through the member socket
- *  (socket-client.ts `onDisplaced` / `onAuthRequired`). Returns a no-op
- *  unsubscribe; callers are due for removal. */
-export async function watchMachinePresence(_update: (presence: MachinePresence) => void): Promise<() => void> {
-  return () => {};
-}

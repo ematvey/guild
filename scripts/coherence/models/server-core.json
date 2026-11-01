@@ -508,7 +508,8 @@
       "types": [
         "RouteRow",
         "AdminRouteRow",
-        "ProviderRow"
+        "ProviderRow",
+        "ModelOption"
       ],
       "aliases": [
         "model-route"
@@ -524,6 +525,14 @@
         },
         {
           "where": "apps/desktop/src/lib/api/models.ts",
+          "role": "ui"
+        },
+        {
+          "where": "crates/protocol/src/ws.rs",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/models-store.ts",
           "role": "ui"
         }
       ],

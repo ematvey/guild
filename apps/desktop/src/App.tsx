@@ -14,6 +14,7 @@ import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { clearSettingsCaches } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./lib/machines-store";
+import { clearWorkspaceIdentity } from "./lib/workspace-store";
 import { ThemeProvider } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -361,6 +362,7 @@ function DesktopApp() {
     clearToken();
     clearSettingsCaches();
     clearMachinesCache();
+    clearWorkspaceIdentity();
     setUser(null);
     window.location.reload();
   };
@@ -521,6 +523,7 @@ function AppInner() {
       clearToken();
       clearSettingsCaches();
       clearMachinesCache();
+      clearWorkspaceIdentity();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

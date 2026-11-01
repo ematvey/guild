@@ -44,10 +44,6 @@ export const userUsageSeriesPath = (from: string, to: string) =>
 
 // ---- org ----
 
-export function getOrg<T>(): Promise<T> {
-  return request<T>("GET", SETTINGS_PATHS.org);
-}
-
 export function putOrgName(name: string): Promise<void> {
   return request<void>("PUT", SETTINGS_PATHS.org, { name });
 }

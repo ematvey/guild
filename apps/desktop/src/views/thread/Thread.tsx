@@ -66,7 +66,8 @@ import { readDraft, writeDraft } from "../../lib/drafts";
 import { HAS_ENGINE, HAS_SHELL } from "../../lib/session";
 import { apiUrl } from "../../lib/session";
 import { bindChatAgent, chatAgentBinding } from "../../lib/api/chats";
-import { listModels, type ModelOption } from "../../lib/api/models";
+import { useModelOptions } from "../agents/agent-model";
+import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../../lib/workspace-store";
 import { machineId } from "../../lib/machine-rpc";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { ContextRing } from "../../components/context-ring";
@@ -263,7 +264,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     pendingDraftsRef, fileInput, dragOver, setDragOver, addFiles, restoreForChat,
     gcDraftKeys, deliveringRef, observedUserIdsRef,
   } = composer;
-  const [models, setModels] = useState<ModelOption[] | null>(null);
+  const models = useModelOptions();
   // The agents the caller can use. Every chat runs with one of them; the
   // composer picks which, and the choice binds the chat.
   const [agentsList, setAgentsList] = useState<Agent[] | null>(null);
@@ -281,10 +282,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // own frame has not arrived yet. A reconnect cannot leave it stuck: the
   // resync's frame retires the pending send and `generating` takes over.
   const busy = busyFrom(openGenerating, pendingSend, viewChatId);
-  // Latest values for the freshness poll, which must not read a stale
-  // closure. Recomputed every render from the derived value.
-  const loadStateRef = useRef({ busy: false, threadLoading: false });
-  loadStateRef.current = { busy, threadLoading };
   // The chat a pre-send pick belongs to: the first send creates the chat and
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
@@ -331,7 +328,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setStopping, justCreatedApprovalRef, justCreatedChatRef, pushRoute,
   });
   const recoverMissingChatRef = useRef<() => void>(() => {});
-  const { socketRef, machineTakenOver } = useMemberSocket({
+  const { socketRef } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, store, retireSendPending, openChatIdRef,
     onThreadStateApplied, updateContextRevision, setSubagentTree,
@@ -347,39 +344,16 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const openDrawer = useCallback(() => setOpen(true), []);
   useMobileGestures({ isMobile, shell, onEdgeSwipe: openDrawer });
 
-  // Reload the page once the served bundle hash differs from the running
-  // one — never while a turn is streaming or a thread is loading.
+  // A browser tab reloads into the bundle the server serves, once nothing
+  // is in flight: the identity frame names the served bundle on connect and
+  // after every deploy. The desktop shell runs its own local bundle.
+  const servedBundle = useWorkspaceIdentity()?.web_bundle;
   useEffect(() => {
-    const currentBundle = () => {
-      const m = document
-        .querySelector('script[src*="/assets/index-"]')
-        ?.getAttribute("src")
-        ?.match(/index-([^"]+)\.js/);
-      return m?.[1] ?? null;
-    };
-    let stopped = false;
-    const tick = async () => {
-      try {
-        const res = await fetch("/", { cache: "no-store" });
-        if (!res.ok) return;
-        const html = await res.text();
-        const served = html.match(/index-([^"]+)\.js/)?.[1] ?? null;
-        const mine = currentBundle();
-        if (served && mine && served !== mine) {
-          const s = loadStateRef.current;
-          if (!s.busy && !s.threadLoading && !stopped && outgoingRef.current.size === 0 && ![...pendingDraftsRef.current.values()].some(files => files.length)) window.location.reload();
-        }
-      } catch {
-        /* offline: nothing to compare this tick */
-      }
-    };
-    const id = window.setInterval(tick, 60_000);
-    return () => {
-      stopped = true;
-      window.clearInterval(id);
-    };
-    // loadStateRef is a stable ref; see above.
-  }, []);
+    if (HAS_SHELL || !webBundleOutdated(servedBundle, runningWebBundle())) return;
+    if (busy || threadLoading || outgoingRef.current.size > 0) return;
+    if ([...pendingDraftsRef.current.values()].some((files) => files.length > 0)) return;
+    window.location.reload();
+  });
 
   useEffect(() => {
     void listAgents()
@@ -416,16 +390,12 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [viewChatId]);
 
 
+  // The pick follows the pushed list: it keeps a model that is still
+  // offered and falls back to the first one when an admin removes it.
   useEffect(() => {
-    listModels().then((m) => {
-      if (m === null) {
-        toast.error("Could not load models");
-        return;
-      }
-      setModels(m);
-      if (m.length > 0) setModel((cur) => cur || m[0].id);
-    });
-  }, []);
+    if (models === null) return;
+    setModel((cur) => (models.some((m) => m.id === cur) ? cur : models[0]?.id ?? ""));
+  }, [models]);
 
 
   // The folded Observability deep link is served as Activity; make the URL
@@ -1196,7 +1166,6 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           addFiles(files);
         }}
       >
-        {machineTakenOver && <div role="status" className="border-b border-border px-4 py-2 text-muted-foreground">Taken over on this machine. Tools run in the other Guild app.</div>}
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
             <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
