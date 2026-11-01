@@ -16,6 +16,9 @@ import { notifySubagentTree } from "../agents/tree.js";
 import type { PlatformContext } from "../platform/root-context.js";
 import { FeedForwarder } from "../hub/feed.js";
 import type { NotifyHandler } from "../platform/notify.js";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { UserEntry } from "@earendil-works/pi-durable";
+import { guildProviderId } from "../harness/models.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;
@@ -1208,6 +1211,195 @@ describe("member-socket push volume", () => {
           && (f.seq as number) > started.seq,
       );
       expect(settled.generating).toBe(false);
+    } finally {
+      ws.end();
+    }
+  });
+});
+
+// A chat's view frames reach only the sockets that display it; list-level
+// facts reach every socket of the owner. A compaction's writes coalesce
+// into at most two views.
+describe("member-socket view routing", () => {
+  const VIEW_FRAMES = new Set(["thread_state", "thread_events", "live_frame", "context_usage"]);
+
+  /** A member socket that displays `chatId` (null: a page with no chat). */
+  async function viewing(chatId: string | null): Promise<ScriptedClient> {
+    const ws = await memberSocket();
+    await waitFrame(ws, (f) => f.type === "model_list");
+    ws.send(JSON.stringify({ type: "sync", chat_id: chatId }));
+    if (chatId !== null) await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chatId);
+    else await new Promise((resolve) => setTimeout(resolve, 200));
+    return ws;
+  }
+
+  const viewFramesOf = (ws: ScriptedClient, from: number, chatId: string) =>
+    ws.frames
+      .slice(from)
+      .filter((f): f is { kind: "text"; data: string } => f.kind === "text")
+      .map((f) => JSON.parse(f.data) as Record<string, unknown>)
+      .filter((f) => VIEW_FRAMES.has(f.type as string) && f.chat_id === chatId);
+
+  it("sends a chat's view only to the sockets showing it, and its status to all", { timeout: TEST_TIMEOUT }, async () => {
+    const shown = await createChat("routed view");
+    const other = await createChat("routed other");
+    const onChat = await viewing(shown.id);
+    const onOther = await viewing(other.id);
+    const onNothing = await viewing(null);
+    try {
+      const marks = [onChat, onOther, onNothing].map((ws) => ws.frames.length);
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${shown.id}/turns`,
+        headers: auth(stack.memberToken),
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hello" }] },
+      });
+      expect(res.statusCode).toBe(200);
+      await waitFrame(
+        onChat,
+        (f) => f.type === "thread_state" && f.chat_id === shown.id && f.generating === false
+          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        20_000,
+      );
+      // The spinner flip is a sidebar fact: every socket sees it.
+      for (const ws of [onOther, onNothing]) {
+        await waitFrame(ws, (f) => f.type === "chat_status" && f.chat_id === shown.id && f.generating === false);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(viewFramesOf(onOther, marks[1]!, shown.id)).toEqual([]);
+      expect(viewFramesOf(onNothing, marks[2]!, shown.id)).toEqual([]);
+
+      // Opening the chat moves the socket's view: the next write reaches it.
+      onOther.send(JSON.stringify({ type: "sync", chat_id: shown.id }));
+      await waitFrame(onOther, (f) => f.type === "sync_done" && f.chat_id === shown.id);
+      const appended = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/chats/${shown.id}/thread`,
+        headers: auth(stack.memberToken),
+        payload: { type: "system_message", content: "after the switch" },
+      });
+      expect(appended.statusCode).toBe(200);
+      for (const ws of [onChat, onOther]) {
+        await waitFrame(
+          ws,
+          (f) => f.type === "thread_state" && f.chat_id === shown.id
+            && (f.events as { event: { type: string; content?: string } }[])
+              .some((e) => e.event.type === "system_message" && e.event.content === "after the switch"),
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(viewFramesOf(onNothing, marks[2]!, shown.id)).toEqual([]);
+    } finally {
+      onChat.end();
+      onOther.end();
+      onNothing.end();
+    }
+  });
+
+  /** The thread_state frames of one chat a socket received from `from`. */
+  const statesOf = (ws: ScriptedClient, from: number, chatId: string) =>
+    viewFramesOf(ws, from, chatId).filter((f) => f.type === "thread_state");
+
+  it("a no-op compaction sends at most two views and lowers the line", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("coalesced no-op");
+    const ws = await viewing(chat.id);
+    try {
+      const turn = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/turns`,
+        headers: auth(stack.memberToken),
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "short" }] },
+      });
+      expect(turn.statusCode).toBe(200);
+      await waitFrame(
+        ws,
+        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.generating === false
+          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        20_000,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const mark = ws.frames.length;
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/compact`,
+        headers: auth(stack.memberToken),
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const started = JSON.parse(res.body) as { seq: number };
+      await waitFrame(
+        ws,
+        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.compacting === false
+          && (f.seq as number) > started.seq,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const states = statesOf(ws, mark, chat.id);
+      expect(states.length).toBeGreaterThanOrEqual(1);
+      expect(states.length).toBeLessThanOrEqual(2);
+      expect(states[states.length - 1]!.compacting).toBe(false);
+    } finally {
+      ws.end();
+    }
+  });
+
+  it("a compaction that writes a summary sends at most two views", { timeout: TEST_TIMEOUT }, async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(stack.memberToken),
+      payload: { title: "coalesced compaction" },
+    });
+    const id = (JSON.parse(created.body) as { id: string }).id;
+    const runtime = platform.runtime;
+    await runtime.refreshOrgModels(stack.orgId);
+    const conversation = await runtime.conversationForChat(id);
+    await conversation.configure(
+      { model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } },
+      BACKGROUND_CONTEXT,
+    );
+    await conversation.commit(async (tx) => {
+      for (let i = 0; i < 3; i++) {
+        await tx.appendEntry(UserEntry, conversation.id, {
+          model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }],
+        });
+      }
+    }, BACKGROUND_CONTEXT);
+    stack.mock.setResponses([
+      {
+        body:
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "summarized old context" } }] })}\n\n` +
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+          'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
+          "data: [DONE]\n\n",
+      },
+    ]);
+    const ws = await viewing(id);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const mark = ws.frames.length;
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${id}/compact`,
+        headers: auth(stack.memberToken),
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const taskId = (JSON.parse(res.body) as { task_id: number }).task_id;
+      await eventually(async () => {
+        const status = await stack.env.app.inject({
+          method: "GET",
+          url: `/api/v1/threads/${id}/compactions/${taskId}`,
+          headers: auth(stack.memberToken),
+        });
+        return (JSON.parse(status.body) as { status: string }).status === "completed";
+      }, 20_000);
+      await waitFrame(ws, (f) => f.type === "thread_state" && f.chat_id === id && f.compacting === false
+        && (f.events as { event: { type: string } }[]).length > 0);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const states = statesOf(ws, mark, id);
+      expect(states.length).toBeGreaterThanOrEqual(1);
+      expect(states.length).toBeLessThanOrEqual(2);
+      expect(states[states.length - 1]!.compacting).toBe(false);
     } finally {
       ws.end();
     }

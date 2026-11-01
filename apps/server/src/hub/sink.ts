@@ -36,6 +36,11 @@ export class SocketSink {
   /** Optional frames the client declared it applies (the upgrade query's
    *  `features`); a frame outside this set is never sent to it. */
   readonly features: ReadonlySet<string>;
+  /** The chat this socket displays: the target of its newest `sync`
+   *  (null for a page that shows no chat). Undefined until the first
+   *  `sync`: such a socket (the engine's turn stream) receives every chat
+   *  of its user. Per-chat view frames go only to sockets showing the chat. */
+  view: string | null | undefined = undefined;
   private queue: SocketOutput[] = [];
   private pending = 0;
   private overloaded = false;

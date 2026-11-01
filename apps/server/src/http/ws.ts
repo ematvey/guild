@@ -469,6 +469,10 @@ async function driveSocket(
       if (current.org_id !== user.org_id) return;
 
       if (message.type === "sync") {
+        // The socket now displays this chat (or none): the feed routes the
+        // chat's view frames here from this point, before the capture, so
+        // nothing committed after the capture read is missed.
+        sink.view = message.chat_id;
         if (message.chat_id !== null) {
           // The gate opens only after validation: an early return above must
           // never leave an unmatched sync_start behind. The writer owns a

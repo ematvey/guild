@@ -1,10 +1,14 @@
 // The member-socket feed forwarder: pushes thread views, live generation
 // frames, chat-status flips, org events, and presence-driven thread lists to
-// every connected socket of a chat's owner. One shared Postgres LISTEN (the
-// NotifyHub) feeds an in-process fan-out. Views republish only when the
-// capture changes (seq-zeroed content compare), live frames carry the
-// generation identity the turn ack issues, and a machine presence flip
-// pushes the thread list so the connection dot moves live. Workspace lists
+// the connected sockets of a chat's owner. One shared Postgres LISTEN (the
+// NotifyHub) feeds an in-process fan-out. A chat's view frames (thread_state,
+// thread_events, live_frame, context_usage) reach only the sockets that
+// display that chat; list-level facts (chat_status, chat rows, subtrees)
+// reach every socket of the owner. Views republish only when the capture
+// changes (seq-zeroed content compare), coalesced on the view tick: a burst
+// of writes to one chat sends one view. Live frames carry the generation
+// identity the turn ack issues, and a machine presence flip pushes the
+// thread list so the connection dot moves live. Workspace lists
 // reach each socket only as the part that changed for it (sent-frames.ts).
 // Agent and skill state rides the same LISTEN through AgentStateFeed.
 
@@ -25,9 +29,13 @@ import {
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import { contextUsageMsg } from "../chats/context-usage.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
+import type { SocketSink } from "./sink.js";
 import { sendChanged, sendChatList } from "./sent-frames.js";
 
 const VIEW_POLL_MS = 100;
+/** A dirty view waits for one quiet tick (no new write) before it
+ *  republishes, and never more than this many ticks after its first write. */
+const VIEW_MAX_WAIT_TICKS = 3;
 /** Ticks between sweeps of per-chat state whose owner has no socket. */
 const SWEEP_EVERY_TICKS = 300;
 /** Chat identities kept in the LRU. */
@@ -40,6 +48,15 @@ const SILENT: FeedLog = { warn: () => {} };
 export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models";
 
 const ALL_PARTS: readonly WorkspacePart[] = ["identity", "chats", "archived", "projects", "machines", "models"];
+
+/** One chat whose view awaits a republish: the ticks of its first and
+ *  newest write, and whether the republish must send even an unchanged
+ *  capture. */
+interface DirtyView {
+  first: number;
+  last: number;
+  force: boolean;
+}
 
 interface ChatIdentity {
   orgId: string;
@@ -62,8 +79,10 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Last broadcast view per chat, as the seq-zeroed wire bytes. Views,
    *  trees and baselines are kept only while the owner has a socket. */
   private readonly views = new Map<string, string>();
-  /** Chats whose streaming buffers moved since the last view capture. */
-  private readonly dirtyChats = new Set<string>();
+  /** Chats whose view may have moved since the last capture. */
+  private readonly dirtyChats = new Map<string, DirtyView>();
+  /** A view tick is publishing: the next tick waits for it. */
+  private publishing = false;
   /** Open generation identities (live_frame generation_id). */
   private readonly generations = new Map<string, string>();
   /** Last pushed subtree per chat, as JSON: a run-status write that leaves
@@ -160,7 +179,7 @@ export class FeedForwarder implements GenerationStreamSink {
       if (!this.chats.has(parsed.chat_id)) {
         this.remember(parsed.chat_id, { orgId: parsed.org_id, userId: parsed.user_id, machineId: null });
       }
-      this.dirtyChats.add(parsed.chat_id);
+      this.markDirty(parsed.chat_id);
       return;
     }
     if (channel === "guild_workspace") {
@@ -272,7 +291,6 @@ export class FeedForwarder implements GenerationStreamSink {
       this.evict(chatId);
       return;
     }
-    this.dirtyChats.delete(chatId);
     // List-level state: a new user turn creates the row (and moves its
     // activity stamp), an assistant turn moves the unread count, and an
     // approval request or decision flips the blocked flag. Each one moves
@@ -296,12 +314,14 @@ export class FeedForwarder implements GenerationStreamSink {
     // messages all land as durable-log events — the client renders them
     // through the same replay rules a refresh uses, live.
     const since = this.sentSeqs.get(chatId);
-    if (this.generations.has(chatId)) {
-      if (since !== undefined) this.publishIncremental(chatId, chat.userId, since);
-      else this.dirtyChats.add(chatId);
+    if (this.generations.has(chatId) && since !== undefined) {
+      // The incremental rows carry the commit; a pending plain republish
+      // has nothing left to add.
+      if (this.dirtyChats.get(chatId)?.force === false) this.dirtyChats.delete(chatId);
+      this.publishIncremental(chatId, chat.userId, since);
       return;
     }
-    await this.publishView(chatId, chat.orgId, chat.userId);
+    this.markDirty(chatId);
   }
 
   private async orgEvent(orgId: string, eventId: string): Promise<void> {
@@ -312,38 +332,81 @@ export class FeedForwarder implements GenerationStreamSink {
 
   // -- view captures --------------------------------------------------------------
 
-  private async publishDirtyViews(): Promise<void> {
-    if (this.dirtyChats.size === 0) return;
-    const chatIds = [...this.dirtyChats];
-    this.dirtyChats.clear();
-    for (const chatId of chatIds) {
-      const chat = this.chats.get(chatId);
-      if (chat === undefined) {
-        this.lookup(chatId, "view_poll");
-        continue;
-      }
-      if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
-        this.evict(chatId);
-        continue;
-      }
-      await this.publishView(chatId, chat.orgId, chat.userId).catch((error: unknown) =>
-        this.failed("view_poll", chatId, error),
-      );
+  /** Marks a chat's view for the view tick. Writes that land together
+   *  (a turn's end, a compaction's summary and settlement) share one
+   *  republish; `force` survives the coalescing. */
+  private markDirty(chatId: string, force = false): void {
+    const pending = this.dirtyChats.get(chatId);
+    if (pending === undefined) {
+      this.dirtyChats.set(chatId, { first: this.ticks, last: this.ticks, force });
+      return;
     }
+    pending.last = this.ticks;
+    pending.force ||= force;
+  }
+
+  /** Republishes every dirty view that has been quiet for a whole tick or
+   *  has waited the longest allowed. */
+  private async publishDirtyViews(): Promise<void> {
+    if (this.publishing || this.dirtyChats.size === 0) return;
+    const due: [string, boolean][] = [];
+    for (const [chatId, pending] of this.dirtyChats) {
+      if (pending.last <= this.ticks - 2 || pending.first <= this.ticks - VIEW_MAX_WAIT_TICKS) {
+        due.push([chatId, pending.force]);
+      }
+    }
+    if (due.length === 0) return;
+    for (const [chatId] of due) this.dirtyChats.delete(chatId);
+    this.publishing = true;
+    try {
+      for (const [chatId, force] of due) {
+        try {
+          const chat = await this.ensureChat(chatId, false);
+          if (chat === null) continue;
+          if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
+            this.evict(chatId);
+            continue;
+          }
+          await this.publishView(chatId, chat.orgId, chat.userId, force);
+        } catch (error) {
+          this.failed("view_poll", chatId, error);
+        }
+      }
+    } finally {
+      this.publishing = false;
+    }
+  }
+
+  /** The owner's member sockets that display a chat: those whose newest
+   *  `sync` named it, and those that never sent one (the engine's turn
+   *  stream). */
+  private viewSinks(userId: string, chatId: string): SocketSink[] {
+    return this.ctx.hub
+      .memberSinksOfUser(userId)
+      .filter((sink) => sink.view === undefined || sink.view === chatId);
   }
 
   /** One capture → broadcast if the seq-zeroed content differs from the
    *  last view (the frame itself carries the real seq), or always when
    *  `force`: a client can hold a flag the server never sent (a /compact it
    *  armed itself), so a compaction's settlement re-asserts the view. The
-   *  chat's context usage follows every capture, deduped on its own. */
+   *  chat's context usage follows every capture, deduped on its own. With no
+   *  socket displaying the chat nothing is captured, and the cached view is
+   *  dropped: a socket that opens it later gets the whole view in its sync
+   *  bracket. */
   private async publishView(chatId: string, orgId: string, userId: string, force = false): Promise<void> {
+    if (this.viewSinks(userId, chatId).length === 0) {
+      this.views.delete(chatId);
+      this.contextUsages.delete(chatId);
+      return;
+    }
     const capture = await captureThreadState(this.ctx, this.ctx.pool, orgId, chatId);
     await this.publishContextUsage(chatId, orgId, userId);
     const dedupe = threadStateWire({ ...capture, seq: 0 });
     if (!force && this.views.get(chatId) === dedupe) return;
     this.views.set(chatId, dedupe);
-    this.sendToUser(userId, threadStateMsg(capture));
+    const frame = threadStateMsg(capture);
+    for (const sink of this.viewSinks(userId, chatId)) sink.send(frame);
     // The full view carried every row of the log: the incremental lane
     // resumes above the newest one it delivered (the capture watermark
     // is reserved later than the read — a row can commit in between).
@@ -358,13 +421,14 @@ export class FeedForwarder implements GenerationStreamSink {
     const wire = JSON.stringify(frame);
     if (this.contextUsages.get(chatId) === wire) return;
     this.contextUsages.set(chatId, wire);
-    this.sendToUser(userId, frame);
+    for (const sink of this.viewSinks(userId, chatId)) sink.send(frame);
   }
 
   /** A compaction task of a conversation was written (created or settled):
-   *  its chat's view republishes even when the capture matches the last one,
-   *  so a compaction that began and ended between two captures, with no
-   *  summary, still lowers the line a client armed. */
+   *  its chat's next view republish sends even when the capture matches the
+   *  last one, so a compaction that began and ended between two captures,
+   *  with no summary, still lowers the line a client armed. The republish
+   *  rides the view tick with the chat's other writes. */
   private async compaction(conversationId: string): Promise<void> {
     const res = await this.ctx.pool.query<{ chat_id: string }>(
       "SELECT chat_id FROM chat_conversations WHERE conversation_id = $1",
@@ -377,7 +441,7 @@ export class FeedForwarder implements GenerationStreamSink {
         this.evict(chatId);
         continue;
       }
-      await this.publishView(chatId, chat.orgId, chat.userId, true);
+      this.markDirty(chatId, true);
     }
   }
 
@@ -413,8 +477,7 @@ export class FeedForwarder implements GenerationStreamSink {
     this.enqueue(chatId, "live_frame", async () => {
       const chat = await this.ensureChat(chatId, false);
       if (chat === null) return;
-      const sinks = this.ctx.hub.sinksOfUser(chat.userId);
-      if (sinks.length === 0) return;
+      if (this.viewSinks(chat.userId, chatId).length === 0) return;
       const seq = await this.ctx.threads.watermark();
       const frame: WsServerMsg = {
         type: "live_frame",
@@ -424,12 +487,12 @@ export class FeedForwarder implements GenerationStreamSink {
         machine_id: chat.machineId,
         event,
       };
-      for (const sink of sinks) sink.send(frame);
+      for (const sink of this.viewSinks(chat.userId, chatId)) sink.send(frame);
     });
   }
 
   dirty(chatId: string): void {
-    this.dirtyChats.add(chatId);
+    this.markDirty(chatId);
   }
 
   /** One incremental fan-out on the chat's send chain: rows appended since
@@ -448,7 +511,7 @@ export class FeedForwarder implements GenerationStreamSink {
         seq: maxRow,
         events: rows,
       };
-      for (const sink of this.ctx.hub.sinksOfUser(userId)) sink.send(frame);
+      for (const sink of this.viewSinks(userId, chatId)) sink.send(frame);
     });
   }
 
@@ -456,7 +519,7 @@ export class FeedForwarder implements GenerationStreamSink {
     const generationId = this.generations.get(chatId);
     this.enqueue(chatId, "close", async () => {
       if (this.generations.get(chatId) === generationId) this.generations.delete(chatId);
-      this.dirtyChats.add(chatId);
+      this.markDirty(chatId);
     });
   }
 
