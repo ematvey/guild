@@ -335,6 +335,67 @@ describe("agent and skill state frames", () => {
     }
   });
 
+  it("sends no agent list to a member whose visible agents did not change", { timeout: TEST_TIMEOUT }, async () => {
+    const other = await memberToken(`agent-quiet-${crypto.randomUUID()}@example.test`);
+    const owner = await memberSocket(stack.memberToken);
+    const peer = await memberSocket(other.token);
+    try {
+      const peerLists = () => textFrames(peer).filter((f) => f.type === "agent_list").length;
+      const before = peerLists();
+      const privateId = await createAgent(stack.memberToken, `quiet-${crypto.randomUUID().slice(0, 8)}`, "private");
+      await waitFrame(owner, (f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === privateId));
+      // The org's agent pushes run on one chain: once the shared agent
+      // reaches the peer, the private write's push has already passed it.
+      const shared = await createAgent(stack.memberToken, `loud-${crypto.randomUUID().slice(0, 8)}`, "org");
+      await waitFrame(peer, (f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === shared));
+      expect(peerLists()).toBe(before + 1);
+    } finally {
+      owner.end();
+      peer.end();
+    }
+  });
+
+  it("names a child's parent by the parent chat's title and follows its rename", { timeout: TEST_TIMEOUT }, async () => {
+    const agentId = await createAgent(stack.memberToken, `parent-${crypto.randomUUID().slice(0, 8)}`, "private");
+    const thread = await api<{ thread: { id: string; chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
+      title: "Parent before",
+    });
+    const rootChat = thread.thread.chat_id;
+    const childChat = await api<{ id: string }>(stack.memberToken, "POST", "/api/v1/chats", { title: "Child chat" });
+    const childThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Child chat', 'subagent', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat.id, thread.thread.id],
+    );
+    const ws = await memberSocket(stack.memberToken);
+    try {
+      ws.send(JSON.stringify({ type: "sync", chat_id: childChat.id }));
+      const synced = await waitFrame(ws, (f) => f.type === "chat_tree" && f.chat_id === childChat.id);
+      expect((synced.tree as { parent: { chat_id: string; title: string } }).parent).toEqual({
+        chat_id: rootChat,
+        title: "Parent before",
+      });
+
+      // A chat rename writes the chat's title alone; the child's header and
+      // the parent's own header name it by that title.
+      await api(stack.memberToken, "PATCH", `/api/v1/threads/${rootChat}`, { title: "Parent after" });
+      await waitFrame(
+        ws,
+        (f) => f.type === "chat_tree" && f.chat_id === childChat.id
+          && (f.tree as { parent: { title: string } | null }).parent?.title === "Parent after",
+      );
+      const header = await api<{ title: string }>(
+        stack.memberToken,
+        "GET",
+        `/api/v1/chats/${rootChat}/tree`,
+      );
+      expect(header.title).toBe("Parent after");
+    } finally {
+      ws.end();
+    }
+  });
+
   it("refuses stop and close on a chat the caller does not own", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `owned-${crypto.randomUUID().slice(0, 8)}`, "private");
     const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {

@@ -1,5 +1,7 @@
 // GET /api/v1/chats/:id/tree: the chat header's node facts — type, title,
-// depth, latest run status and the parent chat of a delegated child.
+// depth, latest run status and the parent chat of a delegated child. A
+// thread is named by its chat's title (what the sidebar shows); the thread
+// row's own title stands in only while the chat has none.
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -68,12 +70,12 @@ describe("chat tree", () => {
     expect(JSON.parse(res.body)).toEqual({
       chat_id: childChat,
       type: "subagent",
-      title: "Child session",
+      title: "Child chat",
       agent_id: agentId,
       agent_name: "Tree agent",
       status: "succeeded",
       depth: 1,
-      parent: { chat_id: parentChat, title: "Parent session" },
+      parent: { chat_id: parentChat, title: "Parent chat" },
       origin: null,
       archived: false,
       deleted: false,
@@ -140,7 +142,7 @@ describe("chat tree", () => {
       [grandchildThread, childThread, null],
     ]);
     expect(body.nodes.map((n) => n.depth)).toEqual([0, 1, 2]);
-    expect(body.nodes.map((n) => n.title)).toEqual(["Root session", "Child session", "Grandchild session"]);
+    expect(body.nodes.map((n) => n.title)).toEqual(["Root chat", "Child chat", "Grandchild chat"]);
 
     // A plain chat has no thread row: an empty subtree, not an error.
     const plainChat = await insertChat("Plain chat");
@@ -197,7 +199,7 @@ describe("chat tree", () => {
     expect(JSON.parse(threaded.body)).toEqual({
       chat_id: threadChat,
       type: "user",
-      title: "Thread session",
+      title: "Thread chat",
       agent_id: agentId,
       agent_name: "Plain agent",
       status: null,

@@ -6,6 +6,11 @@ import type { PlatformPool } from "../platform/db.js";
 import type { WsServerMsg } from "../hub/protocol.js";
 import type { ChatTree, SubagentNode } from "@guild/wire/rest";
 
+/** A thread's display title: its chat's title, the name the sidebar shows
+ *  (a chat rename writes only the chat), else the thread's own title. */
+const CHAT_TITLE = (chat: string, thread: string): string =>
+  `COALESCE(NULLIF(${chat}.title, ''), ${thread}.title)`;
+
 /** One node of a chat's thread subtree, with its latest run status. */
 export type { SubagentNode };
 
@@ -31,10 +36,11 @@ export async function chatSubagentNodes(
        FROM agent_threads c JOIN subtree p ON c.parent_thread_id = p.id
      )
      SELECT s.id AS thread_id, s.chat_id, s.parent_thread_id, a.name AS agent_name,
-            s.title, s.depth,
+            ${CHAT_TITLE("sc", "s")} AS title, s.depth,
             (SELECT r.status FROM agent_runs r WHERE r.thread_id = s.id
              ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS status
      FROM subtree s JOIN agents a ON a.id = s.agent_id
+     LEFT JOIN chats sc ON sc.id = s.chat_id
      ORDER BY s.depth, s.id`,
     [chatId],
   );
@@ -79,15 +85,18 @@ export async function chatTreeFacts(pool: PlatformPool, chatId: string, viewerId
     origin_chat_id: string | null;
     origin_title: string | null;
   }>(
-    `SELECT t.type, t.title, t.depth, t.agent_id, a.name AS agent_name,
+    `SELECT t.type, ${CHAT_TITLE("tc", "t")} AS title, t.depth, t.agent_id, a.name AS agent_name,
             (SELECT r.status FROM agent_runs r WHERE r.thread_id = t.id
              ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS run_status,
-            p.chat_id AS parent_chat_id, p.title AS parent_title,
-            o.chat_id AS origin_chat_id, o.title AS origin_title
+            p.chat_id AS parent_chat_id, ${CHAT_TITLE("pc", "p")} AS parent_title,
+            o.chat_id AS origin_chat_id, ${CHAT_TITLE("oc", "o")} AS origin_title
      FROM agent_threads t
      JOIN agents a ON a.id = t.agent_id
+     LEFT JOIN chats tc ON tc.id = t.chat_id
      LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+     LEFT JOIN chats pc ON pc.id = p.chat_id
      LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
+     LEFT JOIN chats oc ON oc.id = o.chat_id
      WHERE t.chat_id = $1`,
     [chatId],
   );
