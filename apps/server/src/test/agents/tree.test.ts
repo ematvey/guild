@@ -355,3 +355,95 @@ describe("thread stop actions", () => {
     expect(res.statusCode, res.body).toBe(404);
   });
 });
+
+describe("thread delete", () => {
+  /** A user thread with a child and a grandchild; the grandchild runs. */
+  async function threeLevels(): Promise<{ chats: string[]; threads: string[]; runId: string }> {
+    const agentId = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model)
+       VALUES ($1, $2, $3, 'Delete agent', 'GLM-Test-Model')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const chats: string[] = [];
+    const threads: string[] = [];
+    for (const [depth, label] of ["Root", "Scout", "Scout's helper"].entries()) {
+      const chatId = await insertChat(label);
+      const threadId = randomUUID();
+      await stack.env.db.query(
+        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [threadId, agentId, stack.memberId, chatId, label, depth === 0 ? "user" : "subagent", threads.at(-1) ?? null, depth],
+      );
+      chats.push(chatId);
+      threads.push(threadId);
+    }
+    const runId = randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, thread_id, status, trigger)
+       VALUES ($1, $2, $3, $4, 'running', 'delegation')`,
+      [runId, agentId, stack.memberId, threads[2]],
+    );
+    return { chats, threads, runId };
+  }
+
+  const flags = async (chatIds: string[]): Promise<Record<string, { deleted: boolean; closed: boolean }>> => {
+    const res = await stack.env.db.query<{ id: string; deleted: boolean; closed: boolean }>(
+      `SELECT c.id, c.deleted_at IS NOT NULL AS deleted, t.closed_at IS NOT NULL AS closed
+       FROM chats c JOIN agent_threads t ON t.chat_id = c.id WHERE c.id = ANY($1::uuid[])`,
+      [chatIds],
+    );
+    return Object.fromEntries(res.rows.map((r) => [r.id, { deleted: r.deleted, closed: r.closed }]));
+  };
+
+  it("deleting a chat deletes and closes its whole agent-thread subtree", async () => {
+    const tree = await threeLevels();
+    const res = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${tree.chats[0]}`,
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await flags(tree.chats);
+    for (const chatId of tree.chats) expect(after[chatId]).toEqual({ deleted: true, closed: true });
+    const run = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [tree.runId]);
+    expect(run.rows[0]!.status).toBe("cancelled");
+
+    // The child's header reports the deletion, and the child refuses writes.
+    const header = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${tree.chats[1]}/tree`, headers: auth() });
+    expect(JSON.parse(header.body)).toMatchObject({ type: "subagent", deleted: true });
+    const rename = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${tree.chats[1]}`,
+      headers: auth(),
+      payload: { title: "revived" },
+    });
+    expect(rename.statusCode).toBe(404);
+  });
+
+  it("the owner deletes a child directly: its subtree goes, its parent stays", async () => {
+    const tree = await threeLevels();
+    const res = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${tree.chats[1]}`,
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await flags(tree.chats);
+    expect(after[tree.chats[0]!]).toEqual({ deleted: false, closed: false });
+    expect(after[tree.chats[1]!]).toEqual({ deleted: true, closed: true });
+    expect(after[tree.chats[2]!]).toEqual({ deleted: true, closed: true });
+  });
+
+  it("another user cannot delete a child chat", async () => {
+    const tree = await threeLevels();
+    const res = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${tree.chats[1]}`,
+      headers: { authorization: `Bearer ${stack.adminToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+    const after = await flags(tree.chats);
+    for (const chatId of tree.chats) expect(after[chatId]!.deleted).toBe(false);
+  });
+});

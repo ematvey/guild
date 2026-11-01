@@ -280,14 +280,18 @@ export function registerChatsRoutes(
   app.patch("/api/v1/chats/:id", patchThread);
   app.patch("/api/v1/threads/:id", patchThread);
 
-  // Deletion is separate from archiving: a deleted chat leaves every list,
-  // its subtree stops, and the row stays for the transcript.
+  // Deletion is separate from archiving: a deleted chat and every chat in
+  // its agent-thread subtree leave every list, the subtree closes, and the
+  // rows stay for the transcripts. The store closes and marks the subtree in
+  // one transaction; then each chat's in-flight generation ends.
   const deleteThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await chats.chats.deleteChat(user.org_id, chatId, user);
-    await chats.runtime.closeChatSubtree(chatId).catch(() => {});
-    await chats.runtime.stopChat(chatId).catch(() => {});
+    const { descendants } = await chats.chats.deleteChat(user.org_id, chatId, user);
+    for (const id of [chatId, ...descendants]) {
+      if (!chats.runtime.canStopChat(id)) continue;
+      await chats.runtime.stopChat(id).catch(() => {});
+    }
     return reply.status(200).send(await chatResponse(chats, user.org_id, user.id, chatId));
   };
   app.delete("/api/v1/chats/:id", deleteThread);

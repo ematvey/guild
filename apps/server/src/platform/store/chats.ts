@@ -437,13 +437,23 @@ export class ChatStore {
     return rowToChat(row);
   }
 
-  /** Soft-deletes the caller's own chat. A deleted chat drops out of every
-   *  list and refuses writes but keeps its row and transcript; deletion is
-   *  separate from archiving and does not unarchive. Waiting commands settle
-   *  as cancelled in the same transaction. Deleting again answers the same
-   *  row and keeps the first deletion time. */
-  async deleteChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
-    const row = await withTransaction(this.pool, async (client) => {
+  /** Soft-deletes the caller's own chat and its agent-thread subtree. A
+   *  deleted chat drops out of every list and refuses writes but keeps its
+   *  row and transcript; deletion is separate from archiving and does not
+   *  unarchive. One transaction closes the subtree (its queued and running
+   *  runs cancel and every node gets closed_at, so deliveries stop), marks
+   *  every descendant chat deleted, and settles each chat's waiting
+   *  commands as cancelled. A child chat belongs to the user whose run
+   *  spawned it, so that user may delete a child directly: its own subtree
+   *  goes with it and its parent stays. Deleting again answers the same row
+   *  and keeps the first deletion time. `descendants` names the subtree's
+   *  other chats so the caller can stop their live turns. */
+  async deleteChat(
+    orgId: string,
+    chatId: string,
+    caller: UserRow,
+  ): Promise<{ chat: ChatRow; descendants: string[] }> {
+    const { row, descendants, users } = await withTransaction(this.pool, async (client) => {
       const res = await client.query<Record<string, unknown>>(
         `UPDATE chats SET deleted_at = COALESCE(deleted_at, now())
          WHERE org_id = $1 AND id = $2 AND user_id = $3
@@ -455,18 +465,51 @@ export class ChatStore {
         [orgId, chatId, caller.id],
       );
       if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
-      await client.query(
-        "UPDATE turn_commands SET status = 'cancelled', finished_at = now() WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
+      const root = res.rows[0]!;
+      const tree = await client.query<{ thread_id: string; chat_id: string }>(
+        `WITH RECURSIVE tree AS (
+           SELECT id, chat_id, 0 AS distance FROM agent_threads WHERE chat_id = $1
+           UNION ALL
+           SELECT child.id, child.chat_id, tree.distance + 1
+           FROM agent_threads child JOIN tree ON child.parent_thread_id = tree.id
+           WHERE tree.distance < 64
+         )
+         SELECT id AS thread_id, chat_id FROM tree`,
         [chatId],
       );
-      return res.rows[0]!;
+      const threadIds = tree.rows.map((r) => r.thread_id);
+      const chatIds = tree.rows.map((r) => r.chat_id).filter((id) => id !== chatId);
+      if (threadIds.length > 0) {
+        await client.query(
+          `UPDATE agent_runs SET status = 'cancelled', finished_at = now()
+           WHERE thread_id = ANY($1::uuid[]) AND status IN ('queued', 'running')`,
+          [threadIds],
+        );
+        await client.query(
+          "UPDATE agent_threads SET closed_at = now() WHERE id = ANY($1::uuid[]) AND closed_at IS NULL",
+          [threadIds],
+        );
+      }
+      const marked = await client.query<{ user_id: string }>(
+        "UPDATE chats SET deleted_at = now() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL RETURNING user_id",
+        [chatIds],
+      );
+      await client.query(
+        `UPDATE turn_commands SET status = 'cancelled', finished_at = now()
+         WHERE chat_id = ANY($1::uuid[]) AND finished_at IS NULL AND status IN ('pending','submitted')`,
+        [[chatId, ...chatIds]],
+      );
+      const moved = new Set(marked.rows.map((r) => r.user_id));
+      if (root.newly_deleted === true) moved.add(root.user_id as string);
+      return { row: root, descendants: chatIds, users: [...moved] };
     });
-    if (row.newly_deleted === true) {
+    // Each owner whose chat left a list gets the sidebar push.
+    for (const userId of users) {
       await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-        JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId, parts: CHAT_LIST_PARTS }),
+        JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId, parts: CHAT_LIST_PARTS }),
       ]);
     }
-    return rowToChat(row);
+    return { chat: rowToChat(row), descendants };
   }
 
   /** Sets (or clears) the chat's machine binding — only the
