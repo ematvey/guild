@@ -3,6 +3,7 @@
 // per window. Every push is a hint to open the thread — the app syncs on
 // open, so a lost push costs nothing.
 
+import { createHash } from "node:crypto";
 import type { PushStore, PushSubscriptionRow } from "../platform/store/push.js";
 import type { PushPayload, PushSender } from "./sender.js";
 
@@ -34,7 +35,7 @@ export class PushNotifier {
   /** A turn ended for a chat its owner is not watching. */
   async turnEnded(event: TurnEndedEvent): Promise<void> {
     try {
-      await this.notify(event.userId, event.chatId, turnEndedPayload(event), `chat-${event.chatId}`);
+      await this.notify(event.userId, event.chatId, turnEndedPayload(event), pushTopic(event.chatId));
     } catch (error) {
       this.deps.log?.(`push turnEnded failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -86,6 +87,14 @@ export class PushNotifier {
     await this.deps.store.recordFailure(row.endpoint, error ?? "push failed", outcome === "gone");
     if (outcome !== "gone") this.deps.log?.(`push failed for ${row.endpoint}: ${error ?? "unknown"}`);
   }
+}
+
+/** The collapse topic: the push service allows 32 URL-safe characters, so a
+ *  chat id is hashed. Stable per chat, so a second notification replaces the
+ *  first instead of stacking. */
+export function pushTopic(chatId: string): string {
+  const digest = createHash("sha256").update(chatId).digest("base64url");
+  return `c${digest.slice(0, 31)}`;
 }
 
 /** Generic by default: the notification says which thread and how it ended,

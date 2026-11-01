@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { PushStore } from "../platform/store/push.js";
-import { PushNotifier, turnEndedPayload } from "../push/notifier.js";
+import { PushNotifier, pushTopic, turnEndedPayload } from "../push/notifier.js";
 import type { PushResult, PushSender } from "../push/sender.js";
 
 let stack: M2Stack;
@@ -92,7 +92,7 @@ describe("the notifier", () => {
     await notifier.turnEnded(event);
     await notifier.turnEnded(event);
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.topic).toBe("chat-chat-2");
+    expect(sent[0]!.topic).toBe(pushTopic("chat-2"));
     expect(sent[0]!.title).toBe("Weekly");
   });
 
@@ -114,6 +114,14 @@ describe("the notifier", () => {
 });
 
 describe("the payload", () => {
+  it("collapses per chat within the push service's 32-character topic limit", () => {
+    const topic = pushTopic("01a15f24-bbf2-7465-9921-bc78634717c1");
+    expect(topic.length).toBeLessThanOrEqual(32);
+    expect(topic).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(pushTopic("01a15f24-bbf2-7465-9921-bc78634717c1")).toBe(topic);
+    expect(pushTopic("01a15f24-bbf2-7465-9921-bc78634717c2")).not.toBe(topic);
+  });
+
   it("names the thread and how it ended, never the answer", () => {
     const done = turnEndedPayload({ orgId: "o", userId: "u", chatId: "c1", title: "Weekly", failed: false });
     expect(done).toMatchObject({ title: "Weekly", body: "The answer is ready.", url: "/thread/c1", chat_id: "c1" });
