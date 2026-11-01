@@ -3,13 +3,13 @@ import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import type { StorageConformanceProvider } from "@earendil-works/pi-durable/testing";
 import { afterAll, describe, expect, it } from "vitest";
 import pg from "pg";
-import { PgPoolDatabase, PostgresDurableStorage } from "./index.js";
+import { PgPoolDatabase, PostgresDurableStorage } from "../../storage/postgres/index.js";
 import {
   createDisposableDatabase,
   dropDisposableDatabase,
   resetDurableTables,
   type DisposableDatabase,
-} from "./test-support.js";
+} from "../../storage/postgres/test-support.js";
 
 const shared: { database: DisposableDatabase | undefined } = { database: undefined };
 

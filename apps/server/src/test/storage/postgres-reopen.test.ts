@@ -4,8 +4,8 @@ import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import type { ConversationId, DocumentId, EntryId, Seq, SubmissionId, Storage, TaskId } from "@earendil-works/pi-durable";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
-import { PgPoolDatabase, PostgresDurableStorage } from "./index.js";
-import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "./test-support.js";
+import { PgPoolDatabase, PostgresDurableStorage } from "../../storage/postgres/index.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../../storage/postgres/test-support.js";
 
 const context = BACKGROUND_CONTEXT;
 
