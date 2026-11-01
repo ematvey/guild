@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../platform/route-contexts.js";
 import { ApiError, sortedJson } from "../platform/errors.js";
 import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.js";
-import { submitTurn } from "../platform/http/chats.js";
+import { submitTurn } from "../chats/submit-turn.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -296,7 +296,6 @@ export function registerAgentRoutes(
         auth,
         objects,
         user,
-        req,
         {
           model: agent.model,
           messages: [{ role: "user", content: message }],

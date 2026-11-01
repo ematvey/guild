@@ -3,10 +3,10 @@
 // included); names are display labels derived from the folder when omitted
 // — duplicates are allowed.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
-import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
-import { parseUuidParam, queryParam, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { optionalJsonBody, parseUuidParam, queryParam, requireUser } from "./error.js";
 import type { ProjectRow } from "../store/projects.js";
 import type { Project } from "@guild/wire/rest";
 
@@ -32,27 +32,14 @@ function projectJson(p: ProjectRow): string {
   return JSON.stringify(out);
 }
 
-/** serde's column position in deserialize rejections is the raw body
- *  length. */
-function rawLength(req: FastifyRequest): number {
-  const raw = (req as unknown as Record<symbol, string | undefined>)[RAW_BODY];
-  return raw === undefined ? 0 : raw.length;
-}
-
-function jsonRecord(body: unknown): Record<string, unknown> {
-  return body !== null && typeof body === "object" && !Array.isArray(body)
-    ? (body as Record<string, unknown>)
-    : {};
-}
-
 export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
   app.post("/api/v1/projects", async (req, reply) => {
     const user = await requireUser(ctx, req);
-    const record = jsonRecord(req.body);
+    const record = optionalJsonBody(req);
     const folderRaw = typeof record["folder"] === "string" ? record["folder"] : undefined;
-    if (folderRaw === undefined) throw missingFieldError("folder", rawLength(req));
+    if (folderRaw === undefined) throw ApiError.badRequest("folder must be a string");
     const machineIdRaw = typeof record["machine_id"] === "string" ? record["machine_id"] : undefined;
-    if (machineIdRaw === undefined) throw missingFieldError("machine_id", rawLength(req));
+    if (machineIdRaw === undefined) throw ApiError.badRequest("machine_id must be a string");
     const folder = folderRaw.trim();
     if (folder === "" || machineIdRaw === "") {
       throw ApiError.badRequest("folder and machine_id are required");
@@ -76,14 +63,14 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
   app.put("/api/v1/projects/:id", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const projectId = parseUuidParam(req, "id");
-    const record = jsonRecord(req.body);
+    const record = optionalJsonBody(req);
     const name = typeof record["name"] === "string" && record["name"].trim() !== "" ? record["name"].trim() : null;
     const folder =
       typeof record["folder"] === "string" && record["folder"].trim() !== "" ? record["folder"].trim() : null;
     let machineId: string | null = null;
     if (record["machine_id"] !== undefined && record["machine_id"] !== null) {
       if (typeof record["machine_id"] !== "string") {
-        throw invalidTypeError(record["machine_id"], rawLength(req));
+        throw ApiError.badRequest("machine_id must be a string");
       }
       if (record["machine_id"] === "") throw ApiError.badRequest("unknown machine");
       machineId = record["machine_id"];
@@ -91,7 +78,7 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
     let archived: boolean | null = null;
     if (record["archived"] !== undefined && record["archived"] !== null) {
       if (typeof record["archived"] !== "boolean") {
-        throw invalidTypeError(record["archived"], rawLength(req));
+        throw ApiError.badRequest("archived must be a boolean");
       }
       archived = record["archived"];
     }

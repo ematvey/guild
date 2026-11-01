@@ -6,7 +6,7 @@
 import { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import { buildApp, GUILD_TS_SERVER_VERSION, NATIVE_ROUTES } from "../app.js";
+import { buildApp, GUILD_TS_SERVER_VERSION } from "../app.js";
 import { loadConfig } from "../config.js";
 import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
 
@@ -45,82 +45,6 @@ describe("health route (native)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: "ok", version: GUILD_TS_SERVER_VERSION });
     await app.close();
-  });
-
-  it("NATIVE_ROUTES covers the health path and the platform groups", () => {
-    expect(NATIVE_ROUTES).toEqual([
-      "/api/v1/health",
-      "/api/v1/auth/*",
-      "/api/v1/me/approval",
-      "/api/v1/org",
-      "/api/v1/org/telemetry",
-      "/api/v1/org/logo",
-      "/api/v1/orgs/*/logo",
-      "/api/v1/events",
-      "/api/v1/attachments/*",
-      "/api/v1/chats/*/attachments",
-      "/api/v1/auth/oidc/*",
-      "/api/v1/admin/oidc",
-      "/api/v1/gateway/models",
-      "/api/v1/admin/gateway/*",
-      "/api/v1/api-keys",
-      "/api/v1/api-keys/*",
-      "/api/v1/admin/api-keys",
-      "/api/v1/admin/api-keys/*",
-      "/api/v1/push/*",
-      "/api/v1/usage",
-      "/api/v1/usage/*",
-      "/openai/v1/*",
-      "/anthropic/v1/*",
-      // M5 hub core (the ws upgrade itself is a server-level 'upgrade'
-      // listener, not an HTTP route).
-      "/api/v1/machines",
-      "/api/v1/machines/*",
-      "/api/v1/ws/ticket",
-      "/api/v1/chats",
-      "/api/v1/chats/*",
-      "/api/v1/gateway/chat",
-      "/api/v1/gateway/chat/*",
-      "/api/v1/threads",
-      "/api/v1/threads/*",
-      // M6 long tail: registry, releases, projects, teams, admin reads.
-      "/api/v1/registry/*",
-      "/api/v1/skills",
-      "/api/v1/skills/*",
-      "/api/v1/releases",
-      "/api/v1/releases/*",
-      "/api/v1/admin/releases",
-      "/api/v1/admin/releases/*",
-      "/api/v1/updates/latest.json",
-      "/api/v1/projects",
-      "/api/v1/projects/*",
-      "/api/v1/admin/teams",
-      "/api/v1/admin/teams/*",
-      "/api/v1/admin/users",
-      "/api/v1/admin/users/*",
-      "/api/v1/admin/assistant-prompt",
-      "/api/v1/admin/approval-policy-prompt",
-      // M7: the full admin integration CRUD + the script-facing tool API.
-      "/api/v1/admin/integrations",
-      "/api/v1/admin/integrations/*",
-      "/api/v1/integrations",
-      "/api/v1/integrations/*",
-      // User-owned MCP servers (CRUD + probe).
-      "/api/v1/mcp",
-      "/api/v1/mcp/*",
-      // Tool artifacts (the spill surface).
-      "/api/v1/tool_artifacts/*",
-      "/api/v1/chats/*/tool_artifacts",
-      // Persistent agents (A1).
-      "/api/v1/agents",
-      "/api/v1/agents/*",
-      "/api/v1/runs",
-      "/api/v1/runs/*",
-      "/api/v1/activity",
-      "/api/v1/activity/*",
-      "/api/v1/inbox",
-      "/api/v1/inbox/*",
-    ]);
   });
 });
 

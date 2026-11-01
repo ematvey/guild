@@ -4,11 +4,22 @@
 // surface renders errors in its own wire contract (OpenAI `{"error": …}` vs
 // Anthropic `{"type":"error",…}`).
 
-import { ApiError } from "./errors.js";
+import { ApiError, TextError } from "./errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "./provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "./usage.js";
 import type { TraceStore } from "./trace.js";
 import type { GatewayStore } from "./store/gateway.js";
+
+/** Gateway request-body rejections are plain text in serde_json's wording:
+ *  OpenAI/Anthropic SDK clients surface the body verbatim. */
+export const JSON_REJECTION_PREFIX = "Failed to parse the request body as JSON: ";
+export const DESERIALIZE_PREFIX = "Failed to deserialize the JSON body into the target type: ";
+
+/** A required request field is absent; `rawLength` is the body's length
+ *  (serde reports the end of input as the column). */
+export function missingFieldError(field: string, rawLength: number): TextError {
+  return new TextError(422, `${DESERIALIZE_PREFIX}missing field \`${field}\` at line 1 column ${rawLength}`);
+}
 
 /** Request body ceiling for the gateway surfaces. A chat-completions call
  *  carries the whole conversation on every step, including base64 images

@@ -569,7 +569,7 @@ describe("gateway/chat turn flow", () => {
     expect(blocks.some((b) => b.type === "text" && b.text === "via threads path")).toBe(true);
   }, TEST_TIMEOUT);
 
-  it("rejects malformed submissions with the serde-style 422 text", async () => {
+  it("rejects malformed submissions with a 400 envelope", async () => {
     for (const payload of [
       { model: "GLM-Test-Model", messages: [] },
       { chat_id: crypto.randomUUID(), messages: [] },
@@ -582,8 +582,8 @@ describe("gateway/chat turn flow", () => {
         headers: auth(stack.memberToken),
         payload,
       });
-      expect(res.statusCode).toBe(422);
-      expect(res.headers["content-type"]).toContain("text/plain");
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toMatchObject({ error: { code: "bad_request" } });
     }
   });
 
@@ -982,6 +982,39 @@ describe("chat access rule", () => {
     // The transcript stays readable by link.
     const read = await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${chatId}`, headers: auth(stack.memberToken) });
     expect(read.statusCode).toBe(200);
+  });
+
+  it("an appended event with a malformed nested shape is refused", async () => {
+    const chatId = await memberChat("strict appends");
+    for (const payload of [
+      { type: "assistant_message", blocks: [{ type: "text" }] },
+      { type: "assistant_message", blocks: "text" },
+      { type: "assistant_message", usage: { tokens_in: "many" } },
+      { type: "user_message", content: "hi", attachments: [{ id: 1 }] },
+      { type: "tool_result", images: [42] },
+    ]) {
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chatId}/events`,
+        headers: auth(stack.memberToken),
+        payload,
+      });
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const ok = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/events`,
+      headers: auth(stack.memberToken),
+      payload: {
+        type: "assistant_message",
+        blocks: [{ type: "text", text: "hi", extra: true }, { type: "tool_call", id: "c1", name: "ls", arguments: "{}" }],
+        usage: { tokens_in: 3 },
+      },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const event = (JSON.parse(ok.body) as { event: { blocks: unknown[]; usage: unknown } }).event;
+    expect(event.blocks[0]).toEqual({ type: "text", text: "hi" });
+    expect(event.usage).toEqual({ tokens_in: 3 });
   });
 
   it("concurrent approval resolves settle the call once", async () => {

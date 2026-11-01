@@ -8,8 +8,8 @@
 // `message_stop`), the same sequence as the Rust server.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, RAW_BODY, missingFieldError } from "../errors.js";
-import { requireJsonBody } from "./error.js";
+import { ApiError } from "../errors.js";
+import { requireJsonBody, rawJsonText } from "./error.js";
 import type { GatewayCtx } from "../route-contexts.js";
 import {
   accumulate,
@@ -23,6 +23,7 @@ import {
   type GatewayContext,
   type GatewayCredential,
   type RoutedCall,
+  missingFieldError,
 } from "../llm-gateway.js";
 import { ProviderError, type InternalMessage, type ToolSpec, type ToolCall } from "../provider/types.js";
 import { sseReply } from "./sse-writer.js";
@@ -319,10 +320,10 @@ async function handleMessages(
 ): Promise<void> {
   const body = requireJsonBody(req) as Record<string, unknown>;
   if (body["model"] === undefined) {
-    throw missingFieldError("model", (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+    throw missingFieldError("model", rawJsonText(req).length);
   }
   if (body["messages"] === undefined) {
-    throw missingFieldError("messages", (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+    throw missingFieldError("messages", rawJsonText(req).length);
   }
   const req0 = body as unknown as AnthropicRequest;
   // A nonpositive client limit is invalid (the OpenAI ingress rejects it

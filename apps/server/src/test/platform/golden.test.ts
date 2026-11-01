@@ -28,10 +28,6 @@ interface CapturedFixture {
   response: { status: number; headers: Record<string, string>; body: string | { base64: string; length: number } };
 }
 
-// Text-rejection fixtures whose tails are parser-specific (serde's detail
-// vs V8's): compare status + the shared axum prefix.
-const PREFIX_MATCH = new Set(["login-invalid-json", "bootstrap-invalid-json"]);
-
 let env: M1TestEnv;
 let db: pg.Pool;
 
@@ -232,12 +228,7 @@ async function replayFixture(fixture: CapturedFixture): Promise<string | null> {
   const actualBodyText = substitute(res.body, responsePairs);
   const expectedMasked = mask(fixtureBodyText);
   const actualMasked = mask(actualBodyText);
-  if (PREFIX_MATCH.has(fixture.name)) {
-    const prefix = "Failed to parse the request body as JSON: ";
-    if (!actualMasked.startsWith(prefix)) {
-      return `- ${fixture.name}: body ${actualMasked.slice(0, 200)} does not start with "${prefix}"`;
-    }
-  } else if (actualMasked !== expectedMasked) {
+  if (actualMasked !== expectedMasked) {
     return `- ${fixture.name}: body mismatch\n  expected: ${expectedMasked.slice(0, 400)}\n  actual:   ${actualMasked.slice(0, 400)}`;
   }
 

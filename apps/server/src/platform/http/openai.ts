@@ -5,8 +5,8 @@
 // (`data: …\n\n` frames, `[DONE]` end).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, missingFieldError } from "../errors.js";
-import { requireJsonBody } from "./error.js";
+import { ApiError, TextError } from "../errors.js";
+import { requireJsonBody, rawJsonText } from "./error.js";
 import {
   accumulate,
   completionChars,
@@ -22,6 +22,8 @@ import {
   type GatewayContext,
   type GatewayCredential,
   type GatewayTraceEmission,
+  DESERIALIZE_PREFIX,
+  missingFieldError,
 } from "../llm-gateway.js";
 import type { GatewayCtx } from "../route-contexts.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
@@ -216,7 +218,7 @@ function toOpenAiToolCalls(calls: ToolCall[]): unknown {
 }
 
 function missingField(field: string, req: FastifyRequest): TextError {
-  return missingFieldError(field, (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+  return missingFieldError(field, rawJsonText(req).length);
 }
 
 function invalidType(value: unknown, req: FastifyRequest): TextError {
@@ -234,7 +236,7 @@ function invalidType(value: unknown, req: FastifyRequest): TextError {
             : "map";
   return new TextError(
     422,
-    `${DESERIALIZE_PREFIX}invalid type: ${kind}, expected u32 at line 1 column ${(req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0}`,
+    `${DESERIALIZE_PREFIX}invalid type: ${kind}, expected u32 at line 1 column ${rawJsonText(req).length}`,
   );
 }
 
@@ -315,7 +317,7 @@ async function handleChatCompletions(
   // payload rows; internal callers may pin their own (the judge's
   // self-reported row joins its usage_events row through it).
   const requestId = traceHeaders.requestId ?? uuidv7();
-  const promptChars = (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0;
+  const promptChars = rawJsonText(req).length;
   // Internal callers (the judge) self-report their own llm_calls rows — the
   // gateway records none (it cannot know the verdict it hasn't parsed).
   // The payload chain key: the run, else the chat, else this call alone.
@@ -343,7 +345,7 @@ async function handleChatCompletions(
     // Payload capture rides the trace emission: internal callers (the
     // judge) self-report their payloads, so the gateway records none.
     if (trace !== undefined) {
-      void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "", payloadTraceId);
+      void gateway.trace.recordPayload(requestId, credential.orgId, "request", rawJsonText(req), payloadTraceId);
     }
     streamChunks(gateway, credential, reply, call.stream, {
       includeUsage: req0.stream_options?.include_usage === true,
@@ -359,7 +361,7 @@ async function handleChatCompletions(
     return;
   }
   if (trace !== undefined) {
-    void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "", payloadTraceId);
+    void gateway.trace.recordPayload(requestId, credential.orgId, "request", rawJsonText(req), payloadTraceId);
   }
   const counters = new StreamUsageCounters();
   let acc;

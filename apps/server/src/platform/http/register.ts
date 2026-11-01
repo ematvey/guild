@@ -1,14 +1,14 @@
-// Native-route registration: all M1 platform routes (auth, org, events,
-// attachments, OIDC) live in one encapsulated Fastify plugin so their error
-// handling and content parsers stay scoped — every un-ported path keeps
-// flowing to the proxy catch-all, and rollback per area is deleting the
-// route here.
+// Platform route registration: every /api/v1 route group, the script-facing
+// integration tool API, and the LLM gateway surfaces, each in an
+// encapsulated Fastify plugin so its error rendering and content parsers
+// stay scoped to it.
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../root-context.js";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
-import { RAW_BODY, JSON_REJECTION_PREFIX, TextError } from "../errors.js";
-import { installErrorHandling } from "./error.js";
+import { ApiError, TextError } from "../errors.js";
+import { JSON_REJECTION_PREFIX } from "../llm-gateway.js";
+import { installErrorHandling, jsonContentParser } from "./error.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerEventRoutes } from "./events.js";
@@ -36,50 +36,6 @@ import { registerIntegrationToolRoutes } from "./integration_tools.js";
 import { registerUserMcpRoutes } from "./user_mcp.js";
 import { registerAgentRoutes } from "../../agents/routes.js";
 
-export interface NativeRouteGroup {
-  /** Route group name (for the report / rollback notes). */
-  name: string;
-  /** Paths served natively; deleting the group's register call moves each
-   *  one back to the proxy. */
-  paths: string[];
-}
-
-export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
-  { name: "auth", paths: ["/api/v1/auth/*", "/api/v1/me/approval"] },
-  { name: "org", paths: ["/api/v1/org", "/api/v1/org/telemetry", "/api/v1/org/logo", "/api/v1/orgs/*/logo"] },
-  { name: "events", paths: ["/api/v1/events"] },
-  { name: "attachments", paths: ["/api/v1/attachments/*", "/api/v1/chats/*/attachments"] },
-  { name: "oidc", paths: ["/api/v1/auth/oidc/*", "/api/v1/admin/oidc"] },
-  { name: "gateway-admin", paths: ["/api/v1/gateway/models", "/api/v1/admin/gateway/*"] },
-  { name: "api-keys", paths: ["/api/v1/api-keys", "/api/v1/api-keys/*", "/api/v1/admin/api-keys", "/api/v1/admin/api-keys/*"] },
-  { name: "push", paths: ["/api/v1/push/*"] },
-  { name: "usage", paths: ["/api/v1/usage", "/api/v1/usage/*"] },
-  { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
-  { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
-  { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
-  { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*", "/api/v1/threads", "/api/v1/threads/*"] },
-  // M6 long tail: registry, releases, projects, teams, admin users/prompts.
-  { name: "registry", paths: ["/api/v1/registry/*"] },
-  { name: "skills", paths: ["/api/v1/skills", "/api/v1/skills/*"] },
-  { name: "releases", paths: ["/api/v1/releases", "/api/v1/releases/*", "/api/v1/admin/releases", "/api/v1/admin/releases/*", "/api/v1/updates/latest.json"] },
-  { name: "projects", paths: ["/api/v1/projects", "/api/v1/projects/*"] },
-  { name: "teams", paths: ["/api/v1/admin/teams", "/api/v1/admin/teams/*"] },
-  { name: "admin-users", paths: ["/api/v1/admin/users", "/api/v1/admin/users/*"] },
-  { name: "admin-prompts", paths: ["/api/v1/admin/assistant-prompt", "/api/v1/admin/approval-policy-prompt"] },
-  // M7: the full admin integration CRUD (save path + tools listing
-  // included) and the script-facing tool API. The execute route validates
-  // identically but the runtime is deferred (spec decision 8): a validated
-  // call fails with the connector-unreachable shape (200, ok:false).
-  { name: "admin-integrations", paths: ["/api/v1/admin/integrations", "/api/v1/admin/integrations/*"] },
-  { name: "integration-tools", paths: ["/api/v1/integrations", "/api/v1/integrations/*"] },
-  { name: "user-mcp", paths: ["/api/v1/mcp", "/api/v1/mcp/*"] },
-  // Tool artifacts (the spill surface).
-  { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
-  // Persistent agents: CRUD/lifecycle, threads, files, runs, activity, inbox,
-  // conversation search.
-  { name: "agents", paths: ["/api/v1/agents", "/api/v1/agents/*", "/api/v1/runs", "/api/v1/runs/*", "/api/v1/activity", "/api/v1/activity/*", "/api/v1/inbox", "/api/v1/inbox/*"] },
-];
-
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
   // Composition glue: the full context is sliced here and each route group
   // receives only the collaborators it uses.
@@ -91,28 +47,14 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
   await app.register(async (scope) => {
     installErrorHandling(scope);
 
-    // Raw JSON parser: keeps the raw body text for serde-style column
-    // positions and turns parse failures into axum-shaped text rejections.
-    scope.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
-      (req as unknown as Record<symbol, string>)[RAW_BODY] = body as string;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body as string);
-      } catch (error) {
-        // axum renders JSON body parse failures as plain text with this
-        // prefix; the tail is parser-specific (serde vs V8 detail).
-        done(
-          new TextError(400, `${JSON_REJECTION_PREFIX}${error instanceof Error ? error.message : String(error)}`),
-          undefined,
-        );
-        return;
-      }
-      done(null, parsed);
-    });
+    scope.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      jsonContentParser(() => ApiError.badRequest("request body is not valid JSON")),
+    );
 
-    // Binary bodies (attachment uploads, logo uploads): raw bytes, any
-    // content type — axum Bytes semantics. Scoped here so the proxy keeps
-    // its streaming passthrough for everything else.
+    // Binary bodies (attachment uploads, logo uploads, bundles): raw bytes,
+    // any content type.
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
       done(null, body);
     });
@@ -127,14 +69,13 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerPushRoutes(scope, auth, ctx.pushNotifier);
     registerUsageRoutes(scope, auth, infra);
     registerActivityRoutes(scope, auth, infra);
-    // M5 hub core: machine registry routes + the ws-ticket mint (the /api/v1/ws
-    // upgrade itself is a server-level 'upgrade' listener, not an HTTP route).
+    // Machine registry routes + the ws-ticket mint (the /api/v1/ws upgrade
+    // itself is a server-level 'upgrade' listener, not an HTTP route).
     registerMachineRoutes(scope, chats, auth);
     registerWsRoutes(scope, chats, auth);
     registerChatsRoutes(scope, chats, gateway, auth, ctx.objects);
     registerToolArtifactRoutes(scope, chats, auth, infra);
     registerThreadStreamRoute(scope, chats, auth, ctx.pool);
-    // M6 long tail.
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
     registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
       onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),
@@ -151,10 +92,10 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
   });
 
   // The script-facing integration tool API accepts ANY content type as raw
-  // bytes (axum Bytes semantics in the Rust route) and renders its own
-  // envelope, so it lives in its own encapsulated plugin with a catch-all
-  // buffer parser — the platform scope's JSON parser would 415/serde-reject
-  // non-JSON bodies instead of the route's "body must be a JSON object".
+  // bytes and renders its own envelope, so it lives in its own encapsulated
+  // plugin with a catch-all buffer parser — the platform scope's JSON parser
+  // would reject non-JSON bodies instead of the route's "body must be a
+  // JSON object".
   await app.register(async (scope) => {
     installErrorHandling(scope);
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
@@ -165,26 +106,19 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
   // their own wire contracts, so they live in a separate encapsulated
-  // plugin with the same raw-JSON parser but a per-shape error handler —
-  // not the /api/v1 envelope. The shape follows the request path.
+  // plugin with a per-shape error handler — not the /api/v1 envelope. The
+  // shape follows the request path.
   await app.register(async (scope) => {
     installErrorHandling(scope, (error, path) =>
       path.startsWith("/anthropic") ? renderAnthropicError(error) : renderOpenAiError(error),
     );
-    scope.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
-      (req as unknown as Record<symbol, string>)[RAW_BODY] = body as string;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body as string);
-      } catch (error) {
-        done(
-          new TextError(400, `${JSON_REJECTION_PREFIX}${error instanceof Error ? error.message : String(error)}`),
-          undefined,
-        );
-        return;
-      }
-      done(null, parsed);
-    });
+    // The raw body text is kept: it is the request payload the trace
+    // captures, and a parse failure is a plain-text rejection.
+    scope.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      jsonContentParser((detail) => new TextError(400, `${JSON_REJECTION_PREFIX}${detail}`)),
+    );
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
       done(null, body);
     });

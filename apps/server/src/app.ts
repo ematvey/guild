@@ -1,15 +1,14 @@
-// Fastify app shell: the native platform routes (health, auth, chats/turns,
-// gateway, hub, registry, releases, projects, integrations, faro, web UI).
-// The Rust upstream and the M0 proxy-everything are retired: this process
-// serves the whole public surface; un-ported routes (routines, hooks,
-// internal — spec decision 8) answer the Rust not-found envelope.
+// Fastify app shell: health, the platform routes (auth, chats/turns,
+// gateway, hub, registry, releases, projects, integrations), the member
+// socket upgrade, Faro ingest and the web UI. Unmatched paths answer the
+// /api/v1 not-found envelope.
 
 import { createRequire } from "node:module";
 import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import type { Config } from "./config.js";
 import { PlatformContext } from "./platform/root-context.js";
-import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
+import { registerPlatformRoutes } from "./platform/http/register.js";
 import { attachWsUpgrade } from "./http/ws.js";
 import { wireWsSync } from "./chats/ws-sync.js";
 import { registerWebRoutes } from "./http/web.js";
@@ -34,14 +33,6 @@ declare module "fastify" {
     platform: PlatformContext;
   }
 }
-
-// Native route groups. Anything listed here is served by this process;
-// everything else answers the not-found handler below (deferred routes are
-// unreachable by design — spec decision 8).
-export const NATIVE_ROUTES = [
-  "/api/v1/health",
-  ...NATIVE_ROUTE_GROUPS.flatMap((g) => g.paths),
-];
 
 // Default body limit for ordinary JSON routes. The few upload surfaces set
 // their own larger limit on the route (releases 512 MiB, attachments 64 MiB,
@@ -69,26 +60,24 @@ export async function buildApp(config: Config) {
   await platform.runtime.start();
   platform.startScheduler();
 
-  // CORS: the tower-http layer's port — preflights answered before routing,
-  // ACAO rides for the allow-listed webview origins.
+  // CORS: preflights answered before routing, ACAO rides for the
+  // allow-listed webview origins.
   registerCors(app as unknown as Parameters<typeof registerCors>[0]);
 
-  // Native health route — same shape as the Rust one
-  //: {"status":"ok","version":...}.
+  // Health: {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
     status: "ok",
     version: GUILD_TS_SERVER_VERSION,
   }));
 
-  // Native platform routes (auth, org, events, attachments, OIDC, gateway,
-  // chats, hub, registry, integrations, …), registered in one encapsulated
-  // plugin so the error envelope and content parsers stay scoped.
+  // Platform routes (auth, org, events, attachments, OIDC, gateway, chats,
+  // hub, registry, integrations, …), registered in encapsulated plugins so
+  // the error envelope and content parsers stay scoped.
   await registerPlatformRoutes(app as unknown as FastifyInstance, platform);
 
-  // Hub core: the /api/v1/ws upgrade listener + the ws-ticket and
-  // machine-registry HTTP routes (the latter registered inside the platform
-  // plugin, see register.ts, so the M1 error envelope and content parsers
-  // apply). The upgrade listener is the server's ONLY 'upgrade' handler.
+  // The /api/v1/ws upgrade listener (the ws-ticket and machine-registry HTTP
+  // routes are registered inside the platform plugin, see register.ts). It
+  // is the server's ONLY 'upgrade' handler.
   platform.wsLog = (message) => logger.info({ ws: message }, "ws");
   attachWsUpgrade(app.server, platform, platform);
 
@@ -102,8 +91,7 @@ export async function buildApp(config: Config) {
   registerWebRoutes(app as unknown as FastifyInstance, config);
   registerFaroRoute(app as unknown as FastifyInstance, platform.config);
 
-  // Unmatched routes answer the not-found envelope; deferred surfaces
-  // (routines, hooks, internal — spec decision 8) are unreachable, cleanly.
+  // Unmatched routes answer the not-found envelope.
   app.setNotFoundHandler(async (_req, reply) => {
     void reply.status(404).type("application/json").send(
       JSON.stringify({ error: { code: "not_found", message: "no such route" } }),

@@ -29,9 +29,9 @@
         "body": "{\"password\":\"x\"}"
       },
       "response": {
-        "status": 422,
+        "status": 400,
         "headers": {},
-        "body": "Failed to deserialize the JSON body into the target type: missing field `email` at line 1 column 16"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"email is required\"}}"
       }
     },
     {
@@ -45,9 +45,9 @@
         "body": "{\"email\":\"m1cap-admin-07db71@example.test\"}"
       },
       "response": {
-        "status": 422,
+        "status": 400,
         "headers": {},
-        "body": "Failed to deserialize the JSON body into the target type: missing field `password` at line 1 column 43"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"password is required\"}}"
       }
     },
     {
@@ -63,7 +63,7 @@
       "response": {
         "status": 400,
         "headers": {},
-        "body": "Failed to parse the request body as JSON: key must be a string at line 1 column 2"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"request body is not valid JSON\"}}"
       }
     },
     {
@@ -77,7 +77,7 @@
       "response": {
         "status": 415,
         "headers": {},
-        "body": "Expected request with `Content-Type: application/json`"
+        "body": "{\"error\":{\"code\":\"unsupported_media_type\",\"message\":\"expected Content-Type: application/json\"}}"
       }
     },
     {
@@ -231,7 +231,7 @@
       "response": {
         "status": 400,
         "headers": {},
-        "body": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"request body is not valid JSON\"}}"
       }
     },
     {
@@ -464,7 +464,7 @@
       "response": {
         "status": 400,
         "headers": {},
-        "body": "Invalid URL: Cannot parse `id` with value `not-a-uuid`: UUID parsing failed: invalid character: found `n` at 0"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"id must be a UUID\"}}"
       }
     },
     {
@@ -995,7 +995,7 @@
       "response": {
         "status": 400,
         "headers": {},
-        "body": "Invalid URL: Cannot parse `id` with value `not-a-uuid`: UUID parsing failed: invalid character: found `n` at 0"
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"id must be a UUID\"}}"
       }
     }
   ]

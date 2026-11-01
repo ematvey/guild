@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { PlatformPool } from "../db.js";
-import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
+import { ApiError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
@@ -75,7 +75,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
 
   app.post("/api/v1/auth/login", async (req, reply) => {
     const body = requireJsonBody(req);
-    const fields = requireStringFields(body, ["email", "password"], (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+    const fields = requireStringFields(body, ["email", "password"]);
     const { emailKey, addressKey } = attemptKeys(req, fields["email"]!);
     if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
       throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
@@ -123,7 +123,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
   // the code IS the credential. Single-use and TTL-checked server-side.
   app.post("/api/v1/auth/pair", async (req, reply) => {
     const body = requireJsonBody(req);
-    const fields = requireStringFields(body, ["code"], (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0);
+    const fields = requireStringFields(body, ["code"]);
     const addressKey = `ip:${req.ip}`;
     if (addressThrottle.isLimited(addressKey)) {
       throw tooManyAttempts(addressThrottle.retryAfterSeconds(addressKey));
@@ -156,22 +156,10 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
     const user = await requireUser(ctx, req);
     const body = requireJsonBody(req);
     let ttl = 30;
-    const rawLength = (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0;
     if (body["ttl_minutes"] !== undefined) {
       const value = body["ttl_minutes"];
       if (typeof value !== "number" || !Number.isInteger(value)) {
-        const kind =
-          typeof value === "string"
-            ? `string "${value}"`
-            : typeof value === "number"
-              ? `floating point \`${value}\``
-              : value === null
-                ? "null"
-                : "map";
-        throw new TextError(
-          422,
-          `Failed to deserialize the JSON body into the target type: invalid type: ${kind}, expected i64 at line 1 column ${rawLength}`,
-        );
+        throw ApiError.badRequest("ttl_minutes must be an integer");
       }
       ttl = Math.min(Math.max(value, 1), 24 * 60);
     }

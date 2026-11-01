@@ -1,33 +1,57 @@
 // Transport-level request helpers over the domain error types: the Fastify
-// extractions (auth user, JSON body, query/path params) and the error
-// handler installation. The wire shapes themselves (ApiError, TextError,
-// rejection texts) live in platform/errors.ts — stores and services import
-// from there, never from this module.
+// extractions (auth user, admin user, JSON and binary bodies, query/path
+// params), the JSON content parser, the JSON reply, and the error handler
+// installation. The wire shapes themselves (ApiError, TextError) live in
+// platform/errors.ts — stores and services import from there, never from
+// this module.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { isUuid } from "../time.js";
-import {
-  ApiError,
-  TextError,
-  JSON_REJECTION_PREFIX,
-  invalidTypeError,
-  missingFieldError,
-  uuidPathError,
-} from "../errors.js";
+import { ApiError, TextError } from "../errors.js";
 import type { UserRow } from "../store/identity.js";
 import type { IdentityCtx } from "../route-contexts.js";
 
+/** Where the JSON content parser keeps the request's raw body text. */
+const RAW_BODY = Symbol("rawBody");
+
+/** The raw text of a JSON request body ("" when the body was not JSON). */
+export function rawJsonText(req: FastifyRequest): string {
+  return (req as unknown as Record<symbol, string | undefined>)[RAW_BODY] ?? "";
+}
+
+/** A content parser for `application/json` that keeps the raw text (see
+ *  rawJsonText) and turns a parse failure into `onError(detail)`. */
+export function jsonContentParser(
+  onError: (detail: string) => Error,
+): (req: FastifyRequest, body: string | Buffer, done: (err: Error | null, body?: unknown) => void) => void {
+  return (req, body, done) => {
+    const text = typeof body === "string" ? body : body.toString("utf8");
+    (req as unknown as Record<symbol, string>)[RAW_BODY] = text;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      done(onError(error instanceof Error ? error.message : String(error)), undefined);
+      return;
+    }
+    done(null, parsed);
+  };
+}
+
+/** A path parameter that must be a UUID, lowercased. */
 export function parseUuidParam(req: FastifyRequest, param: string): string {
-  const value = (req.params as Record<string, string>)[param] ?? "";
-  if (!isUuid(value)) throw uuidPathError(param, value);
+  const value = pathParam(req, param);
+  if (!isUuid(value)) throw ApiError.badRequest(`${param} must be a UUID`);
   return value.toLowerCase();
 }
 
-/** The authenticated user from the session table (AuthUser extractor). */
-export async function requireUser(
-  ctx: IdentityCtx,
-  req: FastifyRequest,
-): Promise<UserRow> {
+/** A path parameter as given ("" when absent). */
+export function pathParam(req: FastifyRequest, name: string): string {
+  return (req.params as Record<string, string | undefined>)[name] ?? "";
+}
+
+/** The authenticated user from the session table. */
+export async function requireUser(ctx: IdentityCtx, req: FastifyRequest): Promise<UserRow> {
   const header = req.headers.authorization;
   if (header === undefined) {
     throw ApiError.unauthorized("missing authorization header");
@@ -38,51 +62,70 @@ export async function requireUser(
   return ctx.identity.validateSession(header.slice("Bearer ".length));
 }
 
-export function requireAdmin(user: UserRow): UserRow {
+/** The authenticated user, who must be an org admin (403 otherwise). */
+export async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest): Promise<UserRow> {
+  const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;
 }
 
-/**
- * Parses the JSON body like axum's Json extractor: a missing/wrong
- * Content-Type is a 415 text rejection; an unparseable body is a 400 text
- * rejection (the raw body length feeds serde's column position).
- */
+/** A JSON object body: the request must say `Content-Type:
+ *  application/json` (415 otherwise) and carry an object (400 otherwise). */
 export function requireJsonBody(req: FastifyRequest): Record<string, unknown> {
-  const contentType = req.headers["content-type"]?.split(";")[0].trim().toLowerCase();
+  const contentType = req.headers["content-type"]?.split(";")[0]!.trim().toLowerCase();
   if (contentType !== "application/json") {
-    throw new TextError(415, "Expected request with `Content-Type: application/json`");
+    throw ApiError.unsupportedMediaType("expected Content-Type: application/json");
   }
   const body = req.body;
-  if (body === undefined || body === null || typeof body !== "object") {
-    // The custom parser already converts JSON failures to TextError; an
-    // empty body with a JSON content-type is the same rejection class.
-    throw new TextError(400, `${JSON_REJECTION_PREFIX}EOF while parsing an object at line 1 column 0`);
+  if (body === undefined || body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw ApiError.badRequest("request body must be a JSON object");
   }
   return body as Record<string, unknown>;
 }
 
-/** Typed-body variant: two required string fields (LoginRequest, ...). */
+/** The body of a route whose JSON body is optional: the parsed object, or
+ *  an empty one when there is no object body. */
+export function optionalJsonBody(req: FastifyRequest): Record<string, unknown> {
+  const body = req.body;
+  return body !== null && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)
+    ? (body as Record<string, unknown>)
+    : {};
+}
+
+/** Required string fields of a JSON body (400 when one is absent or not a
+ *  string). */
 export function requireStringFields(
   body: Record<string, unknown>,
   fields: [string, ...string[]],
-  rawLength: number,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const field of fields) {
     const value = body[field];
-    if (value === undefined) throw missingFieldError(field, rawLength);
-    if (typeof value !== "string") throw invalidTypeError(value, rawLength);
+    if (value === undefined) throw ApiError.badRequest(`${field} is required`);
+    if (typeof value !== "string") throw ApiError.badRequest(`${field} must be a string`);
     out[field] = value;
   }
   return out;
 }
 
-/** Query parameter as a string (Rust Query<HashMap<String, String>>). */
-export function queryParam(req: FastifyRequest, name: string): string | undefined {
+/** The request body as bytes (binary uploads; empty when absent). */
+export function bodyBytes(req: FastifyRequest): Buffer {
+  const body = req.body;
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body === "string") return Buffer.from(body);
+  return Buffer.alloc(0);
+}
+
+/** One query parameter (the first occurrence), undefined when absent. */
+export function queryParam(req: { url: string }, name: string): string | undefined {
   const url = new URL(req.url, "http://local");
   const value = url.searchParams.get(name);
   return value === null ? undefined : value;
+}
+
+/** Sends `value` as a JSON body. */
+export function sendJson(reply: FastifyReply, value: unknown): FastifyReply {
+  return reply.type("application/json").send(JSON.stringify(value));
 }
 
 /** Installs the error handling on the encapsulated scope. `renderApiError`
@@ -96,29 +139,25 @@ export function installErrorHandling(
   }),
 ): void {
   app.setErrorHandler((error: unknown, req, reply) => {
+    const send = (apiError: ApiError) => {
+      const rendered = renderApiError(apiError, req.url ?? "");
+      return reply.status(rendered.status).type("application/json").send(rendered.body);
+    };
     if (error instanceof ApiError) {
       if (error.status === 500) req.log.error(error);
-      const rendered = renderApiError(error, req.url ?? "");
-      return reply.status(rendered.status).type("application/json").send(rendered.body);
+      return send(error);
     }
     if (error instanceof TextError) {
       return reply.status(error.status).type("text/plain; charset=utf-8").send(error.body);
     }
     const code = (error as { code?: string }).code;
-    // fastify content-parser failures (invalid JSON body) — axum renders
-    // these as plain text with the parse-failure prefix.
+    // Fastify's own request rejections (unsupported media type, body too
+    // large, malformed body) keep their status.
     if (typeof code === "string" && code.startsWith("FST_ERR_CTP_")) {
-      req.log.error(error);
-      return reply
-        .status(400)
-        .type("text/plain; charset=utf-8")
-        .send(`${JSON_REJECTION_PREFIX}${(error as Error).message}`);
+      const status = (error as { statusCode?: number }).statusCode ?? 400;
+      return send(new ApiError(status, status === 413 ? "payload_too_large" : "bad_request", (error as Error).message));
     }
     req.log.error(error);
-    const rendered = renderApiError(new ApiError(500, "internal", "internal server error"), req.url ?? "");
-    return reply.status(rendered.status).type("application/json").send(rendered.body);
+    return send(ApiError.internal());
   });
-  // No custom not-found handler: unmatched methods/paths inside the native
-  // route groups must keep falling through to the proxy catch-all (Rust 404
-  // envelope), so per-area rollback stays "delete the TS route".
 }
