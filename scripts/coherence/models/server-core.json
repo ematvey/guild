@@ -194,7 +194,7 @@
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
+          "where": "apps/desktop/src/views/settings/sections/integration-config.tsx",
           "role": "ui"
         }
       ],
