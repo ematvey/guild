@@ -272,8 +272,9 @@ export function useOutgoing(deps: OutgoingDeps) {
       // lowers it here.
       store.mutate((r) => r.setCompacting(chatId));
       try {
-        if (await compactChat(chatId)) {
-          store.mutate((r) => r.compactStarted(chatId));
+        const started = await compactChat(chatId);
+        if (started !== null) {
+          store.mutate((r) => r.compactStarted(chatId, started.seq));
         } else {
           toast.info("No compaction was needed");
           store.mutate((r) => r.finishCompacting(chatId));

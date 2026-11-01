@@ -1005,6 +1005,12 @@ export class PostgresDurableStorage implements Storage {
             recordJsonText(write.value),
           ],
         );
+        // A compaction's start and end move the chat's `compacting` flag,
+        // also when the task ends without a summary in the same instant it
+        // began: the member-socket feed republishes the chat's view.
+        if (write.value.kind === "pi.compaction") {
+          await tx.query("SELECT pg_notify('guild_compaction', $1)", [String(write.value.conversationId)]);
+        }
         break;
       }
       case "submission":

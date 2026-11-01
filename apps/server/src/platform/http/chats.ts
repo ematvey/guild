@@ -28,6 +28,7 @@ import {
 import type { UserRow } from "../store/identity.js";
 import type { Chat } from "@guild/wire/rest";
 import { chatWire } from "../../chats/chat-wire.js";
+import { DEFAULT_CONTEXT_WINDOW } from "../../chats/context-usage.js";
 import { ThreadAgentLocked } from "../../harness/runtime.js";
 import { optionalUuidField, submitTurn } from "../../chats/submit-turn.js";
 
@@ -45,8 +46,6 @@ async function chatResponse(chats: ChatsCtx, orgId: string, userId: string, chat
   if (!row) throw new ApiError(404, "not_found", "no such chat");
   return chatWire(chats.hub, row);
 }
-
-const DEFAULT_CONTEXT_WINDOW = 128_000;
 
 const APPROVAL_EXPIRED_REASON = "expired — no turn was waiting for this approval";
 
@@ -439,7 +438,11 @@ export function registerChatsRoutes(
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getOwnChat(user.org_id, chatId, user);
     const taskId = await chats.runtime.compactChat(chatId);
-    return reply.status(200).send({ ok: true, task_id: taskId });
+    // A thread_state whose seq is above this one was captured after the
+    // task existed: its `compacting` flag reports this compaction, so a
+    // client that sees it lowered before this answer arrives ends its line.
+    const seq = await chats.threads.watermark();
+    return reply.status(200).send({ ok: true, task_id: taskId, seq });
   };
   // Deprecated alias: POST /api/v1/gateway/chat/:id/compact.
   app.post("/api/v1/gateway/chat/:id/compact", compactTurn);

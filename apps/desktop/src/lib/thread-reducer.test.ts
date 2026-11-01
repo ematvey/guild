@@ -637,6 +637,26 @@ describe("compacting flag from the server", () => {
     expect(r.applyState(flagged(3, false)).compacting).toBe(false);
   });
 
+  it("a compaction that settled before its request was answered ends on the answer", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    // The settlement's state (seq 5) beats the answer, which reserved seq 4.
+    expect(r.applyState(flagged(5, false)).compacting).toBe(true);
+    expect(r.compactStarted("c1", 4).compacting).toBe(false);
+  });
+
+  it("a lowered state older than the answer leaves the line to the next state", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [go], "", "", false));
+    r.setCompacting("c1");
+    expect(r.applyState(flagged(2, false)).compacting).toBe(true);
+    expect(r.compactStarted("c1", 4).compacting).toBe(true);
+    expect(r.applyState(flagged(6, false)).compacting).toBe(false);
+  });
+
   it("shows a compaction this client did not start, for its own chat only", () => {
     const r = createThreadReducer();
     r.open("c1");

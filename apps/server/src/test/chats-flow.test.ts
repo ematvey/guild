@@ -779,7 +779,9 @@ describe("gateway/chat turn flow", () => {
       payload: {},
     });
     expect(compact.statusCode).toBe(200);
-    expect(JSON.parse(compact.body)).toEqual({ ok: true, task_id: null });
+    const body = JSON.parse(compact.body) as { ok: boolean; task_id: number | null; seq: number };
+    expect(body).toMatchObject({ ok: true, task_id: null });
+    expect(body.seq).toBeGreaterThan(0);
   }, TEST_TIMEOUT);
 
   it("waits for a manual compaction's queued summary write to be placed", async () => {

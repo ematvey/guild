@@ -199,15 +199,15 @@ export async function withdrawQueued(chatId: string, messageId: string): Promise
 /** Starts a manual compaction. True when the server started a task; its
  *  outcome reaches the view as the durable compaction event in the thread
  *  state. False when there was nothing to compact. */
-export async function compactChat(chatId: string): Promise<boolean> {
-  const started = await request<{ task_id: number | null }>("POST", `${thread(chatId)}/compact`, undefined, {
+export async function compactChat(chatId: string): Promise<{ seq?: number } | null> {
+  const started = await request<{ task_id: number | null; seq?: number }>("POST", `${thread(chatId)}/compact`, undefined, {
     headers: clientHeaders(),
   });
-  if (started.task_id === null) return false;
+  if (started.task_id === null) return null;
   if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) {
     throw new ApiError("invalid_response", "Invalid compaction task response", 200);
   }
-  return true;
+  return typeof started.seq === "number" ? { seq: started.seq } : {};
 }
 
 /** The chat's agent and whether the picker may move it. A thread belongs to

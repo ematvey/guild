@@ -764,8 +764,10 @@ export interface ThreadReducer {
   setCompacting(chatId: string | null): ApplyResult;
   /** The server accepted the manual compaction: from here a state that
    * reports no compaction running ends the line, with or without a
-   * summary. */
-  compactStarted(chatId: string): ApplyResult;
+   * summary. `seq` is the watermark the server reserved after creating the
+   * task: a lowered state newer than it, already applied, ends the line
+   * now. */
+  compactStarted(chatId: string, seq?: number): ApplyResult;
   /** A task outcome clears only its own chat's pending indicator. */
   finishCompacting(chatId: string): ApplyResult;
 }
@@ -784,6 +786,10 @@ export function createThreadReducer(): ThreadReducer {
   let compactingChat: string | null = null;
   /** The armed /compact's request was accepted by the server. */
   let compactPosted = false;
+  /** Newest seq of a state that reported no compaction while the armed
+   *  request was still unanswered: the compaction may have settled before
+   *  its answer arrived. */
+  let compactLoweredSeq: number | null = null;
   /** Chats whose latest state reported a running compaction. */
   const serverCompacting = new Set<string>();
   const compactingOf = (cid: string): boolean => compactingChat === cid || serverCompacting.has(cid);
@@ -1224,6 +1230,9 @@ export function createThreadReducer(): ThreadReducer {
       if (state.compacting !== undefined) {
         if (state.compacting) serverCompacting.add(cid);
         else serverCompacting.delete(cid);
+        if (compactingChat === cid && !state.compacting && !compactPosted) {
+          compactLoweredSeq = Math.max(compactLoweredSeq ?? 0, state.seq);
+        }
         if (compactingChat === cid && (state.compacting || compactPosted)) compactingChat = null;
       }
       return result(v);
@@ -1417,10 +1426,14 @@ export function createThreadReducer(): ThreadReducer {
         compactingChat = chatId;
       }
       compactPosted = false;
+      compactLoweredSeq = null;
       return result(viewOf(current));
     },
-    compactStarted(chatId) {
-      if (compactingChat === chatId) compactPosted = true;
+    compactStarted(chatId, seq) {
+      if (compactingChat !== chatId) return result(viewOf(current));
+      // A state captured after the task existed already said it was over.
+      if (seq !== undefined && compactLoweredSeq !== null && compactLoweredSeq > seq) compactingChat = null;
+      else compactPosted = true;
       return result(viewOf(current));
     },
     finishCompacting(chatId) {
