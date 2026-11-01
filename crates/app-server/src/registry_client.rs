@@ -122,6 +122,9 @@ pub async fn install_skill(
     global: bool,
     publisher: &str,
 ) -> Result<crate::registry_client::SkillEntry, CloudError> {
+    if !valid_slug(slug) {
+        return Err(CloudError::Request(format!("invalid skill slug {slug:?}")));
+    }
     let base = cloud.base_url.trim_end_matches('/');
     let version = match version {
         Some(v) => v.to_string(),
@@ -175,71 +178,98 @@ pub async fn install_skill(
     } else {
         project_dir.join(".agents").join("skills").join(slug)
     };
-    // Extract into a sibling temp dir and swap only after a clean extract:
-    // extracting in place would leave the previous version's files behind
-    // (and a partial failure a mixed tree) when the new bundle drops files.
-    let parent = dest
-        .parent()
-        .ok_or_else(|| CloudError::Request("skill dir has no parent".into()))?;
-    let staging = parent.join(format!(
-        ".{}-update-{}",
-        slug,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0)
-    ));
-    // The staging dir never outlives a failure (a leftover would be read as
-    // an installed skill), and the provenance sidecar is written INTO
-    // staging before the swap: the installed dir always carries it, so a
-    // later uninstall never refuses a Guild-installed skill.
-    let _ = std::fs::remove_dir_all(&staging);
-    let staged = registry::extract(&bytes, &staging)
-        .map_err(|e| CloudError::Request(format!("extract failed: {e}")))
-        .and_then(|manifest| {
-            let provenance = SkillProvenance {
-                source: "registry".into(),
-                slug: manifest.slug.clone(),
-                version: manifest.version.clone(),
-                review_status: "approved".into(),
-                publisher: publisher.into(),
-                installed_at: chrono::Utc::now().to_rfc3339(),
-                bundle_hash: format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
-                ..Default::default()
-            };
-            crate::registry_client::write_sidecar(&staging, &provenance)
-                .map_err(|e| CloudError::Request(format!("sidecar write failed: {e}")))?;
-            Ok(manifest)
-        });
-    let manifest = match staged {
-        Ok(manifest) => manifest,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(e);
+    let bundle_hash = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    let publisher = publisher.to_string();
+    let manifest = install_bundle(bytes.to_vec(), dest.clone(), move |manifest| {
+        SkillProvenance {
+            source: "registry".into(),
+            slug: manifest.slug.clone(),
+            version: manifest.version.clone(),
+            review_status: "approved".into(),
+            publisher,
+            installed_at: chrono::Utc::now().to_rfc3339(),
+            bundle_hash,
+            ..Default::default()
         }
-    };
-    let previous = parent.join(format!(".{}-previous", slug));
-    let _ = std::fs::remove_dir_all(&previous);
-    let moved_old = dest.exists();
-    if moved_old {
-        if let Err(e) = std::fs::rename(&dest, &previous) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(CloudError::Request(format!("swap failed: {e}")));
-        }
-    }
-    if let Err(e) = std::fs::rename(&staging, &dest) {
-        if moved_old {
-            let _ = std::fs::rename(&previous, &dest);
-        }
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(CloudError::Request(format!("swap failed: {e}")));
-    }
-    let _ = std::fs::remove_dir_all(&previous);
+    })
+    .await
+    .map_err(CloudError::Request)?;
     Ok(crate::registry_client::SkillEntry {
         name: manifest.slug,
         description: manifest.description,
         path: dest.join("SKILL.md"),
     })
+}
+
+/// Slug charset for skill dirs: lowercase alphanumerics, `-`, `_` (the
+/// registry manifest charset) — a path-escape slug never reaches the
+/// filesystem.
+pub fn valid_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= 128
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Installs one skill bundle as `dest` (`<skills dir>/<slug>`), on the
+/// blocking pool: extract into a staging sibling, write the provenance
+/// sidecar (built from the bundle manifest) into staging, move the
+/// previous install aside, rename staging into place, and drop the
+/// previous install. Any failure removes staging and restores the previous
+/// install, so the dir is never torn down or a mixed old/new tree, and an
+/// installed dir always carries provenance. Returns the bundle manifest.
+pub async fn install_bundle(
+    bytes: Vec<u8>,
+    dest: PathBuf,
+    provenance: impl FnOnce(&BundleManifest) -> SkillProvenance + Send + 'static,
+) -> Result<BundleManifest, String> {
+    let slug = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !valid_slug(&slug) {
+        return Err(format!("invalid skill slug {slug:?}"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let parent = dest.parent().ok_or("skill dir has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("{slug}: {e}"))?;
+        let nonce = uuid::Uuid::now_v7().simple();
+        let staging = parent.join(format!(".{slug}-staging-{nonce}"));
+        let previous = parent.join(format!(".{slug}-previous-{nonce}"));
+        let staged = registry::extract(&bytes, &staging)
+            .map_err(|e| format!("{slug}: extract failed: {e}"))
+            .and_then(|manifest| {
+                write_sidecar(&staging, &provenance(&manifest))
+                    .map_err(|e| format!("{slug}: sidecar write failed: {e}"))?;
+                Ok(manifest)
+            });
+        let manifest = match staged {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(e);
+            }
+        };
+        let moved_old = dest.exists();
+        if moved_old {
+            if let Err(e) = std::fs::rename(&dest, &previous) {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(format!("{slug}: replacing the old install failed: {e}"));
+            }
+        }
+        if let Err(e) = std::fs::rename(&staging, &dest) {
+            if moved_old {
+                let _ = std::fs::rename(&previous, &dest);
+            }
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!("{slug}: install failed: {e}"));
+        }
+        let _ = std::fs::remove_dir_all(&previous);
+        Ok(manifest)
+    })
+    .await
+    .map_err(|e| format!("skill install task failed: {e}"))?
 }
 
 /// Removes a previously installed skill dir. Only dirs whose provenance
@@ -380,4 +410,62 @@ pub fn parse_sidecar(body: &str) -> SkillProvenance {
     }
 }
 
-// ---------- /name explicit invocation ----------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundle(dir: &Path, slug: &str, body: &str) -> Vec<u8> {
+        let src = dir.join("src").join(slug);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("SKILL.md"),
+            format!("---\nname: {slug}\ndescription: t\n---\n{body}"),
+        )
+        .unwrap();
+        registry::pack_skill(&src, "v1").unwrap().0
+    }
+
+    /// A good bundle replaces the install whole (sidecar included); a
+    /// corrupt bundle or a path-escape slug leaves the previous install
+    /// and no staging debris behind.
+    #[tokio::test]
+    async fn install_bundle_swaps_whole_and_rolls_back_on_failure() {
+        let dir = std::env::temp_dir().join(format!("guild-install-{}", uuid::Uuid::now_v7()));
+        let skills = dir.join("skills");
+        let dest = skills.join("demo");
+        let prov = |_: &BundleManifest| SkillProvenance {
+            source: "registry".into(),
+            slug: "demo".into(),
+            ..Default::default()
+        };
+        install_bundle(bundle(&dir, "demo", "ONE"), dest.clone(), prov)
+            .await
+            .unwrap();
+        install_bundle(bundle(&dir, "demo", "TWO"), dest.clone(), prov)
+            .await
+            .unwrap();
+        assert!(std::fs::read_to_string(dest.join("SKILL.md"))
+            .unwrap()
+            .contains("TWO"));
+        assert!(read_sidecar(&dest).is_some());
+
+        let err = install_bundle(b"not a bundle".to_vec(), dest.clone(), prov)
+            .await
+            .unwrap_err();
+        assert!(err.contains("extract failed"), "{err}");
+        assert!(std::fs::read_to_string(dest.join("SKILL.md"))
+            .unwrap()
+            .contains("TWO"));
+        let debris: Vec<_> = std::fs::read_dir(&skills)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .filter(|n| n != "demo")
+            .collect();
+        assert!(debris.is_empty(), "{debris:?}");
+
+        let escape = install_bundle(bundle(&dir, "x", "X"), skills.join(".."), prov).await;
+        assert!(escape.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

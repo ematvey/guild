@@ -10,7 +10,6 @@
 
 use crate::cloud::CloudClient;
 use crate::registry_client::{self, SkillProvenance};
-use guild_core::registry;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -39,21 +38,8 @@ pub async fn fetch_bundle(cloud: &CloudClient, url: &str) -> Result<Vec<u8>, Str
     Ok(bytes.to_vec())
 }
 
-/// Slug charset for sync targets: lowercase alphanumerics, `-`, `_` (the
-/// registry manifest charset) — a path-escape slug never reaches the
-/// filesystem.
-fn valid_slug(slug: &str) -> bool {
-    !slug.is_empty()
-        && slug.len() <= 128
-        && slug
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
-}
-
-/// Installs a skill dir in a staging sibling first: a failing extract or
-/// hash check must never leave the previous version's tree torn down or a
-/// mixed old/new tree on disk. The sidecar is written into staging before
-/// the swap, so an installed dir always carries provenance.
+/// Converges `<root>/.agents/skills` to the payload's install list and
+/// returns the `{updated, removed, failed}` summary.
 pub async fn sync<F, Fut>(
     payload: &serde_json::Value,
     fetch: F,
@@ -69,17 +55,13 @@ where
     let mut removed: Vec<String> = Vec::new();
     let mut failed: Vec<serde_json::Value> = Vec::new();
     let mut desired: BTreeSet<String> = BTreeSet::new();
-    let staging_timer = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
     // Per-entry isolation: one bad entry (bad slug, missing url/sha,
     // download, hash, extract, or swap failure) becomes an entry in
     // `failed` — the remaining entries still install and the removal phase
     // always runs, so converge never wedges on a single skill.
-    for (idx, entry) in skills.iter().enumerate() {
+    for entry in skills {
         let slug = entry["slug"].as_str().unwrap_or("?");
-        let outcome = install_entry(entry, slug, idx, staging_timer, &fetch, &skills_dir).await;
+        let outcome = install_entry(entry, slug, &fetch, &skills_dir).await;
         // A failed entry is still a desired slug: its last-known-good
         // install stays on disk and must not be swept by the removal phase.
         desired.insert(slug.to_string());
@@ -125,15 +107,12 @@ where
     Ok(serde_json::json!({ "updated": updated, "removed": removed, "failed": failed }))
 }
 
-/// Installs one payload entry: download, sha-verify, extract into a staging
-/// sibling (off the async workers — the decompressed tree can be large),
-/// write the provenance sidecar, then swap the old install out. A failure
-/// anywhere leaves the previous install untouched.
+/// Installs one payload entry: download, sha-verify, then
+/// [`registry_client::install_bundle`]. A failure anywhere leaves the
+/// previous install untouched.
 async fn install_entry<F, Fut>(
     entry: &serde_json::Value,
     slug: &str,
-    idx: usize,
-    staging_timer: u32,
     fetch: &F,
     skills_dir: &Path,
 ) -> Result<(), String>
@@ -141,7 +120,7 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<Vec<u8>, String>>,
 {
-    if !valid_slug(slug) {
+    if !registry_client::valid_slug(slug) {
         return Err(format!("invalid skill slug {slug:?}"));
     }
     let version = entry["version"].as_str().unwrap_or_default().to_string();
@@ -168,7 +147,6 @@ where
             "{slug}: bundle sha256 mismatch (expected {expected}, got {actual})"
         ));
     }
-    let staging = skills_dir.join(format!(".{}-sync-{}", slug, staging_timer as usize + idx));
     let provenance = SkillProvenance {
         source: "registry".into(),
         slug: slug.to_string(),
@@ -179,32 +157,9 @@ where
         bundle_hash: format!("sha256:{actual}"),
         ..Default::default()
     };
-    let skills_dir = skills_dir.to_path_buf();
-    let slug_c = slug.to_string();
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let slug = slug_c;
-        let _ = std::fs::remove_dir_all(&staging);
-        if let Err(e) = registry::extract(&bytes, &staging) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("{slug}: extract failed: {e}"));
-        }
-        if let Err(e) = registry_client::write_sidecar(&staging, &provenance) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("{slug}: sidecar write failed: {e}"));
-        }
-        let dest = skills_dir.join(&slug);
-        if dest.is_dir() {
-            std::fs::remove_dir_all(&dest)
-                .map_err(|e| format!("{slug}: replacing the old install failed: {e}"))?;
-        }
-        if let Err(e) = std::fs::rename(&staging, &dest) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("{slug}: install failed: {e}"));
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("{slug}: install task failed: {e}"))?
+    registry_client::install_bundle(bytes, skills_dir.join(slug), move |_| provenance)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]
