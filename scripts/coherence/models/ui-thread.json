@@ -226,6 +226,16 @@
       "role": "ui"
     },
     {
+      "where": "apps/desktop/src/views/settings/sections/model-providers.tsx",
+      "concept": "gateway-route",
+      "role": "ui"
+    },
+    {
+      "where": "apps/desktop/src/views/settings/sections/model-routes.tsx",
+      "concept": "gateway-route",
+      "role": "ui"
+    },
+    {
       "where": "apps/desktop/src/views/settings/sections/MachineSection.tsx",
       "concept": "machine",
       "role": "ui"
