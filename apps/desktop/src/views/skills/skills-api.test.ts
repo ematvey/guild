@@ -93,7 +93,7 @@ describe("skillsSave (the editor's save target)", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ error: "slug_taken", message: "a skill with this slug already exists" }), {
+        new Response(JSON.stringify({ error: { code: "slug_taken", message: "a skill with this slug already exists" } }), {
           status: 409,
           headers: { "content-type": "application/json" },
         }),

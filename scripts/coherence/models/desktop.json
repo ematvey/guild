@@ -117,15 +117,21 @@
           "role": "domain"
         },
         {
-          "where": "apps/desktop/src/views/settings/admin-api.ts",
-          "role": "ui"
+          "where": "apps/desktop/src/lib/api/request.ts",
+          "role": "wire"
         },
         {
           "where": "apps/desktop/src/App.tsx",
           "role": "ui"
         }
       ],
-      "translations": []
+      "translations": [
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/desktop/src/lib/api/request.ts"
+        }
+      ]
     },
     {
       "id": "member-socket",

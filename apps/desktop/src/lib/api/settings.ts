@@ -2,28 +2,7 @@
 // integrations, registry and usage. Views render; this module owns every
 // endpoint path so a settings view never names one.
 
-import { apiUrl, getToken } from "../session";
-
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = getToken();
-  const res = await fetch(apiUrl(path), {
-    method,
-    headers: {
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(
-      (v as { error?: { message?: string } })?.error?.message ?? res.statusText,
-    );
-  }
-  if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  return text ? (JSON.parse(text) as T) : (undefined as T);
-}
+import { request, requestResponse } from "./request";
 
 /** The fixed GET paths the settings sections cache. */
 export const SETTINGS_PATHS = {
@@ -114,23 +93,12 @@ export function postPushTest(): Promise<{ ok: boolean; delivered: number }> {
 }
 
 export async function uploadOrgLogo(file: File): Promise<{ logo_url: string }> {
-  const token = getToken();
-  const res = await fetch(
-    apiUrl(`${SETTINGS_PATHS.org}/logo?content_type=${encodeURIComponent(file.type)}`),
-    {
-      method: "PUT",
-      headers: {
-        "content-type": "application/octet-stream",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-      body: file,
-    },
+  const res = await requestResponse(
+    "PUT",
+    `${SETTINGS_PATHS.org}/logo?content_type=${encodeURIComponent(file.type)}`,
+    { body: file, headers: { "content-type": "application/octet-stream" } },
   );
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error((v as { error?: { message?: string } })?.error?.message ?? res.statusText);
-  }
-  return res.json() as Promise<{ logo_url: string }>;
+  return (await res.json()) as { logo_url: string };
 }
 
 export function deleteOrgLogo(): Promise<void> {

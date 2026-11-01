@@ -5,7 +5,7 @@
 //! only when nothing is cached yet.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./admin-api";
+import { request } from "../../lib/api/request";
 
 const cache = new Map<string, unknown>();
 
@@ -81,7 +81,7 @@ export function useCachedGet<T>(path: string | null): {
     const mine = ++seq.current;
     const epoch = currentCacheEpoch();
     setSettled(false);
-    api<T>("GET", path)
+    request<T>("GET", path)
       .then((r) => {
         if (seq.current !== mine || cacheEpochChanged(epoch)) return;
         cache.set(path, r);

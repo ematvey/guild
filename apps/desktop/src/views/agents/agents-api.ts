@@ -1,9 +1,8 @@
 // Client for the persistent-agents API (docs/specs/2026-10-18-persistent-
-// agents.md, "API surface"). Shapes mirror the design's data model; the
-// server owns the wire truth, so list responses accept both a bare array
-// and a keyed envelope.
+// agents.md, "API surface"). Shapes mirror the design's data model; every
+// response is the server's keyed envelope (`{agents: [...]}`, `{agent}`).
 
-import { apiUrl, getToken } from "../../lib/session";
+import { request, requestResponse } from "../../lib/api/request";
 import type {
   AgentStatus,
   AgentVisibility,
@@ -11,66 +10,9 @@ import type {
   RunTrigger,
 } from "./agents-route";
 
-export class AgentsApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "AgentsApiError";
-  }
-}
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${getToken()}`);
-  if (init.body !== undefined && !headers.has("content-type"))
-    headers.set("content-type", "application/json");
-  const res = await fetch(apiUrl(path), { ...init, headers });
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const body = (await res.json()) as {
-        error?: { message?: string } | string;
-        message?: string;
-      };
-      if (typeof body.error === "string") message = body.error;
-      else if (body.error?.message) message = body.error.message;
-      else if (body.message) message = body.message;
-    } catch {
-      // Non-JSON error body: keep the status text.
-    }
-    throw new AgentsApiError(message || `Request failed (${res.status})`, res.status);
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
-
 /** Authed binary/blob request (file preview and download). */
-export async function agentFileResponse(path: string): Promise<Response> {
-  const res = await fetch(apiUrl(path), {
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) throw new AgentsApiError(res.statusText, res.status);
-  return res;
-}
-
-function oneOf<T>(value: unknown, key: string): T {
-  if (value && typeof value === "object" && key in value) {
-    return (value as Record<string, T>)[key]!;
-  }
-  return value as T;
-}
-
-function listOf<T>(value: unknown, ...keys: string[]): T[] {
-  if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === "object") {
-    for (const key of keys) {
-      const found = (value as Record<string, unknown>)[key];
-      if (Array.isArray(found)) return found as T[];
-    }
-  }
-  return [];
+export function agentFileResponse(path: string): Promise<Response> {
+  return requestResponse("GET", path);
 }
 
 export interface Agent {
@@ -254,11 +196,11 @@ const agentBase = (id: string) => `/api/v1/agents/${encodeURIComponent(id)}`;
 
 export async function listAgents(includeArchived = false): Promise<Agent[]> {
   const query = includeArchived ? "?include_archived=1" : "";
-  return listOf<Agent>(await request<unknown>(`/api/v1/agents${query}`), "agents");
+  return (await request<{ agents: Agent[] }>("GET", `/api/v1/agents${query}`)).agents;
 }
 
 export async function getAgent(id: string): Promise<Agent> {
-  return oneOf<Agent>(await request<unknown>(agentBase(id)), "agent");
+  return (await request<{ agent: Agent }>("GET", agentBase(id))).agent;
 }
 
 export interface TeamOption {
@@ -267,79 +209,51 @@ export interface TeamOption {
 }
 
 export async function listMyTeams(): Promise<TeamOption[]> {
-  const body = await request<{ teams: TeamOption[] }>("/api/v1/skills/teams");
+  const body = await request<{ teams: TeamOption[] }>("GET", "/api/v1/skills/teams");
   return body.teams;
 }
 
 export async function createAgent(input: CreateAgentInput): Promise<Agent> {
-  return oneOf<Agent>(
-    await request<unknown>("/api/v1/agents", {
-      method: "POST",
-      body: JSON.stringify(input),
-    }),
-    "agent",
-  );
+  return (await request<{ agent: Agent }>("POST", "/api/v1/agents", input)).agent;
 }
 
 export async function updateAgent(
   id: string,
   input: UpdateAgentInput,
 ): Promise<Agent> {
-  return oneOf<Agent>(
-    await request<unknown>(agentBase(id), {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    }),
-    "agent",
-  );
+  return (await request<{ agent: Agent }>("PATCH", agentBase(id), input)).agent;
 }
 
 export async function archiveAgent(id: string): Promise<Agent> {
-  return oneOf<Agent>(
-    await request<unknown>(`${agentBase(id)}/archive`, { method: "POST" }),
-    "agent",
-  );
+  return (await request<{ agent: Agent }>("POST", `${agentBase(id)}/archive`)).agent;
 }
 
 export async function restoreAgent(id: string): Promise<Agent> {
-  return oneOf<Agent>(
-    await request<unknown>(`${agentBase(id)}/restore`, { method: "POST" }),
-    "agent",
-  );
+  return (await request<{ agent: Agent }>("POST", `${agentBase(id)}/restore`)).agent;
 }
 
 export async function exportAgent(id: string): Promise<unknown> {
-  const body = await request<{ export: unknown }>(`${agentBase(id)}/export`);
+  const body = await request<{ export: unknown }>("GET", `${agentBase(id)}/export`);
   return body.export;
 }
 
 export async function purgeAgent(id: string, force = false): Promise<void> {
-  await request<{ purged: boolean }>(`${agentBase(id)}/purge${force ? "?force=1" : ""}`, {
-    method: "POST",
-  });
+  await request<{ purged: boolean }>("POST", `${agentBase(id)}/purge${force ? "?force=1" : ""}`);
 }
 
 export async function deleteAgent(id: string): Promise<void> {
-  await request<void>(agentBase(id), { method: "DELETE" });
+  await request<void>("DELETE", agentBase(id));
 }
 
 export async function listAgentThreads(id: string): Promise<AgentThread[]> {
-  return listOf<AgentThread>(
-    await request<unknown>(`${agentBase(id)}/threads`),
-    "threads",
-  );
+  return (await request<{ threads: AgentThread[] }>("GET", `${agentBase(id)}/threads`)).threads;
 }
 
 export async function getAgentThread(
   id: string,
   threadId: string,
 ): Promise<AgentThread> {
-  return oneOf<AgentThread>(
-    await request<unknown>(
-      `${agentBase(id)}/threads/${encodeURIComponent(threadId)}`,
-    ),
-    "thread",
-  );
+  return (await request<{ thread: AgentThread }>("GET", `${agentBase(id)}/threads/${encodeURIComponent(threadId)}`)).thread;
 }
 
 
@@ -355,13 +269,7 @@ export async function createAgentThread(
   id: string,
   title?: string,
 ): Promise<AgentThread> {
-  return oneOf<AgentThread>(
-    await request<unknown>(`${agentBase(id)}/threads`, {
-      method: "POST",
-      body: JSON.stringify(title ? { title } : {}),
-    }),
-    "thread",
-  );
+  return (await request<{ thread: AgentThread }>("POST", `${agentBase(id)}/threads`, title ? { title } : {})).thread;
 }
 
 /** Sends one message into an agent thread. The server may stream SSE; this
@@ -377,25 +285,13 @@ export async function sendAgentTurn(
     send_mode?: "queue" | "steer";
   },
 ): Promise<void> {
-  const res = await fetch(apiUrl(`${agentBase(id)}/turns`), {
-    method: "POST",
+  const res = await requestResponse("POST", `${agentBase(id)}/turns`, {
+    body: JSON.stringify(input),
     headers: {
-      authorization: `Bearer ${getToken()}`,
       "content-type": "application/json",
       accept: "text/event-stream, application/json",
     },
-    body: JSON.stringify(input),
   });
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      message = body.error?.message ?? message;
-    } catch {
-      // Keep the status text.
-    }
-    throw new AgentsApiError(message, res.status);
-  }
   // Drain an SSE body so the server-side turn settles; JSON responses have
   // no body to drain.
   const reader = res.body?.getReader();
@@ -407,23 +303,15 @@ export async function sendAgentTurn(
 }
 
 export async function listAgentRuns(id: string): Promise<AgentRun[]> {
-  return listOf<AgentRun>(
-    await request<unknown>(`${agentBase(id)}/runs`),
-    "runs",
-  );
+  return (await request<{ runs: AgentRun[] }>("GET", `${agentBase(id)}/runs`)).runs;
 }
 
 export async function getRun(runId: string): Promise<AgentRun> {
-  return oneOf<AgentRun>(
-    await request<unknown>(`/api/v1/runs/${encodeURIComponent(runId)}`),
-    "run",
-  );
+  return (await request<{ run: AgentRun }>("GET", `/api/v1/runs/${encodeURIComponent(runId)}`)).run;
 }
 
 export async function listRunChildren(runId: string): Promise<AgentRun[]> {
-  const body = await request<{ children: AgentRun[] }>(
-    `/api/v1/runs/${encodeURIComponent(runId)}/children`,
-  );
+  const body = await request<{ children: AgentRun[] }>("GET", `/api/v1/runs/${encodeURIComponent(runId)}/children`);
   return body.children;
 }
 
@@ -443,43 +331,25 @@ export async function listActivity(
   if (filters.trigger && filters.trigger !== "all")
     query.set("trigger", filters.trigger);
   const suffix = query.toString() ? `?${query}` : "";
-  return listOf<AgentRun>(
-    await request<unknown>(`/api/v1/activity${suffix}`),
-    "runs",
-    "activity",
-  );
+  return (await request<{ activity: AgentRun[] }>("GET", `/api/v1/activity${suffix}`)).activity;
 }
 
 export async function listRoutines(id: string): Promise<AgentRoutine[]> {
-  return listOf<AgentRoutine>(
-    await request<unknown>(`${agentBase(id)}/routines`),
-    "routines",
-  );
+  return (await request<{ routines: AgentRoutine[] }>("GET", `${agentBase(id)}/routines`)).routines;
 }
 
 export async function getRoutine(
   id: string,
   routineId: string,
 ): Promise<AgentRoutine> {
-  return oneOf<AgentRoutine>(
-    await request<unknown>(
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-    ),
-    "routine",
-  );
+  return (await request<{ routine: AgentRoutine }>("GET", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`)).routine;
 }
 
 export async function createRoutine(
   id: string,
   input: RoutineInput,
 ): Promise<AgentRoutine> {
-  return oneOf<AgentRoutine>(
-    await request<unknown>(`${agentBase(id)}/routines`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    }),
-    "routine",
-  );
+  return (await request<{ routine: AgentRoutine }>("POST", `${agentBase(id)}/routines`, input)).routine;
 }
 
 export async function updateRoutine(
@@ -487,47 +357,33 @@ export async function updateRoutine(
   routineId: string,
   input: Partial<RoutineInput>,
 ): Promise<AgentRoutine> {
-  return oneOf<AgentRoutine>(
-    await request<unknown>(
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-      { method: "PATCH", body: JSON.stringify(input) },
-    ),
-    "routine",
-  );
+  return (await request<{ routine: AgentRoutine }>("PATCH", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`, input)).routine;
 }
 
 export async function deleteRoutine(
   id: string,
   routineId: string,
 ): Promise<void> {
-  await request<void>(
-    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-    { method: "DELETE" },
-  );
+  await request<void>("DELETE", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`);
 }
 
 export async function runRoutine(
   id: string,
   routineId: string,
-): Promise<AgentRun | null> {
-  const value = await request<unknown>(
-    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
-    { method: "POST" },
-  );
-  if (value === null || value === undefined) return null;
-  return oneOf<AgentRun>(value, "run");
+): Promise<AgentRun> {
+  return (
+    await request<{ run: AgentRun }>(
+      "POST",
+      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
+    )
+  ).run;
 }
 
 export async function listRoutineRuns(
   id: string,
   routineId: string,
 ): Promise<AgentRun[]> {
-  return listOf<AgentRun>(
-    await request<unknown>(
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/runs`,
-    ),
-    "runs",
-  );
+  return (await request<{ runs: AgentRun[] }>("GET", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/runs`)).runs;
 }
 
 export async function listAgentFiles(
@@ -547,13 +403,7 @@ export async function listAgentDir(
 ): Promise<AgentDirListing> {
   const query = new URLSearchParams({ path });
   if (hidden) query.set("hidden", "1");
-  const raw = await request<unknown>(`${agentBase(id)}/files?${query}`);
-  const record = (raw ?? {}) as Record<string, unknown>;
-  return {
-    path: typeof record.path === "string" ? record.path : path,
-    entries: listOf<AgentFileEntry>(raw, "entries", "files"),
-    ...(typeof record.file === "string" ? { file: record.file } : {}),
-  };
+  return request<AgentDirListing>("GET", `${agentBase(id)}/files?${query}`);
 }
 
 export async function getAgentFileContent(
@@ -561,7 +411,7 @@ export async function getAgentFileContent(
   path: string,
 ): Promise<AgentFileContent> {
   const query = new URLSearchParams({ path });
-  return request<AgentFileContent>(`${agentBase(id)}/files/content?${query}`);
+  return request<AgentFileContent>("GET", `${agentBase(id)}/files/content?${query}`);
 }
 
 export function agentFileContentUrl(id: string, path: string): string {
@@ -575,10 +425,7 @@ export function agentFileDownloadUrl(id: string, path: string): string {
 /** The org's tool catalog. Servers that predate the endpoint answer 404;
  *  the caller falls back to the safe baseline so creation still works. */
 export async function listAgentTools(): Promise<AgentToolInfo[]> {
-  return listOf<AgentToolInfo>(
-    await request<unknown>("/api/v1/agents/tools"),
-    "tools",
-  );
+  return (await request<{ tools: AgentToolInfo[] }>("GET", "/api/v1/agents/tools")).tools;
 }
 
 /** The spec's safe baseline: workspace read/write/list, conversation search,
@@ -808,9 +655,7 @@ function activityQuery(filters: ActivityQuery): string {
 export async function listTraces(
   filters: ActivityQuery = {},
 ): Promise<{ traces: TraceRow[]; total: number }> {
-  return request<{ traces: TraceRow[]; total: number }>(
-    `/api/v1/activity/traces${activityQuery(filters)}`,
-  );
+  return request<{ traces: TraceRow[]; total: number }>("GET", `/api/v1/activity/traces${activityQuery(filters)}`);
 }
 
 export async function getTrace(traceId: string): Promise<{
@@ -818,41 +663,31 @@ export async function getTrace(traceId: string): Promise<{
   spans: SpanRow[];
   children: TraceRow[];
 }> {
-  return request<{ trace: TraceRow; spans: SpanRow[]; children: TraceRow[] }>(
-    `/api/v1/activity/traces/${encodeURIComponent(traceId)}`,
-  );
+  return request<{ trace: TraceRow; spans: SpanRow[]; children: TraceRow[] }>("GET", `/api/v1/activity/traces/${encodeURIComponent(traceId)}`);
 }
 
 export async function listSpans(
   filters: ActivityQuery = {},
 ): Promise<{ spans: SpanRow[]; total: number }> {
-  return request<{ spans: SpanRow[]; total: number }>(
-    `/api/v1/activity/spans${activityQuery(filters)}`,
-  );
+  return request<{ spans: SpanRow[]; total: number }>("GET", `/api/v1/activity/spans${activityQuery(filters)}`);
 }
 
 export async function listChatActivity(
   filters: ActivityQuery = {},
 ): Promise<{ chats: ChatActivityRow[]; total: number }> {
-  const body = await request<{ sessions: ChatActivityRow[]; total: number }>(
-    `/api/v1/activity/sessions${activityQuery(filters)}`,
-  );
+  const body = await request<{ sessions: ChatActivityRow[]; total: number }>("GET", `/api/v1/activity/sessions${activityQuery(filters)}`);
   return { chats: body.sessions, total: body.total };
 }
 
 export async function getActivitySummary(
   filters: ActivityQuery = {},
 ): Promise<ActivitySummary> {
-  return request<ActivitySummary>(
-    `/api/v1/activity/summary${activityQuery(filters)}`,
-  );
+  return request<ActivitySummary>("GET", `/api/v1/activity/summary${activityQuery(filters)}`);
 }
 
 export async function getSpanPayloads(
   spanId: string,
 ): Promise<{ kind: string; body: string }[]> {
-  const body = await request<{ payloads: { kind: string; body: string }[] }>(
-    `/api/v1/activity/spans/${encodeURIComponent(spanId)}/payloads`,
-  );
+  const body = await request<{ payloads: { kind: string; body: string }[] }>("GET", `/api/v1/activity/spans/${encodeURIComponent(spanId)}/payloads`);
   return body.payloads;
 }

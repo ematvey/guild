@@ -11,7 +11,7 @@ import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
-import { ApiError } from "../admin-api";
+import { ApiError } from "../../../lib/api/request";
 import { apiUrl, serverUrl } from "../../../lib/session";
 import {
   deleteOrgLogo,
