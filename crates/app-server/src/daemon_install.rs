@@ -101,6 +101,15 @@ fn systemctl_ok(args: &[&str]) -> bool {
 /// (CI hosts have no systemd user session).
 static UNIT_ACTIVE_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
 
+/// The override's forced answer, or `None` to probe.
+fn forced_answer(raw: i8) -> Option<bool> {
+    match raw {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
 /// Forces [`unit_active`]'s answer (tests); `None` restores the probe.
 pub fn set_unit_active_override(active: Option<bool>) {
     use std::sync::atomic::Ordering;
@@ -114,10 +123,8 @@ pub fn set_unit_active_override(active: Option<bool>) {
 /// failed, no systemd on the host) means the socket is up for grabs.
 pub fn unit_active() -> bool {
     use std::sync::atomic::Ordering;
-    match UNIT_ACTIVE_OVERRIDE.load(Ordering::SeqCst) {
-        0 => return false,
-        1 => return true,
-        _ => {}
+    if let Some(forced) = forced_answer(UNIT_ACTIVE_OVERRIDE.load(Ordering::SeqCst)) {
+        return forced;
     }
     if std::env::consts::OS != "linux" {
         return false;
@@ -376,18 +383,14 @@ mod tests {
     }
 
     /// The unit-active probe's test seam: a forced answer short-circuits
-    /// the systemctl call (CI hosts have no systemd user session).
+    /// the systemctl call (CI hosts have no systemd user session). Checked
+    /// on the pure mapping: the global override is pinned by concurrently
+    /// running daemon tests.
     #[test]
     fn unit_active_override_short_circuits_the_probe() {
-        set_unit_active_override(Some(true));
-        assert!(unit_active());
-        set_unit_active_override(Some(false));
-        assert!(!unit_active());
-        set_unit_active_override(None);
-        // Back to probing: on this host (likely no systemd user session, or
-        // no unit installed) the answer is well-defined but not asserted —
-        // the override is what tests pin.
-        let _ = unit_active();
+        assert_eq!(forced_answer(1), Some(true));
+        assert_eq!(forced_answer(0), Some(false));
+        assert_eq!(forced_answer(-1), None);
     }
 
     /// Install's precondition: the socket owner must be a Guild daemon —
