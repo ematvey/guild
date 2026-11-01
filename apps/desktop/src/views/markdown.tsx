@@ -62,7 +62,7 @@ export const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
 
 /// GFM tables: block-level so wide tables scroll horizontally inside the
 /// chat column instead of squishing; cell padding keeps adjacent columns
-/// visually separated (the old rendering had none, so columns merged).
+/// visually separated.
 /// MD_CLASS sets `overflow-wrap:anywhere`, which drops every cell's minimum
 /// width to one character and lets the auto layout crush short columns into
 /// vertical letters; tables take `break-word` instead, so a column never
