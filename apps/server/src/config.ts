@@ -1,7 +1,6 @@
-// Env-driven configuration, same style as the Rust server's config.env
-//. M1 adds
-// the platform-core settings: Postgres, the secret master key, the OIDC
-// state-signing secret, and S3 object storage.
+// Env-driven configuration (GUILD_* variables; the compose stack reads them
+// from config.env): bind address, Postgres, ClickHouse, S3, secrets, the
+// sandbox runner, and the runtime tunables.
 
 import path from "node:path";
 
@@ -11,8 +10,8 @@ export interface Config {
   bindPort: number;
   /** pino log level (GUILD_LOG_LEVEL). */
   logLevel: string;
-  /** Platform Postgres (GUILD_DATABASE_URL) — the same database the Rust
-   *  server and the pi-durable storage use. */
+  /** Platform Postgres (GUILD_DATABASE_URL) — the same database the
+   *  pi-durable storage uses. */
   databaseUrl: string;
   /** 64 hex chars = 32-byte AES-256-GCM master key for stored secrets
    *  (GUILD_MASTER_KEY_HEX). */
@@ -35,7 +34,7 @@ export interface Config {
   clickhousePassword: string;
   /** Static internal API key accepted by the gateway auth path (both LLM
    *  endpoint shapes). Never issued or returned by the public API; the
-   *  pi-durable harness (M3) calls /openai/v1 over loopback with it.
+   *  pi-durable harness calls /openai/v1 over loopback with it.
    *  Internal calls are org-scoped via the x-guild-org-id request header
    *  and metered like external clients (platform/usage.ts). */
   internalKey: string | null;
@@ -74,18 +73,18 @@ export interface Config {
    *  runner when GUILD_SANDBOX_RUNNER_URL is set, else inprocess-unsafe
    *  outside production; production requires the runner. */
   sandbox: SandboxConfig;
-  /** Approval card deadline (GUILD_APPROVAL_TIMEOUT_MS, default 5 min — the
-   *  Rust APPROVAL_TIMEOUT); the gate auto-denies when it lapses. */
+  /** Approval card deadline (GUILD_APPROVAL_TIMEOUT_MS, default 5 min);
+   *  the gate auto-denies when it lapses. */
   approvalTimeoutMs: number;
   /** Machine-tool dispatch deadline (GUILD_CLIENT_TOOL_TIMEOUT_MS, default
-   *  5 min — the Rust CLIENT_TOOL_TIMEOUT). */
+   *  5 min). */
   clientToolTimeoutMs: number;
   /** Base delay of the durable generation retry backoff
    *  (GUILD_RETRY_BASE_DELAY_MS, default 2000 — pi-durable's own default).
    *  Tests lower it so a 404-wrapped-as-502 does not cost 2+4+8 seconds. */
   retryBaseDelayMs: number;
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
-   *  Rust tree's static asset. */
+   *  bundled assets/exec_policy_base.rules. */
   execPolicyRulesPath: string | null;
   /** Trace payload capture (GUILD_TRACE_PAYLOADS, default on): the
    *  llm_payloads request/response bodies. Set GUILD_TRACE_PAYLOADS=0 to
@@ -223,11 +222,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === undefined || env.GUILD_ALLOW_SHELL_TOOLS === ""
     ? sandbox.mode === "runner"
     : env.GUILD_ALLOW_SHELL_TOOLS === "1";
-  const approvalTimeoutMs = Number(env.GUILD_APPROVAL_TIMEOUT_MS ?? 300_000);
-  const clientToolTimeoutMs = Number(env.GUILD_CLIENT_TOOL_TIMEOUT_MS ?? 300_000);
+  const approvalTimeoutMs = positiveInt(env, "GUILD_APPROVAL_TIMEOUT_MS", 300_000);
+  const clientToolTimeoutMs = positiveInt(env, "GUILD_CLIENT_TOOL_TIMEOUT_MS", 300_000);
+  const poolMax = positiveInt(env, "GUILD_POOL_MAX", 10);
   // Absolute: the workspace root and sandbox root must not depend on the
   // server process's cwd (pi-durable re-resolves tool cwds against it).
-  const poolMax = Number(env.GUILD_POOL_MAX ?? 10);
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
   const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
@@ -259,7 +258,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sandbox,
     approvalTimeoutMs,
     clientToolTimeoutMs,
-    retryBaseDelayMs: Number(env.GUILD_RETRY_BASE_DELAY_MS ?? 2000),
+    retryBaseDelayMs: positiveInt(env, "GUILD_RETRY_BASE_DELAY_MS", 2000),
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES || null,
     tracePayloads,
     // Worker-per-chat: when "on", the server holds no harness — admission
@@ -274,16 +273,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : env.GUILD_AGENTS_SCHEDULER === "on"
           ? true
           : (env.NODE_ENV ?? process.env.NODE_ENV) !== "test",
-    agentMaxDepth: positiveInt(env.GUILD_AGENT_MAX_DEPTH, 3),
-    agentMaxChildrenPerNode: positiveInt(env.GUILD_AGENT_MAX_CHILDREN, 16),
+    agentMaxDepth: positiveInt(env, "GUILD_AGENT_MAX_DEPTH", 3),
+    agentMaxChildrenPerNode: positiveInt(env, "GUILD_AGENT_MAX_CHILDREN", 16),
   };
 }
 
-function positiveInt(raw: string | undefined, fallback: number): number {
+/** A positive integer env setting; unset or empty takes `fallback`, and
+ *  anything else that is not a positive integer refuses to start. */
+function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`expected a positive integer, got "${raw}"`);
+    throw new Error(`${name} must be a positive integer, got "${raw}"`);
   }
   return value;
 }

@@ -45,6 +45,19 @@ describe("loadConfig", () => {
     expect(DEFAULT_LOG_LEVEL).toBe("info");
   });
 
+  it("refuses a numeric setting that is not a positive integer", () => {
+    const base = { GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" };
+    for (const name of ["GUILD_POOL_MAX", "GUILD_APPROVAL_TIMEOUT_MS", "GUILD_CLIENT_TOOL_TIMEOUT_MS", "GUILD_RETRY_BASE_DELAY_MS"]) {
+      for (const value of ["abc", "0", "-5", "2.5"]) {
+        expect(() => loadConfig({ ...base, [name]: value }), `${name}=${value}`).toThrow(name);
+      }
+    }
+    expect(loadConfig({ ...base, GUILD_POOL_MAX: "7", GUILD_APPROVAL_TIMEOUT_MS: "" })).toMatchObject({
+      poolMax: 7,
+      approvalTimeoutMs: 300_000,
+    });
+  });
+
   it("resolves the sandbox mode", () => {
     const base = { GUILD_MASTER_KEY_HEX: "11".repeat(32), GUILD_JWT_SECRET: "s" };
     const runner = loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://sandbox-runner:8090/", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32) });
