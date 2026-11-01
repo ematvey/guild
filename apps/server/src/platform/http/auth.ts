@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { PlatformPool } from "../db.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
+import { requireJsonBody, requireStringFields, requireUser, parseUuidParam, sendJson } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
 import type { UserRow } from "../store/identity.js";
@@ -192,7 +192,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
   app.get("/api/v1/me/approval", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const approval = await ctx.identity.approval(user.id);
-    return reply.status(200).type("application/json").send(JSON.stringify({ approval }));
+    return sendJson(reply, { approval });
   });
 
   // Saves (or with `{"approval": null}`, clears) the user's approval
@@ -216,7 +216,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
       value = body;
     }
     await ctx.identity.setApproval(user.id, value);
-    return reply.status(200).type("application/json").send(JSON.stringify({ approval: value }));
+    return sendJson(reply, { approval: value });
   });
 
   // Marks the first-run onboarding wizard as done (finished or skipped).

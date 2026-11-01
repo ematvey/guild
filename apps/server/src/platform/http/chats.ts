@@ -16,7 +16,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { parseUuidParam, queryParam, requireJsonBody, requireUser } from "./error.js";
+import { parseUuidParam, queryParam, requireJsonBody, requireUser, sendJson } from "./error.js";
 import {
   threadEventObject,
   threadEventRowObject,
@@ -106,7 +106,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const archived = ["1", "true"].includes(queryParam(req, "archived") ?? "");
     const list = await threadList(chats, user.org_id, user.id, archived);
-    return reply.status(200).send(JSON.stringify({ chats: list }));
+    return sendJson(reply, { chats: list });
   };
   // Deprecated alias: GET /api/v1/chats.
   app.get("/api/v1/chats", listThreads);
@@ -170,7 +170,7 @@ export function registerChatsRoutes(
     await chats.chats.getOwnChat(user.org_id, chatId, user);
     await chats.turnCommands.cancelWaitingHead(chatId);
     await chats.runtime.stopChat(chatId);
-    return reply.status(200).send(JSON.stringify({ stopped: true }));
+    return sendJson(reply, { stopped: true });
   };
   // Deprecated alias: POST /api/v1/gateway/chat/:id/stop.
   app.post("/api/v1/gateway/chat/:id/stop", stopTurn);
@@ -190,9 +190,7 @@ export function registerChatsRoutes(
       resolved = { ...event, turn: Math.max(1, turn) } as typeof event;
     }
     const row = await chats.threads.appendEvent(chatId, resolved);
-    return reply
-      .status(200)
-      .send(JSON.stringify({ created_at: row.created_at, event: threadEventObject(row.event), id: row.id, seq: row.seq }));
+    return sendJson(reply, { created_at: row.created_at, event: threadEventObject(row.event), id: row.id, seq: row.seq });
   };
   // Deprecated alias: POST /api/v1/chats/:id/thread (the engine-path append).
   app.post("/api/v1/chats/:id/thread", appendThreadEvent);
@@ -215,7 +213,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const approval = await chats.chats.approval(user.org_id, user, chatId);
-    return reply.status(200).send(JSON.stringify({ default: approval?.default ?? null }));
+    return sendJson(reply, { default: approval?.default ?? null });
   };
   // Deprecated alias: GET|POST /api/v1/chats/:id/approval (the per-chat
   // approval policy). GET:
@@ -241,7 +239,7 @@ export function registerChatsRoutes(
       );
     }
     await chats.chats.setApproval(user.org_id, user, chatId, policy);
-    return reply.status(200).send(JSON.stringify({ default: responseMode }));
+    return sendJson(reply, { default: responseMode });
   };
   // Deprecated alias: POST /api/v1/chats/:id/approval.
   app.post("/api/v1/chats/:id/approval", setApprovalMode);
@@ -251,7 +249,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.markRead(user.org_id, chatId, user);
-    return reply.status(200).send(JSON.stringify({ ok: true }));
+    return sendJson(reply, { ok: true });
   };
   // Deprecated alias: POST /api/v1/chats/:id/read.
   app.post("/api/v1/chats/:id/read", markThreadRead);
@@ -310,13 +308,12 @@ export function registerChatsRoutes(
   app.get("/api/v1/threads/:chatId/agent", async (req, reply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "chatId");
-    await chats.chats.getChat(user.org_id, chatId, user);
-    return reply.type("application/json").send(
-      JSON.stringify({
-        agent: await chats.runtime.chatAgent(chatId),
-        switcheable: await chats.runtime.agentSwitchAllowed(chatId),
-      }),
-    );
+    const chat = await chats.chats.getChat(user.org_id, chatId, user);
+    // Switching is a write: only the owner may, even when an admin reads.
+    return sendJson(reply, {
+      agent: await chats.runtime.chatAgent(chatId),
+      switcheable: chat.user_id === user.id && (await chats.runtime.agentSwitchAllowed(chatId)),
+    });
   });
 
   app.post("/api/v1/threads/:chatId/agent", async (req, reply) => {
@@ -337,9 +334,7 @@ export function registerChatsRoutes(
       }
       throw error;
     }
-    return reply
-      .type("application/json")
-      .send(JSON.stringify({ agent: await chats.runtime.chatAgent(chatId), thread_id: bound.thread_id }));
+    return sendJson(reply, { agent: await chats.runtime.chatAgent(chatId), thread_id: bound.thread_id });
   });
 
   app.post("/api/v1/threads/:chatId/turns", async (req, reply) => {
@@ -371,7 +366,7 @@ export function registerChatsRoutes(
     }
     await chats.turnCommands.settleCancelledById(messageId, chatId);
     await chats.threads.deleteQueuedEvent(chatId, messageId);
-    return reply.status(200).send(JSON.stringify({ withdrawn: true }));
+    return sendJson(reply, { withdrawn: true });
   };
   // Deprecated alias: DELETE /api/v1/gateway/chat/:id/pending/:messageId.
   app.delete("/api/v1/gateway/chat/:id/pending/:messageId", withdrawPending);
@@ -421,7 +416,7 @@ export function registerChatsRoutes(
     );
     const decision = row.event as Extract<ThreadEventRow["event"], { type: "approval_decision" }>;
     if (appended && !decision.expired) {
-      return reply.status(200).send(JSON.stringify(sortedJson({ ok: true, settled: false })));
+      return sendJson(reply, sortedJson({ ok: true, settled: false }));
     }
     return reply.status(200).send(
       JSON.stringify(

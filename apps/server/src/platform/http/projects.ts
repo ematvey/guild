@@ -6,7 +6,7 @@
 import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { optionalJsonBody, parseUuidParam, queryParam, requireUser } from "./error.js";
+import { optionalJsonBody, parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
 import type { ProjectRow } from "../store/projects.js";
 import type { Project } from "@guild/wire/rest";
 
@@ -56,7 +56,7 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
     const rows = archived
       ? await gateway.projects.listArchived(user.org_id, user.id)
       : await gateway.projects.list(user.org_id, user.id);
-    reply.type("application/json").send(JSON.stringify({ projects: rows }));
+    sendJson(reply, { projects: rows });
     return reply;
   });
 
@@ -90,7 +90,7 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
     const user = await requireUser(ctx, req);
     const projectId = parseUuidParam(req, "id");
     await gateway.projects.delete(user.org_id, projectId, user.id);
-    reply.type("application/json").send(JSON.stringify({ ok: true }));
+    sendJson(reply, { ok: true });
     return reply;
   });
 }

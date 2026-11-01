@@ -5,7 +5,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
-import { parseUuidParam, requireUser } from "./error.js";
+import { parseUuidParam, requireUser, sendJson } from "./error.js";
 import { toolArtifactObjectKey } from "../store/toolArtifacts.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -24,7 +24,7 @@ export function registerToolArtifactRoutes(
     await readableByExecutor(chats, infra.pool, user.org_id, chatId, user);
     const rows = await chats.toolArtifacts.listForChat(user.org_id, chatId);
     // Rows render with sorted keys at every level.
-    return reply.status(200).send(JSON.stringify(rows.map((r) => sortedJson(r))));
+    return sendJson(reply, rows.map((r) => sortedJson(r)));
   });
 
   app.get("/api/v1/tool_artifacts/:id", async (req, reply) => {
