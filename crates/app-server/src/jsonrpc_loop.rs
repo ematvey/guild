@@ -143,27 +143,17 @@ where
 {
     let shared = Shared::new(session);
     let mut writer = run_connection(&shared, reader, writer).await?;
-    // The client has EOF'd; in-flight agent runs must still get their
-    // events written (as the pre-refactor serve() did). run_connection
-    // forwards the events its own subscriber buffered around EOF (its join
-    // blocks until the agent tasks finish). Subscribing here as well,
-    // BEFORE draining, covers any run still alive past run_connection, so
-    // its events are buffered instead of dropped; drain the JoinSet, then
-    // forward whatever was buffered to the writer.
+    // The client has EOF'd; in-flight runs must still get their events
+    // written. run_connection forwards the events its own subscriber
+    // buffered around EOF (its join blocks until the tasks holding its
+    // sender finish). Subscribing here as well, BEFORE draining, covers any
+    // run still alive past run_connection, so its events are buffered
+    // instead of dropped; drain the JoinSet, then forward whatever was
+    // buffered to the writer.
     let mut event_rx = shared.events.subscribe();
     // tokio Mutex: the guard is held across .await here.
     while shared.agents.lock().await.join_next().await.is_some() {}
-    loop {
-        match event_rx.try_recv() {
-            Ok(v) => {
-                let _ = writeln!(writer, "{v}");
-                let _ = writer.flush();
-            }
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
-            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-        }
-    }
+    drain_events(&mut event_rx, &mut writer);
     let session = match Arc::try_unwrap(shared.session) {
         Ok(m) => m.into_inner().expect("session lock"),
         Err(_) => anyhow::bail!("session references still alive"),
@@ -228,6 +218,24 @@ where
         w
     });
 
+    // Per-connection ordered queue: requests that read or change the
+    // session run one after another in arrival order (a login lands before
+    // the chat.send that follows it). Long phases — a chat's stream, an
+    // agent run — are spawned by their handlers, so the queue only waits
+    // for each request's session-touching part. The select loop below never
+    // awaits a handler: events keep flowing and out-of-band requests
+    // (approvals, hello, shutdown) answer at once.
+    let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<Request>();
+    let ordered = {
+        let shared = shared.clone();
+        let out_tx = out_tx.clone();
+        tokio::spawn(async move {
+            while let Some(req) = ordered_rx.recv().await {
+                dispatch(shared.clone(), req, out_tx.clone()).await;
+            }
+        })
+    };
+
     let mut event_rx = shared.events.subscribe();
     let mut events_open = true;
     loop {
@@ -241,14 +249,18 @@ where
                         "payload": {"message": msg},
                     }));
                 }
-                Some(Incoming::Request(req)) => {
-                    // Sequential per connection (ordering for login → chat).
+                Some(Incoming::Request(req)) if is_out_of_band(&req.method) => {
                     dispatch(shared.clone(), req, out_tx.clone()).await;
+                }
+                Some(Incoming::Request(req)) => {
+                    let _ = ordered_tx.send(req);
                 }
             },
             ev = event_rx.recv(), if events_open => match ev {
                 Ok(v) => { let _ = out_tx.send(v); }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    let _ = out_tx.send(lagged_event(skipped));
+                }
                 Err(broadcast::error::RecvError::Closed) => {
                     // sender dropped (only possible while Shared is being torn
                     // down in serve()): stop consuming events, keep serving
@@ -258,26 +270,53 @@ where
             },
         }
     }
+    drop(ordered_tx);
+    let _ = ordered.await;
     drop(out_tx);
     let mut writer = writer_thread.join().expect("writer thread");
-    // Post-EOF event delivery: the join above blocks until in-flight agent
-    // tasks finish (they hold out_tx clones), and those tasks broadcast
-    // events after EOF with this connection's subscriber no longer polled —
-    // the events sit unread in event_rx's buffer. Forward them before
-    // returning the writer, so delivery matches the pre-refactor serve()
-    // (which wrote them through the still-open out_tx).
-    loop {
-        match event_rx.try_recv() {
-            Ok(v) => {
-                let _ = writeln!(writer, "{v}");
-                let _ = writer.flush();
-            }
-            Err(broadcast::error::TryRecvError::Empty) => break,
-            Err(broadcast::error::TryRecvError::Closed) => break,
-            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-        }
-    }
+    // Post-EOF event delivery: the join above blocks until in-flight tasks
+    // finish (they hold out_tx clones), and those tasks broadcast events
+    // after EOF with this connection's subscriber no longer polled — the
+    // events sit unread in event_rx's buffer. Forward them before returning
+    // the writer.
+    drain_events(&mut event_rx, &mut writer);
     Ok(writer)
+}
+
+/// Requests answered straight from the connection loop, outside the
+/// ordered queue: none of them waits on the session order, and each must
+/// answer while a queued request (a login, a chat's prelude) is in flight.
+fn is_out_of_band(method: &str) -> bool {
+    matches!(
+        method,
+        "agent.approve" | "daemon.hello" | "daemon.shutdown"
+    )
+}
+
+/// The event a client receives when its subscriber fell behind the
+/// broadcast buffer and `skipped` events were dropped for it.
+fn lagged_event(skipped: u64) -> Value {
+    serde_json::to_value(protocol::rpc::Event::new(
+        "rpc.lagged",
+        json!({ "skipped": skipped }),
+    ))
+    .unwrap_or(Value::Null)
+}
+
+/// Writes every event still buffered in `event_rx` to `writer`, with a
+/// lag event in place of any dropped run.
+fn drain_events(event_rx: &mut broadcast::Receiver<Value>, writer: &mut impl std::io::Write) {
+    loop {
+        let v = match event_rx.try_recv() {
+            Ok(v) => v,
+            Err(broadcast::error::TryRecvError::Lagged(skipped)) => lagged_event(skipped),
+            Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {
+                break
+            }
+        };
+        let _ = writeln!(writer, "{v}");
+        let _ = writer.flush();
+    }
 }
 
 async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
@@ -727,8 +766,11 @@ fn resolve_chat_model(session_model: &str) -> String {
     }
 }
 
+/// `chat.send`: resolves the session's cloud, model, and chat (creating
+/// one on first send) in the connection's ordered queue, then streams the
+/// turn on a task of its own — the queue does not wait for the reply.
 async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let result = async {
+    let prelude = async {
         let text = param(&req, "text")?.to_string();
         let (cloud, existing_chat, model, epoch) = {
             let mut s = shared.session.lock().unwrap();
@@ -757,36 +799,34 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 c
             }
         };
-        // The same turn submission the agent.start shim uses — the durable
-        // gateway workflow, with no tools requested (plain completion).
-        // History lives in the server's thread journal; nothing is mirrored
-        // locally (unification spec §3).
-        let stream = cloud
-            .stream_completion(protocol::api::ChatCompletionRequest {
-                server_workspace: None,
-                send_mode: None,
-                user_message_id: None,
-                chat_id,
-                model,
-                messages: vec![Message::user(text.clone())],
-                tools: None,
-                system: None,
-                client_tools: false,
-                attachment_ids: Vec::new(),
-                project_id: None,
-                skills_index: None,
-                agents_md: None,
-            })
-            .await?;
-        let (message_id, cost_usd, tokens_in, tokens_out) =
-            crate::agent_start::drive_chat(shared.events.clone(), stream).await?;
-        Ok(Response::ok(
-            req.id,
-            json!({"chat_id": chat_id, "message_id": message_id, "cost_usd": cost_usd, "tokens_in": tokens_in, "tokens_out": tokens_out}),
-        ))
+        Ok::<_, anyhow::Error>((cloud, chat_id, model, text))
     }
     .await;
-    let _ = out_tx.send(response_value(req.id, result));
+    let (cloud, chat_id, model, text) = match prelude {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = out_tx.send(response_value(req.id, Err(e)));
+            return;
+        }
+    };
+    let events = shared.events.clone();
+    shared.agents.lock().await.spawn(async move {
+        // History lives in the server's thread journal; the client sends
+        // only the new user message.
+        let result = async {
+            let stream = cloud
+                .chat_stream(chat_id, &model, &[Message::user(text)])
+                .await?;
+            let (message_id, cost_usd, tokens_in, tokens_out) =
+                crate::agent_start::drive_chat(events, stream).await?;
+            Ok(Response::ok(
+                req.id,
+                json!({"chat_id": chat_id, "message_id": message_id, "cost_usd": cost_usd, "tokens_in": tokens_in, "tokens_out": tokens_out}),
+            ))
+        }
+        .await;
+        let _ = out_tx.send(response_value(req.id, result));
+    });
 }
 
 /// Starts an agent turn in the background: the shim (agent_start.rs) —
@@ -1650,6 +1690,73 @@ mod agent_start_tests {
             );
         }
         let _ = out_rx.try_recv();
+    }
+
+    /// A login whose server reply is withheld blocks neither the connection's
+    /// out-of-band requests nor its event stream: hello answers and a
+    /// broadcast event arrives while the login is still in flight.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_login_blocks_neither_hello_nor_events() {
+        use std::io::{BufRead as _, Write as _};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/api/v1/auth/login"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(401).set_delay(std::time::Duration::from_secs(3)),
+            )
+            .mount(&server)
+            .await;
+        let shared = Shared::new(EngineState::default());
+        let (client, conn) = std::os::unix::net::UnixStream::pair().unwrap();
+        let conn_read = conn.try_clone().unwrap();
+        let host = shared.clone();
+        tokio::spawn(async move { run_connection(&host, conn_read, conn).await });
+        let mut writer = client.try_clone().unwrap();
+        let line = |id: u64, method: &str, params: Value| {
+            serde_json::to_string(&Request::new(id, method, params)).unwrap()
+        };
+        writeln!(
+            writer,
+            "{}",
+            line(
+                1,
+                "login",
+                json!({"base_url": server.uri(), "email": "a@b", "password": "x"})
+            )
+        )
+        .unwrap();
+        writeln!(writer, "{}", line(2, "daemon.hello", json!({}))).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let _ = shared.events.send(json!({"event": "probe"}));
+        let started = std::time::Instant::now();
+        let seen = tokio::task::spawn_blocking(move || {
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(client);
+            let mut seen = Vec::new();
+            while seen.len() < 3 {
+                let mut buf = String::new();
+                if reader.read_line(&mut buf).unwrap_or(0) == 0 {
+                    break;
+                }
+                let v: Value = serde_json::from_str(buf.trim()).unwrap();
+                seen.push((v, started.elapsed()));
+            }
+            seen
+        })
+        .await
+        .unwrap();
+        let position = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(|(v, _)| pred(v));
+        let hello = position(&|v| v["id"] == 2).expect("hello answered");
+        let probe = position(&|v| v["event"] == "probe").expect("event delivered");
+        let login = position(&|v| v["id"] == 1).expect("login answered");
+        assert!(hello < login && probe < login, "{seen:?}");
+        assert!(
+            seen[hello].1 < std::time::Duration::from_secs(2),
+            "hello waited for the login: {seen:?}"
+        );
     }
 
     /// An account switch while agent.start's project lookup is withheld:
