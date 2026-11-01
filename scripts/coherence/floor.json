@@ -1,20 +1,20 @@
 {
   "comment": "Coherence floor. `counts` may go down, never up; `report` is the baseline for size deltas, never gated. See README.md.",
-  "updated": "2026-11-01",
+  "updated": "2026-11-02",
   "counts": {
     "seams": 11,
-    "shims": 19,
+    "shims": 18,
     "duplicate_files": 0,
     "translation_gaps": 18,
     "unmodeled_types": 0,
-    "unmapped_files": 0
+    "unmapped_files": 2
   },
   "report": {
-    "files": 405,
-    "loc": 92128,
-    "test_files": 163,
-    "test_loc": 31973,
-    "milestone_tags": 78
+    "files": 417,
+    "loc": 91185,
+    "test_files": 167,
+    "test_loc": 32883,
+    "milestone_tags": 28
   },
   "declared_seams": 11
 }
