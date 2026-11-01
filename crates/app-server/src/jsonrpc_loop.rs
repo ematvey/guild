@@ -595,7 +595,8 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
         }
     };
     if let Some(cloud) = cloud {
-        let _ = reqwest::Client::new()
+        let _ = cloud
+            .http_pub()
             .post(format!(
                 "{}/api/v1/auth/logout",
                 cloud.base_url.trim_end_matches('/')

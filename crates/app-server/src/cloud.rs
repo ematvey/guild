@@ -5,7 +5,7 @@ use futures::SinkExt;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, CreateProjectRequest, LoginRequest,
-    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent, ToolCall,
+    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent,
     UserInfo,
 };
 use protocol::ws::WsServerMsg;
@@ -41,18 +41,13 @@ impl CloudClient {
         password: &str,
     ) -> Result<(String, UserInfo), CloudError> {
         let url = format!("{}/api/v1/auth/login", base_url.trim_end_matches('/'));
-        let resp = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| CloudError::Request(e.to_string()))?
-            .post(&url)
+        let resp = Self::timed(http()?.post(&url))
             .json(&LoginRequest {
                 email: email.into(),
                 password: password.into(),
             })
             .send()
-            .await
-            .map_err(|e| CloudError::Request(e.to_string()))?;
+            .await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CloudError::Unauthorized);
         }
@@ -74,17 +69,12 @@ impl CloudClient {
     pub async fn pair(code: &str) -> Result<(String, String, UserInfo), CloudError> {
         let (base_url, _secret) = parse_pairing_code(code)?;
         let url = format!("{}/api/v1/auth/pair", base_url.trim_end_matches('/'));
-        let resp = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| CloudError::Request(e.to_string()))?
-            .post(&url)
+        let resp = Self::timed(http()?.post(&url))
             .json(&PairRequest {
                 code: code.to_string(),
             })
             .send()
-            .await
-            .map_err(|e| CloudError::Request(e.to_string()))?;
+            .await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CloudError::Unauthorized);
         }
@@ -102,7 +92,7 @@ impl CloudClient {
     }
 
     pub async fn refresh_session(&self) -> Result<(), CloudError> {
-        let response = Self::timed(self.http().post(format!(
+        let response = Self::timed(http()?.post(format!(
             "{}/api/v1/auth/refresh",
             self.base_url.trim_end_matches('/')
         )))
@@ -113,20 +103,14 @@ impl CloudClient {
         Ok(())
     }
 
-    /// Validates the stored token and returns the user (GET /api/v1/auth/me).
     /// The workspace's display name and logo URL (GET /api/v1/org). The
     /// switcher shows these per workspace; logo_url is server-relative.
     pub async fn org_settings(&self) -> Result<(String, Option<String>), CloudError> {
         let url = format!("{}/api/v1/org", self.base_url.trim_end_matches('/'));
-        let resp = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| CloudError::Request(e.to_string()))?
-            .get(&url)
-            .header("authorization", format!("Bearer {}", self.token))
+        let resp = Self::timed(http()?.get(&url))
+            .bearer_auth(&self.token)
             .send()
-            .await
-            .map_err(|e| CloudError::Request(e.to_string()))?;
+            .await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CloudError::Unauthorized);
         }
@@ -146,17 +130,13 @@ impl CloudClient {
         ))
     }
 
+    /// Validates the stored token and returns the user (GET /api/v1/auth/me).
     pub async fn me(&self) -> Result<UserInfo, CloudError> {
         let url = format!("{}/api/v1/auth/me", self.base_url.trim_end_matches('/'));
-        let resp = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| CloudError::Request(e.to_string()))?
-            .get(&url)
-            .header("authorization", format!("Bearer {}", self.token))
+        let resp = Self::timed(http()?.get(&url))
+            .bearer_auth(&self.token)
             .send()
-            .await
-            .map_err(|e| CloudError::Request(e.to_string()))?;
+            .await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CloudError::Unauthorized);
         }
@@ -176,7 +156,7 @@ impl CloudClient {
             "{}/api/v1/gateway/models",
             self.base_url.trim_end_matches('/')
         );
-        let resp = Self::timed(self.http().get(&url))
+        let resp = Self::timed(http()?.get(&url))
             .bearer_auth(&self.token)
             .send()
             .await?;
@@ -197,7 +177,7 @@ impl CloudClient {
 
     pub async fn create_chat(&self, title: Option<&str>) -> Result<Uuid, CloudError> {
         let url = format!("{}/api/v1/chats", self.base_url.trim_end_matches('/'));
-        let resp = Self::timed(self.http().post(&url))
+        let resp = Self::timed(http()?.post(&url))
             .bearer_auth(&self.token)
             .json(&CreateChatRequest {
                 title: title.map(Into::into),
@@ -217,7 +197,7 @@ impl CloudClient {
     pub async fn list_projects(&self) -> Result<Vec<Project>, CloudError> {
         let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
         let resp = Self::check(
-            Self::timed(self.http().get(&url))
+            Self::timed(http()?.get(&url))
                 .bearer_auth(&self.token)
                 .send()
                 .await?,
@@ -235,7 +215,7 @@ impl CloudClient {
     pub async fn create_project(&self, req: &CreateProjectRequest) -> Result<Project, CloudError> {
         let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
         let resp = Self::check(
-            Self::timed(self.http().post(&url))
+            Self::timed(http()?.post(&url))
                 .bearer_auth(&self.token)
                 .json(req)
                 .send()
@@ -266,7 +246,7 @@ impl CloudClient {
             body["reason"] = serde_json::json!(reason);
         }
         Self::check(
-            Self::timed(self.http().post(&url))
+            Self::timed(http()?.post(&url))
                 .bearer_auth(&self.token)
                 .json(&body)
                 .send()
@@ -276,8 +256,9 @@ impl CloudClient {
         Ok(())
     }
 
-    /// Streams `StreamEvent` frames for one completion. The server persists
-    /// history; the client sends only the new user message.
+    /// Streams `StreamEvent` frames for one plain-chat completion (no client
+    /// tools). The server persists history; the client sends only the new
+    /// user message.
     pub async fn chat_stream(
         &self,
         chat_id: Uuid,
@@ -312,34 +293,8 @@ impl CloudClient {
         self.refresh_session().await?;
         // Subscribe before submitting the command. The command waits until
         // the feed has attached to the generation before invoking the worker.
-        let ticket = Self::check(
-            Self::timed(self.http().post(format!(
-                "{}/api/v1/ws/ticket",
-                self.base_url.trim_end_matches('/')
-            )))
-            .bearer_auth(&self.token)
-            .send()
-            .await?,
-        )
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
-        let mut url = url::Url::parse(&format!(
-            "{}/api/v1/ws",
-            self.base_url.trim_end_matches('/')
-        ))
-        .map_err(|e| CloudError::Request(e.to_string()))?;
-        let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
-        url.set_scheme(scheme)
-            .map_err(|_| CloudError::Request("invalid server URL".into()))?;
-        url.query_pairs_mut()
-            .append_pair(
-                "ticket",
-                ticket["ticket"]
-                    .as_str()
-                    .ok_or_else(|| CloudError::Request("missing ticket".into()))?,
-            )
-            .append_pair("client_id", &Uuid::now_v7().to_string());
+        let ticket = self.ws_ticket().await?;
+        let url = ws_url(&self.base_url, &ticket, &Uuid::now_v7().to_string())?;
         let (mut socket, _) = tokio::time::timeout(
             Duration::from_secs(10),
             tokio_tungstenite::connect_async(url.as_str()),
@@ -360,7 +315,7 @@ impl CloudClient {
         .await
         .map_err(|_| CloudError::Request("socket bootstrap deadline".into()))??;
         let chat_id = req.chat_id;
-        let command = Self::timed(self.http().post(format!(
+        let command = Self::timed(http()?.post(format!(
             "{}/api/v1/gateway/chat",
             self.base_url.trim_end_matches('/')
         )))
@@ -404,50 +359,16 @@ impl CloudClient {
                         yield Err(CloudError::Unauthorized);
                         break;
                     }
-                    Ok(WsServerMsg::Error { message }) => {
-                        yield Err(CloudError::Request(message)); break;
-                    }
+                    // The member socket's Error frame is not tied to a turn
+                    // (rejected command, feed resync, thread_list failure):
+                    // the turn ends on its own Done/Error live frame, on
+                    // auth loss, or when the socket fails.
+                    Ok(WsServerMsg::Error { .. }) => {}
                     Ok(_) => {},
                     Err(error) => { yield Err(error); break; }
                 }
             }
         })
-    }
-
-    /// Persists a client-produced tool result to the server's thread event
-    /// log (engine sessions execute tools locally; `turn: 0` makes the server
-    /// join the result to the latest turn).
-    pub async fn append_tool_message(
-        &self,
-        chat_id: Uuid,
-        call: &ToolCall,
-        content: &str,
-        is_error: bool,
-        meta: Option<serde_json::Value>,
-    ) -> Result<(), CloudError> {
-        let event = ThreadEvent::ToolResult {
-            turn: 0,
-            step: 0,
-            call_id: call.id.clone(),
-            name: call.name.clone(),
-            content: content.to_string(),
-            is_error,
-            meta,
-            images: Vec::new(),
-            kind: None,
-            artifact_id: None,
-        };
-        let url = format!(
-            "{}/api/v1/chats/{chat_id}/thread",
-            self.base_url.trim_end_matches('/')
-        );
-        let resp = Self::timed(self.http().post(&url))
-            .bearer_auth(&self.token)
-            .json(&event)
-            .send()
-            .await?;
-        Self::check(resp).await?;
-        Ok(())
     }
 
     /// Downloads one spilled tool-result artifact's bytes
@@ -458,7 +379,7 @@ impl CloudClient {
             "{}/api/v1/tool_artifacts/{artifact_id}",
             self.base_url.trim_end_matches('/')
         );
-        let resp = Self::timed(self.http().get(&url))
+        let resp = Self::timed(http()?.get(&url))
             .bearer_auth(&self.token)
             .send()
             .await?;
@@ -478,7 +399,7 @@ impl CloudClient {
             "{}/api/v1/chats/{chat_id}/thread",
             self.base_url.trim_end_matches('/')
         );
-        let resp = Self::timed(self.http().get(&url))
+        let resp = Self::timed(http()?.get(&url))
             .bearer_auth(&self.token)
             .send()
             .await?;
@@ -496,9 +417,11 @@ impl CloudClient {
         Ok(events)
     }
 
-    /// Public for the registry client (same base/token).
+    /// The process-wide HTTP client (connection pool shared by every
+    /// request). Falls back to a default client in the unlikely case the
+    /// configured one cannot be built.
     pub fn http_pub(&self) -> reqwest::Client {
-        self.http()
+        http().cloned().unwrap_or_default()
     }
 
     /// Mints a single-use WS connect ticket (30 s TTL, in-memory). The
@@ -506,7 +429,7 @@ impl CloudClient {
     /// appear in the upgrade query string.
     pub async fn ws_ticket(&self) -> Result<String, CloudError> {
         let resp = Self::check(
-            Self::timed(self.http().post(format!(
+            Self::timed(http()?.post(format!(
                 "{}/api/v1/ws/ticket",
                 self.base_url.trim_end_matches('/')
             )))
@@ -523,18 +446,8 @@ impl CloudClient {
             .ok_or(CloudError::Request("ticket response missing ticket".into()))
     }
 
-    /// Shared client: connect-level timeout only. No total timeout —
-    /// streaming endpoints rely on the connect bound and server keepalive;
-    /// a client-level cap killed long turns at 10 minutes.
-    fn http(&self) -> reqwest::Client {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .expect("reqwest client builds")
-    }
-
-    /// Request-level cap for plain JSON calls (login, me, thread appends).
-    fn timed(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Request-level cap for plain JSON calls (login, me, thread reads).
+    pub(crate) fn timed(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         rb.timeout(Duration::from_secs(30))
     }
 
@@ -591,35 +504,38 @@ where
 use futures::StreamExt;
 use uuid::Uuid;
 
-/// Collects a full turn: returns (text, done-info) after consuming the stream.
-pub async fn collect_turn<S>(stream: S) -> anyhow::Result<(String, Option<StreamEvent>)>
-where
-    S: Stream<Item = Result<StreamEvent, CloudError>>,
-{
-    let mut text = String::new();
-    let mut done = None;
-    let mut pinned = Box::pin(stream);
-    while let Some(ev) = pinned.next().await {
-        match ev? {
-            StreamEvent::Delta { content } => text.push_str(&content),
-            d @ StreamEvent::Done { .. } => done = Some(d),
-            StreamEvent::Error { code, message } => {
-                anyhow::bail!("stream error [{code}]: {message}");
-            }
-            // Plain-chat clients ignore tool-call frames; the agent loop
-            // (Task 5/6) consumes them through its own streaming path.
-            StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. } => {}
-            // Tool lifecycle notifications are for interactive clients.
-            StreamEvent::ToolStarted { .. } | StreamEvent::ToolCompleted { .. } => {}
-            // attach-endpoint only; never on the completion stream
-            StreamEvent::Idle => {}
-            // Approval lifecycle frames are for interactive clients.
-            StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
-            // Reasoning is display-only for plain-chat clients here.
-            StreamEvent::ThinkingDelta { .. } => {}
-        }
-    }
-    Ok((text, done))
+/// The process-wide HTTP client: connect-level timeout only. No total
+/// timeout — streaming endpoints rely on the connect bound and server
+/// keepalive; plain JSON calls add a request cap through
+/// `CloudClient::timed`. Built once; every request shares its pool.
+pub(crate) fn http() -> Result<&'static reqwest::Client, CloudError> {
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .map_err(|e| format!("http client: {e}"))
+        })
+        .as_ref()
+        .map_err(|e| CloudError::Request(e.clone()))
+}
+
+/// The member/executor socket URL: http(s) → ws(s), `{base}/api/v1/ws`,
+/// with the single-use `ticket` and the connection's `client_id` as the
+/// first query pairs (callers append their own after).
+pub fn ws_url(base_url: &str, ticket: &str, client_id: &str) -> Result<url::Url, CloudError> {
+    let mut url =
+        url::Url::parse(base_url).map_err(|e| CloudError::Request(format!("server URL: {e}")))?;
+    let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
+    url.set_scheme(scheme)
+        .map_err(|_| CloudError::Request("invalid server URL".into()))?;
+    url.set_path(&format!("{}/api/v1/ws", url.path().trim_end_matches('/')));
+    url.query_pairs_mut()
+        .append_pair("ticket", ticket)
+        .append_pair("client_id", client_id);
+    Ok(url)
 }
 
 /// Splits a pairing code `g1|<server_url>|<secret>` into (server_url, secret).

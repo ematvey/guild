@@ -61,26 +61,19 @@ pub struct MachineLinkConfig {
     pub machine_name: String,
 }
 
-/// Builds the upgrade URL: http(s) → ws(s), `/api/v1/ws`, all values
-/// percent-encoded by the url crate. The ticket rides last (single-use,
-/// minted per connect).
+/// Builds the executor upgrade URL: the member socket URL
+/// ([`crate::cloud::ws_url`]: ticket — single-use, minted per connect — and
+/// client id) plus the machine identity and metadata, all values
+/// percent-encoded by the url crate.
 fn websocket_url(
     cfg: &MachineLinkConfig,
     meta: &MachineMeta,
     instance_id: uuid::Uuid,
     ticket: &str,
-) -> Url {
-    let mut url = Url::parse(&cfg.base_url).expect("link config carries a parsed URL");
-    url.set_scheme(match url.scheme() {
-        "https" => "wss",
-        _ => "ws",
-    })
-    .expect("ws/wss are valid schemes");
-    url.set_path(&format!("{}/api/v1/ws", url.path().trim_end_matches('/')));
+) -> Result<Url, CloudError> {
+    let mut url = crate::cloud::ws_url(&cfg.base_url, ticket, &cfg.client_id)?;
     {
         let mut query = url.query_pairs_mut();
-        query.append_pair("ticket", ticket);
-        query.append_pair("client_id", &cfg.client_id);
         query.append_pair("machine_id", &cfg.machine_id);
         query.append_pair("machine_name", &cfg.machine_name);
         if let Some(f) = &meta.fingerprint {
@@ -98,7 +91,7 @@ fn websocket_url(
         query.append_pair("instance_id", &instance_id.to_string());
         query.append_pair("resume", "false");
     }
-    url
+    Ok(url)
 }
 
 /// Tool work is owned by one executor connection and addressed by call ID.
@@ -165,7 +158,10 @@ async fn ws_session(
         Err(CloudError::Unauthorized) => return LinkEnd::AuthRequired,
         Err(e) => return LinkEnd::Failed(format!("ticket mint failed: {e}")),
     };
-    let url = websocket_url(cfg, meta, instance_id, &ticket);
+    let url = match websocket_url(cfg, meta, instance_id, &ticket) {
+        Ok(url) => url,
+        Err(e) => return LinkEnd::Failed(e.to_string()),
+    };
     let connected = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async(url.as_str())) => result,
         _ = cfg_rx.changed() => return LinkEnd::Closed,
@@ -1685,7 +1681,7 @@ mod tests {
             os_version: Some("6.1".into()),
             app_version: Some("0.5.12".into()),
         };
-        let url = websocket_url(&cfg(), &meta, uuid::Uuid::now_v7(), "tk");
+        let url = websocket_url(&cfg(), &meta, uuid::Uuid::now_v7(), "tk").unwrap();
         assert_eq!(url.scheme(), "ws");
         assert!(url.path().ends_with("/api/v1/ws"));
         let q = url.query().unwrap();
@@ -1702,7 +1698,7 @@ mod tests {
         // Trailing slash on the base must not double up the path.
         let mut c = cfg();
         c.base_url = "http://localhost:18080/".into();
-        let url2 = websocket_url(&c, &meta, uuid::Uuid::now_v7(), "tk");
+        let url2 = websocket_url(&c, &meta, uuid::Uuid::now_v7(), "tk").unwrap();
         assert_eq!(url2.path(), "/api/v1/ws");
     }
 
@@ -1710,7 +1706,7 @@ mod tests {
     fn websocket_url_upgrades_https_to_wss() {
         let mut c = cfg();
         c.base_url = "https://guild.example.com".into();
-        let url = websocket_url(&c, &MachineMeta::default(), uuid::Uuid::now_v7(), "tk");
+        let url = websocket_url(&c, &MachineMeta::default(), uuid::Uuid::now_v7(), "tk").unwrap();
         assert_eq!(url.scheme(), "wss");
         assert_eq!(url.host_str(), Some("guild.example.com"));
         assert!(url.query().unwrap().contains("ticket=tk"));

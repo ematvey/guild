@@ -1,4 +1,5 @@
-use guild_app_server::cloud::{collect_turn, CloudClient};
+use guild_app_server::cloud::{CloudClient, CloudError};
+use futures::{Stream, StreamExt};
 use protocol::api::{Message, StreamEvent};
 use protocol::ws::WsServerMsg;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -108,6 +109,27 @@ async fn spawn_mock_hub(
         .unwrap();
     });
     (base_url, server)
+}
+
+/// Collects a full turn: the concatenated deltas and the Done frame.
+async fn collect_turn<S>(stream: S) -> Result<(String, Option<StreamEvent>), String>
+where
+    S: Stream<Item = Result<StreamEvent, CloudError>>,
+{
+    let mut text = String::new();
+    let mut done = None;
+    let mut pinned = Box::pin(stream);
+    while let Some(ev) = pinned.next().await {
+        match ev.map_err(|e| e.to_string())? {
+            StreamEvent::Delta { content } => text.push_str(&content),
+            d @ StreamEvent::Done { .. } => done = Some(d),
+            StreamEvent::Error { code, message } => {
+                return Err(format!("stream error [{code}]: {message}"))
+            }
+            _ => {}
+        }
+    }
+    Ok((text, done))
 }
 
 fn live_frame(
@@ -252,6 +274,79 @@ async fn cloud_command_buffers_frames_that_arrive_before_the_ack() {
             .unwrap()
             .unwrap();
     assert_eq!(text, "WS answer", "pre-ack frames must be buffered, not lost");
+    assert!(done.is_some());
+    server.abort();
+}
+
+/// A member-socket Error frame mid-turn is not tied to the turn: the
+/// stream keeps going and ends on the turn's own Done frame.
+#[tokio::test]
+async fn a_socket_error_frame_does_not_end_the_turn() {
+    let chat = Uuid::now_v7();
+    let generation = Uuid::now_v7();
+    let (frames_tx, frames_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (base_url, server) = spawn_mock_hub(
+        MockHub {
+            commands_tx,
+            ack_delay_ms: Arc::new(AtomicU64::new(0)),
+            generation,
+        },
+        frames_rx,
+    )
+    .await;
+    let cloud = CloudClient {
+        base_url,
+        token: "t".into(),
+    };
+    let stream = cloud
+        .chat_stream(chat, "test", &[Message::user("hello")])
+        .await
+        .unwrap();
+    commands_rx.recv().await.unwrap();
+    frames_tx
+        .send(live_frame(
+            chat,
+            generation,
+            1,
+            StreamEvent::Delta {
+                content: "before ".into(),
+            },
+        ))
+        .unwrap();
+    frames_tx
+        .send(WsServerMsg::Error {
+            message: "feed resync".into(),
+        })
+        .unwrap();
+    frames_tx
+        .send(live_frame(
+            chat,
+            generation,
+            2,
+            StreamEvent::Delta {
+                content: "after".into(),
+            },
+        ))
+        .unwrap();
+    frames_tx
+        .send(live_frame(
+            chat,
+            generation,
+            3,
+            StreamEvent::Done {
+                message_id: Uuid::now_v7(),
+                cost_usd: 0.0,
+                tokens_in: 1,
+                tokens_out: 2,
+            },
+        ))
+        .unwrap();
+    let (text, done) = tokio::time::timeout(Duration::from_secs(5), collect_turn(stream))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(text, "before after");
     assert!(done.is_some());
     server.abort();
 }
