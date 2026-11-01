@@ -91,15 +91,39 @@ export function isSettingsSection(id: string): id is SettingsSectionId {
   return Object.prototype.hasOwnProperty.call(SECTION_DETAILS, id);
 }
 
+/** The workspace sections only an admin may open. */
+const ADMIN_SECTIONS: ReadonlySet<SettingsSectionId> = new Set<SettingsSectionId>([
+  "general",
+  "usage",
+  "assistant",
+  "users",
+  "teams",
+  "models",
+  "integrations",
+  "sso",
+  "registry",
+]);
+
+export function isAdminSection(id: SettingsSectionId): boolean {
+  return ADMIN_SECTIONS.has(id);
+}
+
+/** Whether a viewer with this workspace role may open the section. */
+export function sectionAllowed(id: SettingsSectionId, role: string): boolean {
+  return role === "admin" || !ADMIN_SECTIONS.has(id);
+}
+
 /** The settings address the pane shows for a section/detail pair: an absent
- *  or unknown section is the default one, a single-page section has no
- *  sub-page, and a sub-page id reads back through its section's codec (a
- *  malformed one is the section's list page). */
+ *  or unknown section, or an admin section for a non-admin viewer, is the
+ *  default one; a single-page section has no sub-page, and a sub-page id
+ *  reads back through its section's codec (a malformed one is the
+ *  section's list page). */
 export function canonicalSettings(
   section: string | null,
   detail: string | null,
+  role: string,
 ): { section: SettingsSectionId; detail: string | null } {
-  if (section === null || !isSettingsSection(section)) {
+  if (section === null || !isSettingsSection(section) || !sectionAllowed(section, role)) {
     return { section: DEFAULT_SETTINGS_SECTION, detail: null };
   }
   const codec = SECTION_DETAILS[section] as DetailCodec<unknown> | null;

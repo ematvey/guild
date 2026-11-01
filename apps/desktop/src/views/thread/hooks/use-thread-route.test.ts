@@ -5,25 +5,50 @@ import { commitRoute } from "./use-thread-route";
 
 describe("settings address normalisation", () => {
   it("lands an unknown or absent section on the default one", () => {
-    expect(canonicalSettings("machines", null)).toEqual({ section: "account", detail: null });
-    expect(canonicalSettings("machines", "x")).toEqual({ section: "account", detail: null });
-    expect(canonicalSettings(null, null)).toEqual({ section: "account", detail: null });
+    expect(canonicalSettings("machines", null, "admin")).toEqual({ section: "account", detail: null });
+    expect(canonicalSettings("machines", "x", "admin")).toEqual({ section: "account", detail: null });
+    expect(canonicalSettings(null, null, "admin")).toEqual({ section: "account", detail: null });
   });
 
   it("keeps a known section and drops a sub-page it does not have", () => {
-    expect(canonicalSettings("machine", null)).toEqual({ section: "machine", detail: null });
-    expect(canonicalSettings("account", "bogus")).toEqual({ section: "account", detail: null });
-    expect(canonicalSettings("registry", "bogus")).toEqual({ section: "registry", detail: null });
-    expect(canonicalSettings("registry", "mcp/github")).toEqual({ section: "registry", detail: "mcp/github" });
-    expect(canonicalSettings("users", "new")).toEqual({ section: "users", detail: "new" });
-    expect(canonicalSettings("models", "provider/openai")).toEqual({ section: "models", detail: "provider/openai" });
+    expect(canonicalSettings("machine", null, "admin")).toEqual({ section: "machine", detail: null });
+    expect(canonicalSettings("account", "bogus", "admin")).toEqual({ section: "account", detail: null });
+    expect(canonicalSettings("registry", "bogus", "admin")).toEqual({ section: "registry", detail: null });
+    expect(canonicalSettings("registry", "mcp/github", "admin")).toEqual({ section: "registry", detail: "mcp/github" });
+    expect(canonicalSettings("users", "new", "admin")).toEqual({ section: "users", detail: "new" });
+    expect(canonicalSettings("models", "provider/openai", "admin")).toEqual({ section: "models", detail: "provider/openai" });
   });
 
   it("replaces the entry, so Back skips the bad address", () => {
     const history = fakeHistory("/chats");
     history.pushState(null, "", "/settings/machines");
     const route = parseChatRoute("/settings/machines", "");
-    const shown = canonicalSettings(route.settingsSection, route.settingsDetail);
+    const shown = canonicalSettings(route.settingsSection, route.settingsDetail, "admin");
+    commitRoute(
+      history,
+      history.current,
+      applyRoutePatch(route, { tab: "settings", settingsSection: shown.section, settingsDetail: shown.detail }),
+      { replace: true },
+    );
+    expect(history.current).toBe("/settings/account");
+    history.back();
+    expect(history.current).toBe("/chats");
+  });
+
+  it("lands a member on an admin section at the default one; an admin stays", () => {
+    for (const section of ["users", "models", "general", "registry", "usage"]) {
+      expect(canonicalSettings(section, "new", "member")).toEqual({ section: "account", detail: null });
+      expect(canonicalSettings(section, null, "admin").section).toBe(section);
+    }
+    expect(canonicalSettings("mcp", null, "member")).toEqual({ section: "mcp", detail: null });
+    expect(canonicalSettings("machine", null, "member")).toEqual({ section: "machine", detail: null });
+  });
+
+  it("replaces a member's admin address, so Back skips it", () => {
+    const history = fakeHistory("/chats");
+    history.pushState(null, "", "/settings/users");
+    const route = parseChatRoute("/settings/users", "");
+    const shown = canonicalSettings(route.settingsSection, route.settingsDetail, "member");
     commitRoute(
       history,
       history.current,

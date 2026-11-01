@@ -19,7 +19,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import type { UsageQuery } from "./usage-route";
-import type { SettingsSectionId } from "./section-nav";
+import { canonicalSettings, isAdminSection, type SettingsSectionId } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
@@ -47,39 +47,40 @@ export interface SectionDef {
   label: string;
   icon: React.ReactNode;
   group: "user" | "workspace";
-  admin?: boolean;
+  /** Admin-only, from `isAdminSection`: hidden from a member's nav and
+   *  never rendered for one. */
+  admin: boolean;
 }
 
 /// The section catalog: the sidebar rail's Settings tab nav plus the inline
 /// main-pane rendering.
-export const SETTINGS_SECTIONS: SectionDef[] = [
+export const SETTINGS_SECTIONS: SectionDef[] = ([
   { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
   { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
   { id: "notifications", label: "Notifications", icon: <Bell className="size-4" />, group: "user" },
   { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
   { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
   { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
-  { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace", admin: true },
-  { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace", admin: true },
-  { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace", admin: true },
-  { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace", admin: true },
-  { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace", admin: true },
-  { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace", admin: true },
+  { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace" },
+  { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace" },
+  { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace" },
+  { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace" },
+  { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace" },
+  { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
   {
     id: "integrations",
     label: "Integrations",
     icon: <Plug className="size-4" />,
     group: "workspace",
-    admin: true,
   },
   { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
-  { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace", admin: true },
-  { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace", admin: true },
-];
+  { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
+  { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
+] satisfies Omit<SectionDef, "admin">[]).map((s) => ({ ...s, admin: isAdminSection(s.id) }));
 
 /// Section content for embedding outside the overlay: the sidebar rail's
-/// Settings tab renders this pane in the main column. Unknown ids fall back
-/// to the first section (same fallback the overlay uses for stale links).
+/// Settings tab renders this pane in the main column. An unknown id, or an
+/// admin section for a non-admin viewer, renders the default section.
 export function SettingsSectionPane({
   sectionId,
   email,
@@ -98,14 +99,16 @@ export function SettingsSectionPane({
   usage: UsageQuery;
   onUsageChange: (usage: UsageQuery) => void;
 }) {
-  const def =
-    SETTINGS_SECTIONS.find((s) => s.id === sectionId) ?? SETTINGS_SECTIONS[0];
+  // The pane renders the section the canonical address names, so a member
+  // on an admin address sees (and fetches for) the default section only.
+  const shownId = canonicalSettings(sectionId, null, role).section;
+  const def = SETTINGS_SECTIONS.find((s) => s.id === shownId) ?? SETTINGS_SECTIONS[0];
   return (
     <SectionPane
       def={def}
       email={email}
       role={role}
-      detail={detail}
+      detail={shownId === sectionId ? detail : null}
       onDetailChange={onDetailChange}
       usage={usage}
       onUsageChange={onUsageChange}
