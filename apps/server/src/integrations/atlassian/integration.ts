@@ -1,6 +1,6 @@
 import { atlassianSite, configString, secret, secretOrNull } from "../shared.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { atlassianExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
@@ -119,7 +119,7 @@ const plugin: IntegrationPlugin = {
       apiTool("Atlassian"),
     ],
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     // Site and email are plain settings (config wins, the legacy
     // secret-named rows are the fallback); only the token is a credential.
     const site = atlassianSite(config, secrets);

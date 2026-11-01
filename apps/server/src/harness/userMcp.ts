@@ -21,10 +21,9 @@ import { userMcpToolName } from "../platform/domain/mcp.js";
 export { userMcpToolName } from "../platform/domain/mcp.js";
 import type { Logger } from "pino";
 import { mcpConnect } from "../platform/integrations/mcp.js";
+import type { JsonObject } from "../integrations/shared.js";
 import type { UserMcpStore } from "../platform/store/userMcp.js";
 import type { TurnPreparation } from "./integrations.js";
-
-type Json = Record<string, unknown>;
 
 interface ResolvedTool {
   serverId: string;
@@ -241,7 +240,7 @@ export class UserMcpRuntime {
           Number(api.conversationId),
           wireName,
           tool,
-          (args ?? {}) as Json,
+          (args ?? {}) as JsonObject,
           context.abortSignal,
         );
         context.abortSignal?.throwIfAborted();
@@ -274,7 +273,7 @@ export class UserMcpRuntime {
     conversationId: number,
     wireName: string,
     declared: ResolvedTool,
-    args: Json,
+    args: JsonObject,
     signal?: AbortSignal,
   ): Promise<{ content: string; isError: boolean }> {
     const snapshot = await this.snapshotFor(conversationId);

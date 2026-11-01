@@ -1,9 +1,9 @@
 import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, fetchTimeout, transportCause, clampNumber, callVendorApi, slackBaseUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- slack ----------
 
-async function slackApi(url: string, init: RequestInit): Promise<Json> {
+async function slackApi(url: string, init: RequestInit): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init));
@@ -11,9 +11,9 @@ async function slackApi(url: string, init: RequestInit): Promise<Json> {
     throw new Error(`slack unreachable: ${transportCause(error)}`);
   }
   if (!res.ok) throw new Error(`slack returned ${res.status}`);
-  let body: Json;
+  let body: JsonObject;
   try {
-    body = (await res.json()) as Json;
+    body = (await res.json()) as JsonObject;
   } catch {
     throw new Error("slack returned bad json");
   }
@@ -23,13 +23,13 @@ async function slackApi(url: string, init: RequestInit): Promise<Json> {
   return body;
 }
 
-async function slackGet(base: string, botToken: string, endpoint: string, query: [string, string][]): Promise<Json> {
+async function slackGet(base: string, botToken: string, endpoint: string, query: [string, string][]): Promise<JsonObject> {
   const url = new URL(`${base}/${endpoint}`);
   for (const [k, v] of query) url.searchParams.set(k, v);
   return slackApi(url.toString(), { method: "GET", headers: { authorization: `Bearer ${botToken}` } });
 }
 
-async function slackPost(base: string, botToken: string, endpoint: string, body: Json): Promise<Json> {
+async function slackPost(base: string, botToken: string, endpoint: string, body: JsonObject): Promise<JsonObject> {
   return slackApi(`${base}/${endpoint}`, {
     method: "POST",
     headers: { authorization: `Bearer ${botToken}`, "content-type": "application/json" },
@@ -41,7 +41,7 @@ function slackJsonText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export async function slackExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function slackExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const base = slackBaseUrl(config);
   if (tool === "api") {
     const token = secret(secrets, "bot_token");
@@ -56,17 +56,17 @@ export async function slackExecute(config: Json, tool: string, args: Json, secre
       ];
       if (typeof args["cursor"] === "string") query.push(["cursor", args["cursor"]]);
       const body = await slackGet(base, token, "conversations.list", query);
-      const channels = (Array.isArray(body["channels"]) ? (body["channels"] as Json[]) : []).map((c) => ({
+      const channels = (Array.isArray(body["channels"]) ? (body["channels"] as JsonObject[]) : []).map((c) => ({
         id: c["id"] ?? null,
         name: c["name"] ?? null,
         is_private: c["is_private"] ?? null,
         is_member: c["is_member"] ?? null,
-        topic: ((c["topic"] ?? {}) as Json)["value"] ?? null,
+        topic: ((c["topic"] ?? {}) as JsonObject)["value"] ?? null,
       }));
       // The cursor and has_more ride the content too: the model sees
       // content only, and a multi-page list it cannot page is a silently
       // truncated one.
-      const metadata = (body["response_metadata"] ?? {}) as Json;
+      const metadata = (body["response_metadata"] ?? {}) as JsonObject;
       return {
         content: slackJsonText({ channels, next_cursor: metadata["next_cursor"] ?? null }),
         meta: { response_metadata: metadata["next_cursor"] ?? null },
@@ -86,7 +86,7 @@ export async function slackExecute(config: Json, tool: string, args: Json, secre
       // conversations.history requires membership. On not_in_channel,
       // self-join the public channel and retry once — the join is visible
       // in the workspace (the bot appears in the member list).
-      let body: Json;
+      let body: JsonObject;
       try {
         body = await slackGet(base, token, "conversations.history", query);
       } catch (error) {
@@ -105,12 +105,12 @@ export async function slackExecute(config: Json, tool: string, args: Json, secre
           throw new Error(`${message} (joined, retry failed: ${retryMessage})`);
         }
       }
-      const messages = (Array.isArray(body["messages"]) ? (body["messages"] as Json[]) : []).map((m) => ({
+      const messages = (Array.isArray(body["messages"]) ? (body["messages"] as JsonObject[]) : []).map((m) => ({
         ts: m["ts"] ?? null,
         user: m["user"] ?? null,
         text: m["text"] ?? null,
       }));
-      const metadata = (body["response_metadata"] ?? {}) as Json;
+      const metadata = (body["response_metadata"] ?? {}) as JsonObject;
       return {
         content: slackJsonText({ messages, has_more: body["has_more"] === true, next_cursor: metadata["next_cursor"] ?? null }),
         meta: { has_more: body["has_more"] === true, response_metadata: metadata["next_cursor"] ?? null },
@@ -121,7 +121,7 @@ export async function slackExecute(config: Json, tool: string, args: Json, secre
       const query: [string, string][] = [["limit", String(clampNumber(args, "limit", 200, 200))]];
       if (typeof args["cursor"] === "string") query.push(["cursor", args["cursor"]]);
       const body = await slackGet(base, token, "users.list", query);
-      const users = (Array.isArray(body["members"]) ? (body["members"] as Json[]) : []).map((u) => ({
+      const users = (Array.isArray(body["members"]) ? (body["members"] as JsonObject[]) : []).map((u) => ({
         id: u["id"] ?? null,
         name: u["name"] ?? null,
         real_name: u["real_name"] ?? null,
@@ -129,7 +129,7 @@ export async function slackExecute(config: Json, tool: string, args: Json, secre
       }));
       // The cursor rides the content too (the model sees content only — a
       // multi-page list it cannot page is a silently truncated one).
-      const metadata = (body["response_metadata"] ?? {}) as Json;
+      const metadata = (body["response_metadata"] ?? {}) as JsonObject;
       return {
         content: slackJsonText({ users, next_cursor: metadata["next_cursor"] ?? null }),
         meta: { response_metadata: metadata["next_cursor"] ?? null },

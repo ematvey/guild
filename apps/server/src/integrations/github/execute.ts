@@ -1,5 +1,5 @@
 import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, githubApiUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- github ----------
 
@@ -37,7 +37,7 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
-async function githubSend(url: string, init: GithubRequestInit): Promise<Json> {
+async function githubSend(url: string, init: GithubRequestInit): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init as RequestInit));
@@ -55,7 +55,7 @@ async function githubSend(url: string, init: GithubRequestInit): Promise<Json> {
     throw new Error(githubMapError(status, body));
   }
   try {
-    return JSON.parse(body) as Json;
+    return JSON.parse(body) as JsonObject;
   } catch {
     throw new Error("github returned bad json");
   }
@@ -73,7 +73,7 @@ function githubFilePath(owner: string, repo: string, filePath: string): string {
   return `/repos/${pathSegment(owner)}/${pathSegment(repo)}/contents/${parts.join("/")}`;
 }
 
-function githubRepoLine(i: number, hit: Json): string {
+function githubRepoLine(i: number, hit: JsonObject): string {
   const fullName = typeof hit["full_name"] === "string" ? hit["full_name"] : "(unnamed)";
   const url = typeof hit["html_url"] === "string" ? hit["html_url"] : "";
   const language = typeof hit["language"] === "string" ? hit["language"] : "";
@@ -82,7 +82,7 @@ function githubRepoLine(i: number, hit: Json): string {
   return `${i + 1}. ${fullName} (${language === "" ? "?" : language}, ★${stars}) ${url}\n   ${description}\n`;
 }
 
-export async function githubExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function githubExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("github secret 'token' is not stored");
   const api = githubApiUrl(config);
@@ -101,7 +101,7 @@ export async function githubExecute(config: Json, tool: string, args: Json, secr
       url.searchParams.set("q", query);
       url.searchParams.set("per_page", String(perPage));
       const body = await githubSend(url.toString(), { method: "GET", headers: githubHeaders(token) });
-      const hits = Array.isArray(body["items"]) ? (body["items"] as Json[]) : [];
+      const hits = Array.isArray(body["items"]) ? (body["items"] as JsonObject[]) : [];
       let content = hits.map((hit, i) => githubRepoLine(i, hit)).join("");
       if (content === "") content = "No repositories matched.";
       return {
@@ -132,7 +132,7 @@ export async function githubExecute(config: Json, tool: string, args: Json, secr
         const number = typeof issue["number"] === "number" ? issue["number"] : 0;
         const title = typeof issue["title"] === "string" ? issue["title"] : "";
         const issueState = typeof issue["state"] === "string" ? issue["state"] : "?";
-        const author = ((issue["user"] ?? {}) as Json)["login"];
+        const author = ((issue["user"] ?? {}) as JsonObject)["login"];
         content += `#${number} [${issueState}] ${title} (@${typeof author === "string" ? author : "?"})\n`;
       }
       if (content === "") content = "No issues.";
@@ -155,9 +155,9 @@ export async function githubExecute(config: Json, tool: string, args: Json, secr
         const number = typeof pr["number"] === "number" ? pr["number"] : 0;
         const title = typeof pr["title"] === "string" ? pr["title"] : "";
         const prState = typeof pr["state"] === "string" ? pr["state"] : "?";
-        const head = (((pr["head"] ?? {}) as Json)["ref"] ?? "?") as string;
-        const base = (((pr["base"] ?? {}) as Json)["ref"] ?? "?") as string;
-        const author = ((pr["user"] ?? {}) as Json)["login"];
+        const head = (((pr["head"] ?? {}) as JsonObject)["ref"] ?? "?") as string;
+        const base = (((pr["base"] ?? {}) as JsonObject)["ref"] ?? "?") as string;
+        const author = ((pr["user"] ?? {}) as JsonObject)["login"];
         content += `#${number} [${prState}] ${title} (${typeof head === "string" ? head : "?"}→${typeof base === "string" ? base : "?"}, @${typeof author === "string" ? author : "?"})\n`;
       }
       if (content === "") content = "No pull requests.";
@@ -206,7 +206,7 @@ export async function githubExecute(config: Json, tool: string, args: Json, secr
       if (typeof repo !== "string") throw new Error("create_issue requires repo");
       const title = args["title"];
       if (typeof title !== "string") throw new Error("create_issue requires title");
-      const payload: Json = { title };
+      const payload: JsonObject = { title };
       if (typeof args["body"] === "string") payload["body"] = args["body"];
       if (Array.isArray(args["labels"])) payload["labels"] = args["labels"];
       const url = `${api}/repos/${pathSegment(owner)}/${pathSegment(repo)}/issues`;
@@ -228,9 +228,9 @@ export async function githubExecute(config: Json, tool: string, args: Json, secr
         throw new Error("github returned an unreadable body");
       }
       if (!(status >= 200 && status < 300)) throw new Error(githubMapError(status, text));
-      let body: Json;
+      let body: JsonObject;
       try {
-        body = JSON.parse(text) as Json;
+        body = JSON.parse(text) as JsonObject;
       } catch {
         throw new Error("github returned bad json");
       }

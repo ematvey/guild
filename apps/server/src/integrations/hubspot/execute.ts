@@ -1,5 +1,5 @@
 import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, clampNumber, callVendorApi, hubspotBaseUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- hubspot ----------
 
@@ -22,16 +22,16 @@ function hubspotDisplayProps(object: string): string[] {
   }
 }
 
-function hubspotSearchLine(index: number, object: string, hit: Json): string {
+function hubspotSearchLine(index: number, object: string, hit: JsonObject): string {
   const id = typeof hit["id"] === "string" ? hit["id"] : "?";
-  const props = (hit["properties"] ?? {}) as Json;
+  const props = (hit["properties"] ?? {}) as JsonObject;
   const values = hubspotDisplayProps(object)
     .map((p) => (typeof props[p] === "string" ? props[p] as string : null))
     .filter((v): v is string => v !== null);
   return `${index + 1}. id=${id} ${values.join(" ")}`;
 }
 
-async function hubspotSearch(object: string, base: string, token: string, args: Json): Promise<ToolOutcome> {
+async function hubspotSearch(object: string, base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
   const query = args["query"];
   if (typeof query !== "string") throw new Error("search requires query");
   const limit = clampNumber(args, "limit", 10, 100);
@@ -46,15 +46,15 @@ async function hubspotSearch(object: string, base: string, token: string, args: 
     throw new Error(`hubspot unreachable: ${transportCause(error)}`);
   }
   if (!res.ok) throw new Error(`hubspot returned ${res.status}`);
-  let parsed: Json;
+  let parsed: JsonObject;
   try {
-    parsed = (await res.json()) as Json;
+    parsed = (await res.json()) as JsonObject;
   } catch {
     throw new Error("hubspot returned bad json");
   }
-  const hits = Array.isArray(parsed["results"]) ? (parsed["results"] as Json[]) : [];
+  const hits = Array.isArray(parsed["results"]) ? (parsed["results"] as JsonObject[]) : [];
   let content = "";
-  const results: Json[] = [];
+  const results: JsonObject[] = [];
   for (const [i, hit] of hits.slice(0, limit).entries()) {
     const label = hubspotSearchLine(i, object, hit);
     content += `${label}\n`;
@@ -67,7 +67,7 @@ async function hubspotSearch(object: string, base: string, token: string, args: 
   };
 }
 
-async function hubspotUpdateDeal(base: string, token: string, args: Json): Promise<ToolOutcome> {
+async function hubspotUpdateDeal(base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
   const id = args["id"];
   if (typeof id !== "string") throw new Error("update_deal requires id");
   const props = args["properties"];
@@ -85,9 +85,9 @@ async function hubspotUpdateDeal(base: string, token: string, args: Json): Promi
     throw new Error(`hubspot unreachable: ${transportCause(error)}`);
   }
   if (!res.ok) throw new Error(`hubspot returned ${res.status}`);
-  let parsed: Json;
+  let parsed: JsonObject;
   try {
-    parsed = (await res.json()) as Json;
+    parsed = (await res.json()) as JsonObject;
   } catch {
     throw new Error("hubspot returned bad json");
   }
@@ -99,7 +99,7 @@ async function hubspotUpdateDeal(base: string, token: string, args: Json): Promi
   };
 }
 
-export async function hubspotExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function hubspotExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("hubspot requires the token secret");
   const base = hubspotBaseUrl(config);

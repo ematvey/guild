@@ -1,5 +1,5 @@
 import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, urlencode, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, atlassianSite } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- atlassian ----------
 
@@ -9,7 +9,7 @@ interface AtlassianCreds {
   token: string;
 }
 
-function atlassianCreds(config: Json, secrets: [string, string][]): AtlassianCreds {
+function atlassianCreds(config: JsonObject, secrets: [string, string][]): AtlassianCreds {
   // Site and email are plain settings (config wins, the legacy
   // secret-named rows are the fallback); only the token is a credential.
   const site = atlassianSite(config, secrets);
@@ -22,7 +22,7 @@ function atlassianCreds(config: Json, secrets: [string, string][]): AtlassianCre
 
 const ATLASSIAN_JIRA_FIELDS = "summary,status,issuetype,assignee,created";
 
-async function atlassianSendJson(url: string, init: RequestInit): Promise<Json> {
+async function atlassianSendJson(url: string, init: RequestInit): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(CALL_TIMEOUT_MS, init));
@@ -41,7 +41,7 @@ async function atlassianSendJson(url: string, init: RequestInit): Promise<Json> 
     throw new Error(`atlassian returned ${res.status}: ${excerpt(body)}`);
   }
   try {
-    return JSON.parse(body) as Json;
+    return JSON.parse(body) as JsonObject;
   } catch {
     throw new Error("atlassian returned bad json");
   }
@@ -52,13 +52,13 @@ function atlassianAuth(creds: AtlassianCreds): Record<string, string> {
 }
 
 /** One line of a search result: `KEY — summary [Status] (Assignee)`. */
-function jiraLine(issue: Json): string {
+function jiraLine(issue: JsonObject): string {
   const key = typeof issue["key"] === "string" ? issue["key"] : "?";
-  const fields = (issue["fields"] ?? {}) as Json;
+  const fields = (issue["fields"] ?? {}) as JsonObject;
   const summary = typeof fields["summary"] === "string" ? fields["summary"] : "";
-  const status = (fields["status"] ?? {}) as Json;
+  const status = (fields["status"] ?? {}) as JsonObject;
   const statusName = typeof status["name"] === "string" ? status["name"] : "";
-  const assignee = (fields["assignee"] ?? {}) as Json;
+  const assignee = (fields["assignee"] ?? {}) as JsonObject;
   const assigneeName = typeof assignee["displayName"] === "string" ? assignee["displayName"] : "";
   let line = `${key} — ${summary}`;
   if (statusName !== "") line += ` [${statusName}]`;
@@ -67,12 +67,12 @@ function jiraLine(issue: Json): string {
 }
 
 /** Flattens one Jira issue into a readable block with a browse URL. */
-function jiraIssueBlock(creds: AtlassianCreds, issue: Json): string {
+function jiraIssueBlock(creds: AtlassianCreds, issue: JsonObject): string {
   const key = typeof issue["key"] === "string" ? issue["key"] : "?";
-  const fields = (issue["fields"] ?? {}) as Json;
-  const status = (fields["status"] ?? {}) as Json;
-  const itype = (fields["issuetype"] ?? {}) as Json;
-  const assignee = (fields["assignee"] ?? {}) as Json;
+  const fields = (issue["fields"] ?? {}) as JsonObject;
+  const status = (fields["status"] ?? {}) as JsonObject;
+  const itype = (fields["issuetype"] ?? {}) as JsonObject;
+  const assignee = (fields["assignee"] ?? {}) as JsonObject;
   const statusName = typeof status["name"] === "string" ? status["name"] : "";
   const typeName = typeof itype["name"] === "string" ? itype["name"] : "";
   const assigneeName = typeof assignee["displayName"] === "string" ? assignee["displayName"] : "";
@@ -107,7 +107,7 @@ function storageToText(value: string): string {
   return text.split(/\s+/).filter((s) => s !== "").join(" ");
 }
 
-export async function atlassianExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function atlassianExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const creds = atlassianCreds(config, secrets);
   const auth = atlassianAuth(creds);
   if (tool === "api") {
@@ -127,7 +127,7 @@ export async function atlassianExecute(config: Json, tool: string, args: Json, s
           fields: ["summary", "status", "issuetype", "assignee"],
         }),
       });
-      const issues = Array.isArray(body["issues"]) ? (body["issues"] as Json[]) : [];
+      const issues = Array.isArray(body["issues"]) ? (body["issues"] as JsonObject[]) : [];
       const truncated = issues.length > maxResults;
       let content = issues.slice(0, maxResults).map(jiraLine).join("\n");
       if (content === "") content = "No issues match the query.";
@@ -160,12 +160,12 @@ export async function atlassianExecute(config: Json, tool: string, args: Json, s
       url.searchParams.set("cql", cql);
       url.searchParams.set("limit", String(limit));
       const resp = await atlassianSendJson(url.toString(), { headers: auth });
-      const results = Array.isArray(resp["results"]) ? (resp["results"] as Json[]) : [];
+      const results = Array.isArray(resp["results"]) ? (resp["results"] as JsonObject[]) : [];
       const truncated = results.length > limit;
       let content = results
         .slice(0, limit)
         .map((r) => {
-          const inner = (r["content"] ?? {}) as Json;
+          const inner = (r["content"] ?? {}) as JsonObject;
           const title = typeof inner["title"] === "string" ? inner["title"] : "(untitled)";
           const id = typeof inner["id"] === "string" ? inner["id"] : "?";
           const excerptText = typeof r["excerpt"] === "string" ? r["excerpt"] : "";
@@ -186,10 +186,10 @@ export async function atlassianExecute(config: Json, tool: string, args: Json, s
         { headers: auth },
       );
       const title = typeof page["title"] === "string" ? page["title"] : "";
-      const body = (page["body"] ?? {}) as Json;
-      const storage = (body["storage"] ?? {}) as Json;
+      const body = (page["body"] ?? {}) as JsonObject;
+      const storage = (body["storage"] ?? {}) as JsonObject;
       const storageValue = typeof storage["value"] === "string" ? storage["value"] : "";
-      const links = (page["_links"] ?? {}) as Json;
+      const links = (page["_links"] ?? {}) as JsonObject;
       const webui = typeof links["webui"] === "string" ? links["webui"] : "";
       let content = title;
       const text = storageToText(storageValue);
@@ -215,12 +215,12 @@ export async function atlassianExecute(config: Json, tool: string, args: Json, s
         }),
       });
       const id = typeof page["id"] === "string" ? page["id"] : "";
-      const links = (page["_links"] ?? {}) as Json;
+      const links = (page["_links"] ?? {}) as JsonObject;
       const webui = typeof links["webui"] === "string" ? links["webui"] : "";
       const url = webui === "" ? null : `${creds.site}${webui}`;
       let content = `Created page ${id} (${title})`;
       if (url !== null) content += `\n${url}`;
-      const meta: Json = {
+      const meta: JsonObject = {
         kind: "confluence_page_created",
         id,
         title: typeof page["title"] === "string" ? page["title"] : title,

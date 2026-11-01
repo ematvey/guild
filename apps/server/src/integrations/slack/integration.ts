@@ -1,11 +1,11 @@
 import { slackBaseUrl, secret } from "../shared.js";
 import { fetchTimeout } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { slackExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
 
-function spec(name: string, description: string, properties: Json) {
+function spec(name: string, description: string, properties: JsonObject) {
   return {
     name,
     class: "read" as const,
@@ -80,13 +80,13 @@ const plugin: IntegrationPlugin = {
       apiTool("Slack Web API"),
     ],
   },
-  validate(config: Json) {
+  validate(config: JsonObject) {
     if ("base_url" in config && typeof config["base_url"] !== "string") {
       throw new Error("slack config base_url must be a string");
     }
     slackBaseUrl(config);
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     if ("base_url" in config && typeof config["base_url"] !== "string") {
       throw new Error("slack config base_url must be a string");
     }
@@ -104,9 +104,9 @@ const plugin: IntegrationPlugin = {
       const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new Error(`slack unreachable: ${cause}`);
     }
-    let body: Json = {};
+    let body: JsonObject = {};
     try {
-      body = (await res.json()) as Json;
+      body = (await res.json()) as JsonObject;
     } catch {
       body = {};
     }

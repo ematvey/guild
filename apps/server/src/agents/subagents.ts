@@ -3,7 +3,6 @@
 // child reports back by ending its turn.
 
 import { Type } from "typebox";
-import type { JsonValue } from "@earendil-works/chord";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -18,6 +17,7 @@ import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { readThreadTranscript } from "./thread-read.js";
 import { notifySubagentTree } from "./tree.js";
 import type { Agent, AgentRun, AgentThread } from "./types.js";
+import { structured } from "../harness/tool-schema.js";
 
 export interface SubagentsRuntime {
   /** Posts a turn into the child thread's chat. */
@@ -663,7 +663,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 16 * 1024 },
       execute: async (args) => {
         try {
-          return { structuredOutput: (await spawn(context, args)) as unknown as JsonValue };
+          return { structuredOutput: structured(await spawn(context, args)) };
         } catch (error) {
           return errorResult(error);
         }
@@ -683,7 +683,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 16 * 1024 },
       execute: async (args) => {
         try {
-          return { structuredOutput: (await send(context, args)) as unknown as JsonValue };
+          return { structuredOutput: structured(await send(context, args)) };
         } catch (error) {
           return errorResult(error);
         }
@@ -701,7 +701,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 32 * 1024 },
       execute: async () => {
         try {
-          return { structuredOutput: { agents: await listAgents(context) } as unknown as JsonValue };
+          return { structuredOutput: structured({ agents: await listAgents(context) }) };
         } catch (error) {
           return errorResult(error);
         }
@@ -722,7 +722,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 32 * 1024 },
       execute: async (args) => {
         try {
-          return { structuredOutput: (await read(context, args)) as unknown as JsonValue };
+          return { structuredOutput: structured(await read(context, args)) };
         } catch (error) {
           return errorResult(error);
         }
@@ -739,7 +739,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 32 * 1024 },
       execute: async () => {
         try {
-          return { structuredOutput: { children: await list(context) } as unknown as JsonValue };
+          return { structuredOutput: structured({ children: await list(context) }) };
         } catch (error) {
           return errorResult(error);
         }
@@ -758,7 +758,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 8 * 1024 },
       execute: async (args) => {
         try {
-          return { structuredOutput: (await cancel(context, args)) as unknown as JsonValue };
+          return { structuredOutput: structured(await cancel(context, args)) };
         } catch (error) {
           return errorResult(error);
         }
@@ -777,7 +777,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       outputLimits: { maxBytes: 8 * 1024 },
       execute: async (args) => {
         try {
-          return { structuredOutput: (await close(context, args)) as unknown as JsonValue };
+          return { structuredOutput: structured(await close(context, args)) };
         } catch (error) {
           return errorResult(error);
         }

@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { PLUGINS } from "./index.js";
 import { traitSpec } from "./traits.js";
-import type { Json, ToolOutcome } from "./shared.js";
+import type { JsonObject, ToolOutcome } from "./shared.js";
 import type {
   IntegrationField,
   IntegrationManifest,
@@ -34,12 +34,12 @@ export interface BuiltinIntegration extends IntegrationManifest {
   logo: string;
   /** Validates the row config (throws on a broken one) and declares the
    *  tool surface the integration contributes. */
-  toolSpecs(config: Json): IntegrationToolSpec[];
-  testConnection(config: Json, secrets: [string, string][]): Promise<void>;
+  toolSpecs(config: JsonObject): IntegrationToolSpec[];
+  testConnection(config: JsonObject, secrets: [string, string][]): Promise<void>;
   execute(
-    config: Json,
+    config: JsonObject,
     tool: string,
-    args: Json,
+    args: JsonObject,
     secrets: [string, string][],
     actingAs: string | null,
   ): Promise<ToolOutcome>;
@@ -112,7 +112,7 @@ function load(plugin: IntegrationPlugin): BuiltinIntegration {
     secret_names: secretNames(m),
     classes,
     logo: logoOf(m.name),
-    toolSpecs(config: Json): IntegrationToolSpec[] {
+    toolSpecs(config: JsonObject): IntegrationToolSpec[] {
       plugin.validate?.(config);
       return m.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
     },

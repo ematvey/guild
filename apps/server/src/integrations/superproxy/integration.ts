@@ -1,6 +1,6 @@
 import { secretOrNull, superproxyBaseUrl, configString } from "../shared.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { superproxyExecute } from "./execute.js";
 
@@ -60,10 +60,10 @@ const plugin: IntegrationPlugin = {
       },
     ],
   },
-  validate(config: Json) {
+  validate(config: JsonObject) {
     superproxyBaseUrl(config);
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     const url = new URL(`${superproxyBaseUrl(config)}/v1/fetch`);
     url.searchParams.set("url", "https://example.com");
     url.searchParams.set("format", "markdown");

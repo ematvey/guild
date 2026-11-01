@@ -33,3 +33,10 @@ export function toolDetails(value: unknown): JsonValue {
   visit(value);
   return value as JsonValue;
 }
+
+/** A typed result object as a tool's structured output. The static type
+ *  guarantees an object; its fields are JSON by construction (rows, ids and
+ *  strings the tool built). */
+export function structured<T extends object>(value: T): JsonValue {
+  return value as unknown as JsonValue;
+}

@@ -14,7 +14,11 @@ export interface ToolOutcome {
   artifact?: { filename: string; contentType: string; bytes: Buffer };
 }
 
-export type Json = Record<string, unknown>;
+/** A decoded JSON object: tool arguments, configs and vendor payloads
+ *  across the connector and harness tool runtimes. */
+export type JsonObject = Record<string, unknown>;
+/** The name platform/integrations imports JsonObject under. */
+export type Json = JsonObject;
 
 export const CALL_TIMEOUT_MS = 20_000;
 export const LIST_TIMEOUT_MS = 30_000;
@@ -35,12 +39,12 @@ const GITLAB_DEFAULT_API = "https://gitlab.com/api/v4";
 const GOOGLE_DEFAULT_API_BASE = "https://www.googleapis.com";
 const GOOGLE_DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-export function githubApiUrl(config: Json): string {
+export function githubApiUrl(config: JsonObject): string {
   const v = configString(config, "api_url");
   return v !== undefined ? trimTrailingSlash(v) : GITHUB_DEFAULT_API;
 }
 
-export function gitlabBaseUrl(config: Json): string {
+export function gitlabBaseUrl(config: JsonObject): string {
   const raw = configString(config, "base_url");
   const trimmed = raw !== undefined ? raw.trim().replace(/\/+$/, "") : null;
   if (trimmed === null || trimmed === "") return GITLAB_DEFAULT_API;
@@ -52,11 +56,11 @@ export function gitlabBaseUrl(config: Json): string {
   return hasUrlPath ? trimmed : `${trimmed}/api/v4`;
 }
 
-export function hubspotBaseUrl(config: Json): string {
+export function hubspotBaseUrl(config: JsonObject): string {
   return trimTrailingSlash(configString(config, "base_url") ?? "https://api.hubapi.com");
 }
 
-export function langfuseBaseUrl(config: Json, secrets: [string, string][]): string {
+export function langfuseBaseUrl(config: JsonObject, secrets: [string, string][]): string {
   // The config base_url wins; the legacy `host` secret of pre-schema
   // deployments is the fallback; else the public cloud.
   const fromConfig = configString(config, "base_url");
@@ -66,38 +70,38 @@ export function langfuseBaseUrl(config: Json, secrets: [string, string][]): stri
   return "https://cloud.langfuse.com";
 }
 
-export function slackBaseUrl(config: Json): string {
+export function slackBaseUrl(config: JsonObject): string {
   return trimTrailingSlash(configString(config, "base_url") ?? "https://slack.com/api");
 }
 
-export function firecrawlBaseUrl(config: Json): string {
+export function firecrawlBaseUrl(config: JsonObject): string {
   const fromConfig = configString(config, "base_url");
   return trimTrailingSlash(fromConfig !== undefined && fromConfig !== "" ? fromConfig : FIRECRAWL_DEFAULT_BASE_URL);
 }
 
-export function googleApiBase(config: Json): string {
+export function googleApiBase(config: JsonObject): string {
   const v = configString(config, "api_base");
   return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_API_BASE;
 }
 
-export function googleTokenUrl(config: Json): string {
+export function googleTokenUrl(config: JsonObject): string {
   const v = configString(config, "token_url");
   return v !== undefined ? v.replace(/\/+$/, "") : GOOGLE_DEFAULT_TOKEN_URL;
 }
 
-export function searxngBaseUrl(config: Json): string {
+export function searxngBaseUrl(config: JsonObject): string {
   const base = configString(config, "base_url");
   if (base === undefined) throw new Error("searxng config requires base_url");
   return trimTrailingSlash(base);
 }
 
-export function superproxyBaseUrl(config: Json): string {
+export function superproxyBaseUrl(config: JsonObject): string {
   const base = configString(config, "base_url");
   if (base === undefined) throw new Error("superproxy config requires base_url");
   return trimTrailingSlash(base);
 }
 
-export function atlassianSite(config: Json, secrets: [string, string][]): string {
+export function atlassianSite(config: JsonObject, secrets: [string, string][]): string {
   const site = configString(config, "site") ?? secretOrNull(secrets, "site");
   if (site === undefined || site === null || site === "") throw new Error("atlassian requires the site setting");
   return trimTrailingSlash(site);
@@ -114,7 +118,7 @@ export function secretOrNull(secrets: [string, string][], name: string): string 
   return found === undefined ? null : found[1];
 }
 
-export function configString(config: Json, name: string): string | undefined {
+export function configString(config: JsonObject, name: string): string | undefined {
   const v = config[name];
   return typeof v === "string" ? v : undefined;
 }
@@ -172,7 +176,7 @@ export function excerpt(text: string, max = MAX_BODY_SNIPPET): string {
   return [...text].slice(0, max).join("");
 }
 
-export async function fetchJson(url: string, init: RequestInit, api: string, timeoutMs = CALL_TIMEOUT_MS): Promise<Json> {
+export async function fetchJson(url: string, init: RequestInit, api: string, timeoutMs = CALL_TIMEOUT_MS): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(timeoutMs, init));
@@ -189,13 +193,13 @@ export async function fetchJson(url: string, init: RequestInit, api: string, tim
     throw new Error(`${api} returned ${res.status}: ${excerpt(text)}`);
   }
   try {
-    return JSON.parse(text) as Json;
+    return JSON.parse(text) as JsonObject;
   } catch (error) {
     throw new Error(`${api} returned bad json: ${(error as Error).message}`);
   }
 }
 
-export function clampNumber(args: Json, name: string, dflt: number, cap: number): number {
+export function clampNumber(args: JsonObject, name: string, dflt: number, cap: number): number {
   const v = args[name];
   const n = typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : dflt;
   return Math.min(Math.max(n, 1), cap);
@@ -217,7 +221,7 @@ export type ApiAuth =
 /** Runs one generic vendor REST call: `path` must start with `/`; the
  *  method is whitelisted; the body rides as JSON when present. The raw
  *  response text is the content, truncated to `max_chars`. */
-export async function callVendorApi(base: string, auth: ApiAuth, args: Json, maxChars: number, extraHeaders: [string, string][] = []): Promise<ToolOutcome> {
+export async function callVendorApi(base: string, auth: ApiAuth, args: JsonObject, maxChars: number, extraHeaders: [string, string][] = []): Promise<ToolOutcome> {
   const path = args["path"];
   if (typeof path !== "string") throw new Error("api requires path (starting with /)");
   if (!path.startsWith("/")) throw new Error("api path must start with /");
@@ -233,7 +237,7 @@ export async function callVendorApi(base: string, auth: ApiAuth, args: Json, max
   const url = new URL(`${base}${path}`);
   const query = args["query"];
   if (query !== null && typeof query === "object" && !Array.isArray(query)) {
-    for (const [k, v] of Object.entries(query as Json)) {
+    for (const [k, v] of Object.entries(query as JsonObject)) {
       url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v) ?? "");
     }
   }

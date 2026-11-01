@@ -1,6 +1,6 @@
 import { hubspotBaseUrl, secret } from "../shared.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { hubspotExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
@@ -80,7 +80,7 @@ const plugin: IntegrationPlugin = {
       apiTool("HubSpot"),
     ],
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     const token = secret(secrets, "token");
     const url = new URL(`${hubspotBaseUrl(config)}/crm/v3/objects/contacts`);
     url.searchParams.set("limit", "1");

@@ -1,6 +1,6 @@
 import { createHash, createSign } from "node:crypto";
 import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- google_workspace ----------
 
@@ -25,9 +25,9 @@ const googleTokens = new Map<string, CachedGoogleToken>();
 
 function googleServiceAccount(secrets: [string, string][]): { clientEmail: string; privateKey: string } {
   const raw = secret(secrets, "service_account_json");
-  let parsed: Json;
+  let parsed: JsonObject;
   try {
-    parsed = JSON.parse(raw) as Json;
+    parsed = JSON.parse(raw) as JsonObject;
   } catch (error) {
     throw new Error(`service_account_json is not valid json: ${(error as Error).message}`);
   }
@@ -38,7 +38,7 @@ function googleServiceAccount(secrets: [string, string][]): { clientEmail: strin
   return { clientEmail, privateKey };
 }
 
-function googleAdminEmail(config: Json, secrets: [string, string][]): string {
+function googleAdminEmail(config: JsonObject, secrets: [string, string][]): string {
   const fromConfig = configString(config, "admin_email");
   if (fromConfig !== undefined) return fromConfig;
   return secret(secrets, "admin_email");
@@ -50,7 +50,7 @@ function googleActingIdentity(actingAs: string | null, adminEmail: string): stri
   return actingAs ?? adminEmail;
 }
 
-async function googleAccessToken(config: Json, secrets: [string, string][], sub: string): Promise<string> {
+async function googleAccessToken(config: JsonObject, secrets: [string, string][], sub: string): Promise<string> {
   const { clientEmail, privateKey } = googleServiceAccount(secrets);
   const tokenUrl = googleTokenUrl(config);
   const secretFingerprint = createHash("sha256").update(secret(secrets, "service_account_json")).digest("hex");
@@ -87,9 +87,9 @@ async function googleAccessToken(config: Json, secrets: [string, string][], sub:
     throw new Error(`google token endpoint unreachable: ${transportCause(error)}`);
   }
   if (!res.ok) throw new Error(`google token endpoint returned ${res.status}`);
-  let body: Json;
+  let body: JsonObject;
   try {
-    body = (await res.json()) as Json;
+    body = (await res.json()) as JsonObject;
   } catch (error) {
     throw new Error(`google token endpoint returned bad json: ${(error as Error).message}`);
   }
@@ -104,11 +104,11 @@ async function googleAccessToken(config: Json, secrets: [string, string][], sub:
   return token;
 }
 
-export async function googleAccessTokenFor(config: Json, secrets: [string, string][], actingAs: string | null): Promise<string> {
+export async function googleAccessTokenFor(config: JsonObject, secrets: [string, string][], actingAs: string | null): Promise<string> {
   return googleAccessToken(config, secrets, googleActingIdentity(actingAs, googleAdminEmail(config, secrets)));
 }
 
-async function googleGetJson(url: string, token: string, api: string): Promise<Json> {
+async function googleGetJson(url: string, token: string, api: string): Promise<JsonObject> {
   return fetchJson(url, { headers: { authorization: `Bearer ${token}` } }, api);
 }
 
@@ -141,11 +141,11 @@ function stripHtmlTags(html: string): string {
 
 /** Depth-first search of the MIME tree for a readable text body:
  *  text/plain wins, text/html is a fallback (tags stripped). */
-function extractBody(payload: Json): string | null {
+function extractBody(payload: JsonObject): string | null {
   const mime = typeof payload["mimeType"] === "string" ? payload["mimeType"] : "";
   const body = payload["body"];
-  const data = body !== null && typeof body === "object" && typeof (body as Json)["data"] === "string"
-    ? (body as Json)["data"] as string
+  const data = body !== null && typeof body === "object" && typeof (body as JsonObject)["data"] === "string"
+    ? (body as JsonObject)["data"] as string
     : null;
   if (data !== null) {
     const bytes = decodeBodyPartBytes(data);
@@ -155,7 +155,7 @@ function extractBody(payload: Json): string | null {
       if (mime === "text/html") return stripHtmlTags(text);
     }
   }
-  const parts = Array.isArray(payload["parts"]) ? (payload["parts"] as Json[]) : null;
+  const parts = Array.isArray(payload["parts"]) ? (payload["parts"] as JsonObject[]) : null;
   if (parts !== null) {
     for (const part of parts) {
       const found = extractBody(part);
@@ -165,8 +165,8 @@ function extractBody(payload: Json): string | null {
   return null;
 }
 
-function headerValue(payload: Json, name: string): string | null {
-  const headers = Array.isArray(payload["headers"]) ? (payload["headers"] as Json[]) : [];
+function headerValue(payload: JsonObject, name: string): string | null {
+  const headers = Array.isArray(payload["headers"]) ? (payload["headers"] as JsonObject[]) : [];
   const found = headers.find(
     (h) => typeof h["name"] === "string" && (h["name"] as string).toLowerCase() === name.toLowerCase(),
   );
@@ -180,12 +180,12 @@ function truncateBody(text: string): string {
 }
 
 /** Attachment parts of a message: (filename, mime, attachment id). */
-function attachmentParts(payload: Json): [string, string, string][] {
+function attachmentParts(payload: JsonObject): [string, string, string][] {
   const out: [string, string, string][] = [];
-  const walk = (part: Json): void => {
+  const walk = (part: JsonObject): void => {
     const body = part["body"];
-    const id = body !== null && typeof body === "object" && typeof (body as Json)["attachmentId"] === "string"
-      ? (body as Json)["attachmentId"] as string
+    const id = body !== null && typeof body === "object" && typeof (body as JsonObject)["attachmentId"] === "string"
+      ? (body as JsonObject)["attachmentId"] as string
       : null;
     // Body parts of the message text carry an empty attachment id; a part
     // with a real id is an attachment.
@@ -197,19 +197,19 @@ function attachmentParts(payload: Json): [string, string, string][] {
       const mime = typeof part["mimeType"] === "string" ? part["mimeType"] : "application/octet-stream";
       out.push([filename, mime, id]);
     }
-    const parts = Array.isArray(part["parts"]) ? (part["parts"] as Json[]) : [];
+    const parts = Array.isArray(part["parts"]) ? (part["parts"] as JsonObject[]) : [];
     for (const child of parts) walk(child);
   };
   walk(payload);
   return out;
 }
 
-async function gmailSearch(config: Json, args: Json, token: string): Promise<ToolOutcome> {
+async function gmailSearch(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   const query = args["query"];
   if (typeof query !== "string") throw new Error("gmail_search requires query");
   const url = `${googleApiBase(config)}/gmail/v1/users/me/messages?q=${urlencode(query)}&maxResults=${clampNumber(args, "max_results", 10, 25)}`;
   const body = await googleGetJson(url, token, "gmail");
-  const messages = Array.isArray(body["messages"]) ? (body["messages"] as Json[]) : [];
+  const messages = Array.isArray(body["messages"]) ? (body["messages"] as JsonObject[]) : [];
   if (messages.length === 0) {
     return { content: "No messages match the search." };
   }
@@ -223,11 +223,11 @@ async function gmailSearch(config: Json, args: Json, token: string): Promise<Too
   return { content: out };
 }
 
-async function gmailGetMessage(config: Json, args: Json, token: string): Promise<ToolOutcome> {
+async function gmailGetMessage(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   const id = args["message_id"];
   if (typeof id !== "string") throw new Error("gmail_get_message requires message_id");
   const body = await googleGetJson(`${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(id)}`, token, "gmail");
-  const payload = (body["payload"] ?? {}) as Json;
+  const payload = (body["payload"] ?? {}) as JsonObject;
   let out = "";
   for (const header of ["Subject", "From", "Date"]) {
     const v = headerValue(payload, header);
@@ -246,7 +246,7 @@ async function gmailGetMessage(config: Json, args: Json, token: string): Promise
   return { content: out };
 }
 
-async function gmailGetAttachment(config: Json, args: Json, token: string): Promise<ToolOutcome> {
+async function gmailGetAttachment(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   const messageId = args["message_id"];
   if (typeof messageId !== "string") throw new Error("gmail_get_attachment requires message_id");
   const attachmentId = args["attachment_id"];
@@ -254,7 +254,7 @@ async function gmailGetAttachment(config: Json, args: Json, token: string): Prom
   // The attachment endpoint returns only size + base64url data; the part
   // metadata (filename, mime) comes from the message itself.
   const message = await googleGetJson(`${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(messageId)}`, token, "gmail");
-  const part = attachmentParts((message["payload"] ?? {}) as Json).find(([, , id]) => id === attachmentId);
+  const part = attachmentParts((message["payload"] ?? {}) as JsonObject).find(([, , id]) => id === attachmentId);
   const filename =
     (typeof args["filename"] === "string" ? args["filename"] : null) ??
     part?.[0] ??
@@ -275,7 +275,7 @@ async function gmailGetAttachment(config: Json, args: Json, token: string): Prom
   };
 }
 
-async function calendarListEvents(config: Json, args: Json, token: string): Promise<ToolOutcome> {
+async function calendarListEvents(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   // timeMin defaults to now: without it the API expands recurring events
   // from their first instance and ascending startTime order makes the
   // first page decades of old recurrences instead of upcoming events.
@@ -284,13 +284,13 @@ async function calendarListEvents(config: Json, args: Json, token: string): Prom
   let url = `${googleApiBase(config)}/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=${clampNumber(args, "max_results", 10, 50)}&timeMin=${urlencode(timeMin)}`;
   if (typeof args["time_max"] === "string") url += `&timeMax=${urlencode(args["time_max"])}`;
   const body = await googleGetJson(url, token, "calendar");
-  const items = Array.isArray(body["items"]) ? (body["items"] as Json[]) : [];
+  const items = Array.isArray(body["items"]) ? (body["items"] as JsonObject[]) : [];
   if (items.length === 0) {
     return { content: "No events in the requested window." };
   }
   let out = `Calendar events: ${items.length}\n`;
   for (const e of items) {
-    const start = (e["start"] ?? {}) as Json;
+    const start = (e["start"] ?? {}) as JsonObject;
     const startText = typeof start["dateTime"] === "string" ? start["dateTime"] : typeof start["date"] === "string" ? start["date"] : "(no start)";
     out += `- ${startText} ${typeof e["summary"] === "string" ? e["summary"] : "(untitled)"}\n`;
   }
@@ -303,12 +303,12 @@ function driveNameQuery(name: string): string {
   return `name contains '${name.replace(/'/g, "\\'")}'`;
 }
 
-async function driveSearch(config: Json, args: Json, token: string): Promise<ToolOutcome> {
+async function driveSearch(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   const name = args["name"];
   if (typeof name !== "string") throw new Error("drive_search requires name");
   const url = `${googleApiBase(config)}/drive/v3/files?q=${urlencode(driveNameQuery(name))}&fields=files(id,name,mimeType)&pageSize=${clampNumber(args, "max_results", 10, 50)}`;
   const body = await googleGetJson(url, token, "drive");
-  const files = Array.isArray(body["files"]) ? (body["files"] as Json[]) : [];
+  const files = Array.isArray(body["files"]) ? (body["files"] as JsonObject[]) : [];
   if (files.length === 0) {
     return { content: `No Drive files matching "${name}".` };
   }
@@ -319,7 +319,7 @@ async function driveSearch(config: Json, args: Json, token: string): Promise<Too
   return { content: out };
 }
 
-async function directoryUsers(config: Json, args: Json, secrets: [string, string][], token: string): Promise<ToolOutcome> {
+async function directoryUsers(config: JsonObject, args: JsonObject, secrets: [string, string][], token: string): Promise<ToolOutcome> {
   // Default domain: the admin_email's own domain (domain-wide delegation
   // is scoped to the service account's workspace).
   let admin = "";
@@ -334,19 +334,19 @@ async function directoryUsers(config: Json, args: Json, secrets: [string, string
     ? `${googleApiBase(config)}/admin/directory/v1/users?customer=my_customer&maxResults=${clampNumber(args, "max_results", 20, 50)}`
     : `${googleApiBase(config)}/admin/directory/v1/users?domain=${urlencode(domain)}&maxResults=${clampNumber(args, "max_results", 20, 50)}`;
   const body = await googleGetJson(url, token, "directory");
-  const users = Array.isArray(body["users"]) ? (body["users"] as Json[]) : [];
+  const users = Array.isArray(body["users"]) ? (body["users"] as JsonObject[]) : [];
   if (users.length === 0) {
     return { content: `No directory users in domain "${domain}".` };
   }
   let out = `Directory users (domain ${domain}): ${users.length}\n`;
   for (const u of users) {
-    const name = (u["name"] ?? {}) as Json;
+    const name = (u["name"] ?? {}) as JsonObject;
     out += `- ${typeof u["primaryEmail"] === "string" ? u["primaryEmail"] : "(no email)"} — ${typeof name["fullName"] === "string" ? name["fullName"] : "(no name)"}\n`;
   }
   return { content: out };
 }
 
-export async function googleWorkspaceExecute(config: Json, tool: string, args: Json, secrets: [string, string][], actingAs: string | null): Promise<ToolOutcome> {
+export async function googleWorkspaceExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], actingAs: string | null): Promise<ToolOutcome> {
   // Dispatch first: an unknown tool fails without touching the network.
   // Per-call identity: acting_as is the DWD `sub`; the default subject is
   // admin_email.

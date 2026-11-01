@@ -4,9 +4,9 @@
 // datasource it used.
 
 import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, clampNumber, excerpt, fetchTimeout, transportCause, truncateWithMarker } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
-function grafanaBase(config: Json): string {
+function grafanaBase(config: JsonObject): string {
   const raw = config["base_url"];
   if (typeof raw !== "string" || raw.trim() === "") throw new Error("grafana config requires base_url");
   return raw.replace(/\/+$/, "");
@@ -18,18 +18,18 @@ function grafanaToken(secrets: [string, string][]): string {
   return found[1];
 }
 
-function orgId(config: Json): number {
+function orgId(config: JsonObject): number {
   const raw = config["org_id"];
   return typeof raw === "number" && Number.isFinite(raw) ? Math.trunc(raw) : 1;
 }
 
 /** One JSON request against the Grafana API. */
 async function grafanaJson(
-  config: Json,
+  config: JsonObject,
   secrets: [string, string][],
   path: string,
   init: RequestInit = {},
-): Promise<Json> {
+): Promise<JsonObject> {
   const url = `${grafanaBase(config)}${path}`;
   const headers: Record<string, string> = {
     authorization: `Bearer ${grafanaToken(secrets)}`,
@@ -49,7 +49,7 @@ async function grafanaJson(
   }
   if (text === "") return {};
   try {
-    return JSON.parse(text) as Json;
+    return JSON.parse(text) as JsonObject;
   } catch {
     throw new Error(`grafana returned a non-JSON body on ${path}: ${excerpt(text, 200)}`);
   }
@@ -57,7 +57,7 @@ async function grafanaJson(
 
 /** Resolves a datasource reference — a uid or a name — to its uid and type. */
 async function resolveDatasource(
-  config: Json,
+  config: JsonObject,
   secrets: [string, string][],
   reference: string,
 ): Promise<{ uid: string; name: string; type: string }> {
@@ -78,27 +78,27 @@ async function resolveDatasource(
   throw new Error(`grafana datasource "${reference}" not found (${tried.join("; ")})`);
 }
 
-function defaultDatasource(config: Json, kind: "prometheus" | "loki"): string {
+function defaultDatasource(config: JsonObject, kind: "prometheus" | "loki"): string {
   const key = kind === "prometheus" ? "prometheus_datasource" : "loki_datasource";
   const fallback = kind === "prometheus" ? "Prometheus" : "Loki";
   const raw = config[key];
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : fallback;
 }
 
-function timeArg(args: Json, name: string, fallback: string): string {
+function timeArg(args: JsonObject, name: string, fallback: string): string {
   const raw = args[name];
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : fallback;
 }
 
 /** Prometheus answer -> one line per series, value or step count. */
-function prometheusLines(body: Json, maxSeries: number): { text: string; series: number } {
-  const data = (body["data"] ?? {}) as Json;
-  const result = Array.isArray(data["result"]) ? (data["result"] as Json[]) : [];
+function prometheusLines(body: JsonObject, maxSeries: number): { text: string; series: number } {
+  const data = (body["data"] ?? {}) as JsonObject;
+  const result = Array.isArray(data["result"]) ? (data["result"] as JsonObject[]) : [];
   const resultType = typeof data["resultType"] === "string" ? data["resultType"] : "vector";
   if (result.length === 0) return { text: "No series.", series: 0 };
   let text = `resultType=${resultType}\n`;
   for (const [i, series] of result.slice(0, maxSeries).entries()) {
-    const metric = (series["metric"] ?? {}) as Json;
+    const metric = (series["metric"] ?? {}) as JsonObject;
     const labels = Object.entries(metric)
       .map(([k, v]) => `${k}="${String(v)}"`)
       .join(" ");
@@ -116,9 +116,9 @@ function prometheusLines(body: Json, maxSeries: number): { text: string; series:
 }
 
 export async function grafanaExecute(
-  config: Json,
+  config: JsonObject,
   tool: string,
-  args: Json,
+  args: JsonObject,
   secrets: [string, string][],
   _actingAs: string | null,
 ): Promise<ToolOutcome> {
@@ -167,12 +167,12 @@ export async function grafanaExecute(
         `&start=${encodeURIComponent(startNs)}&end=${encodeURIComponent(endNs)}` +
         `&limit=${limit}&direction=backward`;
       const body = await grafanaJson(config, secrets, path);
-      const data = (body["data"] ?? {}) as Json;
-      const streams = Array.isArray(data["result"]) ? (data["result"] as Json[]) : [];
+      const data = (body["data"] ?? {}) as JsonObject;
+      const streams = Array.isArray(data["result"]) ? (data["result"] as JsonObject[]) : [];
       let out = `datasource=${ds.name} (${ds.uid})\n`;
       let count = 0;
       for (const stream of streams) {
-        const labels = Object.entries((stream["stream"] ?? {}) as Json)
+        const labels = Object.entries((stream["stream"] ?? {}) as JsonObject)
           .map(([k, v]) => `${k}="${String(v)}"`)
           .join(" ");
         const values = Array.isArray(stream["values"]) ? (stream["values"] as unknown[][]) : [];
@@ -193,7 +193,7 @@ export async function grafanaExecute(
     case "list_datasources": {
       const type = typeof args["type"] === "string" ? (args["type"] as string) : null;
       const body = await grafanaJson(config, secrets, "/api/datasources");
-      const list = Array.isArray(body) ? (body as Json[]) : [];
+      const list = Array.isArray(body) ? (body as JsonObject[]) : [];
       const rows = list.filter((d) => type === null || d["type"] === type);
       if (rows.length === 0) return { content: "No datasources.", meta: { card: "grafana", kind: "datasources", count: 0 } };
       const content = rows
@@ -208,7 +208,7 @@ export async function grafanaExecute(
         `/api/search?type=dash-db&limit=${limit}` +
         (query === "" ? "" : `&query=${encodeURIComponent(query)}`);
       const body = await grafanaJson(config, secrets, path);
-      const list = Array.isArray(body) ? (body as Json[]) : [];
+      const list = Array.isArray(body) ? (body as JsonObject[]) : [];
       if (list.length === 0) return { content: "No dashboards.", meta: { card: "grafana", kind: "dashboards", count: 0 } };
       const content = list
         .map((d) => {
@@ -222,8 +222,8 @@ export async function grafanaExecute(
       const uid = args["uid"];
       if (typeof uid !== "string" || uid === "") throw new Error("get_dashboard requires uid");
       const body = await grafanaJson(config, secrets, `/api/dashboards/uid/${encodeURIComponent(uid)}`);
-      const dashboard = (body["dashboard"] ?? {}) as Json;
-      const panels = Array.isArray(dashboard["panels"]) ? (dashboard["panels"] as Json[]) : [];
+      const dashboard = (body["dashboard"] ?? {}) as JsonObject;
+      const panels = Array.isArray(dashboard["panels"]) ? (dashboard["panels"] as JsonObject[]) : [];
       const panelLines = panels
         .map((p) => `- ${String(p["title"] ?? "(untitled)")} [${String(p["type"] ?? "?")}]`)
         .join("\n");
@@ -235,12 +235,12 @@ export async function grafanaExecute(
     }
     case "list_alerts": {
       const body = await grafanaJson(config, secrets, "/api/alertmanager/grafana/api/v2/alerts");
-      const list = Array.isArray(body) ? (body as Json[]) : [];
+      const list = Array.isArray(body) ? (body as JsonObject[]) : [];
       if (list.length === 0) return { content: "No active alerts.", meta: { card: "grafana", kind: "alerts", count: 0 } };
       const content = list
         .map((a) => {
-          const labels = (a["labels"] ?? {}) as Json;
-          const annotations = (a["annotations"] ?? {}) as Json;
+          const labels = (a["labels"] ?? {}) as JsonObject;
+          const annotations = (a["annotations"] ?? {}) as JsonObject;
           const name = String(labels["alertname"] ?? "?");
           const severity = String(labels["severity"] ?? "-");
           const message = String(annotations["summary"] ?? annotations["message"] ?? "");
@@ -258,7 +258,7 @@ export async function grafanaExecute(
       let full = path;
       if (query !== null && typeof query === "object" && !Array.isArray(query)) {
         const params = new URLSearchParams();
-        for (const [k, v] of Object.entries(query as Json)) params.set(k, String(v));
+        for (const [k, v] of Object.entries(query as JsonObject)) params.set(k, String(v));
         const qs = params.toString();
         if (qs !== "") full += `${full.includes("?") ? "&" : "?"}${qs}`;
       }

@@ -1,5 +1,5 @@
 import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, gitlabBaseUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- gitlab ----------
 
@@ -20,7 +20,7 @@ function gitlabMapError(status: number, body: string): string {
   }
 }
 
-async function gitlabSend(url: string, init: RequestInit): Promise<Json> {
+async function gitlabSend(url: string, init: RequestInit): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init));
@@ -38,19 +38,19 @@ async function gitlabSend(url: string, init: RequestInit): Promise<Json> {
     throw new Error(gitlabMapError(status, body));
   }
   try {
-    return JSON.parse(body) as Json;
+    return JSON.parse(body) as JsonObject;
   } catch {
     throw new Error("gitlab returned bad json");
   }
 }
 
-function gitlabGet(base: string, token: string, path: string, query: [string, string][]): Promise<Json> {
+function gitlabGet(base: string, token: string, path: string, query: [string, string][]): Promise<JsonObject> {
   const url = new URL(`${base}${path}`);
   for (const [k, v] of query) url.searchParams.set(k, v);
   return gitlabSend(url.toString(), { method: "GET", headers: { "PRIVATE-TOKEN": token } });
 }
 
-export async function gitlabExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function gitlabExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("gitlab secret 'token' is not stored");
   const base = gitlabBaseUrl(config);
@@ -95,7 +95,7 @@ export async function gitlabExecute(config: Json, tool: string, args: Json, secr
         const iid = typeof issue["iid"] === "number" ? issue["iid"] : 0;
         const title = typeof issue["title"] === "string" ? issue["title"] : "";
         const state = typeof issue["state"] === "string" ? issue["state"] : "?";
-        const author = ((issue["author"] ?? {}) as Json)["username"];
+        const author = ((issue["author"] ?? {}) as JsonObject)["username"];
         content += `!${iid} [${state}] ${title} (@${typeof author === "string" ? author : "?"})\n`;
       }
       if (content === "") content = "No issues.";
@@ -118,7 +118,7 @@ export async function gitlabExecute(config: Json, tool: string, args: Json, secr
         const state = typeof mr["state"] === "string" ? mr["state"] : "?";
         const source = typeof mr["source_branch"] === "string" ? mr["source_branch"] : "?";
         const target = typeof mr["target_branch"] === "string" ? mr["target_branch"] : "?";
-        const author = ((mr["author"] ?? {}) as Json)["username"];
+        const author = ((mr["author"] ?? {}) as JsonObject)["username"];
         content += `!${iid} [${state}] ${title} (${source}→${target}, @${typeof author === "string" ? author : "?"})\n`;
       }
       if (content === "") content = "No merge requests.";
@@ -129,7 +129,7 @@ export async function gitlabExecute(config: Json, tool: string, args: Json, secr
       if (typeof project !== "string") throw new Error("create_issue requires project");
       const title = args["title"];
       if (typeof title !== "string") throw new Error("create_issue requires title");
-      const payload: Json = { title };
+      const payload: JsonObject = { title };
       if (typeof args["description"] === "string") payload["description"] = args["description"];
       const body = await gitlabSend(`${base}/projects/${pathSegment(project)}/issues`, {
         method: "POST",

@@ -1,6 +1,6 @@
 import { firecrawlBaseUrl, secretOrNull, FIRECRAWL_DEFAULT_BASE_URL } from "../shared.js";
 import { fetchTimeout } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { firecrawlExecute } from "./execute.js";
 
@@ -84,10 +84,10 @@ const plugin: IntegrationPlugin = {
       },
     ],
   },
-  validate(config: Json) {
+  validate(config: JsonObject) {
     firecrawlBaseUrl(config);
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     const base = firecrawlBaseUrl(config);
     const headers: Record<string, string> = {};
     const key = secretOrNull(secrets, "api_key");

@@ -1,9 +1,9 @@
 import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, fetchJson, clampNumber, truncateWithMarker, superproxyBaseUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- superproxy ----------
 
-export async function superproxyExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function superproxyExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   if (tool !== "web_fetch") throw new Error(`superproxy integration has no tool ${tool}`);
   const target = args["url"];
   if (typeof target !== "string") throw new Error("web_fetch requires url");
@@ -23,7 +23,7 @@ export async function superproxyExecute(config: Json, tool: string, args: Json, 
   const [content, truncated] = truncateWithMarker(full, maxChars);
   const finalUrl = typeof body["url"] === "string" ? body["url"] : target;
   const statusCode = typeof body["status"] === "number" ? body["status"] : 0;
-  const meta: Json = { card: "web", kind: "fetch", url: finalUrl, status_code: statusCode, truncated };
+  const meta: JsonObject = { card: "web", kind: "fetch", url: finalUrl, status_code: statusCode, truncated };
   if (title !== null) meta["title"] = title;
   return { content, meta };
 }

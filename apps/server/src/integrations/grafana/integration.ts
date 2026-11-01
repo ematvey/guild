@@ -1,6 +1,6 @@
 import { grafanaBase } from "./execute.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { grafanaExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
@@ -164,10 +164,10 @@ const plugin: IntegrationPlugin = {
       apiTool("Grafana"),
     ],
   },
-  validate(config: Json) {
+  validate(config: JsonObject) {
     grafanaBase(config);
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     await probe(
       fetch(`${grafanaBase(config)}/api/health`, fetchTimeout({ headers: { authorization: `Bearer ${tokenOf(secrets)}` } })),
       "grafana",

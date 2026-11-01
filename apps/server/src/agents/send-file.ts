@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Type } from "typebox";
-import type { JsonValue } from "@earendil-works/chord";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -18,6 +17,7 @@ import { uuidv7 } from "../platform/time.js";
 import type { Agent, AgentRun } from "./types.js";
 import { resolveAgentReadPath } from "./files.js";
 import { contentTypeOf } from "../platform/domain/mime.js";
+import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEND_BYTES = 64 * 1024 * 1024;
 
@@ -114,7 +114,7 @@ export function createSendFileTool(context: SendFileContext): ToolRegistration {
           path: args.path,
           ...(args.as === undefined ? {} : { as: args.as }),
         });
-        return { structuredOutput: result as unknown as JsonValue };
+        return { structuredOutput: structured(result) };
       } catch (error) {
         return errorResult(error);
       }

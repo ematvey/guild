@@ -1,6 +1,6 @@
 import { langfuseBaseUrl, secret } from "../shared.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { langfuseExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
@@ -87,7 +87,7 @@ const plugin: IntegrationPlugin = {
       apiTool("Langfuse"),
     ],
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     const base = langfuseBaseUrl(config, secrets);
     const public_key = secret(secrets, "public_key");
     const secret_key = secret(secrets, "secret_key");

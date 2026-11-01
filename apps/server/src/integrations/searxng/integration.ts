@@ -1,6 +1,6 @@
 import { searxngBaseUrl } from "../shared.js";
 import { fetchTimeout, probe } from "../probe.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { searxngExecute } from "./execute.js";
 
@@ -48,10 +48,10 @@ const plugin: IntegrationPlugin = {
       },
     ],
   },
-  validate(config: Json) {
+  validate(config: JsonObject) {
     searxngBaseUrl(config);
   },
-  async testConnection(config: Json) {
+  async testConnection(config: JsonObject) {
     const url = new URL(`${searxngBaseUrl(config)}/search`);
     url.searchParams.set("q", "guild");
     url.searchParams.set("format", "json");

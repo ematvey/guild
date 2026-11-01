@@ -4,7 +4,6 @@
 // the thread-history tools' exposure.
 
 import { Type } from "typebox";
-import type { JsonValue } from "@earendil-works/chord";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -25,6 +24,7 @@ import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
+import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEARCH_RESULTS = 20;
 
@@ -242,7 +242,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         }
         try {
           const stored = await deps.store.setDescription(deps.agent.id, description);
-          return { structuredOutput: { description: stored } as unknown as JsonValue };
+          return { structuredOutput: structured({ description: stored }) };
         } catch (error) {
           return textErr(error instanceof Error ? error.message : String(error));
         }
@@ -267,7 +267,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 16 * 1024 },
         execute: async (args) => {
           const result = await sendAgentMessage(deps, { text: args.text, title: args.title });
-          return { structuredOutput: result as unknown as JsonValue };
+          return { structuredOutput: structured(result) };
         },
       }),
     );
@@ -292,7 +292,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           const query = args.query.trim();
           if (query === "") return textErr("query must not be empty");
           const hits = await searchAgentConversations(deps.store, deps.agent.id, query, args.limit);
-          return { structuredOutput: { hits } as unknown as JsonValue };
+          return { structuredOutput: structured({ hits }) };
         },
       }),
     );
@@ -351,7 +351,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
             });
             return {
-              structuredOutput: {
+              structuredOutput: structured({
                 threads: page.threads.map((thread) => ({
                   thread_id: thread.id,
                   chat_id: thread.chat_id,
@@ -365,7 +365,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
                   last_activity_at: thread.last_activity_at,
                 })),
                 next_cursor: page.next_cursor,
-              } as unknown as JsonValue,
+              }),
             };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
@@ -397,7 +397,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               at: args.at,
               prompt: args.prompt,
             });
-            return { structuredOutput: result as unknown as JsonValue };
+            return { structuredOutput: structured(result) };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
           }
@@ -420,7 +420,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 32 * 1024 },
         execute: async () => {
           const routines = await listRoutines(deps.pool, deps.agent.id);
-          return { structuredOutput: { routines } as unknown as JsonValue };
+          return { structuredOutput: structured({ routines }) };
         },
       }),
     );
@@ -456,7 +456,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               timezone: args.timezone ?? "UTC",
               enabled: args.enabled ?? true,
             });
-            return { structuredOutput: routine as unknown as JsonValue };
+            return { structuredOutput: structured(routine) };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
           }
@@ -494,7 +494,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
               ...(args.enabled === undefined ? {} : { enabled: args.enabled }),
             });
-            return { structuredOutput: routine as unknown as JsonValue };
+            return { structuredOutput: structured(routine) };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
           }
@@ -520,7 +520,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           try {
             await deleteRoutine(deps.pool, deps.agent.id, args.routine_id);
             return {
-              structuredOutput: { deleted: true, routine_id: args.routine_id } as unknown as JsonValue,
+              structuredOutput: structured({ deleted: true, routine_id: args.routine_id }),
             };
           } catch (error) {
             return textErr(error instanceof Error ? error.message : String(error));
@@ -561,7 +561,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
             toSeq: args.to_seq,
           });
           if (read === null) return textErr("not_found");
-          return { structuredOutput: read as unknown as JsonValue };
+          return { structuredOutput: structured(read) };
         },
       }),
     );

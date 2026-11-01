@@ -31,7 +31,7 @@ import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
 import { callPlugin } from "../platform/integrations/execute.js";
-import type { ToolOutcome } from "../integrations/shared.js";
+import type { JsonObject, ToolOutcome } from "../integrations/shared.js";
 import type { IntegrationGateway } from "../platform/integrations/plugins.js";
 import {
   namespacedTool,
@@ -41,8 +41,6 @@ import {
   type IntegrationTurn,
 } from "../platform/integrations/plugins.js";
 import { toolAllowed, toolCurate } from "../platform/integrations/policy.js";
-
-type Json = Record<string, unknown>;
 
 /** The coding tools every chat carries (pi-durable CodingTools); the
  *  per-conversation tool allow-list must name them explicitly. */
@@ -273,7 +271,7 @@ export class IntegrationsRuntime {
   private static toolRegistration(
     spec: IntegrationToolInfo["spec"],
     execute: (
-      args: Json,
+      args: JsonObject,
       callId: string,
       conversationId: number,
       signal?: AbortSignal,
@@ -288,7 +286,7 @@ export class IntegrationsRuntime {
       async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
         context.abortSignal?.throwIfAborted();
         const outcome = await execute(
-          (args ?? {}) as Json,
+          (args ?? {}) as JsonObject,
           api.callId,
           Number(api.conversationId),
           context.abortSignal,
@@ -434,7 +432,7 @@ export class IntegrationsRuntime {
     conversationId: number,
     callId: string,
     callName: string,
-    args: Json,
+    args: JsonObject,
     signal?: AbortSignal,
   ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
     const snapshot = await this.authorizedSnapshot(conversationId);
@@ -547,7 +545,7 @@ export class IntegrationsRuntime {
     const [version, bundleSha256] = approved;
     const stored = await gateway.registry.getVersion(orgId, "integration", slug, version);
     if (stored.bundle_sha256 !== bundleSha256) return null;
-    const skills = (stored.manifest ?? {}) as Json;
+    const skills = (stored.manifest ?? {}) as JsonObject;
     const skillList = skills["skills"];
     const first = Array.isArray(skillList) ? skillList.find((s): s is string => typeof s === "string") : undefined;
     if (first === undefined) return null;

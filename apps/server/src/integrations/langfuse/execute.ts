@@ -1,14 +1,14 @@
 import { VENDOR_API_MAX_CHARS, secret, pathSegment, fetchJson, clampNumber, callVendorApi, langfuseBaseUrl } from "../shared.js";
-import type { ToolOutcome, Json } from "../shared.js";
+import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- langfuse ----------
 
-async function langfuseGet(base: string, path: string, publicKey: string, secretKey: string): Promise<Json> {
+async function langfuseGet(base: string, path: string, publicKey: string, secretKey: string): Promise<JsonObject> {
   const basic = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
   return fetchJson(`${base}${path}`, { headers: { authorization: `Basic ${basic}` } }, "langfuse");
 }
 
-export async function langfuseExecute(config: Json, tool: string, args: Json, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function langfuseExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
   const publicKey = secret(secrets, "public_key");
   const secretKey = secret(secrets, "secret_key");
   const base = langfuseBaseUrl(config, secrets);
@@ -16,7 +16,7 @@ export async function langfuseExecute(config: Json, tool: string, args: Json, se
     case "list_traces": {
       const limit = clampNumber(args, "limit", 10, 50);
       const body = await langfuseGet(base, `/api/public/traces?limit=${limit}`, publicKey, secretKey);
-      const traces = Array.isArray(body["data"]) ? (body["data"] as Json[]) : [];
+      const traces = Array.isArray(body["data"]) ? (body["data"] as JsonObject[]) : [];
       let content = "";
       for (const [i, trace] of traces.slice(0, limit).entries()) {
         const id = typeof trace["id"] === "string" ? trace["id"] : "?";

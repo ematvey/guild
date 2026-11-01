@@ -1,5 +1,5 @@
 import { googleAccessTokenFor } from "./execute.js";
-import type { Json } from "../shared.js";
+import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { googleWorkspaceExecute } from "./execute.js";
 import { apiTool } from "../api-tool.js";
@@ -141,7 +141,7 @@ const plugin: IntegrationPlugin = {
       apiTool("Google API"),
     ],
   },
-  async testConnection(config: Json, secrets) {
+  async testConnection(config: JsonObject, secrets) {
     await googleAccessTokenFor(config, secrets, null);
   },
   execute: googleWorkspaceExecute,

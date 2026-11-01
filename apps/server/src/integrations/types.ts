@@ -3,7 +3,7 @@
 // an execute function. The core knows only this shape — adding an
 // integration touches its folder and the plugin index, nothing else.
 
-import type { Json, ToolOutcome } from "./shared.js";
+import type { JsonObject, ToolOutcome } from "./shared.js";
 
 /** One admin-facing settings field (the shop's configure form schema). */
 export interface IntegrationField {
@@ -54,13 +54,13 @@ export interface IntegrationManifest {
 export interface IntegrationPlugin {
   manifest: IntegrationManifest;
   /** Rejects a broken row config before the tool surface is declared. */
-  validate?(config: Json): void;
+  validate?(config: JsonObject): void;
   /** The shop's save gate: a probe against the would-be configuration. */
-  testConnection(config: Json, secrets: [string, string][]): Promise<void>;
+  testConnection(config: JsonObject, secrets: [string, string][]): Promise<void>;
   execute(
-    config: Json,
+    config: JsonObject,
     tool: string,
-    args: Json,
+    args: JsonObject,
     secrets: [string, string][],
     actingAs: string | null,
   ): Promise<ToolOutcome>;
