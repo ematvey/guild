@@ -69,9 +69,14 @@ function reportError(error: unknown, handlers: SocketHandlers): void {
 
 export function routeMessage(message: ServerFrame, handlers: SocketHandlers): void {
   switch (message.type) {
+    // Connection and liveness frames: the socket's onmessage already noted
+    // the frame for the watchdog. Tool dispatch and machine requests belong
+    // to the machine socket, never the member socket.
     case "hello":
+    case "pong":
     case "tool_dispatch":
     case "tool_cancel":
+    case "machine_request":
       return;
     case "thread_state":
       handlers.onThreadState?.(message);
@@ -128,6 +133,11 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
         telemetry: message.telemetry,
       });
       return;
+    default: {
+      // A new frame variant must get a route here before it compiles.
+      const unrouted: never = message;
+      void unrouted;
+    }
   }
 }
 
@@ -203,6 +213,12 @@ export function startSocket(
   };
   const connect = async (): Promise<void> => {
     if (stopped || connecting) return;
+    // A wake-up can dial while a scheduled reconnect is pending: this attempt
+    // is the reconnect, so the timer must not dial a second one.
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     connecting = true;
     attempt += 1;
     traceEvent("socket.connect_start", { attempt, silentMs: silentMs() });
@@ -211,6 +227,14 @@ export function startSocket(
       const ticket = await mintTicket();
       if (stopped) return;
       const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}`;
+      // One live socket per connection: a prior one still open (a half-open
+      // socket a wake-up gave up on) is detached first, so its late frames
+      // and its close cannot reach this connection.
+      const prior = socket;
+      socket = null;
+      if (prior !== null) {
+        try { prior.close(); } catch { /* already closing */ }
+      }
       const current = openSocket(url, factory);
       socket = current;
       current.onopen = () => {
@@ -303,11 +327,13 @@ export function startSocket(
       sendSync();
     }
   };
-  if (typeof window !== "undefined") {
+  const onVisibility = (): void => {
+    if (document.visibilityState === "visible") wakeCheck();
+  };
+  const watchWake = typeof window !== "undefined" && typeof document !== "undefined";
+  if (watchWake) {
     window.addEventListener("online", wakeCheck);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") wakeCheck();
-    });
+    document.addEventListener("visibilitychange", onVisibility);
   }
 
   void connect();
@@ -315,6 +341,10 @@ export function startSocket(
     stop: () => {
       stopped = true;
       livenessStop();
+      if (watchWake) {
+        window.removeEventListener("online", wakeCheck);
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       const current = socket;

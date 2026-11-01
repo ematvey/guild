@@ -299,4 +299,99 @@ describe("startSocket", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+
+  describe("wake-ups", () => {
+    /** A browser-shaped host: window and document as event targets. */
+    function stubHost() {
+      const win = Object.assign(new EventTarget(), { location: { protocol: "http:", host: "test" } });
+      const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      vi.stubGlobal("window", win);
+      vi.stubGlobal("document", doc);
+      vi.stubGlobal("localStorage", { getItem: () => "client" });
+      vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })));
+      return { win, doc };
+    }
+    const handlers = {
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      getOpenChatId: () => null,
+    };
+
+    it("a wake during a pending reconnect dials once, not twice", async () => {
+      vi.useFakeTimers();
+      const { win } = stubHost();
+      const sockets: FakeSocket[] = [];
+      const connection = startSocket({
+        ...handlers,
+        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0].open();
+      sockets[0].close();
+      // The reconnect timer is pending; a silent socket past the dead line
+      // makes the wake-up dial at once.
+      await vi.advanceTimersByTimeAsync(1_000);
+      vi.setSystemTime(Date.now() + 20_000);
+      win.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(sockets).toHaveLength(2);
+      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+    });
+
+    it("a fresh dial closes the socket it replaces", async () => {
+      vi.useFakeTimers();
+      const { doc } = stubHost();
+      const sockets: FakeSocket[] = [];
+      const states: number[] = [];
+      const connection = startSocket({
+        ...handlers,
+        onThreadState: (state) => states.push(state.seq),
+        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // Still connecting (readyState 0) and silent past the dead line: the
+      // wake-up gives up on it and dials again.
+      vi.setSystemTime(Date.now() + 20_000);
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(2);
+      expect(sockets[0].closed).toBe(true);
+      // The replaced socket's late frame never reaches the handlers.
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "thread_state", chat_id: "c", seq: 1, text: "", thinking: "", events: [], generating: false }) });
+      expect(states).toEqual([]);
+      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+    });
+
+    it("stop removes the wake listeners", async () => {
+      vi.useFakeTimers();
+      const { win, doc } = stubHost();
+      const sockets: FakeSocket[] = [];
+      const connection = startSocket({
+        ...handlers,
+        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      const removedWin = vi.spyOn(win, "removeEventListener");
+      const removedDoc = vi.spyOn(doc, "removeEventListener");
+      connection.stop();
+      expect(removedWin).toHaveBeenCalledWith("online", expect.any(Function));
+      expect(removedDoc).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+      vi.setSystemTime(Date.now() + 20_000);
+      win.dispatchEvent(new Event("online"));
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(sockets).toHaveLength(1);
+      vi.useRealTimers(); vi.unstubAllGlobals();
+    });
+  });
+
+  it("routes liveness and machine-socket frames to no handler", () => {
+    const handlers = {
+      onThreadList: vi.fn(), onChatStatus: vi.fn(), onFrame: vi.fn(), onSync: vi.fn(), onError: vi.fn(),
+    } satisfies SocketHandlers;
+    routeMessage({ type: "pong" }, handlers);
+    routeMessage({ type: "machine_request", request_id: "r", op: "fs.read", payload: null }, handlers);
+    for (const fn of Object.values(handlers)) expect(fn).not.toHaveBeenCalled();
+  });
 });
