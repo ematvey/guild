@@ -149,9 +149,6 @@ export class GuildRuntime {
   private readonly bridge: ChatBridge;
   private readonly recovery: ConversationRecovery;
   private readonly host = new ConversationHost();
-  /** The last desktop-sent project instruction chain per conversation, so
-   *  a resumed run sees the same instructions its submit did. */
-  private readonly projectInstructions = new Map<number, string>();
   private readonly watchOpening = new SingleFlight<string, void>();
   private readonly admissions = new ConversationAdmissions();
   private get watches(): Map<string, AgentEventStream> {
@@ -382,7 +379,10 @@ export class GuildRuntime {
       ...(objects !== undefined ? { spill: { artifacts: this.toolArtifacts, objects } } : {}),
       agentRuns: {
         assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
-        runEnd: (chatId, failure) => this.agentRuns.runEnd(chatId, failure),
+        runEnd: (chatId, failure) => {
+          this.forgetRun(chatId);
+          return this.agentRuns.runEnd(chatId, failure);
+        },
       },
       agentFiles: {
         pending: async (chatId) =>
@@ -921,17 +921,17 @@ export class GuildRuntime {
 
   private async initializeHarness(): Promise<void> {
     const harness = this.harness!;
-    // The worker's mapping was bootstrapped for exactly its chat; loading
-    // the full table here would attach foreign conversations' watches, and
-    // the scoped harness refuses them by design.
-    for (const id of this.chatToConversation.values()) {
-      this.bridge.forget(String(id));
-      this.integrationsRuntime.forget(id);
-      this.userMcpRuntime.forget(id);
-      this.skillsRuntime.forget(id);
-    }
+    for (const [chatId, id] of this.chatToConversation) this.forgetConversation(chatId, id);
     this.providerChats.clear();
-    if (!this.workerScope) await this.loadMapping();
+    // Only chats with journal work attach now; every other chat maps and
+    // attaches on its first touch (attachedConversation). The worker's
+    // mapping was bootstrapped for exactly its chat: the scoped harness
+    // refuses foreign conversations by design.
+    if (!this.workerScope) {
+      this.chatToConversation.clear();
+      this.conversationToChat.clear();
+      await this.loadPendingMapping();
+    }
     // Watches attach before resume: a re-driven run must start with its
     // watch already live. Attached after, the attach snapshot is not
     // delivered as run_start, and the bridge misses the generation id and
@@ -1021,11 +1021,57 @@ export class GuildRuntime {
     }
   }
 
-  private async loadMapping(): Promise<void> {
+  /** Maps the chats whose conversation has journal work: live tasks,
+   *  queued submissions, or entries the projection has not caught up on. */
+  private async loadPendingMapping(): Promise<void> {
+    const pending = (await this.chatsWithPendingWork(true)).map((row) => row.chatId);
+    if (pending.length === 0) return;
     const res = await this.pool.query<{ chat_id: string; conversation_id: string }>(
-      "SELECT chat_id, conversation_id FROM chat_conversations",
+      "SELECT chat_id, conversation_id FROM chat_conversations WHERE chat_id = ANY($1::uuid[])",
+      [pending],
     );
     for (const row of res.rows) this.mapConversation(row.chat_id, Number(row.conversation_id));
+  }
+
+  /** Drops everything this process holds for one conversation: bridge
+   *  state, provisioned tool snapshots and the chat-scoped extensions. */
+  private forgetConversation(chatId: string, conversationId: number): void {
+    this.bridge.forget(String(conversationId));
+    this.integrationsRuntime.forget(conversationId);
+    this.userMcpRuntime.forget(conversationId);
+    this.skillsRuntime.forget(conversationId);
+    const installed = this.registry.snapshot();
+    for (const name of chatExtensionNames(chatId)) {
+      const extension = installed.extension(name);
+      if (extension) this.registry.uninstall(extension);
+    }
+    this.forgetRun(chatId);
+  }
+
+  /** Drops the per-run caches of one chat once its run ends. */
+  private forgetRun(chatId: string): void {
+    this.materializedTurns.delete(chatId);
+    this.runIdCache.delete(chatId);
+    for (const [key, owner] of this.sandboxChats) if (owner === chatId) this.sandboxChats.delete(key);
+  }
+
+  /** The chat's existing conversation with its watch attached, mapping it
+   *  on first touch; undefined when the chat has none. Never creates. */
+  private async attachedConversation(chatId: string): Promise<Conversation | undefined> {
+    await this.start();
+    let id = this.chatToConversation.get(chatId);
+    if (id === undefined) {
+      const res = await this.pool.query<{ conversation_id: string }>(
+        "SELECT conversation_id FROM chat_conversations WHERE chat_id = $1",
+        [chatId],
+      );
+      if (res.rows[0] === undefined) return undefined;
+      id = Number(res.rows[0].conversation_id);
+      this.mapConversation(chatId, id);
+    }
+    const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+    if (conversation && !this.watches.has(chatId)) await this.attachWatch(chatId, id);
+    return conversation;
   }
 
   /** Attaches the bridge's event stream to one conversation (dedup: the
@@ -1148,7 +1194,10 @@ export class GuildRuntime {
     const known = this.chatToConversation.get(chatId);
     if (known !== undefined) {
       const conversation = await this.harness!.conversation(known as ConversationId, BACKGROUND_CONTEXT);
-      if (conversation) return conversation;
+      if (conversation) {
+        if (!this.watches.has(chatId)) await this.attachWatch(chatId, known);
+        return conversation;
+      }
       this.unmapConversation(chatId);
       await this.pool.query("DELETE FROM chat_conversations WHERE chat_id = $1", [chatId]);
       // Missing durable state cannot be reconstructed from a possibly
@@ -1208,6 +1257,16 @@ export class GuildRuntime {
       canDelegate,
       thread,
     );
+  }
+
+  /** The project instruction chain the chat's latest submit carried, kept
+   *  with the chat's conversation mapping so a resumed run sees it too. */
+  private async projectInstructionsFor(chatId: string): Promise<string | undefined> {
+    const res = await this.pool.query<{ project_instructions: string | null }>(
+      "SELECT project_instructions FROM chat_conversations WHERE chat_id = $1",
+      [chatId],
+    );
+    return res.rows[0]?.project_instructions ?? undefined;
   }
 
   /** The thread's own context: an isolated routine run, or a thread the agent
@@ -1311,18 +1370,12 @@ export class GuildRuntime {
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
     // under a chat-scoped name and listed with the other extensions.
-    const agentExtension =
-      agentTools.length === 0
-        ? null
-        : { name: `guild-agent-tools:${chatId}`, tools: agentTools };
+    const names = chatExtensionNames(chatId);
+    const agentExtension = agentTools.length === 0 ? null : { name: names[0], tools: agentTools };
     if (agentExtension !== null) this.registry.install(agentExtension);
-    const machineExtension =
-      machineTools.length === 0 ? null : { name: `guild-machine-tools:${chatId}`, tools: machineTools };
+    const machineExtension = machineTools.length === 0 ? null : { name: names[1], tools: machineTools };
     if (machineExtension !== null) this.registry.install(machineExtension);
-    const workspaceExtension =
-      workspaceTools.length === 0
-        ? null
-        : { name: `guild-agent-workspace-tools:${chatId}`, tools: workspaceTools };
+    const workspaceExtension = workspaceTools.length === 0 ? null : { name: names[2], tools: workspaceTools };
     if (workspaceExtension !== null) this.registry.install(workspaceExtension);
     await conversation.configure(
       {
@@ -1347,7 +1400,7 @@ export class GuildRuntime {
           : {
               instructions: await this.agentInstructionsFor(
                 agent,
-                this.projectInstructions.get(Number(conversation.id)),
+                await this.projectInstructionsFor(chatId),
                 workspaceTools.length > 0,
                 chatId,
               ),
@@ -1680,7 +1733,10 @@ export class GuildRuntime {
     // filter). User MCP servers: the chat owner's enabled servers declare
     // their tools the same way (one extension + bare registrations).
     // Empty desired selections clear previously configured dynamic tools.
-    this.projectInstructions.set(Number(conversation.id), input.agentsMd ?? "");
+    await this.pool.query("UPDATE chat_conversations SET project_instructions = $2 WHERE chat_id = $1", [
+      chatId,
+      input.agentsMd ?? "",
+    ]);
     await this.provisionTurnTools(conversation, chatId, orgId, signal);
     signal.throwIfAborted();
     // The combined skills index section renders at turn start from the
@@ -1733,10 +1789,7 @@ export class GuildRuntime {
   /** Changes only inbox placement; the submission and its visible echo keep identity. */
   async steerQueued(chatId: string, submissionId: number): Promise<boolean> {
     if (this.supervisor) return this.supervisor.steer(chatId, submissionId);
-    await this.start();
-    const id = this.chatToConversation.get(chatId);
-    if (id === undefined) return false;
-    const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+    const conversation = await this.attachedConversation(chatId);
     if (!conversation) return false;
     const promoted = await conversation.commit(async (tx) => {
       const inbox = await tx.doc(InboxDoc, conversation.id);
@@ -1745,7 +1798,7 @@ export class GuildRuntime {
       item.mode = "steer";
       return true;
     }, BACKGROUND_CONTEXT);
-    if (promoted) await this.reconcileConversation(chatId, id);
+    if (promoted) await this.reconcileConversation(chatId, Number(conversation.id));
     return promoted;
   }
 
@@ -1756,16 +1809,9 @@ export class GuildRuntime {
    *  the client refreshes); "not_found" = gone already, nothing to do. */
   async withdrawQueued(chatId: string, submissionId: number): Promise<string> {
     if (this.supervisor) return this.supervisor.withdraw(chatId, submissionId);
-    await this.start();
-    const conversationId = this.chatToConversation.get(chatId);
-    if (conversationId === undefined) return "not_found";
-    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+    const conversation = await this.attachedConversation(chatId);
     if (!conversation) return "not_found";
-    return this.harness!.abortSubmission(
-      submissionId as SubmissionId,
-      BACKGROUND_CONTEXT,
-      conversationId as ConversationId,
-    );
+    return this.harness!.abortSubmission(submissionId as SubmissionId, BACKGROUND_CONTEXT, conversation.id);
   }
 
   /** Registers/refreshes every org's loopback provider (startup path: the
@@ -1895,10 +1941,7 @@ export class GuildRuntime {
       await this.supervisor.stop(chatId);
       return;
     }
-    await this.start();
-    const conversationId = this.chatToConversation.get(chatId);
-    if (conversationId === undefined) return;
-    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+    const conversation = await this.attachedConversation(chatId);
     if (!conversation) return;
     await conversation
       .abort(BACKGROUND_CONTEXT)
@@ -1909,10 +1952,7 @@ export class GuildRuntime {
   /** Starts a conversation-owned compaction and returns its durable task identity. */
   async compactChat(chatId: string): Promise<number | null> {
     if (this.supervisor) return this.supervisor.compact(chatId);
-    await this.start();
-    const conversationId = this.chatToConversation.get(chatId);
-    if (conversationId === undefined) return null;
-    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+    const conversation = await this.attachedConversation(chatId);
     if (!conversation) return null;
     return Number(await conversation.compact(undefined, BACKGROUND_CONTEXT));
   }
@@ -1954,18 +1994,19 @@ export class GuildRuntime {
     await this.supervisor?.close();
     await this.host.close();
     await this.reopening;
-    for (const id of this.chatToConversation.values()) {
-      this.bridge.forget(String(id));
-      this.integrationsRuntime.forget(id);
-      this.userMcpRuntime.forget(id);
-      this.skillsRuntime.forget(id);
-    }
+    for (const [chatId, id] of this.chatToConversation) this.forgetConversation(chatId, id);
     this.chatToConversation.clear();
     this.conversationToChat.clear();
     this.providerChats.clear();
     await this.codemodeSandbox.close().catch(() => {});
     await this.sandboxes?.close().catch(() => {});
   }
+}
+
+/** The chat-scoped extensions provisioning installs: agent tools, machine
+ *  tools, and the agent's own workspace tools. */
+function chatExtensionNames(chatId: string): [string, string, string] {
+  return [`guild-agent-tools:${chatId}`, `guild-machine-tools:${chatId}`, `guild-agent-workspace-tools:${chatId}`];
 }
 
 function sandboxRoot(): string {

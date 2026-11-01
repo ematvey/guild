@@ -1,5 +1,7 @@
-// A suspended runtime leaves committed work pending; a fresh app resumes it.
-// SIGKILL recovery is separately covered by worker-mode.test.ts.
+// A suspended runtime leaves committed work pending; a fresh app resumes it
+// with the project instructions its submit carried, and attaches only the
+// chats with pending work at startup. SIGKILL recovery is separately covered
+// by worker-mode.test.ts.
 
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -42,7 +44,15 @@ async function waitFor(probe: () => Promise<boolean>, timeoutMs = 20_000): Promi
   throw new Error("waitFor timed out");
 }
 
-const sseDelta = (content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+interface RuntimeInternals {
+  runIdCache: Map<string, unknown>;
+  materializedTurns: Map<string, string>;
+  registry: { snapshot(): { extension(name: string): unknown } };
+}
+
+const PROJECT_CHAIN = '<project_instructions path="/repo/AGENTS.md">\nUse pnpm, never npm.\n</project_instructions>';
+
+const sseDelta =(content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
@@ -50,6 +60,39 @@ const sseDone = (): string =>
 
 describe("restart resume (full durability)", () => {
   it("a turn suspended by runtime close resumes and completes in a fresh app", async () => {
+    // An idle chat with a finished turn: nothing pending at the restart.
+    stack.mock.setResponses([
+      { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("idle answer") + sseDone() },
+    ]);
+    const idleCreated = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: { title: "idle chat" },
+    });
+    const idle = JSON.parse(idleCreated.body) as { id: string };
+    const idleSent = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(stack.memberToken),
+      payload: { chat_id: idle.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "finish now" }] },
+    });
+    expect(idleSent.statusCode).toBe(200);
+    await waitFor(async () => {
+      const pending = await stack.env.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id
+         WHERE c.chat_id = $1 AND t.status <> 'terminal'`,
+        [idle.id],
+      );
+      const row = await stack.env.db.query<{ generating: boolean }>("SELECT generating FROM chats WHERE id = $1", [
+        idle.id,
+      ]);
+      return pending.rows[0]!.n === 0 && row.rows[0]?.generating === false && stack.mock.requests.length >= 1;
+    });
+    // The run's end drops the chat's per-run caches.
+    const internals = stack.env.app.platform.runtime as unknown as RuntimeInternals;
+    await waitFor(async () => !internals.runIdCache.has(idle.id) && !internals.materializedTurns.has(idle.id));
+
     // A stream slow enough to still be running when the process dies.
     stack.mock.setResponses([
       {
@@ -82,18 +125,25 @@ describe("restart resume (full durability)", () => {
         chat_id: chat.id,
         model: "GLM-Test-Model",
         messages: [{ role: "user", content: "stream me across a restart" }],
+        agents_md: PROJECT_CHAIN,
       },
     });
     expect(sent.statusCode).toBe(200);
 
     // Mid-stream: the model call is running and a partial has committed.
-    await waitFor(async () => stack.mock.requests.length >= 1);
+    await waitFor(async () =>
+      stack.mock.requests.some((request) => JSON.stringify(request.body).includes("stream me")),
+    );
     await new Promise((resolve) => setTimeout(resolve, 800));
 
     // Close the actual owner before opening a replacement. Closing only the
     // fixture's seeding pool would leave app1's scheduler and database pool
     // alive, creating two owners rather than simulating a dead process.
+    const agentTools = `guild-agent-tools:${chat.id}`;
+    expect(internals.registry.snapshot().extension(agentTools)).toBeDefined();
     await stack.env.app.platform.runtime.close();
+    // The forget sweep uninstalls the chat-scoped extensions.
+    expect(internals.registry.snapshot().extension(agentTools)).toBeUndefined();
     const pending = await stack.env.db.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM tasks WHERE status<>'terminal'",
     );
@@ -108,6 +158,7 @@ describe("restart resume (full durability)", () => {
           'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("resumed answer complete") + sseDone(),
       },
     ]);
+    const resumedFrom = stack.mock.requests.length;
     const app2 = await buildApp(stack.env.config);
     await app2.listen({ port, host: "127.0.0.1" });
     try {
@@ -134,6 +185,35 @@ describe("restart resume (full durability)", () => {
       const text = blocks.map((b) => b.text ?? "").join("");
       expect(text).toContain("resumed answer complete");
       expect(events.some((e) => e.event.type === "turn_error")).toBe(false);
+
+      // The re-driven model call carries the submit's project instructions.
+      const resumed = stack.mock.requests.slice(resumedFrom);
+      expect(resumed.length).toBeGreaterThan(0);
+      expect(resumed.every((request) => JSON.stringify(request.body).includes("Use pnpm, never npm."))).toBe(true);
+
+      // Only the pending chat attached at startup; the idle one maps on touch.
+      const runtime2 = app2.platform.runtime;
+      expect(runtime2.conversationIdForChat(chat.id)).toBeDefined();
+      expect(runtime2.conversationIdForChat(idle.id)).toBeUndefined();
+      stack.mock.setResponses([
+        { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("idle again") + sseDone() },
+      ]);
+      const again = await app2.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers: auth(stack.memberToken),
+        payload: { chat_id: idle.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "and again" }] },
+      });
+      expect(again.statusCode).toBe(200);
+      await waitFor(async () => {
+        const thread = await app2.inject({
+          method: "GET",
+          url: `/api/v1/chats/${idle.id}/thread`,
+          headers: auth(stack.memberToken),
+        });
+        return thread.body.includes("idle again");
+      });
+      expect(runtime2.conversationIdForChat(idle.id)).toBeDefined();
     } finally {
       await app2.close();
     }
