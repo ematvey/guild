@@ -11,7 +11,7 @@
 #   scripts/check.sh --only <name>   # one check
 #
 # Check names: cargo-test server-test desktop-test clippy windows protocol
-#              coherence
+#              coherence typecheck
 set -u
 
 cd "$(dirname "$0")/.."
@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ALL_CHECKS="cargo-test server-test desktop-test clippy windows protocol coherence"
+ALL_CHECKS="cargo-test server-test desktop-test clippy windows protocol coherence typecheck"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
 check_cargo_test() { cargo nextest run --workspace; }
@@ -48,6 +48,17 @@ check_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
 check_windows() { ./scripts/check-windows.sh; }
 check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }
+# Vitest strips types without checking them; this is the only place tsc
+# sees the TypeScript trees. packages/ui has no tsconfig of its own and is
+# checked through the desktop, which imports it.
+check_typecheck() {
+  rc=0
+  for project in apps/server apps/desktop packages/wire; do
+    echo "== tsc $project"
+    npx tsc -p "$project/tsconfig.json" --noEmit || rc=1
+  done
+  return $rc
+}
 
 now_ns() { date +%s%N; }
 
@@ -117,7 +128,7 @@ else
   done
 
   RAN=$ALL_CHECKS
-  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows protocol coherence"
+  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy windows protocol coherence typecheck"
 fi
 
 for name in $RAN; do

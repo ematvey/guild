@@ -47,9 +47,14 @@ npm test --workspace apps/server        # TS server suite (disposable PG/CH data
 cd apps/desktop && npm test             # frontend vitest
 cargo clippy --workspace --all-targets -- -D warnings
 scripts/check-windows.sh                # SKIP when the Windows target is absent
-node protocol/check.mjs
+node protocol/check.mjs                 # schema ↔ wire types ↔ fixtures, and compatibility with the last client release
 npm run coherence
+npx tsc -p <project>/tsconfig.json --noEmit   # typecheck: apps/server, apps/desktop, packages/wire
 ```
+
+`--fast` keeps everything but `cargo nextest` and the server suite, so the
+typecheck runs in both modes. Vitest strips types without checking them;
+the `typecheck` check is the only place `tsc` sees the TypeScript trees.
 
 Format before you commit: `cargo fmt --all`.
 
