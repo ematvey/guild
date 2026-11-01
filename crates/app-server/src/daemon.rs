@@ -58,7 +58,7 @@ pub fn socket_path() -> anyhow::Result<PathBuf> {
 /// handle). The raw handle exists only on Windows: the GUI's reader thread
 /// needs PeekNamedPipe there because a blocking read on a duplicated
 /// synchronous pipe handle parks the file object's I/O lock and starves the
-/// concurrent writer (the original first-rpc deadlock).
+/// concurrent writer.
 pub struct Pair(
     pub Box<dyn std::io::Read + Send>,
     pub Box<dyn std::io::Write + Send>,
@@ -85,9 +85,8 @@ pub fn try_connect_at(path: &Path) -> anyhow::Result<Pair> {
         .open(path)
         .with_context(|| format!("connect {}", path.display()))?;
     let rd = f.try_clone()?;
-    // Peek must use the READ half's own handle: the inbound queue is what we
-    // poll, and using the write half's handle left the client blind to
-    // responses in situ (the daemon wrote them; the client never saw them).
+    // Peek must use the READ half's own handle: the inbound queue is what
+    // the client polls.
     use std::os::windows::io::AsRawHandle;
     let raw = rd.as_raw_handle() as isize;
     Ok(Pair(Box::new(rd), Box::new(f), Some(raw)))
@@ -188,12 +187,10 @@ pub fn spawn_detached(bin: &Path) -> anyhow::Result<()> {
 
 /// hello handshake over a fresh pair; a daemon speaking a different wire
 /// protocol is told to shut down and the caller gets an Err (it respawns a
-/// current daemon). The crate version is informational only — the tauri
-/// client and the app-server version independently (GUI 0.3.x vs workspace
-/// 0.2.0), so comparing crate versions here broke every attach after any
-/// version bump. Reads byte-wise (no BufReader) so no bytes past the newline
-/// are lost to a dropped buffer — other clients' events may follow
-/// immediately.
+/// current daemon). The crate version is informational only — the client
+/// and the daemon version independently. The returned pair reads through
+/// the same buffered reader the handshake used, so bytes past the hello
+/// response (other clients' events) are never lost.
 pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
     handshake_with(pair, None)
 }
@@ -269,7 +266,7 @@ pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<P
     // No spawn fallback: the single-process app hosts the socket itself; a
     // CLI verb without a running app fails instead of forking a headless
     // engine (docs/specs/2026-09-13-single-process-desktop.md). `bin` is
-    // kept in the signature for callers that still pass it.
+    // unused.
     let _ = bin;
     for _ in 0..10u8 {
         if let Ok(pair) = try_connect() {
@@ -343,15 +340,12 @@ const RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 /// this process (the webview keeps dispatching), so each new host cycle
 /// relatches it to false before hosting again.
 pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
-    // One live link + watcher pair at a time, tied to HOSTING, not to cycle
-    // attempts: the link is spawned when this process starts hosting and
+    // One live link + watcher + reaper set at a time, tied to HOSTING, not
+    // to cycle attempts: it is spawned when this process starts hosting and
     // torn down when it parks or retires. A failed host cycle (a bind race,
-    // an accept error) must neither respawn nor tear the link down — the
-    // link is independent of the CLI socket. The old shape (abort + respawn
-    // every cycle) turned a persistently failing bind into a link kill per
-    // cycle: with the Windows pipe bind broken (os error 87, 2026-09-23 →
-    // 09-29) every Windows machine's link died within a second of
-    // connecting, forever — Windows machines permanently offline.
+    // an accept error) neither respawns nor tears the link down — the link
+    // is independent of the CLI socket, and a persistently failing bind
+    // must not kill the link once per retry.
     let mut link_cycle: Option<(
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
@@ -384,7 +378,9 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
             if crate::daemon_install::unit_active() || try_connect_at(&path).is_ok() {
                 continue;
             }
-            let _ = shared.shutdown.send(false);
+            // send_replace: while parked nothing subscribes, and a plain
+            // send to a receiverless watch drops the value.
+            shared.shutdown.send_replace(false);
         }
         if link_cycle.is_none() {
             link_cycle = {
@@ -399,10 +395,8 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
                 teardown(&mut link_cycle);
             }
             Err(e) => {
-                // The bind failed; keep the link and the reaper alive and
-                // retry the host. Respawning here was the 2026-09-23
-                // allocation storm; tearing down here kept every link dead
-                // while the bind kept failing.
+                // The bind failed: keep the link and the reaper alive and
+                // retry the host.
                 crate::dtrace::dtrace(&format!("daemon host cycle failed: {e}"));
                 eprintln!("guild: daemon host cycle failed: {e}");
                 tokio::time::sleep(RECLAIM_POLL).await;
@@ -420,17 +414,12 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
 fn spawn_machine_link(
     shared: &Shared,
 ) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
-    // One supervisor runs one link task per live workspace (fed by the
-    // registry's spawn feed); the token.json watcher re-seeds the ACTIVE
-    // session from auth performed by another process.
+    // One supervisor runs one link task per live workspace, fed by a spawn
+    // feed opened for this host cycle; the token.json watcher re-seeds the
+    // ACTIVE session from auth performed by another process.
     let supervisor = tokio::spawn(crate::machine_link::run_link_supervisor(
         shared.clone(),
-        shared
-            .link_spawn_rx
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1),
+        shared.links.spawn_feed(),
     ));
     // Auth performed by another process (the GUI while a unit daemon owns
     // the link, or a CLI verb) lands only in token.json: the watcher
@@ -455,8 +444,6 @@ fn spawn_machine_link(
     )
 }
 
-/// Reaps finished agent runs so the JoinSet doesn't grow unbounded, then
-/// runs the accept loop for this platform until shutdown.
 /// Reaps finished agent runs so the JoinSet doesn't grow unbounded. One
 /// reaper per host cycle: the caller aborts it with the link/watcher pair
 /// before the next cycle's spawn — a failed host cycle must not leave a

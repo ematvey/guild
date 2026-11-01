@@ -8,7 +8,7 @@
 
 use guild_app_server::auth_state::{AuthChange, AuthState};
 use guild_app_server::cloud::CloudClient;
-use guild_app_server::machine_link::{new_registry, MachineLinkConfig};
+use guild_app_server::machine_link::{LinkRegistry, MachineLinkConfig};
 use guild_app_server::session_store::{self, StoredSession, WorkspaceStore};
 use serde_json::json;
 use std::path::PathBuf;
@@ -90,7 +90,7 @@ async fn login_identify_signout_relogin_pair() {
     let base_url = server.uri();
 
     let store = tmp_store("table");
-    let (links, _) = new_registry();
+    let links = LinkRegistry::new();
     let mut link_rx = links.subscribe_or_create(&base_url);
     let mut state = AuthState::default();
 
@@ -226,7 +226,7 @@ async fn login_identify_signout_relogin_pair() {
 #[tokio::test]
 async fn anonymous_identify_parks_the_link_and_skips_the_store() {
     let store = tmp_store("anon");
-    let (links, _) = new_registry();
+    let links = LinkRegistry::new();
     let mut link_rx = links.subscribe_or_create("http://later");
     let mut state = AuthState::default();
 
@@ -291,7 +291,7 @@ async fn two_workspaces_stay_independent() {
     let a = fake_cloud().await;
     let b = fake_cloud().await;
     let store = tmp_store("two");
-    let (links, _) = new_registry();
+    let links = LinkRegistry::new();
     let mut link_a = links.subscribe_or_create(a.uri().as_str());
     let mut link_b = links.subscribe_or_create(b.uri().as_str());
     let mut state = AuthState::default();
@@ -419,7 +419,7 @@ async fn two_workspaces_stay_independent() {
 async fn switch_rejects_unknown_and_tokenless_entries() {
     let server = fake_cloud().await;
     let store = tmp_store("switch-bad");
-    let (links, _) = new_registry();
+    let links = LinkRegistry::new();
     let mut state = AuthState::default();
     let (token, user) = CloudClient::login(server.uri().as_str(), "a@b.c", "pw")
         .await
@@ -566,7 +566,7 @@ async fn login_refreshes_org_identity_into_the_store() {
         .await;
 
     let store = tmp_store("org-identity");
-    let (links, _) = new_registry();
+    let links = LinkRegistry::new();
     let mut state = AuthState::default();
     let (token, user) = CloudClient::login(&server.uri(), "a@b.c", "pw")
         .await

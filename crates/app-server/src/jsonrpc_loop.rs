@@ -66,12 +66,9 @@ pub struct Shared {
     pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
     /// The machine-link registry: one config channel per live workspace.
     /// Publish a config to connect that workspace's executor link, `None`
-    /// (or `drop_link`) to tear it down. The supervisor task subscribes.
+    /// (or `drop_link`) to tear it down. Each host cycle's supervisor opens
+    /// its own spawn feed on it.
     pub links: LinkRegistry,
-    /// The registry's spawn feed — the supervisor takes it once per host
-    /// cycle. `None` after the first taker (a second, parked supervisor is
-    /// harmless; the registry never feeds it).
-    pub link_spawn_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>>,
     /// The session store's path (token.json). Injected by tests so they
     /// never touch the developer's real store; the daemon leaves it None
     /// and the default path applies.
@@ -82,15 +79,13 @@ impl Shared {
     pub fn new(session: EngineState) -> Self {
         let (events, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel(false);
-        let (links, link_spawn_rx) = crate::machine_link::new_registry();
         Self {
             session: Arc::new(Mutex::new(session)),
             events,
             agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
-            links,
-            link_spawn_rx: Arc::new(Mutex::new(Some(link_spawn_rx))),
+            links: LinkRegistry::new(),
             store_path: None,
         }
     }
@@ -387,7 +382,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             ));
         }
         "daemon.shutdown" => {
-            let _ = shared.shutdown.send(true);
+            shared.shutdown.send_replace(true);
             let _ = out_tx.send(response_value(
                 req.id,
                 Ok(Response::ok(req.id, json!({"ok": true}))),

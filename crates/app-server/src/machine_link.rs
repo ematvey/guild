@@ -733,9 +733,11 @@ async fn shutdown_backoff(shutdown_rx: &mut watch::Receiver<bool>, secs: u64) ->
 #[derive(Clone)]
 pub struct LinkRegistry {
     channels: Arc<std::sync::Mutex<std::collections::HashMap<String, ChannelEntry>>>,
-    /// Spawn requests for the supervisor: a key whose channel gained a
-    /// config (new or reseeded link). Dedup is the supervisor's job.
-    spawns: Arc<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Spawn requests for the current host cycle's supervisor: a key whose
+    /// channel gained a config (new or reseeded link). Dedup is the
+    /// supervisor's job. [`LinkRegistry::spawn_feed`] replaces the sender
+    /// once per host cycle; with no supervisor running, sends are dropped.
+    spawns: Arc<std::sync::Mutex<tokio::sync::mpsc::UnboundedSender<String>>>,
 }
 
 /// One workspace's config channel. The keepalive receiver stays alive for
@@ -746,20 +748,39 @@ struct ChannelEntry {
     _keepalive: watch::Receiver<Option<MachineLinkConfig>>,
 }
 
-/// Creates a registry and its spawn feed. The supervisor owns the receiver
-/// for exactly one host cycle.
-pub fn new_registry() -> (LinkRegistry, tokio::sync::mpsc::UnboundedReceiver<String>) {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    (
-        LinkRegistry {
-            channels: Default::default(),
-            spawns: Arc::new(tx),
-        },
-        rx,
-    )
+impl Default for LinkRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LinkRegistry {
+    /// An empty registry with no supervisor attached.
+    pub fn new() -> Self {
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        Self {
+            channels: Default::default(),
+            spawns: Arc::new(std::sync::Mutex::new(tx)),
+        }
+    }
+
+    /// Opens a fresh spawn feed for one host cycle's supervisor and makes
+    /// it the target of every later publish. The feed starts seeded with
+    /// every key that already holds a config, so the new supervisor links
+    /// them without waiting for the next publish. The previous feed's
+    /// sender is dropped, which ends a supervisor still reading it.
+    pub fn spawn_feed(&self) -> tokio::sync::mpsc::UnboundedReceiver<String> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let channels = self.channels.lock().unwrap();
+        for (key, entry) in channels.iter() {
+            if entry.tx.borrow().is_some() {
+                let _ = tx.send(key.clone());
+            }
+        }
+        *self.spawns.lock().unwrap() = tx;
+        rx
+    }
+
     /// Publishes one workspace's link config, creating the channel on first
     /// publish. Sends unconditionally (the link task dedups configs
     /// itself); `Some` also queues a spawn request for the supervisor;
@@ -778,7 +799,7 @@ impl LinkRegistry {
         };
         let _ = tx.send(cfg);
         if tx.borrow().is_some() {
-            let _ = self.spawns.send(key);
+            let _ = self.spawns.lock().unwrap().send(key);
         }
     }
 
@@ -846,9 +867,9 @@ impl LinkRegistry {
 const LINK_WATCHDOG: Duration = Duration::from_secs(30);
 
 /// The link supervisor: spawns one [`run`] task per registry entry and
-/// follows the registry's spawn feed. Lives exactly one host cycle (the
-/// caller aborts its handle at teardown — the JoinSet aborts every child
-/// link task with it). The spawn feed may repeat a key: a key whose task
+/// follows the registry's spawn feed ([`LinkRegistry::spawn_feed`]). Lives
+/// exactly one host cycle (the caller aborts its handle at teardown — the
+/// JoinSet aborts every child link task with it). The spawn feed may repeat a key: a key whose task
 /// is still running is skipped, a key whose task ended is respawned, so a
 /// dead link heals on the next publish and on the watchdog tick.
 pub async fn run_link_supervisor(
@@ -895,10 +916,16 @@ fn spawn_if_dead(
     if live.get(base).is_some_and(|handle| !handle.is_finished()) {
         return;
     }
-    if let Some(cfg_rx) = shared.links.subscribe(base) {
+    match shared.links.subscribe(base) {
         // The JoinSet aborts children on drop, so a host cycle tears the
         // links down with the supervisor.
-        live.insert(base.to_string(), set.spawn(run(shared.clone(), cfg_rx)));
+        Some(cfg_rx) => {
+            live.insert(base.to_string(), set.spawn(run(shared.clone(), cfg_rx)));
+        }
+        // The workspace's channel was dropped (sign-out): forget the key.
+        None => {
+            live.remove(base);
+        }
     }
 }
 
@@ -2010,7 +2037,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("token.json");
-        let (links, _) = new_registry();
+        let links = LinkRegistry::new();
         let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let session = Arc::new(std::sync::Mutex::new(
@@ -2094,7 +2121,7 @@ mod tests {
         initial.chat_id = Some(uuid::Uuid::now_v7());
         initial.model = "m".into();
         let session = Arc::new(std::sync::Mutex::new(initial));
-        let (links, _) = new_registry();
+        let links = LinkRegistry::new();
         let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         tokio::spawn(watch_token_store(

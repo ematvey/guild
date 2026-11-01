@@ -7,6 +7,7 @@ use guild_app_server::daemon::{
     run_daemon_shared, run_daemon_shared_reclaiming, try_connect_at, Pair,
 };
 use guild_app_server::jsonrpc_loop::{EngineState, Shared};
+use guild_app_server::machine_link::MachineLinkConfig;
 use protocol::rpc::Request;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -240,18 +241,40 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     }
     let mut a = a.expect("first daemon reachable");
 
+    // The GUI host's machine link points at a mock server whose ticket
+    // endpoint counts mints: every link task that starts mints one ticket
+    // (the 401 answer then parks it on the slow auth backoff).
+    let hub = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/ws/ticket"))
+        .respond_with(wiremock::ResponseTemplate::new(401))
+        .mount(&hub)
+        .await;
+    let gui = Shared::new(EngineState::default());
+    gui.links.publish(
+        &hub.uri(),
+        Some(MachineLinkConfig {
+            base_url: hub.uri(),
+            token: "tok".into(),
+            machine_id: "machine-1".into(),
+            client_id: "client-1".into(),
+            machine_name: "box".into(),
+        }),
+    );
+
     // The second host (the GUI's) waits instead of giving up: while the
     // endpoint is owned it must NOT bind, and the first daemon keeps
     // serving.
     let dpath2 = path.clone();
-    let second = tokio::spawn(async move {
-        run_daemon_shared_reclaiming(dpath2, Shared::new(EngineState::default())).await
-    });
+    let gui_host = gui.clone();
+    let second =
+        tokio::spawn(async move { run_daemon_shared_reclaiming(dpath2, gui_host).await });
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(
         a.call("daemon.hello", serde_json::json!({}))["result"]["version"].is_string(),
         "the owner must keep serving while the waiter waits"
     );
+    assert_eq!(ticket_mints(&hub).await, 0, "a parked host runs no link");
 
     // Retire the first daemon: the waiter must bind and take over.
     a.call("daemon.shutdown", serde_json::json!({}));
@@ -264,6 +287,9 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     let mut b = wait_for_host(&path)
         .await
         .expect("the reclaiming host must take over");
+    wait_for_mints(&hub, 1)
+        .await
+        .expect("the first host cycle runs the machine link");
 
     // The unit comes up and install retires the GUI's host: it must park —
     // no rebind while the unit is active, even past the reclaim grace.
@@ -281,6 +307,8 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
         try_connect_at(&path).is_err(),
         "the GUI host must not rebind while the unit is active"
     );
+    let parked_mints = ticket_mints(&hub).await;
+    assert_eq!(parked_mints, 1, "the retired host's link went down with it");
 
     // The unit stops (uninstall or daemon death): the GUI host reclaims
     // the socket and hosts again.
@@ -293,6 +321,11 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
         c.call("daemon.hello", serde_json::json!({}))["result"]["protocol"].as_u64() == Some(1),
         "the reclaimed host is a full daemon"
     );
+    // The reclaimed host cycle relinks: a fresh link task starts and mints
+    // a new ticket without any new auth publish.
+    wait_for_mints(&hub, parked_mints + 1)
+        .await
+        .expect("the reclaimed host cycle runs the machine link again");
 
     // Retire once more for cleanup: the host parks again (unit "active"),
     // and dies with the test runtime — it never exits on shutdown.
@@ -310,6 +343,27 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     // host-spawning tests in this binary rely on any value being safe.
     let _ = std::fs::remove_dir_all(&dir);
     drop(second);
+}
+
+/// How many WS tickets the mock hub has minted.
+async fn ticket_mints(hub: &wiremock::MockServer) -> usize {
+    hub.received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.url.path() == "/api/v1/ws/ticket")
+        .count()
+}
+
+/// Polls until the mock hub has minted at least `n` tickets.
+async fn wait_for_mints(hub: &wiremock::MockServer, n: usize) -> Option<()> {
+    for _ in 0..100 {
+        if ticket_mints(hub).await >= n {
+            return Some(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    None
 }
 
 /// Polls until a daemon answers hello on `path`.
