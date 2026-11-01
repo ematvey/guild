@@ -162,7 +162,10 @@ impl Engine {
         let ids: Vec<u64> = self.submitted.guard().drain().map(|(id, _)| id).collect();
         let mut results = self.results.guard();
         for id in ids {
-            results.insert(id, serde_json::json!({"id": id, "error": {"message": message}}));
+            results.insert(
+                id,
+                serde_json::json!({"id": id, "error": {"message": message}}),
+            );
         }
     }
 
@@ -183,9 +186,9 @@ impl Engine {
         let mut results = self.results.guard();
         for id in stale {
             ipc_trace("rpc-timeout", &format!("id={id}"));
-            results
-                .entry(id)
-                .or_insert_with(|| serde_json::json!({"id": id, "error": {"message": "engine timed out"}}));
+            results.entry(id).or_insert_with(
+                || serde_json::json!({"id": id, "error": {"message": "engine timed out"}}),
+            );
         }
     }
 
@@ -379,12 +382,7 @@ fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
         if name.starts_with("docker-desktop") {
             continue;
         }
-        let pretty_name = state
-            .wsl_pretty
-            .guard()
-            .get(&name)
-            .cloned()
-            .flatten();
+        let pretty_name = state.wsl_pretty.guard().get(&name).cloned().flatten();
         out.push(Distro {
             name,
             running,
@@ -469,8 +467,7 @@ pub mod commands {
     #[tauri::command]
     pub fn set_daemon_trace(on: bool) -> Result<(), String> {
         guild_app_server::dtrace::set_enabled(on);
-        let marker = guild_app_server::fs_bridge::guild_config_dir()
-            .join("daemon-trace.enabled");
+        let marker = guild_app_server::fs_bridge::guild_config_dir().join("daemon-trace.enabled");
         if on {
             std::fs::create_dir_all(marker.parent().expect("config dir has a parent"))
                 .map_err(|e| e.to_string())?;
@@ -484,8 +481,7 @@ pub mod commands {
     /// Restores the persisted trace toggle at launch: the marker file wins
     /// over nothing; the env var needs no seeding (checked per call).
     pub fn seed_daemon_trace() {
-        let marker = guild_app_server::fs_bridge::guild_config_dir()
-            .join("daemon-trace.enabled");
+        let marker = guild_app_server::fs_bridge::guild_config_dir().join("daemon-trace.enabled");
         if marker.exists() {
             guild_app_server::dtrace::set_enabled(true);
         }
@@ -542,10 +538,7 @@ pub mod commands {
             let pretty = run_wsl(&["-d", &distro, "--exec", "cat", "/etc/os-release"])
                 .as_deref()
                 .and_then(parse_pretty_name);
-            state
-                .wsl_pretty
-                .guard()
-                .insert(distro, pretty.clone());
+            state.wsl_pretty.guard().insert(distro, pretty.clone());
             Ok(pretty)
         })
         .await
@@ -776,7 +769,6 @@ pub mod commands {
         #[allow(unreachable_code)]
         Ok(())
     }
-
 } // commands module
 
 /// Checks the paired server for a newer signed build and, if found, downloads
@@ -954,11 +946,9 @@ async fn boot_engine(app: AppHandle) {
         tauri::async_runtime::spawn(async move {
             match guild_app_server::daemon::socket_path() {
                 Ok(path) => {
-                    let _ = guild_app_server::daemon::run_daemon_shared_reclaiming(
-                        path,
-                        daemon_shared,
-                    )
-                    .await;
+                    let _ =
+                        guild_app_server::daemon::run_daemon_shared_reclaiming(path, daemon_shared)
+                            .await;
                 }
                 Err(e) => eprintln!("setup: no CLI socket path: {e}"),
             }
@@ -1062,7 +1052,12 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         show_main_window(tray.app_handle());
                     }
                 })
@@ -1190,16 +1185,32 @@ mod tests {
             .collect();
         assert_eq!(
             messages,
-            ["engine timed out", "engine timed out", "engine dropped the request"]
+            [
+                "engine timed out",
+                "engine timed out",
+                "engine dropped the request"
+            ]
         );
     }
 
     #[test]
     fn webview_rpc_allowlist_admits_only_the_app_surface() {
-        for method in ["session.info", "pair", "login", "fs.write_text", "registry.publish"] {
+        for method in [
+            "session.info",
+            "pair",
+            "login",
+            "fs.write_text",
+            "registry.publish",
+        ] {
             assert!(webview_rpc_allowed(method), "{method}");
         }
-        for method in ["agent.start", "agent.policy.set", "daemon.shutdown", "chat.send", ""] {
+        for method in [
+            "agent.start",
+            "agent.policy.set",
+            "daemon.shutdown",
+            "chat.send",
+            "",
+        ] {
             assert!(!webview_rpc_allowed(method), "{method}");
         }
     }
