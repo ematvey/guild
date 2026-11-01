@@ -78,6 +78,13 @@ describe("applyRoutePatch (navigation precedence)", () => {
     expect(next.settingsDetail).toBeNull();
   });
 
+  it("an agents route reads the query of window.location.search, which keeps its '?'", () => {
+    const run = parseChatRoute("/runs/r1", "?view=tree");
+    expect(run.agents).toMatchObject({ view: "run", runId: "r1", traceView: "tree" });
+    const bare = parseChatRoute("/runs/r1", "view=timeline");
+    expect(bare.agents).toMatchObject({ view: "run", runId: "r1", traceView: "timeline" });
+  });
+
   it("an agents route replaces the chat page and a chat navigation drops it", () => {
     const agents = applyRoutePatch(route(), { agents: { view: "activity" } as never });
     expect(agents.agents).not.toBeNull();
