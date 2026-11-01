@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   busyFrom,
+  composerAgent,
   pendingAfterFrame,
   sendButtonState,
   threadAccess,
@@ -1373,4 +1374,20 @@ describe("child thread navigation", () => {
     expect(parseChatRoute(path).agents).toBeNull();
   });
 
+});
+
+describe("composerAgent", () => {
+  const seed = { id: "a1", name: "Old name", visibility: "shared" };
+  it("names the agent as the pushed list describes it", () => {
+    const list = [{ id: "a1", name: "New name", visibility: "shared" }];
+    expect(composerAgent(seed, list, null)?.name).toBe("New name");
+  });
+  it("falls back to the chat tree's name for the same agent", () => {
+    const tree = { agent_id: "a1", agent_name: "Tree name" };
+    expect(composerAgent(seed, [], tree)).toEqual({ ...seed, name: "Tree name" });
+  });
+  it("ignores a tree that names another agent, and keeps an unknown pick", () => {
+    expect(composerAgent(seed, null, { agent_id: "a2", agent_name: "Other" })).toBe(seed);
+    expect(composerAgent(null, [seed], null)).toBeNull();
+  });
 });

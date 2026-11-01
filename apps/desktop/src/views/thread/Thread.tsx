@@ -107,7 +107,7 @@ import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
-import { busyFrom, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
+import { busyFrom, composerAgent, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { canonicalSurfacePath, isImeEnter } from "./route";
 import { canonicalSettings } from "../settings/section-nav";
 import type { RenderBlock } from "../../lib/thread-reducer";
@@ -279,6 +279,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);
   const personalAgent = agentsList?.find((a) => a.is_personal) ?? null;
+  // The composer names the picked agent as the socket last described it,
+  // so a rename shows without a refetch.
+  const shownAgent = composerAgent(pickedAgent, allAgents, viewChatId !== null ? childTree : null);
   const [model, setModel] = useState("");
   // The open chat's server-side turn flag, from its status entry — the same
   // truth the sidebar spinner shows.
@@ -372,8 +375,9 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     pickedAgentRef.current = pickedAgent;
   }, [pickedAgent]);
 
-  // A bound chat shows its own agent; a new chat keeps the pick. A thread
-  // that belongs to its agent is not switchable.
+  // A bound chat's binding seeds the pick and the lock; a new chat keeps
+  // the pick. A thread that belongs to its agent is not switchable. The
+  // name shown comes from pushed state (`shownAgent`), not this read.
   useEffect(() => {
     if (viewChatId === null) {
       setAgentLocked(false);
@@ -420,16 +424,17 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   }, [role, route.agents, pushRoute]);
 
   // A settings arrival (deep link, old bookmark, back/forward) lands on the
-  // address of the page the pane shows: a bare /settings or an unknown
-  // section is the default section, and a sub-page its section does not
+  // address of the page the pane shows: a bare /settings, an unknown
+  // section or an admin section a member opened is the default section,
+  // and a sub-page its section does not
   // have is dropped. replaceState: the normalization is not a step back.
   useEffect(() => {
     if (route.tab !== "settings") return;
     if (route.overlay !== null || route.skills !== null || route.agents !== null) return;
-    const shown = canonicalSettings(route.settingsSection, route.settingsDetail);
+    const shown = canonicalSettings(route.settingsSection, route.settingsDetail, role);
     if (shown.section === route.settingsSection && shown.detail === route.settingsDetail) return;
     pushRoute({ tab: "settings", settingsSection: shown.section, settingsDetail: shown.detail }, { replace: true });
-  }, [route.tab, route.settingsSection, route.settingsDetail, route.overlay, route.skills, route.agents, pushRoute]);
+  }, [role, route.tab, route.settingsSection, route.settingsDetail, route.overlay, route.skills, route.agents, pushRoute]);
 
   // An agents or skills address the parser read past (an unknown tab or a
   // trailing segment) is rewritten to the page it shows.
@@ -1861,7 +1866,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
               <div className="flex shrink-0 items-center gap-2">
                 <ContextRing chatId={viewChatId} model={model} />
                 {(() => {
-                  const chipAgent = pickedAgent;
+                  const chipAgent = shownAgent;
                   return agentLocked ? (
                   // An agent thread, or a chat whose thread belongs to a
                   // shared agent, names its agent and keeps it.
@@ -1886,8 +1891,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                         className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-xs text-secondary-foreground pointer-coarse:h-10"
                         title="Choose the agent for this chat"
                       >
-                        <span className="truncate">{pickedAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
-                        {pickedAgent !== null && pickedAgent.visibility !== "private" && (
+                        <span className="truncate">{shownAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
+                        {shownAgent !== null && shownAgent.visibility !== "private" && (
                           <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
                         )}
                         <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
