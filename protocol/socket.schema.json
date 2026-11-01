@@ -34,6 +34,12 @@
     "WorkspaceIdentity": { "$ref": "#/$defs/WorkspaceIdentity" },
     "ModelList": { "$ref": "#/$defs/ModelList" },
     "ModelOption": { "$ref": "#/$defs/ModelOption" },
+    "AgentList": { "$ref": "#/$defs/AgentList" },
+    "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
+    "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
+    "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
+    "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
+    "ChatTreeFrame": { "$ref": "#/$defs/ChatTreeFrame" },
     "Sync": { "$ref": "#/$defs/Sync" },
     "Read": { "$ref": "#/$defs/Read" },
     "MachineResponse": { "$ref": "#/$defs/MachineResponse" },
@@ -81,7 +87,13 @@
         { "$ref": "#/$defs/ProjectList" },
         { "$ref": "#/$defs/MachineList" },
         { "$ref": "#/$defs/WorkspaceIdentity" },
-        { "$ref": "#/$defs/ModelList" }
+        { "$ref": "#/$defs/ModelList" },
+        { "$ref": "#/$defs/AgentList" },
+        { "$ref": "#/$defs/AgentRunFrame" },
+        { "$ref": "#/$defs/AgentThreads" },
+        { "$ref": "#/$defs/AgentRoutines" },
+        { "$ref": "#/$defs/SkillCatalog" },
+        { "$ref": "#/$defs/ChatTreeFrame" }
       ]
     },
 
@@ -370,6 +382,85 @@
           "type": "string",
           "description": "The admin's display name; empty when the route is unnamed."
         }
+      }
+    },
+    "AgentList": {
+      "description": "Every agent the caller may see, archived and deleting ones included. Sent on connect and to every member of the org when an agent, a grant or a team membership changes; each member receives their own visibility-filtered list.",
+      "type": "object",
+      "required": ["type", "agents"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "agent_list" },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Agent" }
+        }
+      }
+    },
+    "AgentRunFrame": {
+      "description": "One run, created or changed. Sent to every member who may see the run's agent; the client upserts it by id into each list that shows it.",
+      "type": "object",
+      "required": ["type", "run"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "agent_run" },
+        "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" }
+      }
+    },
+    "AgentThreads": {
+      "description": "The caller's open user threads with one agent, newest activity first: the same page GET /api/v1/agents/:id/threads returns. Sent to the threads' owner when one of them changes.",
+      "type": "object",
+      "required": ["type", "agent_id", "threads"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "agent_threads" },
+        "agent_id": { "$ref": "#/$defs/Uuid" },
+        "threads": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentThread" }
+        }
+      }
+    },
+    "AgentRoutines": {
+      "description": "One agent's routines with their newest runs. Sent to every member who may see the agent when a routine is created, changed, scheduled or deleted.",
+      "type": "object",
+      "required": ["type", "agent_id", "routines"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "agent_routines" },
+        "agent_id": { "$ref": "#/$defs/Uuid" },
+        "routines": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRoutine" }
+        }
+      }
+    },
+    "SkillCatalog": {
+      "description": "The org skill catalog plus the caller's own installs. Sent on connect and to every member of the org when a skill is published, gated, unpublished, installed, uninstalled or pinned.",
+      "type": "object",
+      "required": ["type", "items", "installs"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "skill_catalog" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/SkillCatalogItem" }
+        },
+        "installs": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/SkillInstall" }
+        }
+      }
+    },
+    "ChatTreeFrame": {
+      "description": "One chat's tree facts for its header. Sent inside the chat's sync bracket and to the chat owner's sockets whenever its title, run status, parent title or flags change.",
+      "type": "object",
+      "required": ["type", "chat_id", "tree"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "chat_tree" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "tree": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ChatTree" }
       }
     },
 

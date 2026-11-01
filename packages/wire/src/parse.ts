@@ -31,6 +31,12 @@ const SERVER_TAG_NAMES = [
   "machine_list",
   "workspace_identity",
   "model_list",
+  "agent_list",
+  "agent_run",
+  "agent_threads",
+  "agent_routines",
+  "skill_catalog",
+  "chat_tree",
 ] as const satisfies readonly ServerFrame["type"][];
 
 const CLIENT_TAG_NAMES = [

@@ -8,11 +8,18 @@
 // REST types. They are re-exported here because the socket frames use them.
 
 import type {
+  Agent,
+  AgentRoutine,
+  AgentRun,
+  AgentThread,
   Chat,
+  ChatTree,
   EventRow,
   Json,
   MachineInfo,
   Project,
+  SkillCatalogItem,
+  SkillInstall,
   SubagentNode,
   ThreadEventRow,
   ToolCall,
@@ -157,7 +164,13 @@ export type ServerFrame =
       /** The served web bundle's identity; absent when none is served. */
       web_bundle?: string;
     }
-  | { type: "model_list"; models: ModelOption[] };
+  | { type: "model_list"; models: ModelOption[] }
+  | { type: "agent_list"; agents: Agent[] }
+  | { type: "agent_run"; run: AgentRun }
+  | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
+  | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
+  | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
+  | { type: "chat_tree"; chat_id: Uuid; tree: ChatTree };
 
 /** One enabled chat model: the route id and the admin's display name
  *  (empty when unnamed). */

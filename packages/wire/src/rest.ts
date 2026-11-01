@@ -139,6 +139,169 @@ export interface EventRow {
   created_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Agents, the thread tree and the skill catalog: the rows the agent, run,
+// routine, chat-tree and skill-catalog socket frames carry.
+// ---------------------------------------------------------------------------
+
+export type AgentVisibility = "private" | "team" | "org";
+export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
+export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "silent" | "skipped" | "cancelled";
+export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
+
+/** One persistent agent as its viewers see it. */
+export interface Agent {
+  id: string;
+  org_id: string;
+  owner_user_id: string;
+  /** The owner's display name or email. */
+  owner_label: string | null;
+  owner_email: string | null;
+  owner_avatar_url: string | null;
+  name: string;
+  /** What the agent is for; at most 500 characters. */
+  description: string;
+  model: string;
+  /** The org's display name for the model; null falls back to the id. */
+  model_alias: string | null;
+  tools: string[];
+  tools_mode: "selected" | "all";
+  visibility: AgentVisibility;
+  /** The agent's sandbox budget. */
+  resources: Json;
+  status: AgentStatus;
+  /** The user's personal agent: always private, never deleted. */
+  is_personal: boolean;
+  /** Teams granted use of a team-visibility agent. */
+  team_ids: string[];
+  deleted_at: string | null;
+  purge_after: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One agent run. `agent_name` and `routine_name` are joined display names. */
+export interface AgentRun {
+  id: string;
+  agent_id: string;
+  user_id: string | null;
+  thread_id: string | null;
+  routine_id: string | null;
+  parent_run_id: string | null;
+  delegate_agent_id: string | null;
+  depth: number;
+  trigger: AgentTrigger;
+  status: AgentRunStatus;
+  summary: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  error_step: string | null;
+  tokens: number;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  agent_name: string | null;
+  routine_name: string | null;
+}
+
+/** One of the caller's threads with an agent, with its chat's flags. */
+export interface AgentThread {
+  id: string;
+  agent_id: string;
+  user_id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
+  title: string;
+  title_locked: boolean;
+  type: ThreadType;
+  /** The user's Main thread with this agent. */
+  is_default: boolean;
+  parent_thread_id: string | null;
+  /** The run thread this one was opened from, when an agent delivered it. */
+  origin_thread_id: string | null;
+  depth: number;
+  closed_at: string | null;
+  created_at: string;
+  last_activity_at: string;
+  archived: boolean;
+  deleted: boolean;
+}
+
+/** One routine of an agent with its newest run. */
+export interface AgentRoutine {
+  id: string;
+  agent_id: string;
+  created_by_user_id: string | null;
+  name: string;
+  kind: "cron" | "once";
+  /** The cron expression; null for a one-shot routine. */
+  schedule: string | null;
+  timezone: string;
+  run_at: string | null;
+  prompt: string;
+  context: "isolated";
+  enabled: boolean;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** The routine's newest run; null before the first. */
+  last_run: AgentRun | null;
+}
+
+/** A chat the tree header links to: the parent or the origin thread. */
+export interface ChatTreeLink {
+  chat_id: string;
+  title: string;
+}
+
+/** One chat's place in the thread tree. A chat with no thread row is a
+ *  plain user chat. */
+export interface ChatTree {
+  chat_id: string;
+  type: ThreadType;
+  title: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  /** The thread's latest run status; null before its first run. */
+  status: string | null;
+  depth: number;
+  parent: ChatTreeLink | null;
+  origin: ChatTreeLink | null;
+  archived: boolean;
+  deleted: boolean;
+}
+
+/** The owner a skill is listed under: a user or a team. */
+export interface SkillOwner {
+  kind: "user" | "team";
+  id: string;
+  /** A user's display name or email; a team's name. */
+  label: string;
+  /** The owner user's avatar; null for teams and unset avatars. */
+  avatar_url: string | null;
+}
+
+/** One entry of the org skill catalog. */
+export interface SkillCatalogItem {
+  slug: string;
+  description: string;
+  latest_version: string | null;
+  owner: SkillOwner | null;
+  maintainer_gated: boolean;
+  installs: number;
+  /** Installs that follow or pin the latest version. */
+  installs_latest: number;
+  tombstoned: boolean;
+}
+
+/** The caller's install record for one skill. */
+export interface SkillInstall {
+  slug: string;
+  /** The pinned version; null follows the latest. */
+  pinned_version: string | null;
+  installed_at: string;
+}
+
 /** One typed block inside an assistant thread event, in stream order. */
 export type Block =
   | { type: "text"; text: string }

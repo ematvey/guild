@@ -217,6 +217,42 @@ pub enum WsServerMsg {
     ModelList {
         models: Vec<ModelOption>,
     },
+    /// Every agent the member may see, archived and deleting ones included.
+    /// Sent on connect and whenever an agent, a grant or a team membership
+    /// changes. Daemons tag-peek and ignore it.
+    AgentList {
+        agents: Vec<serde_json::Value>,
+    },
+    /// One run, created or changed, for every member who may see its agent.
+    /// Daemons tag-peek and ignore it.
+    AgentRun {
+        run: serde_json::Value,
+    },
+    /// The member's open user threads with one agent, newest activity first.
+    /// Daemons tag-peek and ignore it.
+    AgentThreads {
+        agent_id: Uuid,
+        threads: Vec<serde_json::Value>,
+    },
+    /// One agent's routines with their newest runs. Daemons tag-peek and
+    /// ignore it.
+    AgentRoutines {
+        agent_id: Uuid,
+        routines: Vec<serde_json::Value>,
+    },
+    /// The org skill catalog plus the member's own installs. Daemons
+    /// tag-peek and ignore it.
+    SkillCatalog {
+        items: Vec<serde_json::Value>,
+        installs: Vec<serde_json::Value>,
+    },
+    /// One chat's tree facts for its header: sent inside the chat's sync
+    /// bracket and whenever its title, run status, parent or flags change.
+    /// Daemons tag-peek and ignore it.
+    ChatTree {
+        chat_id: Uuid,
+        tree: serde_json::Value,
+    },
 }
 
 /// One enabled chat model: the route id and the admin's display name
