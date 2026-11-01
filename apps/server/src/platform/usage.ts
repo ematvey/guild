@@ -6,6 +6,7 @@ import { clickhouseDateTime, ClickhouseClient } from "./clickhouse.js";
 import { uuidv7 } from "./time.js";
 import { ApiError } from "./errors.js";
 import type { PlatformPool } from "./db.js";
+import { dedupedUsageEvents } from "./store/usage.js";
 
 export interface UsageEvent {
   ts: Date;
@@ -53,8 +54,7 @@ export class UsageSink {
     this.pool = pool;
   }
 
-  /** The table-creation DDL the Rust sink runs on connect; runs once per
-   *  sink. Callers that need the table to exist (quota reads) await this. */
+  /** The table-creation DDL; runs once per sink. Callers that need the table to exist (quota reads) await this. */
   ensureOnce(): Promise<void> {
     if (this.ready === null) {
       this.ready = this.client.ensureUsageTable();
@@ -94,9 +94,7 @@ export class UsageSink {
   async monthSpend(orgId: string, model: string): Promise<number> {
     const startOfMonth = startOfMonthUtc();
     const rows = await this.client.query(
-      "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events " +
-        "WHERE org_id = toUUID(?) AND model = ? AND ts >= toDateTime(?) " +
-        "ORDER BY ts DESC LIMIT 1 BY org_id, request_id)",
+      `SELECT coalesce(sum(cost_usd), 0) FROM ${dedupedUsageEvents("org_id = toUUID(?) AND model = ? AND ts >= toDateTime(?)")}`,
       [orgId, model, startOfMonth.getTime() / 1000],
     );
     return firstNumber(rows);
