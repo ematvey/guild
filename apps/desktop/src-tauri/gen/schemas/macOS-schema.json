@@ -345,6 +345,150 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the check_update_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-update-now",
+          "markdownDescription": "Enables the check_update_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the daemon_trace_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-daemon-trace-state",
+          "markdownDescription": "Enables the daemon_trace_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-update",
+          "markdownDescription": "Enables the install_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-dir",
+          "markdownDescription": "Enables the list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_wsl_distros command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-wsl-distros",
+          "markdownDescription": "Enables the list_wsl_distros command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pending_update_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pending-update-version",
+          "markdownDescription": "Enables the pending_update_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rpc_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-rpc-poll",
+          "markdownDescription": "Enables the rpc_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rpc_submit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-rpc-submit",
+          "markdownDescription": "Enables the rpc_submit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_daemon_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-daemon-trace",
+          "markdownDescription": "Enables the set_daemon_trace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_engine command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-engine",
+          "markdownDescription": "Enables the start_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wsl_home command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wsl-home",
+          "markdownDescription": "Enables the wsl_home command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wsl_pretty_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wsl-pretty-name",
+          "markdownDescription": "Enables the wsl_pretty_name command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_update_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-update-now",
+          "markdownDescription": "Denies the check_update_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the daemon_trace_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-daemon-trace-state",
+          "markdownDescription": "Denies the daemon_trace_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-update",
+          "markdownDescription": "Denies the install_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-dir",
+          "markdownDescription": "Denies the list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_wsl_distros command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-wsl-distros",
+          "markdownDescription": "Denies the list_wsl_distros command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pending_update_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pending-update-version",
+          "markdownDescription": "Denies the pending_update_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rpc_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-rpc-poll",
+          "markdownDescription": "Denies the rpc_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rpc_submit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-rpc-submit",
+          "markdownDescription": "Denies the rpc_submit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_daemon_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-daemon-trace",
+          "markdownDescription": "Denies the set_daemon_trace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_engine command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-engine",
+          "markdownDescription": "Denies the start_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wsl_home command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wsl-home",
+          "markdownDescription": "Denies the wsl_home command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wsl_pretty_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wsl-pretty-name",
+          "markdownDescription": "Denies the wsl_pretty_name command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
