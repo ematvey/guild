@@ -12,6 +12,22 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The open chat's turn state is derived, not stored (2026-10-31).** `busy`
+  was a `useState` with eight writers across three hooks: two of them were
+  the server's own `generating` flag, four were "my send died", two were
+  navigation resets, and every reader had to add `busy || openGenerating`
+  back together. That is why a stale `true` could outlive a turn by 51
+  minutes: nothing owned the value. Now there is one stored input —
+  `pendingSend`, the chat this client sent to whose own frame has not
+  arrived — and `busy = busyFrom(generating, pendingSend, openChatId)`
+  (`views/thread/status.ts`). The pending send retires when the server
+  speaks for that chat (`pendingAfterFrame`: a thread-state, a chat-status,
+  or a failed submit). Consequences: the reconnect no longer clears a flag
+  it did not set, navigation has nothing to reset, `busyAfterThreadPush` and
+  the navigation machine's `clearBusy` are gone, and a swap cannot leak one
+  chat's turn onto another. The floor rises by 29 LOC for the derivation and
+  the sequence tests.
+
 - **Telemetry is the workspace's decision, and the socket explains a hang
   (2026-10-31).** A user reported the app "hanging": the run finished in 15 s
   and the answer was stored, but his client kept the turn "generating" for

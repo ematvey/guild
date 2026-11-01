@@ -57,7 +57,7 @@ export interface OutgoingDeps {
   outgoingScope: string;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: RenderBlock[]) => void;
-  markBusy: (v: boolean, source: string) => void;
+  setSendPending: (chatId: string | null, source: string) => void;
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
   sendingRef: RefObject<boolean>;
@@ -70,7 +70,7 @@ export interface OutgoingDeps {
   stopping: Record<string, true>;
   setStopping: Dispatch<SetStateAction<Record<string, true>>>;
   justCreatedApprovalRef: RefObject<string | null>;
-  justCreatedBusyRef: RefObject<string | null>;
+  justCreatedChatRef: RefObject<string | null>;
   pushRoute: (next: RoutePatch) => void;
 }
 
@@ -80,9 +80,9 @@ export function useOutgoing(deps: OutgoingDeps) {
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
     deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef, setBlocks,
-    markBusy, openChatIdRef, loadSeq, sendingRef, projects, openRow,
+    setSendPending, openChatIdRef, loadSeq, sendingRef, projects, openRow,
     currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping, setStopping,
-    justCreatedApprovalRef, justCreatedBusyRef, pushRoute,
+    justCreatedApprovalRef, justCreatedChatRef, pushRoute,
   } = deps;
   const [pendingSubmitId, setPendingSubmitId] = useState<string | null>(null);
   const [steeringMessage, setSteeringMessage] = useState<string | null>(null);
@@ -166,7 +166,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       setPendingSubmitId(command.id);
       sendingRef.current = false;
     } else if (openChatIdRef.current === target) {
-      markBusy(true, "optimistic_send");
+      setSendPending(target, "optimistic_send");
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
@@ -215,8 +215,8 @@ export function useOutgoing(deps: OutgoingDeps) {
             setBlocks(reducerRef.current.optimisticSend({ chatId: cid, text: command.text,
               key: command.id, sentAt: command.sentAt,
               attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
-            justCreatedBusyRef.current = cid;
-            markBusy(true, "created");
+            justCreatedChatRef.current = cid;
+            setSendPending(cid, "created");
             pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
           }
         },
@@ -254,14 +254,14 @@ export function useOutgoing(deps: OutgoingDeps) {
       if (!mountedRef.current) return;
       const cid = command.chatId ?? command.originChatId;
       const failed = reducerRef.current.failSend(cid, command.id, e instanceof Error ? e.message : String(e));
-      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); markBusy(false, "send_failed"); }
+      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); setSendPending(null, "send_failed"); }
       recoverOutgoing(command);
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
       setPendingSubmitId(cur => cur === command.id ? null : cur);
       sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
-      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) markBusy(false, "command_error");
+      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setSendPending(null, "command_error");
       refreshOutgoing(n => n + 1);
     }
   };

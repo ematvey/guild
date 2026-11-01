@@ -133,24 +133,28 @@ export function threadAccess(input: {
   return "unknown";
 }
 
-/** Whether the open chat shows busy after a thread-list push: while a
- * send's HTTP round trip is in flight the pushed list predates the
- * server's generating flag, so its false must not clear the optimistic
- * busy (a second send could race the first). A first send is exempt: its
- * pending state lives in the dedicated pending-submit spinner, and busy
- * here feeds stopMode — a Stop button for a turn that does not exist is a
- * lie. */
-export function busyAfterThreadPush(
-  chats: ChatSummary[],
+/** The composer's live turn: one derived value, two inputs. `generating` is
+ * the server's truth for the open chat (a thread-state frame, a chat-status
+ * frame, or the sidebar row, in that order). `pendingSend` is the only
+ * local fact — a chat this client sent to whose own frame has not arrived
+ * yet — and it retires the moment the server speaks for that chat, so no
+ * caller has to remember to clear a flag. */
+export function busyFrom(
+  generating: boolean,
+  pendingSend: string | null,
   openChatId: string | null,
-  sendInFlight: boolean,
-  current = false,
 ): boolean {
-  if (sendInFlight && openChatId !== null) return true;
-  // A child thread is not a sidebar row. Its absence says nothing about the
-  // live turn, so keep the status the thread-state frames own.
-  const row = chats.find((c) => c.id === openChatId);
-  return row === undefined ? current : !!row.generating;
+  return generating || (pendingSend !== null && pendingSend === openChatId);
+}
+
+/** The retirement rule: a pending send lives only until the server speaks for
+ *  that chat (a thread-state, a chat-status, or a failed submit). Frames for
+ *  any other chat leave it alone. */
+export function pendingAfterFrame(
+  pendingSend: string | null,
+  frameChatId: string,
+): string | null {
+  return pendingSend === frameChatId ? null : pendingSend;
 }
 
 /** The composer's send button: the four states it can honestly show.

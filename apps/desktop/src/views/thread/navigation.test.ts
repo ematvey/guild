@@ -5,6 +5,7 @@ import {
   type NavigationEvent,
   type NavigationState,
 } from "./navigation";
+import { busyFrom } from "./status";
 
 const run = (events: NavigationEvent[], state = initialNavigation()): NavigationState => {
   let current = state;
@@ -53,12 +54,8 @@ describe("thread navigation transitions", () => {
     );
     const afterState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
     expect(afterState.swapTo).toBeUndefined();
-    expect(afterState.clearBusy).toBeUndefined();
     const afterTree = transitionNavigation(afterState.state, { type: "tree", chatId: "child", ok: true });
     expect(afterTree.swapTo).toBe("child");
-    // The target's state already set its busy (generating); the tree-driven
-    // swap must keep it.
-    expect(afterTree.clearBusy).toBeUndefined();
   });
 
   it("keeps the target busy when a state-first swap is driven by a tree timeout", () => {
@@ -67,10 +64,8 @@ describe("thread navigation transitions", () => {
       { type: "open", chatId: "child", cached: false, treeKnown: false },
     );
     const afterState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
-    expect(afterState.clearBusy).toBeUndefined();
     const timedOut = transitionNavigation(afterState.state, { type: "tree-timeout", chatId: "child" });
     expect(timedOut.swapTo).toBe("child");
-    expect(timedOut.clearBusy).toBeUndefined();
   });
 
   it("keeps the target busy when its state and known tree swap together", () => {
@@ -80,7 +75,6 @@ describe("thread navigation transitions", () => {
     );
     const afterState = transitionNavigation(pending.state, { type: "state", chatId: "child" });
     expect(afterState.swapTo).toBe("child");
-    expect(afterState.clearBusy).toBeUndefined();
   });
 
   it("still swaps after a failed tree fetch", () => {
@@ -124,13 +118,15 @@ describe("thread navigation transitions", () => {
     expect(late.state.pendingChatId).toBe("child-b");
   });
 
-  it("a cached swap starts clean so running A cannot leak busy onto idle B", () => {
+  it("a cached swap cannot leak running A's turn onto idle B", () => {
     const decision = transitionNavigation(
       { ...initialNavigation(), displayedChatId: "running-a" },
       { type: "open", chatId: "cached-idle-b", cached: true, treeKnown: true },
     );
     expect(decision.swapTo).toBe("cached-idle-b");
-    expect(decision.clearBusy).toBe(true);
+    // The turn state derives from the displayed chat, so the swap has no
+    // flag to clear: B's own generating decides.
+    expect(busyFrom(false, null, decision.state.displayedChatId)).toBe(false);
   });
 
   it("cancels a pending target and keeps the displayed chat", () => {

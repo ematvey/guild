@@ -109,7 +109,7 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
-import { offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
+import { busyFrom, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { chatRoutePath, isImeEnter } from "./route";
 import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
@@ -237,8 +237,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     blocks, setBlocks, threadLoading, setThreadLoading, compacting, setCompacting,
     hasMore, setHasMore, hasMoreRef, loadingEarlier, loadingEarlierRef, oldestSeqRef, earlierAnchor, reducerRef,
     contextRevision, updateContextRevision, onThreadStateApplied,
-    childTree, stopping, setStopping, busy, busyRef, markBusy, sendingRef,
-    loadStateRef, pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
+    childTree, stopping, setStopping, pendingSend, setSendPending, retireSendPending, sendingRef,
+    pane, stick, atBottom, setAtBottom, loadSeq, openChatIdRef,
     scrollRestoreRef, displayedChatId, displayedSynced, displayedSyncedRef,
     childTreeFailed, navigating, loadEarlier, openForChat, cancelPending,
   } = thread;
@@ -269,15 +269,23 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     !!viewChatId &&
     (chatStatus[viewChatId]?.generating ??
       (chats?.find((c) => c.id === viewChatId)?.generating ?? false));
+  // The composer's live turn, derived and never stored: the server's flag for
+  // the open chat, plus the one local fact — a send this client made whose
+  // own frame has not arrived yet. A reconnect cannot leave it stuck: the
+  // resync's frame retires the pending send and `generating` takes over.
+  const busy = busyFrom(openGenerating, pendingSend, viewChatId);
+  // Latest values for the freshness poll, which must not read a stale
+  // closure. Recomputed every render from the derived value.
+  const loadStateRef = useRef({ busy: false, threadLoading: false });
+  loadStateRef.current = { busy, threadLoading };
   // The chat a pre-send pick belongs to: the first send creates the chat and
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
   const justCreatedApprovalRef = useRef<string | null>(null);
-  // The chat whose route push should carry the optimistic busy across the
-  // open effect's busy reset: the created thread renders as working (the
-  // seeded send + busy) until the server's generating flag or a submit
-  // failure takes over.
-  const justCreatedBusyRef = useRef<string | null>(null);
+  // The chat this client just created: it has no sidebar row yet, so it
+  // reads as an unknown thread rather than a read-only one until the row
+  // lands.
+  const justCreatedChatRef = useRef<string | null>(null);
   const { approvalMode, accountDefault, pickApprovalMode } =
     useApprovalMode({ chatId: viewChatId, justCreatedApprovalRef });
   // The composer's project binding. The chip renders only when a project
@@ -314,15 +322,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
     deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef,
-    setBlocks, markBusy, openChatIdRef, loadSeq, sendingRef, projects,
+    setBlocks, setSendPending, openChatIdRef, loadSeq, sendingRef, projects,
     openRow, currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping,
-    setStopping, justCreatedApprovalRef, justCreatedBusyRef, pushRoute,
+    setStopping, justCreatedApprovalRef, justCreatedChatRef, pushRoute,
   });
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef, machineTakenOver } = useMemberSocket({
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
     setArchivedProjects, reducerRef, setBlocks,
-    markBusy, busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
+    retireSendPending, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef,
     oldestSeqRef, setHasMore, setThreadLoading, setCompacting, setSubagentTree,
     resetSubagentTrees, cancelPending,
@@ -462,7 +470,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       stopped = true;
       window.clearInterval(id);
     };
-    // busyRef/threadLoadingRef are stable refs; see below.
+    // loadStateRef is a stable ref; see above.
   }, []);
 
   useEffect(() => {
@@ -623,8 +631,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // composer's project pick is not touched here — it is route state, owned
   // by the pick effect below (an open thread is never pre-picked).
   useEffect(() => {
-    const skipBusyReset = chatId !== null && justCreatedBusyRef.current === chatId;
-    openForChat(chatId, skipBusyReset);
+    openForChat(chatId);
     socketRef.current?.resync();
     // One load per chat id; the helpers are recreated per render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -645,8 +652,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // A just-created chat keeps its editable composer until its sidebar row
   // lands; the marker then clears so a later visit is not treated as new.
   useEffect(() => {
-    const cid = justCreatedBusyRef.current;
-    if (cid !== null && chats?.some((c) => c.id === cid)) justCreatedBusyRef.current = null;
+    const cid = justCreatedChatRef.current;
+    if (cid !== null && chats?.some((c) => c.id === cid)) justCreatedChatRef.current = null;
   }, [chats]);
 
   const openChat = useCallback((id: string) => {
@@ -746,7 +753,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // sync's begin/done bracket must never flash a composer into a child
   // thread. An unknown thread hides the composer instead of showing an
   // editable one that would flip a moment later.
-  const justCreatedChat = viewChatId !== null && justCreatedBusyRef.current === viewChatId;
+  const justCreatedChat = viewChatId !== null && justCreatedChatRef.current === viewChatId;
   const facts = threadFacts({ chatId: viewChatId, chats, archivedChats, childTree });
   const access = threadAccess({
     chatId: viewChatId,
@@ -829,7 +836,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     IS_TAURI,
     IS_TAURI ? machineId() : undefined,
   );
-  const streaming = busy || openGenerating;
+  const streaming = busy;
 
   // Restore the visible chat's saved reading position once per swap. A chat
   // that was at the bottom (or was never opened) pins to the bottom; one

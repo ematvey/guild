@@ -13,6 +13,7 @@ import {
   type NavigationEvent,
   type NavigationState,
 } from "../navigation";
+import { pendingAfterFrame } from "../status";
 
 /** How long a first visit waits for the child tree after its state is in.
  *  A slow tree must not hold the old thread forever; the header fills in
@@ -69,25 +70,28 @@ export function useThreadStore(chatId: string | null) {
   // pruneStopping lifts the flag when that push (or the list push) lands,
   // requestStop on a rejected/failed stop.
   const [stopping, setStopping] = useState<Record<string, true>>({});
-  const [busy, setBusy] = useState(false);
-  // Synchronous mirror of `busy`: frame handlers read it before React
-  // re-renders, and a list push must not clear a child thread's live turn.
-  const busyRef = useRef(false);
-  // `source` names the writer of the flag: a stuck spinner is explained by
-  // which push last set it, so every call site labels itself in the trace.
-  const markBusy = (value: boolean, source: string): void => {
-    traceEvent("busy.set", { value, source });
-    busyRef.current = value;
-    setBusy(value);
+  // The local half of the composer's turn state: the chat this client sent
+  // to whose own frame has not arrived yet. It is the only stored input —
+  // `busy` derives from it plus the server's `generating` (see `busyFrom`),
+  // so no handler has to clear a flag it did not set.
+  const [pendingSend, setPendingSendState] = useState<string | null>(null);
+  // Synchronous mirror: frame handlers retire a pending send before React
+  // re-renders.
+  const pendingSendRef = useRef<string | null>(null);
+  const setSendPending = (chatId: string | null, source: string): void => {
+    if (pendingSendRef.current === chatId) return;
+    traceEvent("busy.pending", { chat: chatId ?? "-", source, action: chatId === null ? "clear" : "set" });
+    pendingSendRef.current = chatId;
+    setPendingSendState(chatId);
   };
-  // A "normal" send's HTTP round trip is in flight: onThreadList consults
-  // this and keeps the optimistic busy instead of lowering it from a list
-  // push that predates the server's generating flag.
+  /** The server spoke for this chat: its `generating` owns the turn now. */
+  const retireSendPending = (chatId: string, source: string): void => {
+    if (pendingAfterFrame(pendingSendRef.current, chatId) !== null) return;
+    setSendPending(null, source);
+  };
+  // A "normal" send's HTTP round trip is in flight: the sidebar push that
+  // predates the server's generating flag reports `sending` for the trace.
   const sendingRef = useRef(false);
-  // Latest busy/threadLoading values for stable-ref consumers (the
-  // deploy-freshness poll must not read stale closure state).
-  const loadStateRef = useRef({ busy: false, threadLoading: false });
-  loadStateRef.current = { busy, threadLoading };
 
   // Sticky-scroll: while streaming, follow the generated text ONLY when the
   // pane is already at the bottom; scrolling up detaches into free scroll,
@@ -160,11 +164,10 @@ export function useThreadStore(chatId: string | null) {
       });
   };
 
-  const finishSwap = (target: string | null, clearBusy = true) => {
+  const finishSwap = (target: string | null) => {
     clearStateTimer();
-    // The target's ThreadState and status own the live turn. A cached swap
-    // happens before its first state, so the old chat's busy must not leak.
-    if (clearBusy) markBusy(false, "swap");
+    // The target's ThreadState and status own the live turn: `busy` derives
+    // from the open chat id, so the old chat's turn cannot leak into it.
     const opened = reducerRef.current.open(target);
     setBlocks(opened.blocks);
     hasMoreRef.current = opened.hasMore;
@@ -194,7 +197,7 @@ export function useThreadStore(chatId: string | null) {
     if (decision.swapTo !== undefined) {
       clearTreeTimer();
       clearStateTimer();
-      finishSwap(decision.swapTo, decision.clearBusy === true);
+      finishSwap(decision.swapTo);
       return;
     }
     if (decision.state.pendingChatId !== pendingRef.current) {
@@ -308,13 +311,12 @@ export function useThreadStore(chatId: string | null) {
    *  the old view until its state and child tree are in. The route chat is
    *  always the reducer's current view, so the socket buffers its state
    *  while the old view stays visible. */
-  const openForChat = (cid: string | null, skipBusyReset = false) => {
+  const openForChat = (cid: string | null) => {
     loadSeq.current++;
     if (cid === displayedRef.current && pendingRef.current === null) return;
-    // Navigation must not clear a live turn (A7): the target's ThreadState
-    // or status push owns that flag. The scratch surface has no target, so
-    // it clears its own optimistic state.
-    if (cid === null && !skipBusyReset) markBusy(false, "open_scratch");
+    // Navigation never touches the turn state: `busy` derives from the open
+    // chat id, so the target's own frame decides and the old chat's turn
+    // cannot leak into it.
     saveScroll(displayedRef.current);
     const opened = reducerRef.current.open(cid);
     dispatchNavRef.current({
@@ -358,11 +360,11 @@ export function useThreadStore(chatId: string | null) {
     childTree,
     stopping,
     setStopping,
-    busy,
-    busyRef,
-    markBusy,
+    pendingSend,
+    pendingSendRef,
+    setSendPending,
+    retireSendPending,
     sendingRef,
-    loadStateRef,
     pane,
     stick,
     atBottom,

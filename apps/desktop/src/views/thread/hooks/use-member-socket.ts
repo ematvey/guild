@@ -12,7 +12,7 @@ import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { RenderBlock, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
-import { busyAfterThreadPush, statusFromThreads } from "../status";
+import { statusFromThreads } from "../status";
 import type { ChatStatus } from "./use-chat-data";
 import { IS_TAURI } from "../../../lib/session";
 import { applyWindowTitle } from "../../../lib/window-title";
@@ -29,8 +29,7 @@ export interface MemberSocketDeps {
   setArchivedProjects: (projects: Project[]) => void;
   reducerRef: RefObject<ThreadReducer>;
   setBlocks: (blocks: RenderBlock[]) => void;
-  markBusy: (v: boolean, source: string) => void;
-  busyRef: RefObject<boolean>;
+  retireSendPending: (chatId: string, source: string) => void;
   sendingRef: RefObject<boolean>;
   openChatIdRef: RefObject<string | null>;
   displayedChatIdRef: RefObject<string | null>;
@@ -54,8 +53,8 @@ export interface MemberSocketDeps {
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
-    setArchivedProjects, reducerRef, setBlocks, markBusy,
-    busyRef, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
+    setArchivedProjects, reducerRef, setBlocks,
+    retireSendPending, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
     onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
     setHasMore, setThreadLoading, setCompacting, setSubagentTree, resetSubagentTrees,
     cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
@@ -157,9 +156,10 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     );
     if (cid !== openChatIdRef.current) return;
     if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
-    // The route chat's live turn is the target's status even while the old
-    // thread is still displayed (the composer is disabled during the swap).
-    markBusy(state.generating, "thread_state");
+    // The server spoke for this chat: the local pending send retires and
+    // `generating` owns the turn from here (the route chat is the target even
+    // while the old thread is still displayed).
+    retireSendPending(cid, "thread_state");
     // The read mark follows the route chat, not the painted one: the first
     // state of an uncached open is what triggers the swap, and the paint ref
     // still names the old chat at this point.
@@ -199,7 +199,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
         resetSubagentTrees();
-        markBusy(false, "connect");
       },
       onMachineStatus: applyMachineStatus,
       onWorkspaceIdentity: (identity) => {
@@ -238,11 +237,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // Merge, not replace: a child thread is never in the list, so its
         // live status must survive every sidebar push.
         setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));
-        // busyAfterThreadPush keeps the optimistic busy while a send's
-        // HTTP round trip is in flight (the push predates the server's
-        // generating flag — clearing busy here would let a second send
-        // race the first).
-        markBusy(busyAfterThreadPush(rows, open, sendingRef.current, busyRef.current), "thread_list");
         traceEvent("thread.list", {
           chats: rows.length,
           open: open ?? "-",
@@ -250,8 +244,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           sending: sendingRef.current,
         });
       },
-      // Sequenced ThreadState owns busy state; older status notifications cannot override it.
-      onChatStatus: () => {},
+      // Sequenced ThreadState owns the turn state. A status frame still
+      // retires a pending send: the server has spoken for that chat.
+      onChatStatus: (frame) => retireSendPending(frame.chat_id, "chat_status"),
       onThreadState: (state) => applyHistory(state),
       onSubagentTree: (cid, nodes) => {
         // Every chat id updates the cache: the open thread reads its entry,

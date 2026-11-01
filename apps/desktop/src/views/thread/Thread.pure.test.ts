@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  busyAfterThreadPush,
+  busyFrom,
+  pendingAfterFrame,
   sendButtonState,
   threadAccess,
   threadFacts,
@@ -828,39 +829,80 @@ describe("authoritative socket state", () => {
   });
 });
 
-describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", () => {
-  const row = (generating: boolean) => ({ id: "chat-1", title: "t", created_at: "x", generating }) as any;
-
-  it("keeps busy while the send's HTTP round trip is in flight", () => {
-    // Regression: a thread_list pushed in that window shows generating=false
-    // (the flag is not set yet), which cleared the optimistic busy and let a
-    // second send race the first.
-    expect(busyAfterThreadPush([row(false)], "chat-1", true)).toBe(true);
-    expect(busyAfterThreadPush([], "chat-1", true)).toBe(true);
+describe("busyFrom (one derived turn state, two inputs)", () => {
+  it("follows the server's generating flag", () => {
+    expect(busyFrom(true, null, "chat-1")).toBe(true);
+    expect(busyFrom(false, null, "chat-1")).toBe(false);
+    expect(busyFrom(false, null, null)).toBe(false);
   });
 
-  it("follows the server's generating flag otherwise", () => {
-    expect(busyAfterThreadPush([row(true)], "chat-1", false)).toBe(true);
-    expect(busyAfterThreadPush([row(false)], "chat-1", false)).toBe(false);
-    expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
+  it("keeps a child thread's live turn: generating is the only input that counts", () => {
+    // Regression: child threads never appear in the sidebar list, so a row
+    // lookup used to read them as idle and clear the Working indicator.
+    expect(busyFrom(true, null, "child-1")).toBe(true);
   });
 
-  it("keeps a child thread's live status when the list has no row", () => {
-    // Regression: child threads never appear in thread_list. Treating the
-    // absent row as generating=false cleared the Working indicator on every
-    // sidebar push while the child's run was still live.
-    expect(busyAfterThreadPush([], "child-1", false, true)).toBe(true);
-    expect(busyAfterThreadPush([row(false)], "child-1", false, true)).toBe(true);
-    expect(busyAfterThreadPush([], "child-1", false, false)).toBe(false);
+  it("holds busy for a pending send until the server speaks for that chat", () => {
+    // The window between the optimistic send and the chat's own frame: a
+    // list push that predates the generating flag must not un-busy it, or a
+    // second send races the first.
+    expect(busyFrom(false, "chat-1", "chat-1")).toBe(true);
+    expect(busyFrom(true, "chat-1", "chat-1")).toBe(true);
   });
 
-  it("never busies the new-chat composer off an in-flight first send", () => {
-    // The first send's pending state is the dedicated pending-submit
-    // spinner; busy here feeds stopMode, and a Stop button for a turn that
-    // does not exist yet is a lie. A list push during creation must not
-    // busy the scratch composer.
-    expect(busyAfterThreadPush([row(false)], null, true)).toBe(false);
-    expect(busyAfterThreadPush([], null, true)).toBe(false);
+  it("does not carry one chat's pending send onto another", () => {
+    expect(busyFrom(false, "chat-1", "chat-2")).toBe(false);
+    expect(busyFrom(false, "chat-1", null)).toBe(false);
+  });
+
+  it("never busies the scratch composer: a first send is a pending submit", () => {
+    expect(busyFrom(false, null, null)).toBe(false);
+  });
+});
+
+describe("the turn's sequence (pending send retires when the server speaks)", () => {
+  // Each case walks the real order of events through the two rules the view
+  // uses, so a regression in either shows up as a wrong final answer.
+  it("send -> generating -> done", () => {
+    let pending = pendingAfterFrame(null, "chat-1");
+    expect(busyFrom(false, pending, "chat-1")).toBe(false); // idle
+    pending = "chat-1"; // the optimistic send
+    expect(busyFrom(false, pending, "chat-1")).toBe(true);
+    pending = pendingAfterFrame(pending, "chat-1"); // thread_state(generating)
+    expect(busyFrom(true, pending, "chat-1")).toBe(true);
+    pending = pendingAfterFrame(pending, "chat-1"); // terminal state
+    expect(busyFrom(false, pending, "chat-1")).toBe(false);
+  });
+
+  it("a failed send clears the turn", () => {
+    const pending = "chat-1";
+    expect(busyFrom(false, pending, "chat-1")).toBe(true);
+    // send_failed retires it with no frame involved.
+    expect(busyFrom(false, null, "chat-1")).toBe(false);
+  });
+
+  it("a reconnect mid-turn retires the pending send and follows the server", () => {
+    // The report: the run finished in 15 s, the client stayed "generating"
+    // for 51 minutes. The resync's state for the open chat retires the local
+    // half, so the stale flag has no place to live.
+    let pending: string | null = "chat-1"; // optimistic send, socket dies
+    pending = pendingAfterFrame(pending, "chat-1"); // resync thread_state(generating: false)
+    expect(busyFrom(false, pending, "chat-1")).toBe(false);
+  });
+
+  it("a frame for another chat never retires the pending send", () => {
+    const pending = pendingAfterFrame("chat-1", "chat-2");
+    expect(pending).toBe("chat-1");
+    expect(busyFrom(false, pending, "chat-1")).toBe(true);
+  });
+
+  it("a swap during a turn does not carry it to the new chat", () => {
+    const pending = "running-a"; // send in flight, then the user opens idle B
+    expect(busyFrom(false, pending, "idle-b")).toBe(false);
+    // Back to A before its own frame: the pending send still holds the turn.
+    expect(busyFrom(false, pending, "running-a")).toBe(true);
+    // A's state then retires it and the server's flag takes over.
+    expect(busyFrom(false, pendingAfterFrame(pending, "running-a"), "running-a")).toBe(false);
   });
 });
 
