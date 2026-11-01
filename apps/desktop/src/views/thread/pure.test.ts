@@ -93,8 +93,8 @@ describe("statusFromThreads", () => {
       { id: "b", generating: false, working: false, unread: true },
     ] as ChatSummary[];
     expect(statusFromThreads(chats)).toEqual({
-      a: { generating: true, working: true, unread: false, blocked: false },
-      b: { generating: false, working: false, unread: true, blocked: false },
+      a: { generating: true, working: true, unread: false },
+      b: { generating: false, working: false, unread: true },
     });
   });
 });

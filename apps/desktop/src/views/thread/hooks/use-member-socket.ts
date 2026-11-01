@@ -10,10 +10,9 @@ import { applyMachineList, applyMachineStatus } from "../../../lib/machines-stor
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { Project } from "../../../lib/api/projects";
 import type { ThreadState } from "../../../lib/thread-events";
-import type { RenderBlock, ThreadReducer } from "../../../lib/thread-reducer";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
-import { statusFromThreads } from "../status";
-import type { ChatStatus } from "./use-chat-data";
+import { statusAfterGenerating, statusFromThreads, type ChatStatus } from "../status";
+import type { ThreadViewStore } from "../thread-view-store";
 import { IS_TAURI } from "../../../lib/session";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
@@ -27,20 +26,11 @@ export interface MemberSocketDeps {
   setArchivedChats: (chats: ChatSummary[]) => void;
   setProjects: (projects: Project[]) => void;
   setArchivedProjects: (projects: Project[]) => void;
-  reducerRef: RefObject<ThreadReducer>;
-  setBlocks: (blocks: RenderBlock[]) => void;
+  store: ThreadViewStore;
   retireSendPending: (chatId: string, source: string) => void;
-  sendingRef: RefObject<boolean>;
   openChatIdRef: RefObject<string | null>;
-  displayedChatIdRef: RefObject<string | null>;
-  displayedSyncedRef: RefObject<boolean>;
   onThreadStateApplied: (cid: string) => void;
   updateContextRevision: (cid: string, events: ThreadState["events"]) => void;
-  hasMoreRef: RefObject<boolean>;
-  oldestSeqRef: RefObject<number>;
-  setHasMore: (v: boolean) => void;
-  setThreadLoading: (v: boolean) => void;
-  setCompacting: (v: boolean) => void;
   setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
   resetSubagentTrees: () => void;
   cancelPending: (cid: string) => void;
@@ -53,10 +43,8 @@ export interface MemberSocketDeps {
 export function useMemberSocket(deps: MemberSocketDeps) {
   const {
     signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
-    setArchivedProjects, reducerRef, setBlocks,
-    retireSendPending, sendingRef, openChatIdRef, displayedChatIdRef, displayedSyncedRef,
-    onThreadStateApplied, updateContextRevision, hasMoreRef, oldestSeqRef,
-    setHasMore, setThreadLoading, setCompacting, setSubagentTree, resetSubagentTrees,
+    setArchivedProjects, store, retireSendPending, openChatIdRef,
+    onThreadStateApplied, updateContextRevision, setSubagentTree, resetSubagentTrees,
     cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
   } = deps;
   const [machineTakenOver, setMachineTakenOver] = useState(false);
@@ -101,9 +89,6 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     setChatStatus((prev) =>
       prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
     );
-    setChats((prev) =>
-      prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
-    );
     return true;
   };
 
@@ -111,7 +96,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     const cid = state.chat_id;
     // The reducer owns the watermark and the view: a sequenced state applies
     // only its new events (a stale one changes nothing anywhere).
-    const applied = reducerRef.current.applyState(state);
+    const applied = store.mutate((r) => r.applyState(state));
     traceEvent("thread.state", {
       seq: state.seq,
       events: state.events.length,
@@ -127,14 +112,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       const command = outgoingRef.current.get(row.id);
       if (row.event.type === "user_message" && command && command.chatId === cid) settleOutgoing(command);
     }
-    setChatStatus(prev => ({ ...prev, [cid]: {
-      generating: state.generating,
-      // Own turn only: descendants come from the live tree, so a finished
-      // run clears the spinner instead of latching the last true value.
-      working: state.generating,
-      unread: cid === openChatIdRef.current && isVisible() ? false :
-        (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
-    } }));
+    const watching = cid === openChatIdRef.current && isVisible();
+    setChatStatus(prev => ({ ...prev, [cid]: statusAfterGenerating(prev[cid], state.generating, watching) }));
     // ThreadState carries the chat's project fields: a live re-bind from
     // another device updates this client's row, so the chip and the sidebar
     // agree without a reload. It also carries the log through its last row:
@@ -174,15 +153,9 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         syncedReadRef.current.add(cid);
       }
     }
-    // A pending target's state stays in the reducer until the display swap;
-    // the visible thread must not receive another chat's blocks.
-    if (cid !== displayedChatIdRef.current) return;
-    updateContextRevision(cid, state.events);
-    setBlocks(applied.blocks);
-    hasMoreRef.current = applied.hasMore;
-    oldestSeqRef.current = applied.oldestSeq;
-    setHasMore(applied.hasMore);
-    setCompacting(applied.compacting);
+    // The screen shows the displayed chat's view straight from the store;
+    // only the context ring's revision follows the displayed chat here.
+    if (cid === store.getSnapshot().displayedChatId) updateContextRevision(cid, state.events);
   };
 
   // One member socket serves both browser tabs and Tauri webviews. The
@@ -197,7 +170,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         lastReadMarkRef.current.clear();
         readSentRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
-        reducerRef.current.invalidate();
+        store.mutate((r) => r.invalidate());
         resetSubagentTrees();
       },
       onMachineStatus: applyMachineStatus,
@@ -241,24 +214,30 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           chats: rows.length,
           open: open ?? "-",
           openGenerating: rows.find((c) => c.id === open)?.generating ?? "absent",
-          sending: sendingRef.current,
+          sending: [...outgoingRef.current.values()].some(
+            (c) => c.running && (c.chatId ?? c.originChatId) === open,
+          ),
         });
       },
-      // Sequenced ThreadState owns the turn state. A chat_status frame
-      // carries no seq, so it must not retire a pending send: that would drop
-      // `busy` before the state that says the turn is live arrives, and the
-      // composer would offer a send into a running turn.
-      onChatStatus: () => {},
+      // A chat_status frame moves the spinner and the unread dot of every
+      // chat but the open one. The open chat's turn belongs to its sequenced
+      // ThreadState: the frame carries no seq, so it never retires a pending
+      // send (that would drop `busy` before the state saying the turn is live
+      // arrives) and never overrides a newer state's flag.
+      onChatStatus: ({ chat_id, generating }) => {
+        if (chat_id === openChatIdRef.current) return;
+        setChatStatus((prev) => ({ ...prev, [chat_id]: statusAfterGenerating(prev[chat_id], generating, false) }));
+      },
       onThreadState: (state) => applyHistory(state),
       onSubagentTree: (cid, nodes) => {
         // Every chat id updates the cache: the open thread reads its entry,
         // and a later switch reuses the tree without a fresh sync.
         setSubagentTree(cid, nodes);
       },
-      onThreadEvents: (cid, _seq, events) => {
+      onThreadEvents: (cid, seq, events) => {
         // Incremental durable-log fan-out: the same rows a refresh replays,
         // applied live. Settles optimistic sends exactly like applyHistory.
-        const applied = reducerRef.current.applyThreadEvents(cid, _seq, events);
+        const applied = store.mutate((r) => r.applyThreadEvents(cid, seq, events));
         for (const row of events) {
           if (row.event.type === "user_message") observedUserIdsRef.current.add(row.id);
           const command = outgoingRef.current.get(row.id);
@@ -279,12 +258,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           });
         }
         if (applied.stale) return;
-        if (cid === openChatIdRef.current && cid === displayedChatIdRef.current) {
+        if (cid === openChatIdRef.current && cid === store.getSnapshot().displayedChatId) {
           updateContextRevision(cid, events);
-          setBlocks(applied.blocks);
-          hasMoreRef.current = applied.hasMore;
-          oldestSeqRef.current = applied.oldestSeq;
-          setHasMore(applied.hasMore);
         }
       },
       onSync: (cid, phase) => {
@@ -304,28 +279,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           const alreadyRead = syncedReadRef.current.delete(cid);
           if (applied && !alreadyRead && cid === openChatIdRef.current && isVisible()) sendRead(cid);
         }
-        if (cid !== openChatIdRef.current) return;
-        // Only the visible thread owns the skeleton flag. A pending target
-        // shows the thin navigation bar instead; a cold deep link already
-        // set threadLoading before its first sync.
-        if (cid !== displayedChatIdRef.current) return;
-        if (phase === "begin") {
-          // A synced view already has content (even an empty synced thread):
-          // a reconnect sync must not raise the cold skeleton over it.
-          if (!displayedSyncedRef.current) setThreadLoading(true);
-        } else if (!syncingChatsRef.current.has(cid)) {
-          setThreadLoading(false);
-        }
       },
       // Content is replaced by sequenced ThreadState at turn boundaries;
       // within a live turn the cheap frames render the stream (deltas, tool
       // status) through the reducer's frame merge.
       onFrame: (frame) => {
         if (frame.chat_id === openChatIdRef.current) {
-          const applied = reducerRef.current.applyFrame(frame.event);
-          if (!applied.stale && frame.chat_id === displayedChatIdRef.current) {
-            setBlocks(applied.blocks);
-          }
+          store.mutate((r) => r.applyFrame(frame.event));
           if (frame.event.type === "error") {
             toast.error(frame.event.message?.trim() || "Model error", { id: "model-error" });
           }
@@ -333,17 +293,16 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       onError: (message) => {
         traceEvent("socket.error_frame", { message: message.slice(0, 160) });
-        if (message === "frames dropped — resync") {
-          socketRef.current?.resync();
-        } else if (message === "no such chat" && openChatIdRef.current) {
+        if (message === "no such chat" && openChatIdRef.current) {
           // The open chat no longer exists (stale deep link, chat deleted
           // elsewhere, server store reset): drop into a fresh chat instead
           // of showing an error the user cannot act on.
           recoverMissingChatRef.current();
         } else {
+          // A cold load waiting on this chat gives up: the skeleton derives
+          // from the pending navigation, so cancelling it lowers it.
           const route = openChatIdRef.current;
           if (route !== null) cancelPending(route);
-          setThreadLoading(false);
           // One toast per connection problem: the socket retries every few
           // seconds, and identical stacked toasts read as spam.
           toast.error(message, { id: "member-socket" });

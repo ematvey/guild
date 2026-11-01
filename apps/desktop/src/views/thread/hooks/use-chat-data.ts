@@ -4,18 +4,19 @@
 // hook only holds the state.
 import { useCallback, useRef, useState } from "react";
 import type { ChatSubagentNode, ChatSummary } from "../../../lib/api/chats";
-import { applySubagentTree, clearSubagentTrees } from "../status";
+import { applySubagentTree, clearSubagentTrees, type ChatStatus } from "../status";
 import type { Project } from "../../../lib/api/projects";
 import { useMachines } from "../../../lib/machines-store";
 
-export type ChatStatus = Record<string, { generating: boolean; working: boolean; unread: boolean }>;
+export type { ChatStatus };
 
 export function useChatData() {
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
-  // Live sidebar status overlay (thread-list spinner/dot): the server's
-  // chat-status channel and the workspace push both write it. mark-read
-  // happens on thread load for the visible open chat; a hidden tab never
-  // swallows its own dot.
+  // Every chat's live status (spinner, working, unread dot) — the one owner
+  // of those flags; the rows' own copies only seed it. The list push, the
+  // thread-state frames, the chat-status frames for chats other than the
+  // open one, and a sent read write it. mark-read happens on thread load
+  // for the visible open chat; a hidden tab never swallows its own dot.
   const [chatStatus, setChatStatus] = useState<ChatStatus>({});
   // Every chat's thread subtree, keyed by chat id. The socket updates a
   // chat's entry whether or not that chat is open, so switching back to a

@@ -9,6 +9,7 @@ import {
   threadAccess,
   threadFacts,
   pruneStopping,
+  statusAfterGenerating,
   statusFromThreads,
   offlineMachine,
   tabPaneLayout,
@@ -825,7 +826,24 @@ describe("authoritative socket state", () => {
     expect(second?.reasoningText).toBe("part one part two");
   });
   it("replaces a stale generating overlay from the server list", () => {
-    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false, blocked: false } });
+    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false } });
+  });
+});
+
+describe("statusAfterGenerating (a frame moves one chat's status)", () => {
+  const entry = (generating: boolean, unread = false, working = false) => ({ generating, working, unread });
+
+  it("a turn that ends unwatched raises the unread dot", () => {
+    expect(statusAfterGenerating(entry(true), false, false)).toEqual(entry(false, true));
+  });
+
+  it("a watched chat stays read", () => {
+    expect(statusAfterGenerating(entry(true, true), false, true)).toEqual(entry(false, false));
+  });
+
+  it("a start keeps the dot as it was and the list's working flag", () => {
+    expect(statusAfterGenerating(entry(false, true, true), true, false)).toEqual(entry(true, true, true));
+    expect(statusAfterGenerating(undefined, true, false)).toEqual(entry(true));
   });
 });
 
@@ -933,26 +951,23 @@ describe("sendButtonState (pending submit holds the button until the turn exists
 });
 
 describe("pruneStopping (a stop click lifts when the chat's own generating settles)", () => {
-  const status = (generating: boolean) => ({ generating, unread: false });
+  const status = (generating: boolean) => ({ generating, working: false, unread: false });
 
-  it("keeps the flag while every server-truth source still says generating (or is silent)", () => {
+  it("keeps the flag while the chat's status still says generating (or is silent)", () => {
     // Regression: the stop click flagged the chat but nothing lifted it —
     // the button stayed in its pre-click state for the whole epilogue.
-    expect(pruneStopping({ "chat-1": true }, { "chat-1": status(true) }, null)).toBeNull();
+    expect(pruneStopping({ "chat-1": true }, { "chat-1": status(true) })).toBeNull();
     // No evidence is no clearance: unknown chat keeps the flag.
-    expect(pruneStopping({ "chat-1": true }, {}, null)).toBeNull();
-    expect(pruneStopping({ "chat-1": true }, {}, [ { id: "chat-2" } as any ])).toBeNull();
+    expect(pruneStopping({ "chat-1": true }, {})).toBeNull();
+    expect(pruneStopping({ "chat-1": true }, { "chat-2": status(false) })).toBeNull();
   });
 
-  it("lifts when the thread-state frame or the pushed list says false", () => {
-    const viaFrame = pruneStopping({ "chat-1": true }, { "chat-1": status(false) }, null);
-    expect(viaFrame).toEqual({});
-    const viaList = pruneStopping(
+  it("lifts when the chat's status says false", () => {
+    const lifted = pruneStopping(
       { "chat-1": true, "chat-2": true },
-      {},
-      [ { id: "chat-1", generating: false }, { id: "chat-2", generating: true } ] as any,
+      { "chat-1": status(false), "chat-2": status(true) },
     );
-    expect(viaList).toEqual({ "chat-2": true });
+    expect(lifted).toEqual({ "chat-2": true });
   });
 });
 

@@ -301,13 +301,14 @@ export async function withdrawQueued(chatId: string, messageId: string): Promise
   return true;
 }
 
-/** Follow the durable compaction task, including successful no-op outcomes. */
+/** Starts a manual compaction. True when the server started a task; its
+ *  outcome reaches the view as the durable compaction event in the thread
+ *  state. False when there was nothing to compact. */
 export async function compactChat(chatId: string): Promise<boolean> {
-  const token = getToken();
   const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compact`), {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${getToken()}`,
       "x-guild-client-id": clientId(),
     },
   });
@@ -318,17 +319,7 @@ export async function compactChat(chatId: string): Promise<boolean> {
   const started = await res.json() as { task_id: number | null };
   if (started.task_id === null) return false;
   if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) throw new Error("Invalid compaction task response");
-  for (;;) {
-    const response = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compactions/${started.task_id}`), {
-      headers: { authorization: `Bearer ${token}`, "x-guild-client-id": clientId() },
-    });
-    const status = await response.json();
-    if (!response.ok) throw new Error(status?.error?.message ?? response.statusText);
-    if (status.status === "completed") return status.compacted === true;
-    if (status.status === "failed") throw new Error(status.error);
-    if (status.status !== "running") throw new Error("Invalid compaction status response");
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
+  return true;
 }
 
 /// The org-skills HTTP surface lib/context's assembly consumes (spec §2.3):

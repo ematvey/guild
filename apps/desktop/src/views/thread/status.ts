@@ -4,13 +4,40 @@ import type { ChatRoute } from "./route";
 import type { MachineInfo } from "../../lib/api/machines";
 import type { ChatSubagentNode, ChatSummary, ThreadType } from "../../lib/api/chats";
 
-export function statusFromThreads(chats: ChatSummary[]) {
+/** One chat's live status — the only place the client keeps it. The list
+ *  push seeds every listed chat; a thread-state or chat-status frame moves
+ *  `generating` and `unread`; a sent read clears `unread`. `working` is the
+ *  list row's subtree flag, the descendant fallback until a live tree
+ *  exists (see `workingForChat`). */
+export interface ChatStatusEntry {
+  generating: boolean;
+  working: boolean;
+  unread: boolean;
+}
+export type ChatStatus = Record<string, ChatStatusEntry>;
+
+export function statusFromThreads(chats: ChatSummary[]): ChatStatus {
   return Object.fromEntries(chats.map(chat => [chat.id, {
     generating: !!chat.generating,
     working: !!chat.working,
     unread: !!chat.unread,
-    blocked: !!chat.blocked,
   }]));
+}
+
+/** A chat's status after the server reported its own turn's generating
+ *  flag (a thread-state or a chat-status frame). A turn that ends while the
+ *  reader is not watching the chat raises its unread dot; a watched chat is
+ *  read. */
+export function statusAfterGenerating(
+  prev: ChatStatusEntry | undefined,
+  generating: boolean,
+  watching: boolean,
+): ChatStatusEntry {
+  return {
+    generating,
+    working: prev?.working ?? false,
+    unread: watching ? false : !generating && prev?.generating ? true : prev?.unread ?? false,
+  };
 }
 
 /** A queued or running run in the chat's subtree. */
@@ -22,7 +49,7 @@ export function hasRunningSubagent(nodes: readonly ChatSubagentNode[] | undefine
  *  row's precomputed subtree flag. `generating` stays the narrower flag for
  *  Stop, queue mode and "Stopping". */
 export function workingForChat(
-  chat: Pick<ChatSummary, "generating" | "working"> | undefined,
+  chat: { generating?: boolean; working?: boolean } | undefined,
   nodes: readonly ChatSubagentNode[] | undefined,
 ): boolean {
   // The list row's working flag is a first-paint fallback. Once the live
@@ -134,8 +161,9 @@ export function threadAccess(input: {
 }
 
 /** The composer's live turn: one derived value, two inputs. `generating` is
- * the server's truth for the open chat (a thread-state frame, a chat-status
- * frame, or the sidebar row, in that order). `pendingSend` is the only
+ * the server's truth for the open chat: its status entry, which the open
+ * chat's sequenced thread-state frames move (the list push seeds it before
+ * the first one). `pendingSend` is the only
  * local fact — a chat this client sent to whose own frame has not arrived
  * yet — and it retires the moment the server speaks for that chat, so no
  * caller has to remember to clear a flag. */
@@ -147,9 +175,11 @@ export function busyFrom(
   return generating || (pendingSend !== null && pendingSend === openChatId);
 }
 
-/** The retirement rule: a pending send lives only until the server speaks for
- *  that chat (a thread-state, a chat-status, or a failed submit). Frames for
- *  any other chat leave it alone. */
+/** The retirement rule: a pending send lives only until the server speaks
+ *  for that chat in sequence (a thread-state, or a failed submit). A
+ *  chat-status frame carries no seq and never retires it: it can arrive
+ *  before the state that says the turn is live. Frames for any other chat
+ *  leave it alone. */
 export function pendingAfterFrame(
   pendingSend: string | null,
   frameChatId: string,
@@ -176,25 +206,21 @@ export function sendButtonState(input: {
 }
 
 /** Drops a chat's cancellation-in-progress flag once that chat's own
- * generating state settled to false in a server-truth source — the
- * chat-status map (thread-state frames) or the pushed list. The stop
- * click flags the chat optimistically; the server's stop is cooperative
- * (journaled step checks), so the authoritative generating=false push
- * trails the click by the epilogue's round trips. Undefined generating
- * (chat unknown to both sources) keeps the flag: no evidence is no
- * clearance. Returns null when nothing changed — the caller bails out
- * of the state update instead of re-rendering on every push. */
+ * generating state settled to false in its status entry (a frame or the
+ * pushed list). The stop click flags the chat optimistically; the server's
+ * stop is cooperative (journaled step checks), so the authoritative
+ * generating=false push trails the click by the epilogue's round trips.
+ * A chat with no status entry keeps the flag: no evidence is no
+ * clearance. Returns null when nothing changed — the caller bails out of
+ * the state update instead of re-rendering on every push. */
 export function pruneStopping(
   stopping: Record<string, true>,
-  chatStatus: Record<string, { generating: boolean; unread: boolean }>,
-  chats: ChatSummary[] | null,
+  chatStatus: Record<string, { generating: boolean }>,
 ): Record<string, true> | null {
   let changed = false;
   const next: Record<string, true> = {};
   for (const cid of Object.keys(stopping)) {
-    const generating =
-      chatStatus[cid]?.generating ?? chats?.find((c) => c.id === cid)?.generating;
-    if (generating === false) {
+    if (chatStatus[cid]?.generating === false) {
       changed = true;
       continue;
     }

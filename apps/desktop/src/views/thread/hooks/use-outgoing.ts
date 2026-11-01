@@ -19,7 +19,8 @@ import {
   type DraftAttachment,
   type OutgoingCommand,
 } from "../../../lib/outgoing-command";
-import type { RenderBlock, ThreadReducer } from "../../../lib/thread-reducer";
+import type { RenderBlock } from "../../../lib/thread-reducer";
+import type { ThreadViewStore } from "../thread-view-store";
 import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
 import type { Project } from "../../../lib/api/projects";
@@ -31,9 +32,7 @@ export interface OutgoingDeps {
   chatId: string | null;
   model: string;
   busy: boolean;
-  openGenerating: boolean;
   compacting: boolean;
-  setCompacting: (v: boolean) => void;
   filesReady: boolean;
   promptRef: RefObject<string>;
   setPrompt: (v: string) => void;
@@ -55,12 +54,10 @@ export interface OutgoingDeps {
   restoredCommandRef: RefObject<Map<string | null, string>>;
   refreshOutgoing: (update: (n: number) => number) => void;
   outgoingScope: string;
-  reducerRef: RefObject<ThreadReducer>;
-  setBlocks: (blocks: RenderBlock[]) => void;
+  store: ThreadViewStore;
   setSendPending: (chatId: string | null, source: string) => void;
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
-  sendingRef: RefObject<boolean>;
   projects: Project[] | null;
   openRow: { machine_id?: string | null } | undefined;
   currentProject: PickedProject | null;
@@ -76,11 +73,11 @@ export interface OutgoingDeps {
 
 export function useOutgoing(deps: OutgoingDeps) {
   const {
-    chatId, model, busy, openGenerating, compacting, setCompacting, filesReady,
+    chatId, model, busy, compacting, filesReady,
     promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
-    deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, reducerRef, setBlocks,
-    setSendPending, openChatIdRef, loadSeq, sendingRef, projects, openRow,
+    deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, store,
+    setSendPending, openChatIdRef, loadSeq, projects, openRow,
     currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping, setStopping,
     justCreatedApprovalRef, justCreatedChatRef, pushRoute,
   } = deps;
@@ -164,16 +161,12 @@ export function useOutgoing(deps: OutgoingDeps) {
       // optimistically — the composer's pending-submit spinner carries the
       // state until the create responds and the route moves.
       setPendingSubmitId(command.id);
-      sendingRef.current = false;
     } else if (openChatIdRef.current === target) {
       setSendPending(target, "optimistic_send");
-      setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
+      store.mutate((r) => r.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
-        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
-      sendingRef.current = true;
-    } else {
-      sendingRef.current = false;
+        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
     }
     try {
       await submitCommand(command, {
@@ -186,10 +179,6 @@ export function useOutgoing(deps: OutgoingDeps) {
         },
         created: (cid) => {
           if (!mountedRef.current) return;
-          // The chat exists server-side: from here the turn's submission is
-          // an in-flight round trip against a real chat — pushes must keep
-          // its busy until the server's generating flag takes over.
-          sendingRef.current = true;
           if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
             // The composer was held (blocked, text visible) on the scratch
             // surface for the whole create, so no follow-up typing exists:
@@ -212,10 +201,13 @@ export function useOutgoing(deps: OutgoingDeps) {
             // Seed the created chat's view with the sent message so the
             // route push lands straight on the working thread — no
             // skeleton between the scratch surface and the thread state.
-            setBlocks(reducerRef.current.optimisticSend({ chatId: cid, text: command.text,
+            store.mutate((r) => r.optimisticSend({ chatId: cid, text: command.text,
               key: command.id, sentAt: command.sentAt,
-              attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
+              attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
+            store.seed(cid);
             justCreatedChatRef.current = cid;
+            // The created chat has no frame yet: the pending send holds
+            // `busy` until its own thread state arrives.
             setSendPending(cid, "created");
             pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
           }
@@ -230,8 +222,7 @@ export function useOutgoing(deps: OutgoingDeps) {
           // file store): a restored draft re-sends the server id instead of
           // its local identity.
           attachment.uploadedAs = meta;
-          const changed = reducerRef.current.settleAttachment(command.id, `pending-${attachment.id}`, meta.id);
-          if (openChatIdRef.current === command.chatId || loadSeq.current === mySeq) setBlocks(changed.blocks);
+          store.mutate((r) => r.settleAttachment(command.id, `pending-${attachment.id}`, meta.id));
         },
         prepare: async (text, folder) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
@@ -253,14 +244,13 @@ export function useOutgoing(deps: OutgoingDeps) {
     } catch (e) {
       if (!mountedRef.current) return;
       const cid = command.chatId ?? command.originChatId;
-      const failed = reducerRef.current.failSend(cid, command.id, e instanceof Error ? e.message : String(e));
-      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); setSendPending(null, "send_failed"); }
+      store.mutate((r) => r.failSend(cid, command.id, e instanceof Error ? e.message : String(e)));
+      if (openChatIdRef.current === cid) setSendPending(null, "send_failed");
       recoverOutgoing(command);
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
       setPendingSubmitId(cur => cur === command.id ? null : cur);
-      sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
       if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setSendPending(null, "command_error");
       refreshOutgoing(n => n + 1);
     }
@@ -276,20 +266,24 @@ export function useOutgoing(deps: OutgoingDeps) {
       promptRef.current = "";
       setPrompt("");
       requestAnimationFrame(autoGrow);
-      setCompacting(reducerRef.current.setCompacting(chatId).compacting);
+      // The line stays up until the durable compaction event reaches the
+      // view (the reducer settles it from the thread state); a request that
+      // started no task, or failed, lowers it here.
+      store.mutate((r) => r.setCompacting(chatId));
       try {
-        if (!await compactChat(chatId)) toast.info("No compaction was needed");
+        if (!await compactChat(chatId)) {
+          toast.info("No compaction was needed");
+          store.mutate((r) => r.finishCompacting(chatId));
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e));
-      } finally {
-        setCompacting(reducerRef.current.finishCompacting(chatId).compacting);
+        store.mutate((r) => r.finishCompacting(chatId));
       }
       return;
     }
     const retry = [...outgoingRef.current.values()].find(c => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current));
     if (retry) { await deliverOutgoing(retry); return; }
-    const generating = busy || openGenerating;
-    if (mode === "normal" && generating) return;
+    if (mode === "normal" && busy) return;
     if ([...outgoingRef.current.values()].some(c => deliveringRef.current.has(c.id) && !c.running && (c.chatId ?? c.originChatId) === chatId)) return;
     if (!chatId && [...outgoingRef.current.values()].some(c => c.running && c.originChatId === null)) return;
     const selected = currentProject ? projects?.find(p => p.id === currentProject.id) : undefined;
@@ -301,7 +295,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
       prepareLocally: prepareOnSendingMachine(IS_TAURI, !!currentProject, executor ?? undefined, IS_TAURI ? machineId() : ""),
-      sendMode: generating ? (mode === "steer" ? "steer" : "queue") : undefined,
+      sendMode: busy ? (mode === "steer" ? "steer" : "queue") : undefined,
       attachments: pendingRef.current,
     });
     outgoingRef.current.set(command.id, command);
@@ -335,7 +329,7 @@ export function useOutgoing(deps: OutgoingDeps) {
         toast.info("Message was just delivered to the agent");
         return;
       }
-      setBlocks(reducerRef.current.dropQueued(cid, block.eventId).blocks);
+      store.mutate((r) => r.dropQueued(cid, block.eventId!));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }
