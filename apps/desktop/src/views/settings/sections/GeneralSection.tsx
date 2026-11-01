@@ -17,6 +17,13 @@ import { apiUrl, serverUrl } from "../../../lib/session";
 import { deleteOrgLogo, putOrgName, putOrgTelemetry, uploadOrgLogo } from "../../../lib/api/settings";
 import { useWorkspaceIdentity } from "../../../lib/workspace-store";
 
+/** The name field after a push: it takes the pushed name unless the admin
+ *  has edited away from the name shown before (`shownBefore`, null before
+ *  the first push). */
+export function followPushedName(current: string, shownBefore: string | null, pushed: string): string {
+  return shownBefore === null || current === shownBefore ? pushed : current;
+}
+
 export default function GeneralSection() {
   const identity = useWorkspaceIdentity();
   const org = identity === null ? null : { name: identity.name, logo_url: identity.logo_url ?? null, telemetry: identity.telemetry };
@@ -27,13 +34,16 @@ export default function GeneralSection() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   // The field follows the pushed name until the admin edits it: a rename
-  // from another client lands here unless a draft would be overwritten.
+  // from another client lands here unless a draft would be overwritten. The
+  // updater compares against the name shown before this push, captured now:
+  // React may run it after the ref has moved on.
   const pushedName = identity?.name ?? null;
   const shownNameRef = useRef<string | null>(null);
   useEffect(() => {
     if (pushedName === null) return;
-    setName((current) => (shownNameRef.current === null || current === shownNameRef.current ? pushedName : current));
+    const shownBefore = shownNameRef.current;
     shownNameRef.current = pushedName;
+    setName((current) => followPushedName(current, shownBefore, pushedName));
   }, [pushedName]);
 
   const saveName = async () => {
