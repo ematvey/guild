@@ -223,6 +223,24 @@
       "translations": []
     },
     {
+      "id": "agent-state-push",
+      "definition": "The member-socket push of agent and skill state: the agent list, one run, one agent's routines, one user's threads with an agent and the skill catalog, each a whole-value frame scoped to the members allowed to read it.",
+      "canonical": "apps/server/src/hub/agent-state.ts",
+      "types": [
+        "AgentStateFeed"
+      ],
+      "aliases": [
+        "agent-frames"
+      ],
+      "representations": [
+        {
+          "where": "apps/server/src/hub/agent-state.ts",
+          "role": "wire"
+        }
+      ],
+      "translations": []
+    },
+    {
       "id": "workspace-snapshot",
       "definition": "One user's sidebar state \u2014 active chats, archived chats, projects, and the machine registry \u2014 built as wire rows for the workspace push on the member socket.",
       "canonical": "apps/server/src/hub/workspace.ts",

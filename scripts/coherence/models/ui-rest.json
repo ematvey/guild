@@ -74,6 +74,40 @@
       ]
     },
     {
+      "id": "pushed-agent-state",
+      "definition": "The client's copy of the agent list and each agent's runs, threads and routines, applied from member-socket frames and seeded over HTTP only for a connection's first paint.",
+      "canonical": "apps/desktop/src/views/agents/agents-store.ts",
+      "types": [],
+      "aliases": [
+        "agents-store"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/agents/agents-store.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": []
+    },
+    {
+      "id": "pushed-skill-catalog",
+      "definition": "The client's copy of the org skill catalog and the member's installs from the skill_catalog frame, plus the skill org events the activity feed prepends.",
+      "canonical": "apps/desktop/src/views/skills/skills-store.ts",
+      "types": [
+        "SkillCatalog"
+      ],
+      "aliases": [
+        "skills-store"
+      ],
+      "representations": [
+        {
+          "where": "apps/desktop/src/views/skills/skills-store.ts",
+          "role": "domain"
+        }
+      ],
+      "translations": []
+    },
+    {
       "id": "settings-wire",
       "definition": "The settings endpoints and their mutations, named in one module so no view holds a path.",
       "canonical": "apps/desktop/src/lib/api/settings.ts",
