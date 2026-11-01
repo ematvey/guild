@@ -124,7 +124,8 @@
     "project_id": "018f0b7c-0000-7000-8000-000000000002",
     "project_name": "Guild",
     "project_machine_label": "laptop",
-    "has_more_events": true
+    "has_more_events": true,
+    "compacting": true
   },
   {
     "type": "sync_done",
@@ -233,6 +234,14 @@
     "type": "workspace_identity",
     "name": "Guild",
     "logo_url": "https://example.com/logo.png",
-    "telemetry": true
+    "telemetry": true,
+    "web_bundle": "Bx3k9aQd"
+  },
+  {
+    "type": "model_list",
+    "models": [
+      { "id": "claude-sonnet", "alias": "Auto" },
+      { "id": "gpt-5", "alias": "" }
+    ]
   }
 ]

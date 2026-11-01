@@ -32,6 +32,8 @@
     "ProjectList": { "$ref": "#/$defs/ProjectList" },
     "MachineList": { "$ref": "#/$defs/MachineList" },
     "WorkspaceIdentity": { "$ref": "#/$defs/WorkspaceIdentity" },
+    "ModelList": { "$ref": "#/$defs/ModelList" },
+    "ModelOption": { "$ref": "#/$defs/ModelOption" },
     "Sync": { "$ref": "#/$defs/Sync" },
     "Read": { "$ref": "#/$defs/Read" },
     "MachineResponse": { "$ref": "#/$defs/MachineResponse" },
@@ -78,7 +80,8 @@
         { "$ref": "#/$defs/ArchivedThreadList" },
         { "$ref": "#/$defs/ProjectList" },
         { "$ref": "#/$defs/MachineList" },
-        { "$ref": "#/$defs/WorkspaceIdentity" }
+        { "$ref": "#/$defs/WorkspaceIdentity" },
+        { "$ref": "#/$defs/ModelList" }
       ]
     },
 
@@ -237,6 +240,10 @@
         "has_more_events": {
           "type": "boolean",
           "description": "Always serialized. True when `events` is only the newest page of the durable log."
+        },
+        "compacting": {
+          "type": "boolean",
+          "description": "True while a compaction of the chat's context is running. Absent from servers that do not report it."
         }
       }
     },
@@ -333,6 +340,35 @@
         "telemetry": {
           "type": "boolean",
           "description": "Admin-controlled telemetry switch: when true the client collects app diagnostics and sends them to the workspace collector."
+        },
+        "web_bundle": {
+          "type": "string",
+          "description": "Identity of the web bundle the server serves (its entry script hash). A browser client running a different bundle reloads into the served one. Absent when the server serves no bundle."
+        }
+      }
+    },
+    "ModelList": {
+      "type": "object",
+      "required": ["type", "models"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "model_list" },
+        "models": {
+          "type": "array",
+          "description": "The org's enabled chat models, ordered by id. Sent with every workspace push and to every member socket of the org when an admin changes a route.",
+          "items": { "$ref": "#/$defs/ModelOption" }
+        }
+      }
+    },
+    "ModelOption": {
+      "type": "object",
+      "required": ["id", "alias"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "alias": {
+          "type": "string",
+          "description": "The admin's display name; empty when the route is unnamed."
         }
       }
     },

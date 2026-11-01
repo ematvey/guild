@@ -141,6 +141,10 @@ pub enum WsServerMsg {
         /// Absent/false = the payload is the whole log.
         #[serde(default)]
         has_more_events: bool,
+        /// True while a compaction of the chat's context runs; absent from
+        /// servers that do not report it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compacting: Option<bool>,
     },
     SyncDone {
         chat_id: Uuid,
@@ -202,7 +206,25 @@ pub enum WsServerMsg {
         /// The admin-controlled telemetry switch (absent on old servers).
         #[serde(default)]
         telemetry: bool,
+        /// The served web bundle's identity; absent when the server serves
+        /// no bundle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        web_bundle: Option<String>,
     },
+    /// The org's enabled chat models. Sent with every workspace push and to
+    /// every member socket of the org when an admin changes a route.
+    /// Daemons tag-peek and ignore it.
+    ModelList {
+        models: Vec<ModelOption>,
+    },
+}
+
+/// One enabled chat model: the route id and the admin's display name
+/// (empty when the route is unnamed).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelOption {
+    pub id: String,
+    pub alias: String,
 }
 
 #[cfg(test)]

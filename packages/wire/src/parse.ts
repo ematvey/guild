@@ -30,6 +30,7 @@ const SERVER_TAG_NAMES = [
   "project_list",
   "machine_list",
   "workspace_identity",
+  "model_list",
 ] as const satisfies readonly ServerFrame["type"][];
 
 const CLIENT_TAG_NAMES = [

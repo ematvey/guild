@@ -125,6 +125,9 @@ export type ServerFrame =
       project_name?: string;
       project_machine_label?: string;
       has_more_events: boolean;
+      /** True while a compaction of the chat's context runs. Absent from
+       *  servers that do not report it. */
+      compacting?: boolean;
     }
   | { type: "sync_done"; chat_id: Uuid }
   | { type: "pong" }
@@ -146,7 +149,22 @@ export type ServerFrame =
       archived_projects: Project[];
     }
   | { type: "machine_list"; machines: MachineInfo[] }
-  | { type: "workspace_identity"; name: string; logo_url?: string; telemetry: boolean };
+  | {
+      type: "workspace_identity";
+      name: string;
+      logo_url?: string;
+      telemetry: boolean;
+      /** The served web bundle's identity; absent when none is served. */
+      web_bundle?: string;
+    }
+  | { type: "model_list"; models: ModelOption[] };
+
+/** One enabled chat model: the route id and the admin's display name
+ *  (empty when unnamed). */
+export interface ModelOption {
+  id: string;
+  alias: string;
+}
 
 /** Client → server. */
 export type ClientFrame =
