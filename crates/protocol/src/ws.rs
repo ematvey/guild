@@ -253,6 +253,21 @@ pub enum WsServerMsg {
         chat_id: Uuid,
         tree: serde_json::Value,
     },
+    /// One row of the active chat list changed in place: the client
+    /// replaces it by id. Sent only to sockets that connected with
+    /// `features=chat_row`. Daemons tag-peek and ignore it.
+    ChatRow {
+        chat: serde_json::Value,
+    },
+    /// One chat's context usage: the last completed request's tokens and
+    /// the model it ran on. Sent inside the chat's sync bracket and when it
+    /// changes. Daemons tag-peek and ignore it.
+    ContextUsage {
+        chat_id: Uuid,
+        tokens: Option<i64>,
+        usage_model: Option<String>,
+        usage_model_alias: Option<String>,
+    },
 }
 
 /// One enabled chat model: the route id and the admin's display name
@@ -261,6 +276,10 @@ pub enum WsServerMsg {
 pub struct ModelOption {
     pub id: String,
     pub alias: String,
+    /// The model's context window in tokens; absent from servers that do
+    /// not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 #[cfg(test)]

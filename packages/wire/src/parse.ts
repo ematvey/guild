@@ -37,6 +37,8 @@ const SERVER_TAG_NAMES = [
   "agent_routines",
   "skill_catalog",
   "chat_tree",
+  "chat_row",
+  "context_usage",
 ] as const satisfies readonly ServerFrame["type"][];
 
 const CLIENT_TAG_NAMES = [

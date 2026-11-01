@@ -170,13 +170,28 @@ export type ServerFrame =
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
-  | { type: "chat_tree"; chat_id: Uuid; tree: ChatTree };
+  | { type: "chat_tree"; chat_id: Uuid; tree: ChatTree }
+  /** One active-list row changed in place: replace it by id. Sent only to
+   *  sockets that connected with `features=chat_row`. */
+  | { type: "chat_row"; chat: Chat }
+  /** One chat's context usage: its last completed request's tokens and the
+   *  model it ran on. */
+  | {
+      type: "context_usage";
+      chat_id: Uuid;
+      tokens: number | null;
+      usage_model: string | null;
+      usage_model_alias: string | null;
+    };
 
 /** One enabled chat model: the route id and the admin's display name
  *  (empty when unnamed). */
 export interface ModelOption {
   id: string;
   alias: string;
+  /** The model's context window in tokens; absent from servers that do
+   *  not report it. */
+  context_window?: number;
 }
 
 /** Client → server. */

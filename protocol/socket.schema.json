@@ -40,6 +40,8 @@
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
     "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
     "ChatTreeFrame": { "$ref": "#/$defs/ChatTreeFrame" },
+    "ChatRow": { "$ref": "#/$defs/ChatRow" },
+    "ContextUsage": { "$ref": "#/$defs/ContextUsage" },
     "Sync": { "$ref": "#/$defs/Sync" },
     "Read": { "$ref": "#/$defs/Read" },
     "MachineResponse": { "$ref": "#/$defs/MachineResponse" },
@@ -93,7 +95,9 @@
         { "$ref": "#/$defs/AgentThreads" },
         { "$ref": "#/$defs/AgentRoutines" },
         { "$ref": "#/$defs/SkillCatalog" },
-        { "$ref": "#/$defs/ChatTreeFrame" }
+        { "$ref": "#/$defs/ChatTreeFrame" },
+        { "$ref": "#/$defs/ChatRow" },
+        { "$ref": "#/$defs/ContextUsage" }
       ]
     },
 
@@ -381,6 +385,11 @@
         "alias": {
           "type": "string",
           "description": "The admin's display name; empty when the route is unnamed."
+        },
+        "context_window": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The model's context window in tokens (the route's setting, else the server default): the denominator of the composer's context meter. Absent from servers that do not report it."
         }
       }
     },
@@ -461,6 +470,29 @@
         "type": { "const": "chat_tree" },
         "chat_id": { "$ref": "#/$defs/Uuid" },
         "tree": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ChatTree" }
+      }
+    },
+    "ChatRow": {
+      "description": "One row of the caller's active chat list changed while the list kept its rows and order: the client replaces that row by id. Sent instead of a whole thread_list, and only to sockets that connected with `features=chat_row`; any other list change sends thread_list.",
+      "type": "object",
+      "required": ["type", "chat"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "chat_row" },
+        "chat": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Chat" }
+      }
+    },
+    "ContextUsage": {
+      "description": "One chat's context usage: the prompt-plus-response tokens of its last completed model request since the last compaction, and the model that request ran on. Sent inside the chat's sync bracket and to the chat owner's sockets when it changes (a turn ends, a compaction lands). The meter's denominator is the selected model's `ModelOption.context_window`.",
+      "type": "object",
+      "required": ["type", "chat_id", "tokens", "usage_model", "usage_model_alias"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "context_usage" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "tokens": { "type": ["integer", "null"], "description": "Null when no completed request is measured yet." },
+        "usage_model": { "type": ["string", "null"], "description": "The model the measured request ran on." },
+        "usage_model_alias": { "type": ["string", "null"], "description": "Display name of `usage_model`; null when that route is gone or unnamed." }
       }
     },
 

@@ -419,12 +419,51 @@
     "models": [
       {
         "id": "claude-sonnet",
-        "alias": "Auto"
+        "alias": "Auto",
+        "context_window": 200000
       },
       {
         "id": "gpt-5",
         "alias": ""
       }
     ]
+  },
+  {
+    "type": "chat_row",
+    "chat": {
+      "id": "018f0b7c-0000-7000-8000-000000000010",
+      "org_id": "018f0b7c-0000-7000-8000-000000000020",
+      "user_id": "018f0b7c-0000-7000-8000-000000000030",
+      "title": "Patents overview",
+      "created_at": "2026-10-28T09:00:00Z",
+      "machine_id": "m-1",
+      "machine_label": "workstation",
+      "generating": false,
+      "unread": true,
+      "working": false,
+      "blocked": false,
+      "last_activity_at": "2026-10-28T09:05:00Z",
+      "project_id": "018f0b7c-0000-7000-8000-000000000001",
+      "project_name": "web",
+      "project_machine_label": "workstation",
+      "machine_online": true,
+      "type": "user",
+      "archived": false,
+      "deleted": false
+    }
+  },
+  {
+    "type": "context_usage",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000010",
+    "tokens": 48213,
+    "usage_model": "claude-sonnet",
+    "usage_model_alias": "Auto"
+  },
+  {
+    "type": "context_usage",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000010",
+    "tokens": null,
+    "usage_model": null,
+    "usage_model_alias": null
   }
 ]
