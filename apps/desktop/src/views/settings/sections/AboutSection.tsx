@@ -10,7 +10,7 @@ import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { HAS_SHELL, serverBase } from "../../../lib/session";
-import { telemetryEnabled } from "../../../lib/telemetry";
+import { useWorkspaceIdentity } from "../../../lib/workspace-store";
 
 async function fetchJson(url: string): Promise<unknown | null> {
   try {
@@ -26,8 +26,9 @@ export function AboutSection() {
   const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
   const [serverVersion, setServerVersion] = useState<string | null | undefined>(undefined);
   const [latestRelease, setLatestRelease] = useState<string | null | undefined>(undefined);
-  // Read-only: the switch is the workspace admin's (Settings → General).
-  const [telemetry] = useState(telemetryEnabled());
+  // Read-only and live: the switch is the workspace admin's (Settings →
+  // General), and the workspace-identity frame carries it.
+  const telemetry = useWorkspaceIdentity()?.telemetry ?? null;
   const [trace, setTrace] = useState<{
     enabled: boolean;
     path: string;
@@ -77,12 +78,16 @@ export function AboutSection() {
         <FactCard label="Server version">{serverVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : serverVersion ?? "Unavailable"}</FactCard>
         <FactCard label="Paired server">{base || "same origin (web)"}</FactCard>
         <FactCard label="Telemetry">
-        <span className="text-sm text-muted-foreground">
-          {telemetry
-            ? "On — this workspace collects app diagnostics (errors, socket trace, performance)."
-            : "Off — nothing is collected. Your workspace admin controls this."}
-        </span>
-      </FactCard>
+          {telemetry === null ? (
+            <Skeleton className="my-1 h-4 w-20" />
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {telemetry
+                ? "On — this workspace collects app diagnostics (errors, socket trace, performance)."
+                : "Off — nothing is collected. Your workspace admin controls this."}
+            </span>
+          )}
+        </FactCard>
       <FactCard label="Newest published release">{latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : latestRelease ?? "none"}</FactCard>
       </FactGrid>
       {HAS_SHELL && (
