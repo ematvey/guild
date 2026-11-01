@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://guild.local/protocol/rpc.schema.json",
   "title": "Guild JSON-RPC envelope",
-  "description": "The line-delimited JSON-RPC 2.0 envelope between the desktop UI and the engine, and over the local CLI socket. Derived from crates/protocol/src/rpc.rs, which is what the wire actually is. Every message carries `protocol` so the UI and the engine can negotiate. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
+  "description": "The line-delimited JSON-RPC 2.0 envelope between the desktop UI and the engine, and over the local CLI socket. This schema is the contract: crates/protocol/src/rpc.rs (Rust) and packages/wire/src/rpc.ts (TypeScript) are hand-written from it and tested against protocol/fixtures. Every message carries `protocol` so the UI and the engine can negotiate. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
   "type": "object",
   "properties": {
     "Json": { "$ref": "#/$defs/Json" },

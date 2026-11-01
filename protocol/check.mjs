@@ -204,8 +204,8 @@ async function main() {
     }
   }
   // Every named object or union is compared, not only the fixture roots: a
-  // union can reach the wire inside another root and have no fixture of its
-  // own (StreamEvent rides `live_frame`).
+  // type can reach the wire inside another root and have no fixture of its
+  // own (a frame's nested row or payload struct).
   for (const [schemaName, schema] of schemas) {
     for (const [root, def] of Object.entries(schema.$defs ?? {})) {
       const name = `${schemaName}.${root}`;

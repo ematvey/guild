@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://guild.local/protocol/socket.schema.json",
   "title": "Guild member socket",
-  "description": "The frame vocabulary of the member and machine socket. Derived from crates/protocol/src/ws.rs, which is what the wire actually is. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable. A row type that also crosses the REST surface is referenced by the REST schema's `$id`, never copied here. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
+  "description": "The frame vocabulary of the member and machine socket. This schema is the contract: crates/protocol/src/ws.rs (Rust) and packages/wire/src/types.ts (TypeScript) are hand-written from it and tested against protocol/fixtures. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable. A row type that also crosses the REST surface is referenced by the REST schema's `$id`, never copied here. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
   "type": "object",
   "properties": {
     "Uuid": { "$ref": "#/$defs/Uuid" },

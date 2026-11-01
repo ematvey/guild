@@ -1,0 +1,86 @@
+[
+  {
+    "type": "delta",
+    "content": "Reading the file"
+  },
+  {
+    "type": "thinking_delta",
+    "content": "The user wants the README."
+  },
+  {
+    "type": "idle"
+  },
+  {
+    "type": "done",
+    "message_id": "018f0b7c-0000-7000-8000-000000000071",
+    "cost_usd": 0.0125,
+    "tokens_in": 1200,
+    "tokens_out": 340
+  },
+  {
+    "type": "error",
+    "code": "upstream_error",
+    "message": "the provider closed the stream"
+  },
+  {
+    "type": "tool_call_delta",
+    "index": 0,
+    "id": "call-1",
+    "name": "read_file",
+    "arguments_delta": "{\"path\":"
+  },
+  {
+    "type": "tool_call_delta",
+    "index": 0,
+    "arguments_delta": "\"README.md\"}"
+  },
+  {
+    "type": "tool_call_done",
+    "call": {
+      "id": "call-1",
+      "name": "read_file",
+      "arguments": {
+        "path": "README.md"
+      }
+    }
+  },
+  {
+    "type": "tool_started",
+    "call_id": "call-1",
+    "name": "read_file",
+    "arguments": "{\"path\":\"README.md\"}",
+    "executor": "client"
+  },
+  {
+    "type": "tool_started",
+    "call_id": "call-2",
+    "name": "web_search",
+    "arguments": "{\"query\":\"guild\"}",
+    "executor": "server",
+    "kind": "web_search"
+  },
+  {
+    "type": "tool_completed",
+    "call_id": "call-1",
+    "name": "read_file",
+    "content": "# Guild",
+    "is_error": false
+  },
+  {
+    "type": "approval_requested",
+    "call_id": "call-3",
+    "name": "execute",
+    "arguments": "{\"command\":\"rm -rf build\"}"
+  },
+  {
+    "type": "approval_resolved",
+    "call_id": "call-3",
+    "approved": true
+  },
+  {
+    "type": "approval_resolved",
+    "call_id": "call-4",
+    "approved": false,
+    "reason": "denied by the user"
+  }
+]

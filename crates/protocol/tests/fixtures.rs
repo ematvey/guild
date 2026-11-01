@@ -101,6 +101,13 @@ fn server_frames_match_the_schema_fixtures() {
 }
 
 #[test]
+fn stream_events_match_the_schema_fixtures() {
+    let frames = fixture("socket.StreamEvent.json");
+    let parsed: Vec<protocol::api::StreamEvent> = round_trip("socket.StreamEvent.json", frames);
+    assert!(!parsed.is_empty(), "the stream event fixture must not be empty");
+}
+
+#[test]
 fn client_frames_match_the_schema_fixtures() {
     let frames = fixture("socket.ClientFrame.json");
     let parsed: Vec<WsClientMsg> = round_trip("socket.ClientFrame.json", frames);

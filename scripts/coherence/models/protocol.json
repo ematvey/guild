@@ -76,6 +76,10 @@
           "role": "wire"
         },
         {
+          "where": "protocol/fixtures/socket.StreamEvent.json",
+          "role": "wire"
+        },
+        {
           "where": "protocol/check.mjs",
           "role": "wire"
         },
