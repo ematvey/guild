@@ -456,7 +456,8 @@ export function registerAgentRoutes(
   app.post("/api/v1/agents/:id/threads", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "use");
+    const { agent } = await store.requireAccess(user, agentId, "use");
+    refuseDeletingAgent(agent);
     const body = jsonBody(req);
     const title = optionalString(body, "title") ?? "";
     return sendJson(reply, { thread: await store.createThread(agentId, user.id, title) });

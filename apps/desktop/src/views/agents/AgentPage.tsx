@@ -192,7 +192,7 @@ export function AgentPage({
         actions={
           <>
             {tab !== "threads" && (
-              <Button variant="outline" size="sm" onClick={() => void newThread()}>
+              <Button variant="outline" size="sm" onClick={() => void newThread()} disabled={agent.status === "deleting"}>
                 <Plus />
                 New thread
               </Button>
@@ -364,7 +364,7 @@ function AgentOverview({
             </ul>
           )}
           <div className="mt-2 flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => void onNewThread()}>
+            <Button size="sm" variant="outline" onClick={() => void onNewThread()} disabled={agent.status === "deleting"}>
               <Plus />
               New thread
             </Button>

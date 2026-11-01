@@ -56,7 +56,7 @@ export function ThreadList({
           Threads are independent conversations over one shared workspace.
         </p>
         <div className="flex-1" />
-        <Button size="sm" onClick={() => void create()} disabled={creating}>
+        <Button size="sm" onClick={() => void create()} disabled={creating || agent.status === "deleting"}>
           {creating ? <Loader2 className="animate-spin" /> : <MessageSquare />}
           New thread
         </Button>

@@ -326,6 +326,7 @@ describe("an agent being deleted", () => {
         url: `/api/v1/threads/${chatId}/turns`,
         payload: { model: "GLM-Test-Model", agent_id: agent.id, messages: [{ role: "user", content: "again" }] },
       },
+      { url: `/api/v1/agents/${agent.id}/threads`, payload: { title: "a new thread" } },
     ];
     for (const refusal of refusals) {
       const res = await stack.env.app.inject({ method: "POST", headers: auth(), ...refusal });
