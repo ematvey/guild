@@ -4,7 +4,8 @@
 // routines reach only members who may see that agent, a thread list only its
 // owner, an agent list is filtered per member — and carries the whole current
 // value, so the client replaces (or, for a run, upserts) and never re-fetches.
-// Table triggers NOTIFY every write (migrations/0101_agent_notify.sql); each
+// Table triggers NOTIFY every write (migrations/0101_agent_notify.sql, and
+// 0102 for an agent rename, which moves its threads' chat trees); each
 // key's pushes run on one chain, so a snapshot read before a write never
 // lands after the one read after it.
 

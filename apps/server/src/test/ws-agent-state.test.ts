@@ -292,6 +292,49 @@ describe("agent and skill state frames", () => {
     expect(ownerRead.own).toBe(true);
   });
 
+  it("re-pushes the tree of every chat that shows a renamed agent's thread", { timeout: TEST_TIMEOUT }, async () => {
+    const agentId = await createAgent(stack.memberToken, `named-${crypto.randomUUID().slice(0, 8)}`, "private");
+    const thread = await api<{ thread: { id: string; chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
+      title: "Rename root",
+    });
+    const rootChat = thread.thread.chat_id;
+    const childChat = await api<{ id: string }>(stack.memberToken, "POST", "/api/v1/chats", { title: "Rename child" });
+    const childThread = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
+       VALUES ($1, $2, $3, $4, 'Rename child', 'subagent', $5, 1)`,
+      [childThread, agentId, stack.memberId, childChat.id, thread.thread.id],
+    );
+    const ws = await memberSocket(stack.memberToken);
+    try {
+      ws.send(JSON.stringify({ type: "sync", chat_id: rootChat }));
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === rootChat);
+      ws.send(JSON.stringify({ type: "sync", chat_id: childChat.id }));
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === childChat.id);
+
+      await api(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}`, { name: "Renamed agent" });
+
+      const rootTree = await waitFrame(
+        ws,
+        (f) => f.type === "chat_tree" && f.chat_id === rootChat && (f.tree as { agent_name: string }).agent_name === "Renamed agent",
+      );
+      expect(rootTree.tree).toMatchObject({ agent_id: agentId, own: true });
+      const subtree = await waitFrame(
+        ws,
+        (f) => f.type === "subagent_tree" && f.chat_id === rootChat
+          && (f.nodes as { agent_name: string }[]).length === 2
+          && (f.nodes as { agent_name: string }[]).every((n) => n.agent_name === "Renamed agent"),
+      );
+      expect((subtree.nodes as { thread_id: string }[]).map((n) => n.thread_id)).toEqual([thread.thread.id, childThread]);
+      await waitFrame(
+        ws,
+        (f) => f.type === "chat_tree" && f.chat_id === childChat.id && (f.tree as { agent_name: string }).agent_name === "Renamed agent",
+      );
+    } finally {
+      ws.end();
+    }
+  });
+
   it("refuses stop and close on a chat the caller does not own", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `owned-${crypto.randomUUID().slice(0, 8)}`, "private");
     const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
