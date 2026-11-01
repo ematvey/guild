@@ -3,7 +3,7 @@
 //! seeds a local draft from it.
 
 import { useState } from "react";
-import { useCachedGet } from "../use-cached-api";
+import { updateCached, useCachedGet } from "../use-cached-api";
 import {
   deleteGatewayRoute,
   putGatewayRoute,
@@ -153,7 +153,17 @@ export function RouteDetail({
         ...(draft.temperature != null || tempText.trim() !== "" ? { temperature: parsedTemp } : {}),
         modalities: draft.modalities,
       });
-      toast.success("Route saved", { description: draft.alias.trim() || draft.model.trim() });
+      const saved: RouteRow = {
+        ...draft,
+        model: draft.model.trim(),
+        alias: draft.alias.trim(),
+        temperature: parsedTemp,
+      };
+      updateCached<{ routes: RouteRow[] }>(SETTINGS_PATHS.gatewayRoutes, (value) => ({
+        ...value,
+        routes: value.routes.map((row) => (row.model === model ? saved : row)),
+      }));
+      toast.success("Route saved", { description: saved.alias || saved.model });
       onChanged();
       if (draft.model.trim() !== model) onRenamed(draft.model.trim());
       setDraft(null);

@@ -2,12 +2,29 @@
 //! keeps the last successful response per path; on mount the cached value
 //! renders immediately while a fresh GET updates it in the background, so
 //! navigation never flashes a skeleton over known content. Skeletons appear
-//! only when nothing is cached yet.
+//! only when nothing is cached yet. Every mounted reader of one path shows
+//! the same value: a fresh response or a local write reaches all of them.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "../../lib/api/request";
 
 const cache = new Map<string, unknown>();
+/** Mounted readers per path. */
+const readers = new Map<string, Set<(value: unknown) => void>>();
+
+/** Stores a value for a path and hands it to every mounted reader. */
+function publish(path: string, value: unknown): void {
+  cache.set(path, value);
+  for (const reader of readers.get(path) ?? []) reader(value);
+}
+
+/** Replaces the cached value of a path from the one held now (a section's
+ *  own successful write), and every mounted reader of it repaints. A path
+ *  with nothing cached stays empty. */
+export function updateCached<T>(path: string, update: (value: T) => T): void {
+  if (!cache.has(path)) return;
+  publish(path, update(cache.get(path) as T));
+}
 
 /** Section caches that clear with the settings cache (sign-out). */
 const cacheClearers = new Set<() => void>();
@@ -84,8 +101,7 @@ export function useCachedGet<T>(path: string | null): {
     request<T>("GET", path)
       .then((r) => {
         if (seq.current !== mine || cacheEpochChanged(epoch)) return;
-        cache.set(path, r);
-        setData(r);
+        publish(path, r);
         setError(null);
         setSettled(true);
       })
@@ -105,6 +121,21 @@ export function useCachedGet<T>(path: string | null): {
     setData(path ? ((cache.get(path) as T | undefined) ?? null) : null);
     setError(null);
     setSettled(false);
+  }, [path]);
+
+  useEffect(() => {
+    if (!path) return;
+    const reader = (value: unknown) => setData(value as T);
+    let set = readers.get(path);
+    if (set === undefined) {
+      set = new Set();
+      readers.set(path, set);
+    }
+    set.add(reader);
+    return () => {
+      set.delete(reader);
+      if (set.size === 0) readers.delete(path);
+    };
   }, [path]);
 
   useEffect(() => {
