@@ -226,6 +226,14 @@
         {
           "where": "apps/desktop/src/views/agents/TraceDetail.tsx",
           "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/trace-views.tsx",
+          "role": "ui"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/span-detail.tsx",
+          "role": "ui"
         }
       ],
       "translations": [

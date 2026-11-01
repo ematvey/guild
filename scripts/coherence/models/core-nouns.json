@@ -207,6 +207,10 @@
           "role": "ui"
         },
         {
+          "where": "apps/desktop/src/views/agents/agent-settings.tsx",
+          "role": "ui"
+        },
+        {
           "where": "apps/server/src/agents/store.ts",
           "role": "db"
         },
