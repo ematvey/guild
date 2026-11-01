@@ -185,10 +185,8 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
     // stripped only `unpersisted-<chat>`/`live-thinking-<chat>` left those
     // orphans rendering above the durable copies — the response showed twice.
     const r = createThreadReducer();
-    r.open(null);
-    r.optimisticSend({ chatId: null, text: "hello world", key: "cmd-1", sentAt: 0, attachments: [] });
-    r.bindPending("c1", "cmd-1");
-    r.adopt("c1");
+    r.open("c1");
+    r.optimisticSend({ chatId: "c1", text: "hello world", key: "cmd-1", sentAt: 0, attachments: [] });
     r.applyState(state("c1", 2, [echo(1, "hello world", "cmd-1")], "", "", true));
     r.applyFrame({ type: "thinking_delta", content: "thinking part one" });
     r.applyFrame({ type: "delta", content: "partial answer - **" });
@@ -508,19 +506,6 @@ describe("optimistic send vs server sync", () => {
     expect(crossed.blocks.some((b) => b.key === "pending-1" && b.pending)).toBe(true);
   });
 
-  it("first send: the created chat adopts the scratch view and settles on its echo", () => {
-    const r = createThreadReducer();
-    r.open(null);
-    const sent = r.optimisticSend({ chatId: null, text: "hello", key: "pending-9", sentAt: 1 });
-    expect(sent.blocks.some((b) => b.key === "pending-9")).toBe(true);
-    r.bindPending("new-chat", "pending-9");
-    const adopted = r.adopt("new-chat");
-    expect(adopted.blocks.some((b) => b.key === "pending-9")).toBe(true);
-    const settled = r.applyState(state("new-chat", 2, [echo(1, "hello", "pending-9")]));
-    expect(settled.blocks.some((b) => b.key === "pending-9")).toBe(false);
-    expect(settled.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["hello"]);
-  });
-
   it("failSend removes the optimistic block, appends the error, releases the marker", () => {
     const r = createThreadReducer();
     r.open("c1");
@@ -673,16 +658,16 @@ describe("artifact card on spilled tool_result frames", () => {
   });
 });
 
-describe("open / adopt / cache", () => {
+describe("open / cache", () => {
   it("caches the previous chat's blocks and restores them on switch-back", () => {
     const r = createThreadReducer();
     r.open("a");
     r.applyState(state("a", 1, [row(1, { type: "user_message", content: "hi", attachments: [] })]));
     const toB = r.open("b");
     expect(toB.blocks).toEqual([]);
-    expect(toB.restored).toBe(false);
+    expect(toB.synced).toBe(false);
     const back = r.open("a");
-    expect(back.restored).toBe(true);
+    expect(back.synced).toBe(true);
     expect(back.blocks.map((b) => b.text)).toEqual(["hi"]);
   });
 
@@ -690,10 +675,10 @@ describe("open / adopt / cache", () => {
     const r = createThreadReducer();
     const none = r.open(null);
     expect(none.blocks).toEqual([]);
-    expect(none.restored).toBe(false);
+    expect(none.synced).toBe(false);
     r.open("a");
     r.applyState(state("a", 1, []));
-    expect(r.open("b").restored).toBe(false);
+    expect(r.open("b").synced).toBe(false);
   });
 
   it("invalidate forces a full re-derive on the next state", () => {
@@ -747,16 +732,6 @@ it("retains every queued optimistic command across authoritative rebuilds", () =
   expect(rebuilt.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["one", "two"]);
   expect(rebuilt.blocks.filter(b => b.pending).map(b => b.text)).toEqual(["two"]);
   expect(r.applyState(state("chat", 3, [echo(1, "one", "id-1"), echo(2, "two", "id-2")])).blocks.filter(b => b.pending)).toEqual([]);
-});
-
-it("a create-time failure is owned by scratch and cannot reappear on later adoption", () => {
-  const r = createThreadReducer(); r.open(null);
-  r.optimisticSend({ chatId: null, text: "first", key: "first", sentAt: 1 });
-  r.bindPending("created", "first");
-  r.failSend("created", "first", "upload failed");
-  const adopted = r.adopt("created");
-  expect(adopted.blocks.some(b => b.pending)).toBe(false);
-  expect(adopted.blocks.some(b => b.kind === "error")).toBe(true);
 });
 
 describe("provider error surfacing (tracked on assistant_message, shown only while latest)", () => {
@@ -1062,9 +1037,9 @@ describe("open cache reports synced, not non-empty", () => {  it("a previously s
     const r = createThreadReducer();
     r.open("empty");
     r.applyState(state("empty", 1, []));
-    expect(r.open("other").restored).toBe(false);
+    expect(r.open("other").synced).toBe(false);
     const back = r.open("empty");
-    expect(back.restored).toBe(true);
+    expect(back.synced).toBe(true);
     expect(back.synced).toBe(true);
     expect(back.blocks).toEqual([]);
   });

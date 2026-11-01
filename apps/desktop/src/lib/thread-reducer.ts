@@ -678,13 +678,10 @@ export interface ApplyResult {
   /// a null-vs-null comparison holds and the "Compacting thread…" line
   /// flashes on every first send.
   compacting: boolean;
-  /// open()/adopt(): whether an authoritative sync has already built this
-  /// view. A synced view renders immediately, even when it is empty — a
-  /// repeat visit must not flash a skeleton over a known thread.
+  /// Whether an authoritative sync has already built this view. A synced
+  /// view renders immediately, even when it is empty — a repeat visit must
+  /// not flash a skeleton over a known thread.
   synced: boolean;
-  /// Backwards-compatible alias of `synced` for callers that read the
-  /// original field name.
-  restored: boolean;
   /// An older page exists before the view's oldest loaded event.
   hasMore: boolean;
   /// Oldest loaded event seq (-1 = nothing loaded): the cursor for the
@@ -722,9 +719,9 @@ export interface ThreadReducer {
    * capped) so switching back renders them immediately; `null` opens the
    * no-chat scratch view, empty. */
   open(chatId: string | null): ApplyResult;
-  /** First send: the created chat adopts the scratch view's optimistic
-   * block; the socket's first ThreadState continues from there. */
-  adopt(chatId: string): ApplyResult;
+  /** Reads one chat's view without switching the open chat (null = the
+   * scratch view). The compaction line is reported for that chat. */
+  view(chatId: string | null): ApplyResult;
   /** One sequenced ThreadState (initial sync or live publish). Applies only
    * the events past the view's watermark, then re-stamps the authoritative
    * model buffers, settles the pending send and reconciles a manual
@@ -734,11 +731,9 @@ export interface ThreadReducer {
    *  fresh rows through the same replay rules a sync uses and advances the
    *  watermark. Never re-stamps buffers — in-flight deltas stay untouched. */
   applyThreadEvents(chatId: string, seq: number, events: ThreadEventRow[]): ApplyResult;
-  /** One live stream frame (deltas, tool status, approval cards). The wire
-   * contract keeps view content sequenced-ThreadState-only (LiveFrames are
-   * a non-replayable command-consumer stream), so the chat view does not
-   * feed frames today; the transition exists for stream consumers built on
-   * the same merge rules. */
+  /** One live stream frame (deltas, tool status, approval cards) for the
+   * open chat. Frames render the turn between sequenced states; the next
+   * ThreadState re-stamps the buffers they built. */
   applyFrame(frame: StreamEvent): ApplyResult;
   /** Prepends one older page of the durable log (the scroll-to-top loader):
    *  the view re-derives from the merged window, so cross-page tool results
@@ -748,19 +743,13 @@ export interface ThreadReducer {
    * (socket reconnect: the fresh sync's events replace the view wholesale,
    * same as a first load). */
   invalidate(): void;
-  /** Appends the optimistic user command to the current view; a send to an
-   * existing chat registers the pending marker here, a first send binds it
-   * later via bindPending. */
+  /** Appends the optimistic user command to its chat's view and registers
+   * the pending marker its durable echo settles. */
   optimisticSend(pending: PendingSend): ApplyResult;
-  /** Binds a first send's pending marker to the chat created for it. */
-  bindPending(chatId: string, key: string): void;
   /** Attachment upload finished: `uploadedId` swaps the pending chip id for
    * the stored attachment's (dropping the local preview); without one, only
    * the preview is dropped (upload failed — the file itself is gone). */
   settleAttachment(key: string, pendingId: string, uploadedId?: string): ApplyResult;
-  /** Appends an error block to the current view (create-chat failure,
-   * attachment upload failure). */
-  appendError(text: string): ApplyResult;
   /** The user trashed a queued chip: drops the block (and the pending
    * marker) at once — the server's withdrawal reconcile confirms it for
    * every client via the state republish. */
@@ -779,8 +768,8 @@ export interface ThreadReducer {
 const CACHE_LIMIT = 20;
 
 export function createThreadReducer(): ThreadReducer {
-  /** Rendered views by chat id; "" is the no-chat scratch view (a first
-   * send's optimistic block lives there until the created chat adopts it). */
+  /** Rendered views by chat id; "" is the no-chat scratch view (a failed
+   * first send leaves its error block there). */
   const views = new Map<string, ChatView>();
   const LOOSE = "";
   let current = LOOSE;
@@ -820,7 +809,6 @@ export function createThreadReducer(): ThreadReducer {
     stale,
     compacting: compactingChat !== null && current !== LOOSE && compactingChat === current,
     synced,
-    restored: synced,
     hasMore: v.hasMore,
     oldestSeq: v.events[0]?.seq ?? -1,
   });
@@ -1116,9 +1104,16 @@ export function createThreadReducer(): ThreadReducer {
       return result(v, false, v.synced);
     },
 
-    adopt(chatId) {
-      current = chatId;
-      return result(viewOf(chatId));
+    view(chatId) {
+      const v = views.get(chatId ?? LOOSE) ?? freshView();
+      return {
+        blocks: v.blocks,
+        stale: false,
+        compacting: chatId !== null && compactingChat === chatId,
+        synced: v.synced,
+        hasMore: v.hasMore,
+        oldestSeq: v.events[0]?.seq ?? -1,
+      };
     },
 
     applyState(state) {
@@ -1358,18 +1353,6 @@ export function createThreadReducer(): ThreadReducer {
       return result(v);
     },
 
-    bindPending(chatId, key) {
-      const pending = pendingOf(LOOSE).get(key);
-      if (pending) {
-        pendingOf(chatId).set(key, { ...pending, chatId });
-        pendingOf(LOOSE).delete(key);
-        const loose = viewOf(LOOSE);
-        const bound = viewOf(chatId);
-        bound.blocks = [...bound.blocks, ...loose.blocks.filter(b => b.key === key)];
-        loose.blocks = loose.blocks.filter(b => b.key !== key);
-      }
-    },
-
     settleAttachment(key, pendingId, uploadedId) {
       const update = (attachments: PendingSend["attachments"]) => attachments?.map(a =>
         a.id === pendingId ? { ...a, ...(uploadedId ? { id: uploadedId, previewUrl: undefined } : {}) } : a);
@@ -1382,12 +1365,6 @@ export function createThreadReducer(): ThreadReducer {
           ? { ...b, attachments: update(b.attachments) } : b);
       }
       return result(viewOf(current));
-    },
-
-    appendError(text) {
-      const v = viewOf(current);
-      v.blocks = [...v.blocks, { kind: "error", text, key: liveKey() }];
-      return result(v);
     },
 
     dropQueued(chatId, key) {
