@@ -215,6 +215,10 @@ export async function discoverSkills(
   return out;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 /** Paths disabled in `{config_dir}/settings.json` under `skillsDisabled`. */
 export async function disabledPaths(
   fs: BridgeFs,
@@ -224,13 +228,13 @@ export async function disabledPaths(
 ): Promise<Set<string>> {
   const body = await fs.readText(projectDir, `${configDir}/settings.json`);
   if (body === null) return new Set();
-  let v: any;
+  let v: unknown;
   try {
     v = JSON.parse(body);
   } catch {
     return new Set();
   }
-  const map = v?.skillsDisabled;
+  const map = isRecord(v) ? v.skillsDisabled : undefined;
   if (typeof map !== "object" || map === null) return new Set();
   const out = new Set<string>();
   for (const [p, on] of Object.entries(map)) {
@@ -390,18 +394,18 @@ export async function setSkillDisabled(
 ): Promise<boolean> {
   const { configDir } = scopes;
   if (!configDir) return false;
-  let v: any = {};
+  let v: Record<string, unknown> = {};
   const body = await fs.readText(undefined, `${configDir}/settings.json`);
   if (body !== null) {
     try {
-      v = JSON.parse(body);
+      const parsed: unknown = JSON.parse(body);
+      if (isRecord(parsed)) v = parsed;
     } catch {
       v = {};
     }
   }
-  if (typeof v.skillsDisabled !== "object" || v.skillsDisabled === null) {
-    v.skillsDisabled = {};
-  }
-  v.skillsDisabled[skillPath] = enabled;
+  const disabled = isRecord(v.skillsDisabled) ? v.skillsDisabled : {};
+  disabled[skillPath] = enabled;
+  v.skillsDisabled = disabled;
   return fs.writeText(undefined, `${configDir}/settings.json`, JSON.stringify(v, null, 2) + "\n");
 }

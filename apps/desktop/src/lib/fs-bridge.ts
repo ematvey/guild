@@ -30,35 +30,56 @@ const emptyFs: BridgeFs = {
   writeText: async () => false,
 };
 
+/** The engine call the bridge rides on (machine-rpc's rpcCall). */
+export type BridgeRpc = (
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs?: number,
+) => Promise<{ result?: unknown } | null | undefined>;
+
+/** The `fs.*` verbs' reply shapes; any field may be missing. */
+interface FsReplies {
+  "fs.scopes": { config_dir?: string | null; home?: string | null };
+  "fs.read_text": { content?: string | null };
+  "fs.list_dir": { entries?: DirEntry[] };
+  "fs.exists": { exists?: boolean };
+  "fs.write_text": { ok?: boolean };
+}
+
 /** The real bridge: `fs.*` verbs over the app-process RPC channel. */
-export function daemonFs(rpcCall: (method: string, params: any, timeoutMs?: number) => Promise<any>): BridgeFs {
-  const call = async (method: string, params: Record<string, unknown>): Promise<any> => {
+export function daemonFs(rpcCall: BridgeRpc): BridgeFs {
+  const call = async <M extends keyof FsReplies>(
+    method: M,
+    params: Record<string, unknown>,
+  ): Promise<FsReplies[M] | null> => {
     try {
       const res = await rpcCall(method, params, 15_000);
-      return res?.result ?? null;
+      const result = res?.result;
+      return typeof result === "object" && result !== null ? (result as FsReplies[M]) : null;
     } catch {
       return null;
     }
   };
+  const scoped = (projectDir: string | undefined) => (projectDir ? { project_dir: projectDir } : {});
   return {
     scopes: async () => {
       const r = await call("fs.scopes", {});
       return { configDir: r?.config_dir ?? null, home: r?.home ?? null };
     },
     readText: async (projectDir, path) => {
-      const r = await call("fs.read_text", { ...(projectDir ? { project_dir: projectDir } : {}), path });
+      const r = await call("fs.read_text", { ...scoped(projectDir), path });
       return r?.content ?? null;
     },
     listDir: async (projectDir, path) => {
-      const r = await call("fs.list_dir", { ...(projectDir ? { project_dir: projectDir } : {}), path });
+      const r = await call("fs.list_dir", { ...scoped(projectDir), path });
       return r?.entries ?? [];
     },
     exists: async (projectDir, path) => {
-      const r = await call("fs.exists", { ...(projectDir ? { project_dir: projectDir } : {}), path });
+      const r = await call("fs.exists", { ...scoped(projectDir), path });
       return r?.exists === true;
     },
     writeText: async (projectDir, path, body) => {
-      const r = await call("fs.write_text", { ...(projectDir ? { project_dir: projectDir } : {}), path, body });
+      const r = await call("fs.write_text", { ...scoped(projectDir), path, body });
       return r?.ok === true;
     },
   };

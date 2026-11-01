@@ -213,6 +213,14 @@ const TextBlock = memo(function TextBlock({
   );
 });
 
+/** The chat's bound agent from its agent read, when the reply has an
+ *  agent's identity; anything else leaves the picker as it is. */
+function boundAgent(value: unknown): Agent | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { id, name } = value as Partial<Agent>;
+  return typeof id === "string" && typeof name === "string" ? (value as Agent) : null;
+}
+
 export default function Thread(props: ThreadProps) {
   const scope = `${apiUrl("")}\n${props.email}`;
   return (
@@ -487,9 +495,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       .then(({ agent, switcheable }) => {
         if (!live) return;
         setAgentLocked(!switcheable);
-        if (agent === null) return;
-        const bound = agent as Agent;
-        setPickedAgent(bound);
+        const bound = boundAgent(agent);
+        if (bound !== null) setPickedAgent(bound);
       })
       .catch(() => {});
     return () => {

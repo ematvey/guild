@@ -28,14 +28,22 @@ export function machineId(): string {
  * Resolves with the full JSON-RPC envelope (same shape rpc_request returned).
  */
 
+/** One JSON-RPC reply from the engine. `R` is the method's result shape,
+ *  named by the caller; the bridge itself never reads it. */
+export interface RpcEnvelope<R = unknown> {
+  id: number;
+  result?: R;
+  error?: { message?: string; code?: number } | null;
+}
+
 const rpcWaiters = new Map<
   number,
-  { resolve: (v: any) => void; reject: (e: Error) => void }
+  { resolve: (v: RpcEnvelope) => void; reject: (e: Error) => void }
 >();
 // Results drained by the poll loop before their caller's waiter was
 // registered (a fast call completes in the engine while its submit ack is
 // still in flight). Kept briefly so the registration can pick them up.
-const rpcOrphans = new Map<number, { value: any; at: number }>();
+const rpcOrphans = new Map<number, { value: RpcEnvelope; at: number }>();
 const RPC_ORPHAN_TTL_MS = 10000;
 let rpcPolling = false;
 
@@ -47,13 +55,13 @@ export function rpcWaitersOutstanding(): number {
 async function rpcPollLoop(): Promise<void> {
   while (rpcWaiters.size > 0) {
     try {
-      const batch: any[] = await invoke<any[]>("rpc_poll");
+      const batch = await invoke<RpcEnvelope[]>("rpc_poll");
       for (const v of batch) {
         const w = rpcWaiters.get(v?.id);
         if (w) {
           rpcWaiters.delete(v.id);
           rpcOrphans.delete(v.id);
-          if (v?.error) w.reject(new Error(v.error?.message ?? String(v.error)));
+          if (v?.error) w.reject(rpcError(v.error));
           else w.resolve(v);
         } else {
           rpcOrphans.set(v.id, { value: v, at: Date.now() });
@@ -71,13 +79,20 @@ async function rpcPollLoop(): Promise<void> {
   rpcPolling = false;
 }
 
-export async function rpcCall(
+function rpcError(error: NonNullable<RpcEnvelope["error"]>): Error {
+  return new Error(error.message ?? String(error));
+}
+
+/** Calls one engine method. The result type is the caller's claim about the
+ *  method's reply; it defaults to an unchecked shape for the call sites that
+ *  read fields ad hoc. */
+export async function rpcCall<R = any>(
   method: string,
-  params: any,
+  params: Record<string, unknown>,
   timeoutMs = 30000,
-): Promise<any> {
+): Promise<RpcEnvelope<R>> {
   const id = await invoke<number>("rpc_submit", { method, params });
-  return new Promise<any>((resolve, reject) => {
+  return new Promise<RpcEnvelope<R>>((resolve, reject) => {
     const timer = setTimeout(() => {
       rpcWaiters.delete(id);
       reject(
@@ -89,7 +104,7 @@ export async function rpcCall(
     rpcWaiters.set(id, {
       resolve: (v) => {
         clearTimeout(timer);
-        resolve(v);
+        resolve(v as RpcEnvelope<R>);
       },
       reject: (e) => {
         clearTimeout(timer);
@@ -104,7 +119,7 @@ export async function rpcCall(
       // entry lives forever and the poll loop never exits.
       rpcWaiters.delete(id);
       if (orphan.value?.error) {
-        w?.reject(new Error(orphan.value.error?.message ?? String(orphan.value.error)));
+        w?.reject(rpcError(orphan.value.error));
       } else {
         w?.resolve(orphan.value);
       }

@@ -332,11 +332,6 @@ export interface ChatSnapshot {
 
 
 
-/** The agent bound to a chat (the composer's agent picker). */
-export async function chatAgent(chatId: string): Promise<unknown | null> {
-  return (await chatAgentBinding(chatId)).agent;
-}
-
 /** The chat's agent and whether the picker may move it. A thread belongs to
  *  its agent: shared agents and Main threads keep theirs. */
 export async function chatAgentBinding(
