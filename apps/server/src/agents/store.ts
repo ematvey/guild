@@ -47,6 +47,17 @@ import type { TraceStore } from "../platform/trace.js";
 
 const DEFAULT_GRACE_DAYS = 30;
 
+/** A parent thread already holds its maximum number of children. */
+export class ChildLimitReached extends Error {
+  constructor(
+    readonly children: number,
+    readonly limit: number,
+  ) {
+    super(`this thread already has ${children} children; the limit is ${limit} per thread`);
+    this.name = "ChildLimitReached";
+  }
+}
+
 export interface CreateAgentInput {
   tools_mode?: AgentToolsMode;
   name: string;
@@ -819,27 +830,37 @@ export class AgentStore {
   }
 
   /** Creates a delegated child thread under an existing node. The edge is
-   *  parent_thread_id; depth is the parent's depth plus one. */
+   *  parent_thread_id; depth is the parent's depth plus one. With
+   *  `maxChildren`, the parent row is locked for the count and the insert, so
+   *  concurrent spawns under one parent never exceed the limit. */
   async createChildThread(
     parentThreadId: string,
     agentId: string,
     userId: string,
     title: string,
     titleLocked = false,
+    maxChildren?: number,
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
-    const parent = await this.pool.query<{ depth: number; closed_at: Date | null }>(
-      "SELECT depth, closed_at FROM agent_threads WHERE id = $1",
-      [parentThreadId],
-    );
-    const parentRow = parent.rows[0];
-    if (parentRow === undefined) throw ApiError.notFound("no such parent thread");
-    if (parentRow.closed_at !== null) throw ApiError.badRequest("the parent thread is closed");
     const id = uuidv7();
-    const depth = Number(parentRow.depth) + 1;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const parent = await client.query<{ depth: number; closed_at: Date | null }>(
+        "SELECT depth, closed_at FROM agent_threads WHERE id = $1 FOR UPDATE",
+        [parentThreadId],
+      );
+      const parentRow = parent.rows[0];
+      if (parentRow === undefined) throw ApiError.notFound("no such parent thread");
+      if (parentRow.closed_at !== null) throw ApiError.badRequest("the parent thread is closed");
+      if (maxChildren !== undefined) {
+        const count = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM agent_threads WHERE parent_thread_id = $1",
+          [parentThreadId],
+        );
+        const children = Number(count.rows[0]?.count ?? 0);
+        if (children >= maxChildren) throw new ChildLimitReached(children, maxChildren);
+      }
       const chat = await this.chats.createChatOn(
         client,
         agent.org_id,
@@ -851,7 +872,7 @@ export class AgentStore {
         `INSERT INTO agent_threads
            (id, agent_id, user_id, chat_id, title, title_locked, type, parent_thread_id, depth)
          VALUES ($1, $2, $3, $4, $5, $8, 'subagent', $6, $7)`,
-        [id, agentId, userId, chat.id, title, parentThreadId, depth, titleLocked],
+        [id, agentId, userId, chat.id, title, parentThreadId, Number(parentRow.depth) + 1, titleLocked],
       );
       await client.query("COMMIT");
     } catch (error) {

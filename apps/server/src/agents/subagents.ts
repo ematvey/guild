@@ -12,7 +12,7 @@ import {
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { isUuid, uuidv7 } from "../platform/time.js";
-import type { AgentStore } from "./store.js";
+import { ChildLimitReached, type AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { readThreadTranscript } from "./thread-read.js";
@@ -282,7 +282,20 @@ export async function spawn(
     requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
   const titleLocked = requestedName !== "";
   const userId = context.parentRun.user_id ?? context.requester.id;
-  const thread = await context.store.createChildThread(parentThreadId, target.id, userId, title, titleLocked);
+  let thread: AgentThread;
+  try {
+    thread = await context.store.createChildThread(
+      parentThreadId,
+      target.id,
+      userId,
+      title,
+      titleLocked,
+      context.maxChildrenPerNode,
+    );
+  } catch (error) {
+    if (error instanceof ChildLimitReached) throw new SubagentError("child_limit", error.message);
+    throw error;
+  }
   const childRun = await context.store.createRun({
     agent_id: target.id,
     user_id: userId,

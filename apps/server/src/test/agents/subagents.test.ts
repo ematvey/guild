@@ -224,6 +224,24 @@ dbDescribe("subagent tree tools", () => {
     });
   });
 
+  it("parallel spawns under one parent never exceed the child limit", async () => {
+    const parent = await store.createThread(parentAgent.id, owner.id, "Parallel cap");
+    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: parent.id });
+    const fake = fakeRuntime();
+    const context = await contextFor({ thread: parent, run: parentRun, fake, maxChildrenPerNode: 3 });
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, (_, index) => spawn(context, { agent: targetAgent.name, task: `task ${index}` })),
+    );
+    const spawned = results.filter((result) => result.status === "fulfilled");
+    const refused = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(spawned).toHaveLength(3);
+    expect(refused).toHaveLength(5);
+    for (const result of refused) expect(result.reason).toMatchObject({ code: "child_limit" });
+    expect(await store.childCount(parent.id)).toBe(3);
+  });
+
   it("requires the requester to be able to use the target agent", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Access");
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
