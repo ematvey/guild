@@ -69,7 +69,7 @@ import { assertPlatformSchema } from "../platform/migrations.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
-import { AgentStore } from "../agents/store.js";
+import { AgentStore, refuseDeletingAgent } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
@@ -1454,7 +1454,8 @@ export class GuildRuntime {
   /** Makes a plain chat an agent chat: the caller's personal agent adopts it
    *  on the first turn, so every conversation has an agent. Idempotent — a
    *  chat that already belongs to an agent keeps it. Returns the agent whose
-   *  model and tools the turn must use, or null when the org has no model. */
+   *  model and tools the turn must use, or null when the org has no model.
+   *  A chat whose agent is being deleted refuses the turn (409). */
   async adoptChatAgent(
     chatId: string,
     orgId: string,
@@ -1464,6 +1465,7 @@ export class GuildRuntime {
     const existing = await agentThreadForChat(this.pool, chatId);
     if (existing !== null) {
       const agent = await this.agents.fetchAgent(existing.agent_id);
+      refuseDeletingAgent(agent);
       return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
     }
     const personal = await this.agents.ensurePersonalAgentFor(orgId, userId);
@@ -1482,6 +1484,7 @@ export class GuildRuntime {
       const again = await agentThreadForChat(this.pool, chatId);
       if (again === null) throw new Error("chat adoption lost its thread");
       const agent = await this.agents.fetchAgent(again.agent_id);
+      refuseDeletingAgent(agent);
       return { agent_id: agent.id, thread_id: again.thread_id, model: agent.model };
     }
     return { agent_id: personal.id, thread_id: id, model: personal.model };
@@ -1489,7 +1492,8 @@ export class GuildRuntime {
 
   /** Binds a chat to a chosen agent (the composer's agent picker). A chat
    *  that already has a thread keeps its transcript and changes agent; a
-   *  plain chat gets a thread on the chosen agent. */
+   *  plain chat gets a thread on the chosen agent. An agent being deleted
+   *  takes no chat (409). */
   async bindChatAgent(
     chatId: string,
     userId: string,
@@ -1498,6 +1502,7 @@ export class GuildRuntime {
     user: UserRow,
   ): Promise<{ agent_id: string; thread_id: string; model: string }> {
     const { agent } = await this.agents.requireAccess(user, agentId, "use");
+    refuseDeletingAgent(agent);
     const existing = await agentThreadForChat(this.pool, chatId);
     if (existing !== null) {
       if (existing.agent_id !== agent.id && !(await this.agentSwitchAllowed(chatId))) {

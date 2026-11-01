@@ -107,7 +107,7 @@ import { ApprovalCard } from "./approval-card";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
-import { busyFrom, composerAgent, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
+import { agentDeleting, busyFrom, composerAgent, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
 import { canonicalSurfacePath, isImeEnter } from "./route";
 import { canonicalSettings } from "../settings/section-nav";
 import type { RenderBlock } from "../../lib/thread-reducer";
@@ -640,11 +640,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // editable one that would flip a moment later.
   const justCreatedChat = viewChatId !== null && justCreatedChatRef.current === viewChatId;
   const facts = threadFacts({ chatId: viewChatId, chats, archivedChats, childTree });
+  // The chat's agent as the pushed tree binds it and the pushed list
+  // describes it: an agent being deleted leaves its threads read-only.
+  const deletingAgent = agentDeleting(viewChatId !== null ? childTree?.agent_id ?? null : null, allAgents);
   const access = threadAccess({
     chatId: viewChatId,
     chats,
     facts,
     justCreated: justCreatedChat,
+    agentDeleting: deletingAgent !== null,
   });
   const readOnlyThread = access === "readonly";
   const composerUnknown = access === "unknown";
@@ -1512,6 +1516,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   ? "Read-only. This thread belongs to another member; only its owner can send messages or change it."
                   : facts.deleted
                   ? "Deleted. This thread is out of your lists and its runs have stopped."
+                  : facts.type === "user" && deletingAgent !== null
+                  ? `Read-only. ${deletingAgent.name} is being deleted; restoring the agent makes this thread writable again.`
                   : facts.type === "routine"
                     ? "Routine run. Read-only — the agent wrote this transcript on a schedule."
                     : facts.type === "subagent"

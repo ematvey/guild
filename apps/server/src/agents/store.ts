@@ -47,6 +47,14 @@ import type { TraceStore } from "../platform/trace.js";
 
 const DEFAULT_GRACE_DAYS = 30;
 
+/** An agent in its deletion grace period takes no new turns: its threads
+ *  stay readable (and restorable with the agent) but refuse writes. */
+export function refuseDeletingAgent(agent: { status: AgentStatus }): void {
+  if (agent.status === "deleting" || agent.status === "deleted") {
+    throw ApiError.conflict("agent_deleting", "this agent is being deleted; its threads are read-only");
+  }
+}
+
 /** A parent thread already holds its maximum number of children. */
 export class ChildLimitReached extends Error {
   constructor(

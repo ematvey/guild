@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  agentDeleting,
   busyFrom,
   composerAgent,
   pendingAfterFrame,
@@ -112,6 +113,25 @@ describe("thread access", () => {
     });
     expect(threadAccess({ ...base, facts })).toBe("readonly");
     expect(threadAccess({ ...base, facts: { ...facts, archived: true } })).toBe("readonly");
+  });
+
+  it("makes a listed chat read-only while its agent is being deleted", () => {
+    const listed = { ...base, chats: [{ id: "child-chat" }] };
+    expect(threadAccess({ ...listed, agentDeleting: true })).toBe("readonly");
+    expect(threadAccess({ ...listed, agentDeleting: false })).toBe("writable");
+    expect(threadAccess({ ...listed, chatId: null, agentDeleting: true })).toBe("writable");
+  });
+
+  it("reads the deleting agent from the pushed list", () => {
+    const agents = [
+      { id: "a1", name: "Scout", status: "deleting" },
+      { id: "a2", name: "Helper", status: "active" },
+    ];
+    expect(agentDeleting("a1", agents)?.name).toBe("Scout");
+    expect(agentDeleting("a2", agents)).toBeNull();
+    expect(agentDeleting("a3", agents)).toBeNull();
+    expect(agentDeleting(null, agents)).toBeNull();
+    expect(agentDeleting("a1", null)).toBeNull();
   });
 
   it("treats an unknown thread as unknown, never editable", () => {

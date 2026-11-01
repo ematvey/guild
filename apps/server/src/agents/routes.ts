@@ -15,7 +15,7 @@ import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
 import { resolveIntegrations } from "../platform/integrations/plugins.js";
 import { toolCurate } from "../platform/integrations/policy.js";
-import { AgentStore, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
+import { AgentStore, refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { chatSubagentNodes, chatTreeFacts } from "./tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
@@ -267,6 +267,7 @@ export function registerAgentRoutes(
     agent: Agent,
     thread: AgentThread,
   ): Promise<FastifyReply> {
+    refuseDeletingAgent(agent);
     const body = jsonBody(req);
     const message = requiredString(body, "message");
     const rawAttachments = body["attachment_ids"];

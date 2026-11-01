@@ -284,3 +284,88 @@ describe("agent picker", () => {
     expect((JSON.parse(read.body) as { switcheable: boolean }).switcheable).toBe(true);
   }, 40_000);
 });
+
+describe("an agent being deleted", () => {
+  it("refuses turns into its threads and new bindings with 409", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Doomed agent", model: "GLM-Test-Model" },
+    });
+    const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
+    const chatRes = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(),
+      payload: { title: "Bound to the doomed agent" },
+    });
+    const chatId = (JSON.parse(chatRes.body) as { id: string }).id;
+    const bind = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+      payload: { agent_id: agent.id },
+    });
+    expect(bind.statusCode, bind.body).toBe(200);
+
+    const deleted = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/agents/${agent.id}`,
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+
+    const refusals = [
+      { url: `/api/v1/agents/${agent.id}/turns`, payload: { message: "still there?" } },
+      {
+        url: `/api/v1/threads/${chatId}/turns`,
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "still there?" }] },
+      },
+      {
+        url: `/api/v1/threads/${chatId}/turns`,
+        payload: { model: "GLM-Test-Model", agent_id: agent.id, messages: [{ role: "user", content: "again" }] },
+      },
+    ];
+    for (const refusal of refusals) {
+      const res = await stack.env.app.inject({ method: "POST", headers: auth(), ...refusal });
+      expect(res.statusCode, `${refusal.url}: ${res.body}`).toBe(409);
+      expect(JSON.parse(res.body)).toMatchObject({ error: { code: "agent_deleting" } });
+    }
+    const commands = await stack.env.db.query("SELECT 1 FROM turn_commands WHERE chat_id = $1", [chatId]);
+    expect(commands.rowCount).toBe(0);
+    const runs = await stack.env.db.query("SELECT 1 FROM agent_runs WHERE agent_id = $1", [agent.id]);
+    expect(runs.rowCount).toBe(0);
+
+    // A plain chat cannot be bound to it either.
+    const other = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(),
+      payload: { title: "Another chat" },
+    });
+    const rebind = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${(JSON.parse(other.body) as { id: string }).id}/agent`,
+      headers: auth(),
+      payload: { agent_id: agent.id },
+    });
+    expect(rebind.statusCode).toBe(409);
+
+    // Restoring the agent makes its threads writable again.
+    const restored = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${agent.id}/restore`,
+      headers: auth(),
+      payload: {},
+    });
+    expect(restored.statusCode, restored.body).toBe(200);
+    const bindAgain = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/agent`,
+      headers: auth(),
+      payload: { agent_id: agent.id },
+    });
+    expect(bindAgain.statusCode, bindAgain.body).toBe(200);
+  }, 40_000);
+});

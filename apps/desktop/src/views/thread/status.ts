@@ -147,6 +147,21 @@ export function composerAgent<A extends { id: string; name: string }>(
   return picked;
 }
 
+/** The agent a chat is bound to, when the pushed agent list marks it as
+ *  being deleted. Its threads keep their sidebar rows through the grace
+ *  period — readable, and restored with the agent — but the server refuses
+ *  their turns (409 `agent_deleting`), so the composer is read-only until
+ *  the agent is restored or purged with its chats. Null while the binding
+ *  or the list is unknown, or when the agent is live. */
+export function agentDeleting<A extends { id: string; status: string }>(
+  boundAgentId: string | null,
+  agents: ReadonlyArray<A> | null,
+): A | null {
+  if (boundAgentId === null || agents === null) return null;
+  const agent = agents.find((a) => a.id === boundAgentId);
+  return agent !== undefined && (agent.status === "deleting" || agent.status === "deleted") ? agent : null;
+}
+
 export interface ThreadFacts {
   type: ThreadType;
   archived: boolean;
@@ -186,11 +201,14 @@ export function threadAccess(input: {
   facts: ThreadFacts;
   /** The chat was just created and its sidebar row may still be in flight. */
   justCreated?: boolean;
+  /** The chat's agent is in its deletion grace period (`agentDeleting`). */
+  agentDeleting?: boolean;
 }): ThreadAccess {
-  const { chatId, chats, facts, justCreated } = input;
+  const { chatId, chats, facts, justCreated, agentDeleting } = input;
   if (chatId === null) return "writable";
   if (facts.type !== "user") return "readonly";
   if (facts.deleted) return "readonly";
+  if (agentDeleting) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";
   if (facts.owned === false) return "readonly";
   if (facts.archived) return "readonly";
