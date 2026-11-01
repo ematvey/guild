@@ -63,8 +63,10 @@ export function webPushSender(keys: VapidKeys, subject: string): PushSender {
 function describe(error: unknown): string {
   const status = (error as { statusCode?: number }).statusCode;
   const body = (error as { body?: string }).body;
-  if (typeof status === "number" && typeof body === "string" && body !== "") {
-    return `${status} ${body}`.slice(0, 200);
-  }
-  return (error instanceof Error ? error.message : String(error)).slice(0, 200);
+  const head = typeof status === "number" ? String(status) : "";
+  const tail = typeof body === "string" ? body.trim() : "";
+  const message =
+    [head, tail].filter((part) => part !== "").join(" ") ||
+    (error instanceof Error ? error.message : String(error));
+  return message.slice(0, 200);
 }
