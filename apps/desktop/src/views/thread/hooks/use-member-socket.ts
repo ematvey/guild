@@ -244,9 +244,11 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           sending: sendingRef.current,
         });
       },
-      // Sequenced ThreadState owns the turn state. A status frame still
-      // retires a pending send: the server has spoken for that chat.
-      onChatStatus: (frame) => retireSendPending(frame.chat_id, "chat_status"),
+      // Sequenced ThreadState owns the turn state. A chat_status frame
+      // carries no seq, so it must not retire a pending send: that would drop
+      // `busy` before the state that says the turn is live arrives, and the
+      // composer would offer a send into a running turn.
+      onChatStatus: () => {},
       onThreadState: (state) => applyHistory(state),
       onSubagentTree: (cid, nodes) => {
         // Every chat id updates the cache: the open thread reads its entry,
