@@ -111,7 +111,6 @@
         "ToolRegistry",
         "ToolOutcome",
         "ToolFailure",
-        "Approval",
         "ReadFile",
         "WriteFile",
         "EditFile",
@@ -149,8 +148,7 @@
       "types": [
         "ArtifactPath",
         "ArtifactIndex",
-        "ArtifactHooks",
-        "ToolArtifact"
+        "ArtifactHooks"
       ],
       "aliases": [
         "spill"

@@ -3,7 +3,7 @@
 //! agent.
 
 use anyhow::Context;
-use guild_core::tools::{Approval, Tool, ToolFailure, ToolOutcome};
+use guild_core::tools::{Tool, ToolFailure, ToolOutcome};
 use protocol::api::ToolSpec;
 use rmcp::model::{CallToolRequestParams, ClientConfig, Implementation};
 use rmcp::service::{serve_client, RoleClient, RunningService};
@@ -146,10 +146,6 @@ impl Tool for McpTool {
         self.spec.clone()
     }
 
-    fn default_policy(&self) -> Approval {
-        Approval::Ask
-    }
-
     async fn run(&self, _workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
         let raw_name = self.raw_name.clone().ok_or_else(|| {
             ToolFailure::Execution(format!(
@@ -181,10 +177,7 @@ impl Tool for McpTool {
         Ok(ToolOutcome {
             images: Vec::new(),
             output_for_model: text,
-            ui_summary: Some(format!("mcp::{}", self.spec.name)),
-            diff: None,
             meta: None,
-            artifact: None,
         })
     }
 }

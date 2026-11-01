@@ -720,12 +720,9 @@ mod tests {
 
     use super::super::ToolRegistry;
 
-    fn registry_with(hooks: Option<Arc<ArtifactHooks>>) -> ToolRegistry {
+    fn read_only_registry() -> ToolRegistry {
         let mut r = ToolRegistry::new();
         r.add(Arc::new(super::super::fs::ReadFile::default()));
-        if let Some(h) = hooks {
-            r = r.with_artifacts(h);
-        }
         r
     }
 
@@ -736,15 +733,16 @@ mod tests {
         index.record(CHAT, "ok.bin", ART);
         let mut f = FakeFetcher::new();
         f.bytes.insert(ART, b"model-reads-this".to_vec());
-        let registry = registry_with(Some(Arc::new(ArtifactHooks {
+        let hooks = ArtifactHooks {
             index,
             fetcher: Arc::new(f),
-        })));
-        let out = registry
+        };
+        let out = read_only_registry()
             .run(
                 "read_file",
                 &dir,
                 json!({ "path": format!(".guild/artifacts/{CHAT}/ok.bin") }),
+                Some(&hooks),
             )
             .await
             .unwrap();
@@ -757,15 +755,16 @@ mod tests {
         let dir = workdir("regfail");
         let index = Arc::new(ArtifactIndex::new());
         index.record(CHAT, "gone.bin", ART);
-        let registry = registry_with(Some(Arc::new(ArtifactHooks {
+        let hooks = ArtifactHooks {
             index,
             fetcher: Arc::new(FakeFetcher::new()),
-        })));
-        let err = registry
+        };
+        let err = read_only_registry()
             .run(
                 "read_file",
                 &dir,
                 json!({ "path": format!(".guild/artifacts/{CHAT}/gone.bin") }),
+                Some(&hooks),
             )
             .await
             .unwrap_err();
@@ -781,9 +780,8 @@ mod tests {
     async fn plain_registry_is_unaffected() {
         let dir = workdir("plain");
         std::fs::write(dir.join("f.txt"), "plain").unwrap();
-        let registry = registry_with(None);
-        let out = registry
-            .run("read_file", &dir, json!({ "path": "f.txt" }))
+        let out = read_only_registry()
+            .run("read_file", &dir, json!({ "path": "f.txt" }), None)
             .await
             .unwrap();
         assert_eq!(out.output_for_model, "plain");

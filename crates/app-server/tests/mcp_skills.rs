@@ -79,14 +79,14 @@ async fn fixture_server_connects_and_tool_calls() {
         registry.add(wrapper);
     }
     let out = registry
-        .run("mcp_fixture_echo", &project, json!({"text": "ping pong"}))
+        .run("mcp_fixture_echo", &project, json!({"text": "ping pong"}), None)
         .await
         .unwrap();
     assert_eq!(out.output_for_model, "ping pong");
 
     // schema validation applies to MCP tools too
     let err = registry
-        .run("mcp_fixture_echo", &project, json!({"wrong": 1}))
+        .run("mcp_fixture_echo", &project, json!({"wrong": 1}), None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("failed validation"));

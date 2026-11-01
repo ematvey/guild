@@ -11,7 +11,7 @@
 //! non-login exec (which works precisely because it skips the broken
 //! bootstrap), and retries the command once.
 
-use super::{resolve_scoped, truncate, Approval, Tool, ToolFailure, ToolOutcome};
+use super::{resolve_scoped, truncate, Tool, ToolFailure, ToolOutcome};
 use async_trait::async_trait;
 use protocol::api::ToolSpec;
 use serde_json::Value;
@@ -319,10 +319,6 @@ impl Tool for RunCommand {
         protocol::api::client_tool_spec("execute").expect("built-in execute spec")
     }
 
-    fn default_policy(&self) -> Approval {
-        Approval::Ask
-    }
-
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
         let command = args["command"]
             .as_str()
@@ -433,11 +429,8 @@ impl Tool for RunCommand {
             output.push_str(&stderr);
         }
         Ok(ToolOutcome {
-            artifact: None,
             images: Vec::new(),
             output_for_model: truncate(output),
-            ui_summary: Some(format!("$ {command}")),
-            diff: None,
             meta: Some({
                 let mut m = serde_json::json!({
                     "card": "terminal",

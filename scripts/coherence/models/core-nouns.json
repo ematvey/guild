@@ -63,6 +63,7 @@
       "definition": "A tool call waiting for the user's answer in this client.",
       "canonical": "apps/server/src/harness/approvals.ts",
       "types": [
+        "Approval",
         "ApprovalPolicy",
         "ChatApprovalMode",
         "ApprovalDecision"
@@ -87,12 +88,8 @@
           "role": "ui"
         },
         {
-          "where": "crates/guild-core/src/agent/mod.rs",
+          "where": "crates/app-server/src/agent_session.rs",
           "role": "domain"
-        },
-        {
-          "where": "crates/guild-core/src/agent/policy.rs",
-          "role": "db"
         },
         {
           "where": "apps/server/src/harness/approvals.ts",

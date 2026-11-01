@@ -2,7 +2,7 @@
 
 use super::workspace::{self, WorkspaceKind};
 use super::{
-    diff_text, resolve_scoped, resolve_scoped_in, truncate, Approval, Tool, ToolFailure,
+    resolve_scoped, resolve_scoped_in, truncate, Tool, ToolFailure,
     ToolOutcome,
 };
 use async_trait::async_trait;
@@ -103,12 +103,6 @@ async fn read_bytes_capped(path: &Path, cap: usize) -> Result<Vec<u8>, ToolFailu
             Ok(buf)
         }
     }
-}
-
-/// Best-effort read: a missing or unreadable file reads as empty — used for
-/// the `old` side of a write diff.
-async fn read_bytes_optional(path: &Path) -> Vec<u8> {
-    read_bytes(path).await.unwrap_or_default()
 }
 
 async fn write_bytes(path: &Path, content: &[u8]) -> Result<(), ToolFailure> {
@@ -346,10 +340,6 @@ impl Tool for ReadFile {
         protocol::api::client_tool_spec("read_file").expect("built-in read_file spec")
     }
 
-    fn default_policy(&self) -> Approval {
-        Approval::Allow
-    }
-
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
         let path = resolve_scoped_in(
             workdir,
@@ -384,13 +374,10 @@ impl Tool for ReadFile {
             // half image.
             if truncated || bytes.len() > MAX_IMAGE_BYTES {
                 return Ok(ToolOutcome {
-                    artifact: None,
                     images: Vec::new(),
                     output_for_model: format!(
                         "[image file: {display} ({kb} KB) — too large to attach (limit 4 MB)]"
                     ),
-                    ui_summary: None,
-                    diff: None,
                     meta: Some(meta),
                 });
             }
@@ -399,13 +386,10 @@ impl Tool for ReadFile {
                 base64::engine::general_purpose::STANDARD.encode(&bytes)
             );
             return Ok(ToolOutcome {
-                artifact: None,
                 images: vec![uri],
                 output_for_model: format!(
                     "[image file: {display} ({kb} KB) — the image is attached to this result; describe what you see when asked]"
                 ),
-                ui_summary: None,
-                diff: None,
                 meta: Some(meta),
             });
         }
@@ -415,13 +399,10 @@ impl Tool for ReadFile {
             Err(e) => {
                 let size = e.as_bytes().len();
                 return Ok(ToolOutcome {
-                    artifact: None,
                     images: Vec::new(),
                     output_for_model: format!(
                         "[binary file: {display} ({size} bytes) — this tool returns text only]"
                     ),
-                    ui_summary: None,
-                    diff: None,
                     meta: Some(meta),
                 });
             }
@@ -444,11 +425,8 @@ impl Tool for ReadFile {
             ));
         }
         Ok(ToolOutcome {
-            artifact: None,
             images: Vec::new(),
             output_for_model: truncate(body),
-            ui_summary: None,
-            diff: None,
             meta: Some(meta),
         })
     }
@@ -462,10 +440,6 @@ impl Tool for WriteFile {
         protocol::api::client_tool_spec("write_file").expect("built-in write_file spec")
     }
 
-    fn default_policy(&self) -> Approval {
-        Approval::Ask
-    }
-
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
         let path = resolve_scoped(
             workdir,
@@ -476,15 +450,11 @@ impl Tool for WriteFile {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| ToolFailure::InvalidInput("missing content".into()))?;
-        let old = String::from_utf8_lossy(&read_bytes_optional(&path).await).into_owned();
         write_bytes(&path, content.as_bytes()).await?;
         let n = content.len();
         Ok(ToolOutcome {
-            artifact: None,
             images: Vec::new(),
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
-            ui_summary: Some(format!("write {}", path.display())),
-            diff: Some(diff_text(&old, content, &path)),
             meta: Some(serde_json::json!({
                 "card": "diff",
                 "path": path.display().to_string(),
@@ -499,10 +469,6 @@ pub struct EditFile;
 impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
         protocol::api::client_tool_spec("edit_file").expect("built-in edit_file spec")
-    }
-
-    fn default_policy(&self) -> Approval {
-        Approval::Ask
     }
 
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
@@ -543,11 +509,8 @@ impl Tool for EditFile {
                 let updated = content.replacen(old, new, 1);
                 write_bytes(&path, updated.as_bytes()).await?;
                 Ok(ToolOutcome {
-            artifact: None,
             images: Vec::new(),
                     output_for_model: format!("edited {}", path.display()),
-                    ui_summary: Some(format!("edit {}", path.display())),
-                    diff: Some(diff_text(&content, &updated, &path)),
                     meta: Some(serde_json::json!({
                         "card": "diff",
                         "path": path.display().to_string(),

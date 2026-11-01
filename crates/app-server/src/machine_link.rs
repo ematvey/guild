@@ -575,7 +575,7 @@ async fn execute_client_tool(
         } else { builtin_registry() };
         // Artifact fetch uses the authenticated cloud session for this link,
         // including results spilled earlier in this same turn.
-        registry.run_with_artifacts(name, Path::new(dir), args, hooks.as_deref())
+        registry.run(name, Path::new(dir), args, hooks.as_deref())
             .await.map_err(|e| e.to_string())
     }.await;
     match result {

@@ -1,4 +1,4 @@
-use guild_core::tools::{fs::*, shell::RunCommand, Approval, Tool, ToolRegistry};
+use guild_core::tools::{fs::*, shell::RunCommand, Tool, ToolRegistry};
 use protocol::api::ToolSpec;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,15 +31,18 @@ async fn read_file_happy_and_missing() {
 }
 
 #[tokio::test]
-async fn write_file_creates_with_diff() {
+async fn write_file_overwrites_and_creates() {
     let dir = scratch("write");
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let out = WriteFile
         .run(&dir, json!({"path": "a.txt", "content": "one\ntwo\n"}))
         .await
         .unwrap();
-    let diff = out.diff.unwrap();
-    assert!(diff.contains("+two"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert_eq!(out.meta.unwrap()["card"], "diff");
     let out = WriteFile
         .run(&dir, json!({"path": "nested/b.txt", "content": "x"}))
         .await
@@ -79,7 +82,7 @@ async fn edit_file_uniqueness_rules() {
         )
         .await
         .unwrap();
-    assert!(out.diff.unwrap().contains("+gamma"));
+    assert_eq!(out.meta.unwrap()["card"], "diff");
     assert_eq!(
         std::fs::read_to_string(dir.join("a.txt")).unwrap(),
         "alpha\ngamma\nalpha\n"
@@ -121,24 +124,21 @@ async fn registry_validates_schema_before_running() {
     let dir = scratch("registry");
     let reg = ToolRegistry::builtins();
     let err = reg
-        .run("read_file", &dir, json!({"wrong": "shape"}))
+        .run("read_file", &dir, json!({"wrong": "shape"}), None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("failed validation"), "{err}");
-    let err = reg.run("mystery_tool", &dir, json!({})).await.unwrap_err();
+    let err = reg.run("mystery_tool", &dir, json!({}), None).await.unwrap_err();
     assert!(err.to_string().contains("unknown tool"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[tokio::test]
-async fn default_policies_match_spec() {
+async fn builtin_specs_are_complete() {
     let reg = ToolRegistry::builtins();
-    let dp = |name: &str| -> Approval { reg.get(name).unwrap().default_policy() };
-    assert_eq!(dp("read_file"), Approval::Allow);
-    assert_eq!(dp("write_file"), Approval::Ask);
-    assert_eq!(dp("edit_file"), Approval::Ask);
-    assert_eq!(dp("execute"), Approval::Ask);
-    // specs are complete and well-formed
+    for name in ["read_file", "write_file", "edit_file", "execute"] {
+        assert!(reg.get(name).is_some(), "{name}");
+    }
     let specs: Vec<ToolSpec> = reg.specs();
     assert_eq!(specs.len(), reg.names().len());
     assert!(specs.iter().all(|s| !s.description.is_empty()));
@@ -156,7 +156,7 @@ async fn escape_rejection_consistent_across_fs_tools() {
         ),
     ] {
         let err = ToolRegistry::builtins()
-            .run(tool, &dir, args)
+            .run(tool, &dir, args, None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("escapes"), "{tool}: {err}");

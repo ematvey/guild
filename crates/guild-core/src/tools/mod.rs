@@ -1,5 +1,6 @@
-//! Built-in tools and the tool registry (spec §3.2). Tools are the agent's
-//! hands: scoped to the project dir, schema-validated, approval-gated.
+//! Built-in tools and the tool registry (spec §3.2). Tools run on the
+//! machine for the server-driven agent loop: scoped to the project dir and
+//! schema-validated; approvals are decided before dispatch reaches here.
 
 pub mod artifacts;
 pub mod fs;
@@ -13,45 +14,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Per-tool approval default (spec §3.2: always / never / ask).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Approval {
-    Allow,
-    Ask,
-    Never,
-}
-
 /// What a successful tool run leaves behind.
 #[derive(Debug, Clone)]
 pub struct ToolOutcome {
     /// What the model sees on the next turn.
     pub output_for_model: String,
-    /// One-line summary for the UI transcript.
-    pub ui_summary: Option<String>,
-    /// Unified diff for file edits (UI rendering).
-    pub diff: Option<String>,
     /// Widget payload for the UI (spec C.2): card kind + tool-owned render
     /// hints, persisted with the tool_result event. Opaque to the loop.
     pub meta: Option<serde_json::Value>,
     /// Image parts (data URIs) attached to the tool result for vision-capable
     /// models — e.g. read_file on an image attaches it for direct viewing.
     pub images: Vec<String>,
-    /// Binary payload the tool hands the model as a spilled artifact (tool
-    /// artifacts design): the worker stores the bytes in object storage and
-    /// replaces the tool result text with a pointer to the materialized
-    /// file. Carrying a payload always spills, regardless of size.
-    pub artifact: Option<ToolArtifact>,
-}
-
-/// Binary payload a tool returns for spill-through: the worker persists it
-/// as a `tool_artifacts` row + object-storage bytes and gives the model a
-/// pointer path instead of the raw content.
-#[derive(Debug, Clone)]
-pub struct ToolArtifact {
-    pub filename: String,
-    pub content_type: String,
-    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,17 +38,12 @@ pub enum ToolFailure {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
-    fn default_policy(&self) -> Approval;
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure>;
 }
 
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     order: Vec<String>,
-    /// Materialization hooks consulted before a tool runs: spilled
-    /// tool-result artifacts are pulled on first touch (tool-artifacts
-    /// spec). Absent → tools run without artifact handling.
-    artifacts: Option<Arc<artifacts::ArtifactHooks>>,
 }
 
 impl ToolRegistry {
@@ -83,15 +51,7 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
-            artifacts: None,
         }
-    }
-
-    /// Installs artifact materialization hooks (shared index + fetch
-    /// source) for the engine's runs of one process.
-    pub fn with_artifacts(mut self, hooks: Arc<artifacts::ArtifactHooks>) -> Self {
-        self.artifacts = Some(hooks);
-        self
     }
 
     pub fn builtins() -> Self {
@@ -137,19 +97,10 @@ impl ToolRegistry {
         &self.order
     }
 
-    /// Validates args against the tool's JSON Schema, then runs it.
+    /// Validates args against the tool's JSON Schema, then runs it. With
+    /// `hooks`, spilled tool-result artifacts the call touches are
+    /// materialized first (pulled on first touch, tool-artifacts spec).
     pub async fn run(
-        &self,
-        name: &str,
-        workdir: &Path,
-        args: Value,
-    ) -> Result<ToolOutcome, ToolFailure> {
-        self.run_with_artifacts(name, workdir, args, self.artifacts.as_deref())
-            .await
-    }
-
-    /// Per-call authenticated artifact source for a shared builtin registry.
-    pub async fn run_with_artifacts(
         &self,
         name: &str,
         workdir: &Path,
@@ -305,16 +256,6 @@ fn normalize(path: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn diff_text(old: &str, new: &str, path: &Path) -> String {
-    let d = similar::TextDiff::from_lines(old, new);
-    d.unified_diff()
-        .context_radius(3)
-        .header(
-            &format!("a/{}", path.display()),
-            &format!("b/{}", path.display()),
-        )
-        .to_string()
-}
 
 const MAX_MODEL_OUTPUT: usize = 64 * 1024;
 
@@ -407,12 +348,6 @@ mod tests {
         let other = format!("{}/secrets.txt", base.join("home").display());
         assert!(resolve_scoped_in(&dir, &roots, &other).is_err());
         std::fs::remove_dir_all(&base).ok();
-    }
-
-    #[test]
-    fn diff_renders() {
-        let d = diff_text("a\nb\n", "a\nc\n", Path::new("f.txt"));
-        assert!(d.contains("-b") && d.contains("+c"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! The `agent.start` shim (unification spec §4 phase 1): the daemon no
-//! longer runs its own agent loop. It validates the request, creates or
+//! The `agent.start` shim (unification spec §4 phase 1): the daemon runs
+//! no agent loop of its own. It validates the request, creates or
 //! attaches the cloud chat and its machine-bound project, drives the same
 //! durable gateway workflow every other client uses, and maps the
 //! workflow's `StreamEvent`s onto the engine protocol's `agent.*` events.
@@ -9,8 +9,8 @@
 use crate::agent_session::PendingApprovals;
 use crate::cloud::{CloudClient, CloudError};
 use futures::{Stream, StreamExt};
-use guild_core::agent::policy::ApprovalPolicy;
-use guild_core::tools::Approval;
+use crate::agent_session::ApprovalPolicy;
+use crate::agent_session::Approval;
 use protocol::api::{CreateProjectRequest, Project, StreamEvent};
 use protocol::rpc::Event;
 use serde_json::{json, Value};
@@ -19,8 +19,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 /// How long an Ask approval waits for the engine client's decision before
-/// denying (the same bound the in-process loop applied; the server journal
-/// has its own expiry on top).
+/// denying (the server journal has its own expiry on top).
 const APPROVAL_WAIT: Duration = Duration::from_secs(5 * 60);
 
 /// Maps one workflow frame onto engine events. `text` accumulates the
@@ -166,11 +165,11 @@ fn on_approval_requested(
 ) {
     enum Path {
         /// Wait for the engine client's decision on this receiver.
-        Ask(tokio::sync::oneshot::Receiver<guild_core::agent::ApprovalDecision>),
+        Ask(tokio::sync::oneshot::Receiver<crate::agent_session::ApprovalDecision>),
         Allow,
         Never,
     }
-    let path = match policy.for_tool(name, Approval::Ask) {
+    let path = match policy.for_tool(name) {
         Approval::Allow => Path::Allow,
         Approval::Never => Path::Never,
         Approval::Ask => {
@@ -192,8 +191,8 @@ fn on_approval_requested(
     running.spawn(async move {
         let (approved, reason) = match path {
             Path::Ask(rx) => match tokio::time::timeout(APPROVAL_WAIT, rx).await {
-                Ok(Ok(guild_core::agent::ApprovalDecision::Approve)) => (true, None),
-                Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => {
+                Ok(Ok(crate::agent_session::ApprovalDecision::Approve)) => (true, None),
+                Ok(Ok(crate::agent_session::ApprovalDecision::Deny { reason })) => {
                     (false, Some(reason))
                 }
                 // Resolution elsewhere or stream termination cancels the wait.
@@ -459,7 +458,7 @@ mod tests {
         let resolver = tokio::spawn(async move {
             for _ in 0..200 {
                 if let Some(tx) = resolver_pending.lock().unwrap().remove("ask1") {
-                    let _ = tx.send(guild_core::agent::ApprovalDecision::Approve);
+                    let _ = tx.send(crate::agent_session::ApprovalDecision::Approve);
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;

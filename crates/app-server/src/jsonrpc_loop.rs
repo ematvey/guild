@@ -11,9 +11,9 @@ use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
 use crate::machine_link::LinkRegistry;
 use anyhow::Context as _;
-use guild_core::agent::policy::ApprovalPolicy;
+use crate::agent_session::ApprovalPolicy;
 use guild_core::tools::artifacts::ArtifactIndex;
-use guild_core::tools::Approval;
+use crate::agent_session::Approval;
 use protocol::api::Message;
 use protocol::rpc::{Request, Response, RpcError, PROTOCOL_VERSION};
 use serde_json::{json, Value};
@@ -1020,8 +1020,8 @@ async fn agent_approve(
         }
     };
     let decision = match param(&req, "decision") {
-        Ok("approve") => guild_core::agent::ApprovalDecision::Approve,
-        Ok("deny") => guild_core::agent::ApprovalDecision::Deny {
+        Ok("approve") => crate::agent_session::ApprovalDecision::Approve,
+        Ok("deny") => crate::agent_session::ApprovalDecision::Deny {
             reason: req.params["reason"]
                 .as_str()
                 .unwrap_or("denied")
