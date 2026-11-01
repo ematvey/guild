@@ -10,8 +10,8 @@
 // process-global and extensions are static code, so the per-conversation extension
 // is (re)installed at each turn start (registry.install replaces in place)
 // and each conversation is configured with an exact extension selection +
-// tool allow-list (`pi.agent`), role-filtered like the Rust disclosure
-// filter. The tool calls ride the existing durable turn stream untouched.
+// role-filtered tool allow-list (`pi.agent`). The tool calls ride the
+// existing durable turn stream untouched.
 
 import type { Context } from "@earendil-works/chord";
 import { toolSchema, toolDetails } from "./tool-schema.js";
@@ -398,8 +398,8 @@ export class IntegrationsRuntime {
     return { ...declared, turns, caller: await this.chatCaller(declared.chatId) };
   }
 
-  /** The approval-gate classification of one call (restate.rs
-   *  server_tool_step's gate): Guild-provided disclosure tools, read-class
+  /** The approval-gate classification of one call: Guild-provided
+   *  disclosure tools, read-class
    *  tools, and always_allow-curated tools flow without a gate; an
    *  `always_ask` curation or a write-class tool forces the card / follows
    *  the chat's approval mode — org governance wins over the chat's
@@ -424,8 +424,7 @@ export class IntegrationsRuntime {
     return info.class === "read" ? "skip" : "policy";
   }
 
-  /** Executes one integration tool call (restate.rs server_tool_step): the
-   *  policy filter, the plugin dispatch, the artifact spill, and the audit
+  /** Executes one integration tool call: the policy filter, the plugin dispatch, the artifact spill, and the audit
    *  event. A failure is a tool RESULT the model sees, never a thrown
    *  error. */
   private async executeToolCall(
@@ -469,8 +468,8 @@ export class IntegrationsRuntime {
       .then((value) => ({ ok: true as const, value }))
       .catch((error: unknown) => ({ ok: false as const, error }));
     const ok = outcome.ok;
-    // Journaled audit of the call's identity (spec §8) — best-effort, as
-    // in Rust. Auto tools are disclosure-only and never audited.
+    // Journaled audit of the call's identity (spec §8) — best-effort. Auto
+    // tools are disclosure-only and never audited.
     try {
       await this.deps.events.emit(snapshot.orgId, "integration.tool_called", {
         slug: turn.slug,

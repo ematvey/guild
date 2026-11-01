@@ -1,7 +1,6 @@
-// Connection hub for browser member sockets and machine singleton sockets
-//. Liveness is represented by a socket held
-// in the hub. Everything runs on the Node event loop — the Rust code's
-// "mutex never held across an await" is trivially true here.
+// Connection hub for browser member sockets and machine singleton sockets.
+// Liveness is a socket held in the hub. Everything runs on the Node event
+// loop, so registry updates never interleave.
 
 import { uuidv7 } from "../platform/time.js";
 import { SocketSink } from "./sink.js";
@@ -52,15 +51,14 @@ export class LiveHub {
   private owners = new Map<string, string>();
   private members = new Map<string, Map<string, LiveMember>>();
   private machineRequests = new Map<string, PendingMachineRequest>();
-  /** The dispatch lane's disconnect hook (M4: pending machine tools settle
-   *  as unknown-outcome when their connection dies). */
+  /** The dispatch lane's disconnect hook (pending machine tools settle as
+   *  unknown-outcome when their connection dies). */
   onMachineDisconnected?: (machineId: string, connId: string) => void;
   /** Machine slot presence flips (claimed, released, displaced): the feed
    *  forwards each one to the owner's member sockets. */
   onMachineStatus?: (machineId: string, userId: string, orgId: string, online: boolean) => void;
 
-  /** Registers a browser socket, rejecting a new connection over the limit.
-   *  (Rust `Hub::register_member`.) */
+  /** Registers a browser socket, rejecting a new connection over the limit. */
   registerMember(m: LiveMember): boolean {
     const perUser = this.members.get(m.user_id);
     const alreadyRegistered = perUser?.has(m.conn_id) ?? false;
@@ -90,8 +88,7 @@ export class LiveHub {
    *  machine shows offline until restart, 2026-09-28/29). A
    *  reconnect of the SAME instance replaces its own zombie slot — this
    *  heals honest blips and the observed thief pattern (fresh instance).
-   *  `resume=true` from a stale (non-current) instance is likewise rejected.
-   *  (Rust `Hub::register_machine_instance`.) */
+   *  `resume=true` from a stale (non-current) instance is likewise rejected. */
   async registerMachineInstance(
     m: LiveMember,
     machineId: string,
@@ -159,7 +156,7 @@ export class LiveHub {
       if (pending.connection_id === connId) {
         this.machineRequests.delete(requestId);
         // The responder dropped without a send: the machine disconnected
-        // while its requests were in flight (Rust's oneshot-drop → Offline).
+        // while its requests were in flight.
         pending.settle({ settled: "dropped" });
       }
     }
@@ -189,7 +186,7 @@ export class LiveHub {
 
   /** Displaces a machine's live socket without a replacement: registry
    *  adoption re-keyed the row away from this id, so the old registration no
-   *  longer has a registry identity to hold. (Rust `displace_machine`.) */
+   *  longer has a registry identity to hold. */
   displaceMachine(machineId: string): boolean {
     const slot = this.machines.get(machineId);
     if (!slot) return false;
@@ -206,8 +203,7 @@ export class LiveHub {
 
   /** Sends a control-plane request to the machine's executor socket and
    *  awaits its `MachineResponse`. Offline/send/timeout are clean errors;
-   *  the machine's own refusal arrives as `rejected`. (Rust
-   *  `Hub::machine_request` — seam-compatible result shape.) */
+   *  the machine's own refusal arrives as `rejected`. */
   async machineRequest(
     machineId: string,
     orgId: string,
@@ -224,8 +220,7 @@ export class LiveHub {
 
   /** `machine_request` pinned to an already-validated socket holder: the
    *  request goes out only while `holder` still holds the machine slot (same
-   *  connection); a re-pair or reclaim since validation is `offline`.
-   *  (Rust `Hub::machine_request_pinned`.) */
+   *  connection); a re-pair or reclaim since validation is `offline`. */
   async machineRequestPinned(
     machineId: string,
     holder: LiveMember,
@@ -260,7 +255,7 @@ export class LiveHub {
       settle: settle!,
     });
 
-    // The pending entry is removed on every exit path (the Rust guard's Drop).
+    // The pending entry is removed on every exit path.
     try {
       const sent = holder.sink.send({
         type: "machine_request",
@@ -303,7 +298,7 @@ export class LiveHub {
 
   /** Routes a machine's `MachineResponse` to its waiter (from the socket
    *  inbound path). Unknown request ids are dropped silently — a request
-   *  whose timer already fired. (Rust `resolve_machine_response`.) */
+   *  whose timer already fired. */
   resolveMachineResponse(
     member: LiveMember,
     requestId: string,
@@ -353,8 +348,7 @@ export class LiveHub {
   }
 
   /** Returns browser sockets and machine sockets of one organization —
-   *  the org-event fan-out (Rust per-user feeds filter the org channel
-   *  and every member of the org holds a feed). */
+   *  the org-event fan-out. */
   sinksOfOrg(orgId: string): SocketSink[] {
     const sinks: SocketSink[] = [];
     for (const perUser of this.members.values()) {

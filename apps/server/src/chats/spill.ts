@@ -2,11 +2,11 @@
 // tool results become a tool_artifacts row + object-storage bytes, and the
 // persisted tool_result event carries a short pointer text naming the
 // materialized path `.guild/artifacts/<chat>/<filename>` instead of the full
-// content. The spill rides the bridge's event-append boundary (the M3
-// architecture: thread_events derive from durable entries) and is
+// content. The spill rides the bridge's event-append boundary
+// (thread_events derive from durable entries) and is
 // idempotent — deterministic uuid v5 + ON CONFLICT DO NOTHING, so replays
 // and re-executions reuse the row. A spill failure keeps the inline result:
-// the outcome is never lost (same fallback as the Rust integration path).
+// the outcome is never lost.
 
 import { ApiError } from "../platform/errors.js";
 import type { ObjectStore } from "../platform/s3.js";

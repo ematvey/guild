@@ -9,7 +9,7 @@
 //    unresolved default is the AI judge ("approve for me"). Never → denied
 //    by policy; Ask → the gate.
 // 3. The gate appends the ApprovalRequest thread event (the audit trail and
-//    every attached client's pending card — same rows as the Rust gate),
+//    every attached client's pending card),
 //    then suspends the tool task until the decision arrives on the approval
 //    API (POST /api/v1/gateway/chat/{id}/approvals/{callId} → journaled
 //    ApprovalDecision event) or the 5-minute timeout auto-denies. The
@@ -18,7 +18,7 @@
 //
 // The batch contract (server-side workspace agent sessions) skips the
 // interactive gate — trusted workspace, pre-approved — but the exec policy
-// still applies, exactly like the Rust server-local executor.
+// still applies.
 
 import { hook, ToolTask } from "@earendil-works/pi-durable";
 import type { HookApi } from "@earendil-works/pi-durable";
@@ -80,7 +80,7 @@ export interface ApprovalGateDeps {
   /** Where this conversation's tools execute (drives the shell allowlist +
    *  the batch contract). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
-  /** The integrations chat runtime (M8): the integration tool envelope —
+  /** The integrations chat runtime: the integration tool envelope —
    *  read-class tools and always_allow-curated tools flow; an `always_ask`
    *  curation forces the card, any other class follows the chat's approval
    *  mode (org governance wins in both directions). */
@@ -132,7 +132,7 @@ function forTool(
   return "ask"; // safest
 }
 
-/** The AI judge (Rust approval_policy_verdict): one short loopback gateway
+/** The AI judge: one short loopback gateway
  *  call, org-metered like any internal call. Any failure — route missing,
  *  quota, timeout, unparsable verdict — asks the user. Returns null as the
  *  approve field when the judge cannot decide (callers treat that as Ask).
@@ -320,7 +320,7 @@ async function judgeVerdict(
 }
 
 /** The chat's approval mode (composer selector) + the chat owner's account
- *  policy — one row like the Rust gate's journaled read; a read failure
+ *  policy — one journaled row read; a read failure
  *  falls back to the server default (the safe direction). */
 async function readChatPolicy(deps: ApprovalGateDeps, chatId: string): Promise<ChatPolicyRow> {
   try {
@@ -413,7 +413,7 @@ async function waitForApproval(
         return { block: decision.reason ? `denied by user: ${decision.reason}` : "denied by user" };
       }
       if (Date.now() >= deadline) {
-        // The 5-minute auto-deny (Rust APPROVAL_TIMEOUT): journaled like a
+        // The 5-minute auto-deny: journaled like a
         // decision, then the denied tool result. The text tells the model
         // the call is dead — a plain "denied" invites an immediate retry,
         // which gated again and burned another 5-minute cycle.
@@ -497,16 +497,15 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         if (decision.kind === "deny") {
           return { block: `denied by exec policy: ${decision.reason}` };
         }
-        // Server-side executors honor the shell allowlist (the Rust
-        // run_server_tool check); machine-bound chats run on the desktop's
-        // own executor.
+        // Server-side executors honor the shell allowlist; machine-bound
+        // chats run on the desktop's own executor.
         if (toolExecutor !== "machine" && !deps.allowShellTools) {
           return { block: "denied: shell tools are disabled on this server" };
         }
         if (decision.kind === "allow") return undefined; // static allow skips the gate
       }
 
-      // 1b. Integration tools (M8): the connector envelope. Guild-provided
+      // 1b. Integration tools: the connector envelope. Guild-provided
       //     disclosure, read-class, and always_allow-curated tools flow;
       //     an always_ask curation forces the card; any other class falls
       //     through to the chat's approval mode below (full_access flows,
@@ -528,7 +527,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       //    ran). Everything else gates by policy.
       if (toolExecutor === "server" && !isCommandTool) {
         // Non-shell server tools (read/write/edit) run under the same batch
-        // contract in the Rust server-local executor.
+        // contract.
         return undefined;
       }
 

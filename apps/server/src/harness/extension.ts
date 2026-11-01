@@ -1,6 +1,6 @@
 // The Guild extension: the system-prompt sections the built-in agent runs
 // with (the persona/guild section and the combined skills index) and the
-// approval gate hook (the M4 exec-policy + approvals lane).
+// approval gate hook (exec policy + approvals).
 
 import {
   defineExtension,
@@ -78,10 +78,10 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The thread-history tools (thread_history/thread_search), built by the
    *  runtime over its pool; absent in tests without one. */
   threadTools?: readonly ToolRegistration[];
-  /** The integrations chat runtime (M8): the approval gate consults it for
+  /** The integrations chat runtime: the approval gate consults it for
    *  the integration tool envelope (absent: the generic policy applies). */
   integrations?: IntegrationGate;
-  /** The skills runtime (read_skill/search_skills/push_skill + the Task 6
+  /** The skills runtime (read_skill/search_skills/push_skill + the
    *  prompt index section); absent in tests without one. */
   skillRuntime?: SkillRuntime;
   /** Extra tool-task hooks (the workspace conflict journal). */

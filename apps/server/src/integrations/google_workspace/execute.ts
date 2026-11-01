@@ -20,7 +20,7 @@ interface CachedGoogleToken {
 
 /** Access tokens keyed by `token_url|client_email|subject|secret
  *  fingerprint` — one entry per acting identity AND credential, shared
- *  across calls in this process (the Rust GoogleWorkspace token cache). */
+ *  across calls in this process. */
 const googleTokens = new Map<string, CachedGoogleToken>();
 
 function googleServiceAccount(secrets: [string, string][]): { clientEmail: string; privateKey: string } {

@@ -2,12 +2,11 @@
 //. The hub clones
 // sinks into registry slots; the ws route runs the writer loop.
 //
-// Node model of the Rust semantics: an unbounded queue with a pending
-// counter, a high-water latch (4096 → latched until disconnect), an
+// An unbounded queue with a pending counter, a high-water latch (4096 → latched until disconnect), an
 // AuthRequired latch the writer observes even while stalled on a write, a
 // last-matched-pong register for the heartbeat challenge, and a notify that
-// wakes the writer. Enqueue is synchronous (single-threaded, no await before
-// the push), which stands in for the Rust sink's short ordering mutex.
+// wakes the writer. Enqueue is synchronous (no await before the push), so
+// messages keep their send order without a lock.
 
 import type { WsServerMsg } from "./protocol.js";
 
@@ -76,7 +75,7 @@ export class SocketSink {
   }
 
   /** Sends a message; AuthRequired bypasses the queue entirely (the latch is
-   *  the message) exactly like the Rust `send`. */
+   *  the message). */
   send(msg: WsServerMsg): boolean {
     if (this.dead) return false;
     if (msg.type === "auth_required") {
@@ -141,8 +140,7 @@ export class SocketSink {
 
   /** Dequeues the next output. Does NOT settle the pending count: the writer
    *  settles each output when it disposes of it (ackWritten / ackSyncStart),
-   *  so sync-deferred messages keep counting exactly like the Rust writer's
-   *  bookkeeping. */
+   *  so sync-deferred messages keep counting until written. */
   take(): SocketOutput | undefined {
     const output = this.queue.shift();
     if (this.queue.length > 0) this.wake();

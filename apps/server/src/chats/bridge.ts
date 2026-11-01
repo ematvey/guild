@@ -1,9 +1,9 @@
 import { TranscriptProjection } from "./projection.js";
 import { canonicalJson } from "../platform/domain/json.js";
 // The event bridge: pi-durable `watchEvents()` streams → thread_events rows
-// + generating flag + turn-command settlement, with the EXACT frame contract
-// the Rust ChatRunner wrote (turn/step numbering, UsagePayload fields,
-// serde-ordered wire rows — see platform/domain/thread-events.ts).
+// + generating flag + turn-command settlement, with the exact thread-event
+// frame contract (turn/step numbering, UsagePayload fields, serde-ordered
+// wire rows — see platform/domain/thread-events.ts).
 //
 // Turn semantics: one Guild turn = one client request = one pi-durable run
 // (turn number derived from the log at each run_start, so restarts cannot
@@ -32,20 +32,20 @@ export interface LiveBuffers {
 
 /** The live generation fan-out the member-socket feed implements: the
  *  bridge's model deltas and terminals leave the process as live_frame
- *  frames (Rust: state.generations broadcast + feed::drain_events). */
+ *  frames. */
 export interface GenerationStreamSink {
   /** Registers the chat's active generation identity — the command id the
-   *  turn ack carries as generation_id (Rust attach_with_id). Untracked
-   *  runs keep an already-open identity (Rust attach semantics). */
+   *  turn ack carries as generation_id. Untracked runs keep an already-open
+   *  identity. */
   open(chatId: string, generationId: string): void;
   /** One StreamEvent inside the chat's open generation. */
   event(chatId: string, event: StreamWireEvent): void;
   /** The chat's streaming buffers moved — the feed's view republish poll
-   *  must capture (Rust publish_views' signature tick). */
+   *  must capture. */
   dirty(chatId: string): void;
   /** Mirrors unpersisted buffers across a worker boundary without publishing a full view. */
   buffers?(chatId: string, buffers: LiveBuffers): void;
-  /** The generation ended (Rust generations.remove). */
+  /** The generation ended. */
   close(chatId: string): void;
 }
 
@@ -54,10 +54,9 @@ export interface BridgeDeps {
   chats: ChatStore;
   turnCommands: TurnCommandStore;
   /** The resolved route's image-modality support for the conversation's
-   *  current model (gates tool-result image parts at persist time, like the
-   *  Rust persist path). */
+   *  current model (gates tool-result image parts at persist time). */
   routeSupportsImages(orgId: string, model: string | null): Promise<boolean>;
-  /** Spill machinery (M4): oversized tool results become artifacts. Absent
+  /** Spill machinery: oversized tool results become artifacts. Absent
    *  (tests without an object store) = no spill, inline results only. */
   spill?: { artifacts: ToolArtifactStore; objects: ObjectStore };
   /** Agent-run lifecycle hooks (agent threads only; plain chats no-op). */
@@ -91,7 +90,7 @@ interface BridgeState {
   /** Last appended assistant row id (the stop epilogue's Done message_id). */
   lastEventId: string | null;
   /** Spilled pointer text per tool call id (the ToolCompleted stream card
-   *  carries the pointer, like the Rust post-spill payload). */
+   *  carries the pointer). */
   spilled: Map<string, string>;
   /** Answer text has streamed for the current assistant message. Some
    *  backends (local vLLM) emit a trailing reasoning delta after the answer
@@ -290,9 +289,8 @@ export class ChatBridge {
             }
           }
         }
-        // Untracked runs keep an already-open generation identity (Rust
-        // attach semantics); a cold untracked run streams under a fresh id
-        // no client matches, exactly like Rust's fresh attach.
+        // Untracked runs keep an already-open generation identity; a cold
+        // untracked run streams under a fresh id no client matches.
         state.generationId = generationId ?? state.generationId ?? uuidv7();
         if (this.streamSink && state.chatId) this.streamSink.open(state.chatId, state.generationId);
         return;
@@ -315,9 +313,8 @@ export class ChatBridge {
         return;
       }
       case "task_failed": {
-        // The run's own failure (Rust: StreamEvent::Error at the failure
-        // point + the registry removal). Tool/compaction task failures are
-        // the executor paths' own surface.
+        // The run's own failure (an Error frame at the failure point).
+        // Tool/compaction task failures are the executor paths' own surface.
         if (event.kind !== "pi.generation") return;
         await this.persistTaskFailure(_conversationId, Number(event.taskId), event.message);
         if (state.generationId === null || state.doneSent) return;
@@ -335,8 +332,7 @@ export class ChatBridge {
         if (event.message.role === "assistant") {
           state.currentModel = (event.message as { model?: string }).model ?? state.currentModel;
           // The first partial commit arrives as message_start with the
-          // content streamed so far (Rust: the first ProviderChunk::Text
-          // already emits its Delta) — seed the buffers and stream it.
+          // content streamed so far — seed the buffers and stream it.
           for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] })
             .content) {
             if (block.type === "text" && block.text) {
@@ -349,8 +345,8 @@ export class ChatBridge {
             }
           }
           // No dirty() here: live frames carry the stream; the view poll
-          // publishes only at turn boundaries (Rust parity: the run-end
-          // generating flip is the turn's single view broadcast).
+          // publishes only at turn boundaries (the run-end generating flip
+          // is the turn's single view broadcast).
         }
         return;
       }
@@ -415,8 +411,8 @@ export class ChatBridge {
         // Nested calls (a codemode script's tools.*) are not transcript
         // cards: only the model-issued call that owns them is.
         if (event.parentToolCallId !== undefined) return;
-        // The tool-call card (Rust: ToolStarted into the generation stream;
-        // the durable harness's tools execute server-side).
+        // The tool-call card (ToolStarted into the generation stream; the
+        // durable harness's tools execute server-side).
         if (state.generationId === null) return;
         this.emitStream(state, {
           type: "tool_started",
@@ -433,9 +429,9 @@ export class ChatBridge {
           const result = event.entry.model?.find((m) => m.role === "toolResult");
           await this.projectEntry(state, event.entry);
           state.handledEntries.add(String(event.entry.id));
-          // The result card rides after the persisted row (Rust
-          // ToolCompleted carries the finished tool's content — the spilled
-          // pointer when the result spilled).
+          // The result card rides after the persisted row (ToolCompleted
+          // carries the finished tool's content — the spilled pointer when
+          // the result spilled).
           if (result && result.role === "toolResult" && state.generationId !== null) {
             const raw = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
             this.emitStream(state, {
@@ -503,7 +499,7 @@ export class ChatBridge {
 
   /** The generation's terminal bookkeeping at run end: an unsent terminal
    *  rides here (failure → Error, stop → zero-usage Done with the last
-   *  event id), then the registry entry clears (Rust's turn epilogue). */
+   *  event id), then the registry entry clears. */
   private finishGeneration(state: BridgeState): void {
     if (!this.streamSink || !state.chatId || state.generationId === null) return;
     if (state.failure !== null && !state.doneSent) {

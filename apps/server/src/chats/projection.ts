@@ -179,7 +179,7 @@ export class TranscriptProjection {
             ? (details as Record<string, unknown>)["guild_meta"]
             : undefined);
         // Image parts ride only when the route supports the image modality
-        // (gated at persist time, like the Rust path — keeps replay identical).
+        // (gated at persist time, so replay stays identical).
         const supported = await this.deps.routeSupportsImages(state.orgId, state.currentModel);
         const eventImages = supported
           ? result.content
@@ -196,9 +196,9 @@ export class TranscriptProjection {
           toolMeta,
         );
         if (eventImages.length > 0) (ev as { images: string[] }).images = eventImages;
-        // Oversized-result spill (M4): the persisted event carries the
-        // pointer text + the artifact card meta; the durable entry keeps the
-        // full content (pi-durable owns model context — the M3 split).
+        // Oversized-result spill: the persisted event carries the pointer
+        // text + the artifact card meta; the durable entry keeps the full
+        // content (pi-durable owns model context).
         if (this.deps.spill !== undefined && shouldSpill(content)) {
           try {
             const { spilled, pointer } = await spillOversizedResult(
@@ -213,7 +213,7 @@ export class TranscriptProjection {
             state.spilled.set(result.toolCallId, pointer);
             (ev as { content: string }).content = pointer;
             // The spilled card claims the meta (existing tool meta keys
-            // preserved — the Rust artifact_meta merge).
+            // preserved).
             const meta = artifactMeta(toolMeta, spilled);
             (ev as { meta?: unknown }).meta = meta;
           } catch (error) {

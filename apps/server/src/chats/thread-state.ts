@@ -1,5 +1,5 @@
 // ThreadState capture + wire rendering: the authoritative atomic view the
-// member socket (M5) syncs with and the M3 SSE thread-stream endpoint
+// member socket syncs with and the SSE thread-stream endpoint
 // pushes. Frame bytes match `serde_json::to_value(WsServerMsg::ThreadState)`
 //: internally-tagged
 // snake_case enum, fields in variant declaration order, `None` project
@@ -34,8 +34,8 @@ export const THREAD_STATE_EVENT_LIMIT = 120;
 /** One atomic capture: history + the unpersisted model buffers + the chat
  *  status, with the watermark reserved AFTER the event read (seq is always
  *  newer than every row it carries). `caller` omitted = the notify-driven
- *  org-scoped republish path (Rust capture_thread's Option<&AuthUser>::None
- *  — no per-user gate; the payload is org-gated by construction). */
+ *  org-scoped republish path — no per-user gate; the payload is org-gated
+ *  by construction). */
 export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
   if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
   const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });

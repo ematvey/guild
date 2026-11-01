@@ -10,7 +10,7 @@ export interface ToolOutcome {
   meta?: unknown;
   /** Binary payload the tool hands the model as a spilled artifact: the
    *  caller materializes the bytes and replaces `content` with the pointer
-   *  text (chat path). The script API drops the payload (as in Rust). */
+   *  text (chat path). The script API drops the payload. */
   artifact?: { filename: string; contentType: string; bytes: Buffer };
 }
 

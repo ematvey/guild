@@ -20,8 +20,8 @@ export interface GuildRouteInfo {
   reasoning: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
-  /** Route prices ($/Mtok) — the durable assistant usage carries the cost
-   *  exactly like the Rust worker's route-priced events. */
+  /** Route prices ($/Mtok) — the durable assistant usage carries the
+   *  route-priced cost. */
   price_in: number;
   price_out: number;
 }

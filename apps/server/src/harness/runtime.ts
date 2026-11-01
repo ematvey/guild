@@ -34,7 +34,7 @@ import type { Logger } from "pino";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
-import { ForkSupervisor } from "../worker/supervisor.js";
+import type { ForkSupervisor } from "../worker/supervisor.js";
 import type { PlatformPool } from "../platform/db.js";
 import { applyPlatformMigrations } from "../platform/migrations.js";
 import { GatewayStore } from "../platform/store/gateway.js";
@@ -135,6 +135,33 @@ export interface SubmitTurnInput {
   agentsMd?: string;
 }
 
+/** Where a chat's turns run: this process's harness, or the chat's forked
+ *  worker. Admission, inbox placement, stop and compaction route through it. */
+interface TurnBackend {
+  submit(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number>;
+  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  steer(chatId: string, submissionId: number): Promise<boolean>;
+  withdraw(chatId: string, submissionId: number): Promise<string>;
+  stop(chatId: string): Promise<void>;
+  compact(chatId: string): Promise<number | null>;
+  liveBuffers(chatId: string): LiveBuffers;
+}
+
+/** Worker mode: the full admission path (conversation bootstrap, configure,
+ *  integrations, submit) runs in the chat's worker; the server keeps only
+ *  the projections the routes own. */
+function workerTurns(forker: ForkSupervisor): TurnBackend {
+  return {
+    submit: (chatId, _orgId, input) => forker.submit(chatId, input),
+    deliverSteer: (chatId, orgId, text, model) => forker.deliverSteer(chatId, orgId, text, model),
+    steer: (chatId, submissionId) => forker.steer(chatId, submissionId),
+    withdraw: (chatId, submissionId) => forker.withdraw(chatId, submissionId),
+    stop: (chatId) => forker.stop(chatId),
+    compact: (chatId) => forker.compact(chatId),
+    liveBuffers: (chatId) => forker.liveBuffers(chatId),
+  };
+}
+
 export class GuildRuntime {
   private readonly models: MutableModels;
   private readonly registry: Registry;
@@ -149,6 +176,7 @@ export class GuildRuntime {
   private readonly bridge: ChatBridge;
   private readonly recovery: ConversationRecovery;
   private readonly host = new ConversationHost();
+  private readonly turns: TurnBackend;
   private readonly watchOpening = new SingleFlight<string, void>();
   private readonly admissions = new ConversationAdmissions();
   private get watches(): Map<string, AgentEventStream> {
@@ -170,9 +198,9 @@ export class GuildRuntime {
   }
   /** The durable database facade, created once at startup (the platform
    *  pool outlives the runtime; the facade must not end it). Reused by
-   *  every supervisor reopen. */
+   *  every reopen. */
   private durableDb: PgPoolDatabase | undefined;
-  /** Supervisor state (the reopen loop below). */
+  /** The supervisor's state: the harness reopen loop below. */
   private reopenAttempts = 0;
   private harnessOpenedAt = 0;
   private reopening: Promise<void> | undefined;
@@ -196,7 +224,7 @@ export class GuildRuntime {
   private reconcileTimer: NodeJS.Timeout | undefined;
 
   readonly toolArtifacts: ToolArtifactStore;
-  /** The integrations chat runtime (M8): per-turn plugin resolution, the
+  /** The integrations chat runtime: per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
   readonly integrationsRuntime: IntegrationsRuntime;
   /** The user-MCP chat runtime: the chat owner's servers declared as
@@ -237,9 +265,10 @@ export class GuildRuntime {
     private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
     /** The LLM trace sink: the approval judge self-reports through it. */
     private readonly trace?: TraceStore,
-    /** Worker-per-chat: the server's forker (worker mode only). When set,
-     *  admission routes over IPC and the server opens no harness. */
-    private readonly supervisor?: ForkSupervisor,
+    /** Worker-per-chat: forks and owns one worker per active chat (worker
+     *  mode only). When set, turns route over IPC and the server opens no
+     *  harness. */
+    private readonly forker?: ForkSupervisor,
     /** Worker side: this process serves exactly one chat (worker/main.ts). */
     private readonly workerScope?: {
       chatId: string;
@@ -255,6 +284,18 @@ export class GuildRuntime {
     },
   ) {
     this.objects = objects;
+    this.turns =
+      forker === undefined
+        ? {
+            submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
+            deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),
+            steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
+            withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
+            stop: (chatId) => this.stopInProcess(chatId),
+            compact: (chatId) => this.compactInProcess(chatId),
+            liveBuffers: (chatId) => this.liveBuffersInProcess(chatId),
+          }
+        : workerTurns(forker);
     this.attachments = new AttachmentStore(pool);
     this.sandboxes =
       config.sandbox.mode === "runner"
@@ -456,8 +497,8 @@ export class GuildRuntime {
           ? null
           : { id: owner.user_id, email: owner.email, display_name: owner.display_name, role: owner.role };
       },
-      // The approval gate (M4): exec policy + approvals over the chat
-      // mapping and the executor resolution below.
+      // The approval gate: exec policy + approvals over the chat mapping and
+      // the executor resolution below.
       pool: this.pool,
       threads: this.threads,
       log: this.log,
@@ -490,7 +531,7 @@ export class GuildRuntime {
         const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
         const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
         const resolved = agent?.model?.modelId ?? null;
-        this.log.info(
+        this.log.debug(
           { conversationId, found: conversation !== undefined, agentModel: resolved },
           "currentModel probe",
         );
@@ -740,11 +781,11 @@ export class GuildRuntime {
       // Worker: bootstrap its chat's conversation mapping (create on first
       // touch), then open the scoped harness for exactly that conversation.
       await this.bootstrapWorkerConversation();
-    } else if (this.supervisor) {
+    } else if (this.forker) {
       // Server in worker mode: no harness here — a second scheduler would
       // adopt the workers' tasks. Boot recovery spawns workers for every
       // conversation the journal says still has pending work.
-      await this.supervisor.recoverFromJournal(await this.chatsWithPendingWork(true));
+      await this.forker.recoverFromJournal(await this.chatsWithPendingWork(true));
       return;
     }
     await this.openHarness();
@@ -793,7 +834,7 @@ export class GuildRuntime {
   }
 
   /** Opens the durable storage + harness and attaches everything a resumed
-   *  session needs. Both the startup path and the supervisor's reopen path
+   *  session needs. Both the startup path and the supervisor's reopen loop
    *  run this — pi-durable's documented recovery for a failed session is
    *  reopen + resume: commits are atomic, so the journal is consistent, and
    *  a sealed session takes no writes, so in-flight tasks stay pending and
@@ -859,10 +900,10 @@ export class GuildRuntime {
             },
           },
           env: async (target) => {
-            // M4 executor selection: the chat's bound machine (machine dispatch
+            // Executor selection: the chat's bound machine (machine dispatch
             // over the hub), an agent session's workspace dir
-            // (workspaces/<org>/<name>), or the per-conversation sandbox the M3
-            // runtime used for regular chats.
+            // (workspaces/<org>/<name>), or the per-conversation sandbox for
+            // regular chats.
             const kind = await this.executorKind(Number(target.conversationId));
             if (kind === "machine") {
               const dispatch = this.workerScope?.dispatch ?? this.dispatch();
@@ -1217,12 +1258,6 @@ export class GuildRuntime {
     return conversation;
   }
 
-  /** The per-turn tool provisioning submit and resume share: resolve the
-   *  org's enabled integrations + the chat owner's MCP servers into
-   *  extensions + tools and configure the conversation with them. Submit
-   *  runs it before admission; resume runs it before the re-driven run —
-   *  a resumed run must see the same tool surface a submitted one gets
-   *  (the fresh process's registry carries only the base extensions). */
   /** Seeds the workspace config files when absent, reads them, and builds
    *  the thread's instructions. A broken volume never fails a turn: the
    *  prompt falls back to the runtime block alone. */
@@ -1324,6 +1359,12 @@ export class GuildRuntime {
     };
   }
 
+  /** The per-turn tool provisioning submit and resume share: resolve the
+   *  org's enabled integrations + the chat owner's MCP servers into
+   *  extensions + tools and configure the conversation with them. Submit
+   *  runs it before admission; resume runs it before the re-driven run —
+   *  a resumed run must see the same tool surface a submitted one gets
+   *  (the fresh process's registry carries only the base extensions). */
   private async provisionTurnTools(
     conversation: Conversation,
     chatId: string,
@@ -1516,7 +1557,7 @@ export class GuildRuntime {
   async deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
     // The conversation handle is invocation-bound: only the worker that owns
     // the chat can open it. A worker forwards to the owner; the server
-    // forwards to the supervisor.
+    // routes through its turn backend.
     if (this.workerScope !== undefined && chatId !== this.workerScope.chatId) {
       if (this.workerScope.remoteDeliverSteer === undefined) {
         throw new Error("this worker cannot deliver a steer to another chat");
@@ -1524,10 +1565,10 @@ export class GuildRuntime {
       await this.workerScope.remoteDeliverSteer(chatId, orgId, text, model);
       return;
     }
-    if (this.supervisor !== undefined) {
-      await this.supervisor.deliverSteer(chatId, orgId, text, model);
-      return;
-    }
+    await this.turns.deliverSteer(chatId, orgId, text, model);
+  }
+
+  private async deliverSteerInProcess(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
     await this.start();
     const conversation = await this.conversationForChat(chatId);
     const pending = await conversation.commit(async (tx) => {
@@ -1632,7 +1673,7 @@ export class GuildRuntime {
    *  tool allowlist. Plain chats get none. */
   private async agentToolsForChat(chatId: string): Promise<ToolRegistration[]> {
     const ref = await agentThreadForChat(this.pool, chatId);
-    this.log.info({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
+    this.log.debug({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
     if (ref === null) return [];
     const agent = await this.agents.fetchAgent(ref.agent_id);
     const subagents = await subagentsContextForChat({
@@ -1677,7 +1718,7 @@ export class GuildRuntime {
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });
-    this.log.info({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
+    this.log.debug({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
     return tools;
   }
 
@@ -1715,24 +1756,27 @@ export class GuildRuntime {
       }
       return this.workerScope.remoteSubmit(chatId, orgId, input);
     }
-    if (this.supervisor) {
-      // Worker mode: the full admission path (conversation bootstrap,
-      // configure, integrations, submit) runs in the worker; the server
-      // keeps only the projections the routes own.
-      return this.supervisor.submit(chatId, input);
-    }
+    return this.turns.submit(chatId, orgId, input, signal);
+  }
+
+  private async admitInProcess(
+    chatId: string,
+    orgId: string,
+    input: SubmitTurnInput,
+    signal: AbortSignal,
+  ): Promise<number> {
     await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId);
     await this.refreshOrgModels(orgId);
     const owner = await this.chats.ownerOf(chatId);
-    // Integrations (M8) + user MCP: the shared per-turn provisioning (the
-    // same call the resume path makes before a re-driven run) — the org's
-    // enabled plugins resolve into a snapshot, the per-org extension
-    // carries their tools, and the conversation's agent selection + tool
-    // allow-list are refreshed (role-filtered like the Rust disclosure
-    // filter). User MCP servers: the chat owner's enabled servers declare
-    // their tools the same way (one extension + bare registrations).
-    // Empty desired selections clear previously configured dynamic tools.
+    // Integrations + user MCP: the shared per-turn provisioning (the same
+    // call the resume path makes before a re-driven run) — the org's
+    // enabled plugins resolve into a snapshot, the per-org extension carries
+    // their tools, and the conversation's agent selection + role-filtered
+    // tool allow-list are refreshed. User MCP servers: the chat owner's
+    // enabled servers declare their tools the same way (one extension + bare
+    // registrations). Empty desired selections clear previously configured
+    // dynamic tools.
     await this.pool.query("UPDATE chat_conversations SET project_instructions = $2 WHERE chat_id = $1", [
       chatId,
       input.agentsMd ?? "",
@@ -1787,8 +1831,11 @@ export class GuildRuntime {
   }
 
   /** Changes only inbox placement; the submission and its visible echo keep identity. */
-  async steerQueued(chatId: string, submissionId: number): Promise<boolean> {
-    if (this.supervisor) return this.supervisor.steer(chatId, submissionId);
+  steerQueued(chatId: string, submissionId: number): Promise<boolean> {
+    return this.turns.steer(chatId, submissionId);
+  }
+
+  private async steerInProcess(chatId: string, submissionId: number): Promise<boolean> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return false;
     const promoted = await conversation.commit(async (tx) => {
@@ -1805,10 +1852,14 @@ export class GuildRuntime {
   /** Withdraws one queued (not yet placed) submission — the desktop
    *  queued-chip trash button's backend. Returns the pi-durable abort
    *  outcome: "aborted" removes the inbox item; "already_placed"/"settled"
-   *  mean the input just reached a boundary (the caller reports 409 and
-   *  the client refreshes); "not_found" = gone already, nothing to do. */
-  async withdrawQueued(chatId: string, submissionId: number): Promise<string> {
-    if (this.supervisor) return this.supervisor.withdraw(chatId, submissionId);
+   *  mean the input just reached a boundary (the caller reports 409; the
+   *  placement itself reaches the client as a pushed thread frame);
+   *  "not_found" = gone already, nothing to do. */
+  withdrawQueued(chatId: string, submissionId: number): Promise<string> {
+    return this.turns.withdraw(chatId, submissionId);
+  }
+
+  private async withdrawInProcess(chatId: string, submissionId: number): Promise<string> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return "not_found";
     return this.harness!.abortSubmission(submissionId as SubmissionId, BACKGROUND_CONTEXT, conversation.id);
@@ -1937,10 +1988,10 @@ export class GuildRuntime {
     await this.cancelChildOnStop(chatId).catch((error: unknown) => {
       this.log.warn({ err: error, chatId }, "child cancel marking failed");
     });
-    if (this.supervisor) {
-      await this.supervisor.stop(chatId);
-      return;
-    }
+    await this.turns.stop(chatId);
+  }
+
+  private async stopInProcess(chatId: string): Promise<void> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return;
     await conversation
@@ -1950,8 +2001,11 @@ export class GuildRuntime {
   }
 
   /** Starts a conversation-owned compaction and returns its durable task identity. */
-  async compactChat(chatId: string): Promise<number | null> {
-    if (this.supervisor) return this.supervisor.compact(chatId);
+  compactChat(chatId: string): Promise<number | null> {
+    return this.turns.compact(chatId);
+  }
+
+  private async compactInProcess(chatId: string): Promise<number | null> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return null;
     return Number(await conversation.compact(undefined, BACKGROUND_CONTEXT));
@@ -1961,7 +2015,7 @@ export class GuildRuntime {
    *  bridge emits into it; without a sink the frames are simply dropped. */
   setStreamSink(sink: GenerationStreamSink | null): void {
     this.bridge.setStream(sink);
-    this.supervisor?.setStreamSink(sink);
+    this.forker?.setStreamSink(sink);
   }
 
   /** The push lane's turn-end hook (the notifier's presence gate decides
@@ -1975,7 +2029,10 @@ export class GuildRuntime {
   /** Live streaming buffers of a conversation (the ThreadState frame's
    *  text/thinking). */
   liveBuffers(chatId: string): LiveBuffers {
-    if (this.supervisor) return this.supervisor.liveBuffers(chatId);
+    return this.turns.liveBuffers(chatId);
+  }
+
+  private liveBuffersInProcess(chatId: string): LiveBuffers {
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return { text: "", thinking: "" };
     return this.bridge.buffers(String(conversationId));
@@ -1991,7 +2048,7 @@ export class GuildRuntime {
     if (this.reconcileTimer !== undefined) clearInterval(this.reconcileTimer);
     this.reconcileTimer = undefined;
     await this.admissions.close();
-    await this.supervisor?.close();
+    await this.forker?.close();
     await this.host.close();
     await this.reopening;
     for (const [chatId, id] of this.chatToConversation) this.forgetConversation(chatId, id);
