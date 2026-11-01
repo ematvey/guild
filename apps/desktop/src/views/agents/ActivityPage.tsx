@@ -25,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { apiMe } from "../../lib/api/servers";
 import {
   AGENTS_ACTIVITY,
   RUN_STATUS_LABEL,
@@ -93,6 +92,7 @@ export function ActivityPage({
   onOpenChat,
   agentId,
   embedded = false,
+  role,
 }: {
   /** The activity filters named by the route. */
   filters: ActivityFilters;
@@ -102,8 +102,9 @@ export function ActivityPage({
   /** Per-agent projection when set. */
   agentId?: string;
   embedded?: boolean;
+  /** The signed-in user's workspace role. */
+  role: string;
 }) {
-  const [role, setRole] = useState<string | null>(null);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
@@ -111,10 +112,6 @@ export function ActivityPage({
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
-  }, []);
 
   const set = (next: Partial<ActivityFilters>) => {
     onFiltersChange({ ...filters, ...next });
@@ -630,21 +627,19 @@ function ChatsTable({
 
 export function ChatActivityPage({
   chatId,
+  role,
   onNavigate,
   onOpenChat,
 }: {
   chatId: string;
+  /** The signed-in user's workspace role. */
+  role: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
   const [rows, setRows] = useState<TraceRow[] | null>(null);
-  const [role, setRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
-  }, []);
 
   // Old activity chat links used /sessions/<id>; rewrite them to the
   // canonical /chats/<id> address without adding a history step.

@@ -217,7 +217,7 @@ function SectionBody({
 function AccountSection({ email }: { email: string }) {
   const [role, setRole] = useState<string | null>(null);
   useEffect(() => {
-    apiMe().then((u) => setRole(u?.role ?? "member"));
+    apiMe().then((u) => setRole(u?.role ?? "member")).catch(() => setRole("member"));
   }, []);
   return (
     <div className="space-y-5">

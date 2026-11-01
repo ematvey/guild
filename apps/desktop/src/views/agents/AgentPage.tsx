@@ -41,7 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
+import { modelLabel } from "../../lib/api/models";
 import { relativeTime } from "../../lib/relative-time";
 import { count } from "../../lib/format";
 import {
@@ -91,7 +91,7 @@ import {
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
-import { ModelName } from "./agent-model";
+import { ModelName, useModelOptions } from "./agent-model";
 import { ThreadList } from "./AgentThreadList";
 
 export interface Viewer {
@@ -327,6 +327,7 @@ export function AgentPage({
           {tab === "activity" && (
             <ActivityPage
               embedded
+              role={viewer.role}
               agentId={agent.id}
               filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
               onFiltersChange={(next) =>
@@ -708,14 +709,13 @@ function AgentSettings({
   const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
   const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
   const [teams, setTeams] = useState<TeamOption[]>([]);
-  const [models, setModels] = useState<ModelOption[] | null>(null);
+  const models = useModelOptions();
   const [catalog, setCatalog] = useState<AgentToolInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    void listModels().then((rows) => setModels(rows ?? []));
     void listMyTeams().then(setTeams).catch(() => setTeams([]));
     void listAgentTools().then(setCatalog).catch(() => setCatalog([]));
   }, []);

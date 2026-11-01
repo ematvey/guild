@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
+import { cacheEpochChanged, currentCacheEpoch, registerCacheClear } from "../settings/use-cached-api";
 
-/** The org's enabled models, fetched once per session. Model ids are
- *  provider names; the app shows the admin's alias (e.g. "Auto") instead. */
+/** The org's enabled models, fetched once per session (sign-out clears the
+ *  cache; a failed fetch is not cached, so the next mount retries). Model
+ *  ids are provider names; the app shows the admin's alias (e.g. "Auto"). */
 let cached: ModelOption[] | null = null;
-let inflight: Promise<ModelOption[]> | null = null;
+let inflight: Promise<ModelOption[] | null> | null = null;
 
-function loadModels(): Promise<ModelOption[]> {
-  inflight ??= listModels().then((rows) => {
-    cached = rows ?? [];
-    return cached;
+registerCacheClear(() => {
+  cached = null;
+  inflight = null;
+});
+
+function loadModels(): Promise<ModelOption[] | null> {
+  if (inflight !== null) return inflight;
+  const epoch = currentCacheEpoch();
+  const pending = listModels().then((rows) => {
+    if (cacheEpochChanged(epoch)) return rows;
+    if (rows === null) inflight = null;
+    else cached = rows;
+    return rows;
   });
-  return inflight;
+  inflight = pending;
+  return pending;
 }
 
+/** The model list; null while it loads. A failed fetch reads as an empty
+ *  list for this mount. */
 export function useModelOptions(enabled = true): ModelOption[] | null {
   const [models, setModels] = useState<ModelOption[] | null>(cached);
   useEffect(() => {
@@ -24,7 +38,7 @@ export function useModelOptions(enabled = true): ModelOption[] | null {
     }
     let live = true;
     void loadModels().then((rows) => {
-      if (live) setModels(rows);
+      if (live) setModels(rows ?? []);
     });
     return () => {
       live = false;

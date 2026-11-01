@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createAgentPayload, validateAgentStep } from "./AgentCreate";
+import { createAgentPayload, reachableStep, validateAgentStep } from "./AgentCreate";
 import { AgentRow } from "./AgentsDirectory";
 import type { Agent } from "./agents-api";
 
@@ -57,5 +57,16 @@ describe("agent description", () => {
       <AgentRow agent={{ ...agent, description: "" }} onNavigate={() => {}} />,
     );
     expect(html).not.toContain("line-clamp-2");
+  });
+});
+
+describe("agent-create wizard steps", () => {
+  it("shows the URL's step when every earlier step is complete", () => {
+    expect(reachableStep("visibility", draft)).toBe("visibility");
+  });
+
+  it("lands a deep link past an unfinished step on that step", () => {
+    expect(reachableStep("tools", { ...draft, name: "" })).toBe("name");
+    expect(reachableStep("visibility", { ...draft, model: "" })).toBe("model");
   });
 });

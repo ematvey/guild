@@ -36,9 +36,17 @@ export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
   model: "",
 };
 
+/** The reading a trace page shows its spans in. */
+export type TraceView = "transcript" | "tree" | "timeline";
+
+/** The agent-create wizard's steps, in order. */
+export type CreateStep = "name" | "model" | "tools" | "visibility";
+export const CREATE_STEPS: readonly CreateStep[] = ["name", "model", "tools", "visibility"];
+
 export type AgentsRoute =
   | { view: "directory" }
-  | { view: "new" }
+  /** `step` absent = the first step. */
+  | { view: "new"; step?: CreateStep }
   | {
       view: "agent";
       agentId: string;
@@ -48,8 +56,9 @@ export type AgentsRoute =
       filters?: ActivityFilters;
     }
   | { view: "activity"; filters: ActivityFilters }
-  | { view: "run"; runId: string }
-  | { view: "trace"; traceId: string }
+  /** `traceView` absent = the transcript. */
+  | { view: "run"; runId: string; traceView?: TraceView }
+  | { view: "trace"; traceId: string; traceView?: TraceView }
   | { view: "chat"; chatId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
@@ -57,6 +66,16 @@ export const AGENTS_ACTIVITY: AgentsRoute = {
   view: "activity",
   filters: DEFAULT_ACTIVITY_FILTERS,
 };
+
+/** The non-default trace view a query names, as route fields. */
+function traceViewFrom(search: string): { traceView?: TraceView } {
+  const value = new URLSearchParams(search).get("view");
+  return value === "tree" || value === "timeline" ? { traceView: value } : {};
+}
+
+function traceViewSearch(view: TraceView | undefined): string {
+  return view === undefined || view === "transcript" ? "" : `?view=${view}`;
+}
 
 function filtersFrom(search: string): ActivityFilters {
   const params = new URLSearchParams(search);
@@ -124,16 +143,21 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
 
   if (parts[0] === "activity" && parts.length === 1)
     return { view: "activity", filters: filtersFrom(search) };
-  if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1] };
+  if (parts[0] === "runs" && parts[1])
+    return { view: "run", runId: parts[1], ...traceViewFrom(search) };
   // A turn with no agent run has no run id; its trace id owns its own route.
-  if (parts[0] === "traces" && parts[1]) return { view: "trace", traceId: parts[1] };
+  if (parts[0] === "traces" && parts[1])
+    return { view: "trace", traceId: parts[1], ...traceViewFrom(search) };
   // Old activity chat links used /sessions/<id>; they now resolve to the
   // canonical /chats/<id> address.
   if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
     return { view: "chat", chatId: parts[1] };
   if (parts[0] !== "agents") return null;
   if (parts.length === 1) return AGENTS_DIRECTORY;
-  if (parts[1] === "new" && parts.length === 2) return { view: "new" };
+  if (parts[1] === "new" && parts.length <= 3) {
+    const step = CREATE_STEPS.find((s) => s === parts[2] && s !== "name");
+    return step === undefined ? { view: "new" } : { view: "new", step };
+  }
 
   const agentId = parts[1];
   if (!agentId) return AGENTS_DIRECTORY;
@@ -167,13 +191,15 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "directory":
       return "/agents";
     case "new":
-      return "/agents/new";
+      return route.step === undefined || route.step === "name"
+        ? "/agents/new"
+        : `/agents/new/${route.step}`;
     case "activity":
       return `/activity${filtersSearch(route.filters)}`;
     case "run":
-      return `/runs/${segment(route.runId)}`;
+      return `/runs/${segment(route.runId)}${traceViewSearch(route.traceView)}`;
     case "trace":
-      return `/traces/${segment(route.traceId)}`;
+      return `/traces/${segment(route.traceId)}${traceViewSearch(route.traceView)}`;
     case "chat":
       return `/chats/${segment(route.chatId)}`;
     case "agent": {

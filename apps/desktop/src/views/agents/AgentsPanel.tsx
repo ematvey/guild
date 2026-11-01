@@ -21,7 +21,7 @@ export function AgentsPanel({
     case "directory":
       return <AgentsDirectory onNavigate={onNavigate} />;
     case "new":
-      return <AgentCreate onNavigate={onNavigate} />;
+      return <AgentCreate step={route.step ?? "name"} onNavigate={onNavigate} />;
     case "agent":
       return (
         <AgentPage
@@ -39,23 +39,41 @@ export function AgentsPanel({
       return (
         <ActivityPage
           filters={route.filters}
+          role={viewer.role}
           onFiltersChange={(filters) => onNavigate({ view: "activity", filters })}
           onNavigate={onNavigate}
           onOpenChat={onOpenChat}
         />
       );
     case "run":
-      return <RunDetailPage runId={route.runId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+      return (
+        <RunDetailPage
+          runId={route.runId}
+          view={route.traceView ?? "transcript"}
+          role={viewer.role}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
+      );
     case "trace":
       return (
         <RunDetailPage
           runId={route.traceId}
           traceOnly
+          view={route.traceView ?? "transcript"}
+          role={viewer.role}
           onNavigate={onNavigate}
           onOpenChat={onOpenChat}
         />
       );
     case "chat":
-      return <ChatActivityPage chatId={route.chatId} onNavigate={onNavigate} onOpenChat={onOpenChat} />;
+      return (
+        <ChatActivityPage
+          chatId={route.chatId}
+          role={viewer.role}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
+      );
   }
 }

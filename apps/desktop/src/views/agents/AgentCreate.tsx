@@ -12,7 +12,8 @@ import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
-import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
+import { modelLabel } from "../../lib/api/models";
+import { useModelOptions } from "./agent-model";
 import {
   SAFE_BASELINE_NAMES,
   SAFE_BASELINE_TOOLS,
@@ -25,10 +26,10 @@ import {
   type CreateAgentInput,
   type TeamOption,
 } from "./agents-api";
-import type { AgentVisibility, AgentsRoute } from "./agents-route";
+import type { AgentVisibility, AgentsRoute, CreateStep } from "./agents-route";
 import { ErrorState, PageBody, PageHeader } from "./agent-ui";
 
-type Step = "name" | "model" | "tools" | "visibility";
+type Step = CreateStep;
 
 const STEPS: ReadonlyArray<readonly [Step, string, string]> = [
   ["name", "Name", "Give the agent a short, unique name."],
@@ -77,6 +78,20 @@ export function validateAgentStep(
   }
 }
 
+/** The step the wizard shows for a requested step: a deep link or reload
+ *  past an unfinished step (the form lives only in this page) lands on the
+ *  first step that still needs input. */
+export function reachableStep(
+  requested: Step,
+  value: Parameters<typeof validateAgentStep>[1],
+): Step {
+  for (const [id] of STEPS) {
+    if (id === requested) return id;
+    if (validateAgentStep(id, value) !== null) return id;
+  }
+  return requested;
+}
+
 /** The create request. The description is optional and trimmed; the name
  *  step caps it at 500 characters. */
 export function createAgentPayload(value: {
@@ -100,13 +115,15 @@ export function createAgentPayload(value: {
 }
 
 export function AgentCreate({
+  step: requestedStep,
   onNavigate,
   onCreated,
 }: {
+  /** The step the URL names. */
+  step: Step;
   onNavigate: (route: AgentsRoute) => void;
   onCreated?: (agent: Agent) => void;
 }) {
-  const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [model, setModel] = useState("");
@@ -115,17 +132,13 @@ export function AgentCreate({
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
-  const [models, setModels] = useState<ModelOption[] | null>(null);
+  const models = useModelOptions();
   const [catalog, setCatalog] = useState<AgentToolInfo[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    void listModels().then((rows) => {
-      setModels(rows ?? []);
-      if (rows && rows.length > 0) setModel((current) => current || rows[0]!.id);
-    });
     void listAgentTools()
       .then((rows) => setCatalog(rows.length > 0 ? rows : SAFE_BASELINE_TOOLS))
       .catch(() => setCatalog(SAFE_BASELINE_TOOLS));
@@ -134,21 +147,19 @@ export function AgentCreate({
       .catch(() => setTeams([]));
   }, []);
 
+  useEffect(() => {
+    if (models !== null && models.length > 0) setModel((current) => current || models[0]!.id);
+  }, [models]);
+
   const groups = useMemo(() => groupTools(catalog ?? SAFE_BASELINE_TOOLS), [catalog]);
+  const form = { name, description, model, tools, toolsMode, visibility, teamIds };
+  const step = reachableStep(requestedStep, form);
   const stepIndex = STEPS.findIndex(([id]) => id === step);
-  const currentError = validateAgentStep(step, {
-    name,
-    description,
-    model,
-    tools,
-    toolsMode,
-    visibility,
-    teamIds,
-  });
+  const currentError = validateAgentStep(step, form);
 
   const go = (next: Step) => {
     setError(null);
-    setStep(next);
+    onNavigate({ view: "new", step: next });
   };
   const back = () => {
     if (stepIndex === 0) {

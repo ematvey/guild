@@ -31,7 +31,26 @@ const routes: AgentsRoute[] = [
   { view: "run", runId: "run-1" },
   { view: "trace", traceId: "trace-1" },
   { view: "chat", chatId: "chat-1" },
+  { view: "new", step: "model" },
+  { view: "new", step: "tools" },
+  { view: "new", step: "visibility" },
+  { view: "run", runId: "run-1", traceView: "tree" },
+  { view: "trace", traceId: "trace-1", traceView: "timeline" },
 ];
+
+describe("trace view and create step addresses", () => {
+  it("puts the trace view in the query, transcript being the bare URL", () => {
+    expect(agentsRoutePath({ view: "run", runId: "r" })).toBe("/runs/r");
+    expect(agentsRoutePath({ view: "run", runId: "r", traceView: "tree" })).toBe("/runs/r?view=tree");
+    expect(parseAgentsRoute("/traces/t?view=bogus")).toEqual({ view: "trace", traceId: "t" });
+  });
+
+  it("gives each wizard step its own path; unknown steps start over", () => {
+    expect(agentsRoutePath({ view: "new" })).toBe("/agents/new");
+    expect(agentsRoutePath({ view: "new", step: "tools" })).toBe("/agents/new/tools");
+    expect(parseAgentsRoute("/agents/new/bogus")).toEqual({ view: "new" });
+  });
+});
 
 describe("agents route contract", () => {
   it("round-trips every route through its canonical URL", () => {

@@ -19,7 +19,6 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
-import { apiMe } from "../../lib/api/servers";
 import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import {
@@ -31,40 +30,33 @@ import {
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
-import { AGENTS_ACTIVITY, type AgentsRoute } from "./agents-route";
+import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
 import { compact, money, ms, spanPreview, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { JsonView } from "./JsonView";
 import { MessagesView, payloadMessages } from "./MessagesView";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 
-type TraceView = "transcript" | "tree" | "timeline";
 const TRACE_VIEWS: ReadonlyArray<readonly [TraceView, string]> = [
   ["transcript", "Transcript"],
   ["tree", "Tree"],
   ["timeline", "Timeline"],
 ];
 
-function readTraceView(): TraceView {
-  const value = new URL(window.location.href).searchParams.get("view");
-  return value === "tree" || value === "timeline" ? value : "transcript";
-}
-
-function writeTraceView(view: TraceView): void {
-  const url = new URL(window.location.href);
-  if (view === "transcript") url.searchParams.delete("view");
-  else url.searchParams.set("view", view);
-  if (url.toString() !== window.location.href) window.history.pushState(null, "", url);
-}
-
 export function RunDetailPage({
   runId,
   traceOnly = false,
+  view,
+  role,
   onNavigate,
   onOpenChat,
 }: {
   runId: string;
   /** The route holds a trace id with no agent run behind it. */
   traceOnly?: boolean;
+  /** The trace reading, from the route. */
+  view: TraceView;
+  /** The signed-in user's workspace role. */
+  role: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
@@ -73,14 +65,8 @@ export function RunDetailPage({
   const [children, setChildren] = useState<TraceRow[]>([]);
   const [selected, setSelected] = useState<SpanRow | null>(null);
   const [run, setRun] = useState<AgentRun | null>(null);
-  const [view, setView] = useState<TraceView>(readTraceView);
-  const [role, setRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    apiMe().then((user) => setRole(user?.role ?? "member")).catch(() => setRole("member"));
-  }, []);
 
   useEffect(() => {
     let live = true;
@@ -200,10 +186,13 @@ export function RunDetailPage({
                   label="Trace views"
                   tabs={TRACE_VIEWS}
                   value={view}
-                  onChange={(next) => {
-                    setView(next);
-                    writeTraceView(next);
-                  }}
+                  onChange={(next) =>
+                    onNavigate(
+                      traceOnly
+                        ? { view: "trace", traceId: runId, traceView: next }
+                        : { view: "run", runId, traceView: next },
+                    )
+                  }
                 />
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2" data-scrollable>
