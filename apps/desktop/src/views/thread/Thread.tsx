@@ -89,7 +89,6 @@ import { AgentsPanel } from "../agents/AgentsPanel";
 import {
   AGENTS_ACTIVITY,
   AGENTS_DIRECTORY,
-  agentsRoutePath,
   agentsRailTab,
   type AgentsRoute,
 } from "../agents/agents-route";
@@ -110,7 +109,7 @@ import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { useVisualViewportPin } from "./use-visual-viewport-pin";
 import { busyFrom, offlineMachine, pruneStopping, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
-import { chatRoutePath, isImeEnter } from "./route";
+import { isImeEnter } from "./route";
 import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
@@ -229,7 +228,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     resetSubagentTrees, archivedChats, setArchivedChats, projects, setProjects, machines,
     archivedProjects, setArchivedProjects,
   } = useChatData();
-  const { route, setRoute, pushRoute } = useThreadRoute();
+  const { route, pushRoute } = useThreadRoute();
   const chatId = route.chatId;
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
@@ -543,10 +542,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           ? { view: "agent", agentId: a.agentId, tab: "overview" }
           : null;
     if (next === null) return;
-    const path = agentsRoutePath(next);
-    if (window.location.pathname !== path) window.history.replaceState(null, "", path);
-    setRoute((current) => ({ ...current, agents: next }));
-  }, [role, route.agents]);
+    pushRoute({ agents: next }, { replace: true });
+  }, [role, route.agents, pushRoute]);
 
   // A bare /settings arrival (deep link, old bookmark, back/forward)
   // normalizes to the default section — the Settings tab always has a
@@ -554,10 +551,8 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   useEffect(() => {
     if (route.tab !== "settings" || route.settingsSection !== null) return;
     if (route.overlay !== null || route.skills !== null || route.agents !== null) return;
-    const path = chatRoutePath(null, null, null, null, "settings", "account", null);
-    window.history.replaceState(null, "", path);
-    setRoute((r) => ({ ...r, settingsSection: "account", settingsDetail: null }));
-  }, [route.tab, route.settingsSection, route.overlay, route.skills, route.agents]);
+    pushRoute({ tab: "settings", settingsSection: "account", settingsDetail: null }, { replace: true });
+  }, [route.tab, route.settingsSection, route.overlay, route.skills, route.agents, pushRoute]);
 
   // First-run onboarding auto-show: a user the server flags as not yet
   // onboarded is pushed to /onboard, so the wizard owns the URL like any
@@ -1178,9 +1173,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // needed beyond the route parse.
   // Chat routes: a project-bound chat owns the project route — its URL is
   // /project/<id>/thread/<cid>, so the Work tab survives reload and
-  // back/forward. A bare /thread/<id> for a project chat is rewritten once
-  // the chat list names its project; a chat not yet listed (just sent)
-  // counts as bound while the composer still carries a project pick.
+  // back/forward. A bare /thread/<id> for a project chat is rewritten in
+  // place (replace: the bare address is not a step back) once the chat list
+  // names its project; a chat not yet listed (just sent) counts as bound
+  // while the composer still carries a project pick.
   const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!route.chatId || route.projectId !== null) {
@@ -1192,7 +1188,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     const row = chats.find((c) => c.id === route.chatId);
     const projectId = row?.project_id ?? currentProjectRef.current?.id ?? null;
     routeTabDecidedRef.current = route.chatId;
-    if (projectId) pushRoute({ projectId });
+    if (projectId) pushRoute({ projectId }, { replace: true });
   }, [route.chatId, route.projectId, chats, pushRoute]);
 
   // Mobile: a route page (agents, skills, settings) replaces the whole main
