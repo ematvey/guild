@@ -127,6 +127,13 @@ first. Code comments describe only the present.
     input, a ref space per direction, error codes kept across the fork,
     timed-out requests and the config passed as JSON; the core turn flow is
     tested in both placements.
+  - *Agent store.* `AgentStore` keeps the agent rows and the access check
+    (`AgentCatalog`) and exposes `grants`, `threads`, `tree`, `runs`,
+    `notices` and `lifecycle` from `agents/store/`; callers name the
+    sub-store, and its `ChatStore` is injected. Recovery, the approval gate
+    and the thread-history tools read through the platform stores, so the
+    SQL allowlist names only the agents lane. An agent-list push burst costs
+    three reads for any number of members (`AgentGrants.visibleAgentIds`).
   - *Push.* The NOTIFY channels are one typed parser table, per-key pushes
     share `KeyedChain`, and `DEFERRED_UNTIL_SYNC` classifies every frame
     tag. A read that moves nothing notifies nothing, nor does a no-op agents
