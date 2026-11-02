@@ -212,8 +212,20 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
     it("drops in-flight calls when the connection is cut", async () => {
       const e = envFor(target("cut"));
       await sh(e, "true");
-      const pending = e.exec("sleep 30", { timeout: 60_000 }, ctx);
-      setTimeout(() => e.disconnect(), 500);
+      // Cut once the command is running in the sandbox (its first output).
+      let cut = false;
+      const pending = e.exec(
+        "echo started; sleep 30",
+        {
+          timeout: 60_000,
+          onOutput: () => {
+            if (cut) return;
+            cut = true;
+            e.disconnect();
+          },
+        },
+        ctx,
+      );
       const result = await pending;
       assert.ok(!result.ok);
       expect(result.error.message).toMatch(/connection lost/);

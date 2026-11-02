@@ -6,10 +6,11 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import crypto from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
 import type { PlatformContext } from "../composition.js";
+import { AgentStateFeed, BURST_MAX_MS, BURST_QUIET_MS, type AgentStateDeps } from "../hub/agent-state.js";
 
 const TEST_TIMEOUT = 30_000;
 
@@ -462,20 +463,17 @@ describe("agent and skill state frames", () => {
     try {
       const catalogs = () => textFrames(owner).filter((f) => f.type === "skill_catalog").length;
       const before = catalogs();
-      const gap = () => new Promise((resolve) => setTimeout(resolve, 20));
       // A publish's shape: the item row, then follow-up writes in their own
-      // statements a few milliseconds apart.
+      // statements. The window's timing is covered with fake timers below.
       await stack.env.db.query(
         `INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version, owner_user_id)
          VALUES (gen_random_uuid(), $1, 'skill', $2, 'A burst skill.', '1.0.0', $3)`,
         [stack.orgId, slug, stack.memberId],
       );
-      await gap();
       await stack.env.db.query(
         "UPDATE registry_items SET description = 'A burst skill, described.' WHERE org_id = $1 AND slug = $2",
         [stack.orgId, slug],
       );
-      await gap();
       await stack.env.db.query(
         `INSERT INTO skill_installs (id, org_id, user_id, slug, pinned_version) VALUES (gen_random_uuid(), $1, $2, $3, NULL)`,
         [stack.orgId, stack.memberId, slug],
@@ -484,7 +482,10 @@ describe("agent and skill state frames", () => {
         owner,
         (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug),
       );
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      // Every NOTIFY of the burst is handled and its push enqueued; the
+      // socket's pong lands behind any second catalog.
+      await stack.env.app.platform.feed.idle();
+      await owner.pingBarrier();
       expect(catalogs()).toBe(before + 1);
     } finally {
       owner.end();
@@ -588,5 +589,67 @@ describe("agent and skill state frames", () => {
       headers: { authorization: `Bearer ${stack.memberToken}` },
     });
     expect(own.statusCode).toBe(200);
+  });
+});
+
+describe("agent-state burst coalescing", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A feed over one connected member whose catalog reads are counted;
+   *  each read returns a new value so no push is deduped away. */
+  function catalogFeed() {
+    let reads = 0;
+    const sent: unknown[] = [];
+    const sink = {
+      send: (frame: unknown) => {
+        sent.push(frame);
+        return true;
+      },
+    };
+    const ctx = {
+      hub: { memberUsersOfOrg: () => ["u"], memberSinksOfUser: () => [sink] },
+      skills: {
+        catalog: async () => [{ read: ++reads }],
+        installsForUsers: async () => new Map(),
+      },
+    } as unknown as AgentStateDeps;
+    const feed = new AgentStateFeed(ctx, (_channel, error) => {
+      throw error;
+    });
+    const notify = () => feed.skills({ org_id: "org", agent_id: null, run_id: null, user_id: null });
+    return { feed, notify, reads: () => reads, sent };
+  }
+
+  it("re-reads once for writes inside the quiet window", async () => {
+    vi.useFakeTimers();
+    const { feed, notify, reads, sent } = catalogFeed();
+    notify();
+    await vi.advanceTimersByTimeAsync(BURST_QUIET_MS - 30);
+    notify();
+    await vi.advanceTimersByTimeAsync(BURST_QUIET_MS - 30);
+    notify();
+    expect(reads()).toBe(0);
+    await vi.advanceTimersByTimeAsync(BURST_QUIET_MS);
+    expect(reads()).toBe(1);
+    expect(sent).toHaveLength(1);
+    // A write after the window is a new burst.
+    notify();
+    await vi.advanceTimersByTimeAsync(BURST_QUIET_MS);
+    expect(reads()).toBe(2);
+    feed.stop();
+  });
+
+  it("pushes a steady stream of writes no later than the cap after the first", async () => {
+    vi.useFakeTimers();
+    const { feed, notify, reads } = catalogFeed();
+    notify();
+    for (let elapsed = 0; elapsed < BURST_MAX_MS - 10; elapsed += 10) {
+      await vi.advanceTimersByTimeAsync(10);
+      notify();
+    }
+    expect(reads()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(reads()).toBe(1);
+    feed.stop();
   });
 });

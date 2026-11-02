@@ -256,12 +256,15 @@ describe("ensure on a dead volume", () => {
       },
     } as unknown as DockerClient;
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const manager = new SandboxManager(boot, docker, pino({ level: "silent" }));
     const error = await manager.ensure(`chat:${ORG}:dead`, `chats/${ORG}/deadmount`).catch((e: unknown) => e);
     expect((error as { status?: number }).status).toBe(503);
     expect((error as Error).message).toMatch(/volume is stale/);
     // The exit is deferred 100ms so the 503 reaches the client first.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(exit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    vi.useRealTimers();
     expect(exit).toHaveBeenCalledWith(1);
     exit.mockRestore();
   });

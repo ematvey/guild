@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
+import { partialCommitted } from "./support/durable.js";
 import { waitFor } from "./support/wait.js";
 
 let stack: GatewayStack;
@@ -128,7 +129,7 @@ describe("restart resume (full durability)", () => {
     await waitFor(async () =>
       stack.mock.requests.some((request) => JSON.stringify(request.body).includes("stream me")),
     );
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await waitFor(() => partialCommitted(stack.env.db, "partial one"), 20_000, 50);
 
     // Close the actual owner before opening a replacement. Closing only the
     // fixture's seeding pool would leave app1's scheduler and database pool

@@ -91,13 +91,11 @@ describe("ws upgrade gates", () => {
     // The same ticket again → handshake rejection (single-use).
     const reused = new ScriptedClient(base, `ticket=${t1}`);
     await reused.open().catch(() => {});
-    await new Promise((r) => setTimeout(r, 200));
     expect(reused.upgradeFailure?.code).toBe(401);
     expect(reused.upgradeFailure?.message).toContain("invalid or expired ticket");
     // A garbage ticket likewise.
     const garbage = new ScriptedClient(base, "ticket=gst_00000000000000000000000000000000");
     await garbage.open().catch(() => {});
-    await new Promise((r) => setTimeout(r, 200));
     expect(garbage.upgradeFailure?.code).toBe(401);
     // An unused ticket from a revoked session: the ticket was minted while
     // the session was live, but the upgrade re-checks the session.
@@ -109,7 +107,6 @@ describe("ws upgrade gates", () => {
     void t3;
     const revoked = new ScriptedClient(base, `ticket=${t3}`);
     await revoked.open().catch(() => {});
-    await new Promise((r) => setTimeout(r, 200));
     expect(revoked.upgradeFailure?.code).toBe(401);
     expect(revoked.upgradeFailure?.message).toContain("session expired or revoked");
   });
@@ -120,7 +117,6 @@ describe("ws upgrade gates", () => {
     const t = await ticket(l.token);
     const noInstance = new ScriptedClient(base, `ticket=${t}&machine_id=some-machine`);
     await noInstance.open().catch(() => {});
-    await new Promise((r) => setTimeout(r, 200));
     expect(noInstance.upgradeFailure?.code).toBe(400);
     expect(noInstance.upgradeFailure?.message).toContain("machine connections require instance_id");
   });

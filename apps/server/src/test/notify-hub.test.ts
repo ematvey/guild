@@ -2,13 +2,10 @@ import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { NotifyHub } from "../platform/notify.js";
 import { TEST_ADMIN_URL } from "./support/platform-env.js";
+import { waitFor } from "./support/wait.js";
 
-async function until(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await cond())) {
-    if (Date.now() > deadline) throw new Error("condition not met in time");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+function until(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  return waitFor(cond, timeoutMs, 20, "condition not met in time");
 }
 
 describe("NotifyHub", () => {

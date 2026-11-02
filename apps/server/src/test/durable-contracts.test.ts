@@ -1,6 +1,7 @@
 import { ConversationRecovery } from "../chats/recovery.js";
 import { pendingWorkQuery } from "../storage/postgres/queries.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { waitFor } from "./support/wait.js";
 import pino from "pino";
 import pg from "pg";
 import { ConversationDirectory } from "../harness/conversation-directory.js";
@@ -56,12 +57,8 @@ async function open(registry = createRegistry(), models = createModels()) {
     context,
   );
 }
-async function until(probe: () => Promise<boolean>) {
-  const end = Date.now() + 10_000;
-  while (!(await probe())) {
-    if (Date.now() > end) throw new Error("condition did not settle");
-    await new Promise((r) => setTimeout(r, 20));
-  }
+function until(probe: () => Promise<boolean>): Promise<void> {
+  return waitFor(probe, 10_000, 20, "condition did not settle");
 }
 function bridge(chatId: string, conversation: Conversation, store = threads) {
   const b = new ChatBridge({

@@ -17,6 +17,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { PostgresDurableStorage } from "../storage/postgres/index.js";
 import { PgPoolDatabase } from "../storage/postgres/pg.js";
 import { masterKeyBytes, encryptSecret } from "../platform/crypto.js";
+import { partialCommitted } from "./support/durable.js";
 import { waitFor } from "./support/wait.js";
 
 let stack: GatewayStack;
@@ -365,7 +366,12 @@ describe("worker-per-chat (fork supervisor)", () => {
     await submit(chatA, "stream in worker A");
     await submit(chatB, "stream in worker B");
     await waitFor(async () => stack.mock.requests.length >= 2);
-    await new Promise((resolve) => setTimeout(resolve, 900)); // partials commit
+    // Both workers are mid-turn with a committed partial.
+    await waitFor(
+      async () => (await partialCommitted(stack.env.db, "slow a1")) && (await partialCommitted(stack.env.db, "bee a1")),
+      20_000,
+      50,
+    );
 
     const pidA = stack.env.app.platform.supervisor!.pidOf(chatA);
     expect(pidA).toBeDefined();

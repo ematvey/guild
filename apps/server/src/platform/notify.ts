@@ -3,6 +3,7 @@
 // subscribers. The member-socket feed consumes it instead of holding its own
 // connection.
 
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import type { Logger } from "pino";
 
@@ -144,11 +145,17 @@ export function notifyDispatcher(
 
 const SILENT: Pick<Logger, "warn" | "info"> = { warn: () => {}, info: () => {} };
 
+/** The channel `barrier()` NOTIFYs on; the hub consumes it and never
+ *  dispatches it to subscribers. */
+const BARRIER_CHANNEL = "guild_notify_barrier";
+
 export class NotifyHub {
   private client: pg.Client | undefined;
   private connecting: Promise<void> | undefined;
   private readonly handlers = new Set<NotifyHandler>();
   private readonly reconnectHandlers = new Set<ReconnectHandler>();
+  /** Pending barrier tokens → their resolvers. */
+  private readonly barriers = new Map<string, () => void>();
   /** True once a LISTEN client has been up: a later connect is a reconnect. */
   private listened = false;
   private closed = false;
@@ -188,6 +195,12 @@ export class NotifyHub {
           };
           client.on("notification", (msg) => {
             if (msg.channel === undefined) return;
+            if (msg.channel === BARRIER_CHANNEL) {
+              const token = msg.payload ?? "";
+              this.barriers.get(token)?.();
+              this.barriers.delete(token);
+              return;
+            }
             for (const handler of this.handlers) handler(msg.channel, msg.payload ?? "");
           });
           client.on("error", (error) => {
@@ -196,7 +209,7 @@ export class NotifyHub {
           });
           client.on("end", drop);
           await client.connect();
-          for (const channel of NOTIFY_CHANNELS) await client.query(`LISTEN ${channel}`);
+          for (const channel of [...NOTIFY_CHANNELS, BARRIER_CHANNEL]) await client.query(`LISTEN ${channel}`);
           this.client = client;
           backoffMs = 250;
           if (this.listened) {
@@ -218,6 +231,21 @@ export class NotifyHub {
     } finally {
       this.connecting = undefined;
     }
+  }
+
+  /** Resolves once every NOTIFY committed before the call has been
+   *  dispatched to the subscribers: the hub NOTIFYs a token on its own LISTEN
+   *  connection, and Postgres delivers notifications in commit order. Tests
+   *  order a "nothing was pushed" check after it. */
+  async barrier(): Promise<void> {
+    await this.ensureListening();
+    if (this.connecting !== undefined) await this.connecting;
+    const client = this.client;
+    if (client === undefined) throw new Error("notify hub is not listening");
+    const token = randomUUID();
+    const reached = new Promise<void>((resolve) => this.barriers.set(token, resolve));
+    await client.query("SELECT pg_notify($1, $2)", [BARRIER_CHANNEL, token]);
+    await reached;
   }
 
   async close(): Promise<void> {

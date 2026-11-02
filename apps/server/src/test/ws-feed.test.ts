@@ -20,6 +20,7 @@ import type { NotifyHandler } from "../platform/notify.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { UserEntry } from "@earendil-works/pi-durable";
 import { guildProviderId } from "../harness/models.js";
+import { waitFor } from "./support/wait.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;
@@ -142,13 +143,31 @@ async function waitFrame(
 }
 
 /** Polls an async condition until it holds; throws when the deadline passes. */
-async function eventually(probe: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+function eventually(probe: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  return waitFor(probe, timeoutMs, 50, `condition not met within ${timeoutMs}ms`);
+}
+
+/** Orders a "nothing arrived" check after the writes so far: the feed
+ *  finishes every push they started (NOTIFY fan-in, send chains, view
+ *  ticks), then each socket's ping rides its outbound queue behind any frame
+ *  those pushes enqueued. Resolves with each socket's pong index. */
+async function quiesce(...sockets: ScriptedClient[]): Promise<number[]> {
+  await platform.feed.idle();
+  return Promise.all(sockets.map((ws) => ws.pingBarrier()));
+}
+
+/** Waits until a chat's turn has fully ended: no durable task of its
+ *  conversation is still open and the chat row reads not generating. */
+async function turnSettled(chatId: string): Promise<void> {
+  await eventually(async () => {
+    const res = await stack.env.db.query<{ open: number; generating: boolean }>(
+      `SELECT (SELECT count(*)::int FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id
+                WHERE c.chat_id = $1 AND t.status <> 'terminal') AS open,
+              (SELECT generating FROM chats WHERE id = $1) AS generating`,
+      [chatId],
+    );
+    return res.rows[0]!.open === 0 && res.rows[0]!.generating === false;
+  }, 20_000);
 }
 
 /** A second member user + live session token (org-scoped stranger). */
@@ -422,6 +441,18 @@ describe("member-socket feed", () => {
       "INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'fix-dropped-sync') RETURNING id",
     );
     const otherOrg = orgRes.rows[0]!.id;
+    // The dropped sync's revalidation read: once it returns the moved
+    // member, processClient returns before the bracket can open.
+    const getUser = platform.identity.getUser;
+    let markDropped: () => void = () => {};
+    const dropped = new Promise<void>((resolve) => {
+      markDropped = resolve;
+    });
+    platform.identity.getUser = async (...args: Parameters<typeof getUser>) => {
+      const row = await getUser.apply(platform.identity, args);
+      if (row.id === stack.memberId && row.org_id === otherOrg) markDropped();
+      return row;
+    };
     try {
       // The next client message reads the member in another org, so
       // processClient returns before the bracket opens.
@@ -439,11 +470,19 @@ describe("member-socket feed", () => {
       ]);
       const status = await waitFrame(ws, (f) => f.type === "chat_status" && f.chat_id === chat.id);
       expect(status.generating).toBe(true);
-      // Give the dropped sync time to drain, then check it opened nothing.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const syncFrames = textFrames(ws).filter((f) => f.type === "sync_begin" || f.type === "sync_done");
-      expect(syncFrames).toEqual([]);
+      // Client messages process in order: once the dropped sync was read,
+      // a valid sync after it opens the only bracket the socket sees.
+      await dropped;
+      platform.identity.getUser = getUser;
+      await stack.env.db.query("UPDATE users SET org_id = $1 WHERE id = $2", [stack.orgId, stack.memberId]);
+      ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
+      await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chat.id);
+      const syncFrames = textFrames(ws)
+        .filter((f) => f.type === "sync_begin" || f.type === "sync_done")
+        .map((f) => f.type);
+      expect(syncFrames).toEqual(["sync_begin", "sync_done"]);
     } finally {
+      platform.identity.getUser = getUser;
       await stack.env.db.query("UPDATE users SET org_id = $1 WHERE id = $2", [stack.orgId, stack.memberId]);
       ws.end();
     }
@@ -579,9 +618,9 @@ describe("member-socket feed", () => {
       const count = textFrames(ws).filter((f) => f.type === "thread_state" && f.chat_id === chat.id).length;
       expect(count).toBe(1);
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const [pong] = await quiesce(stranger);
     const strangerText = stranger.frames
-      .slice(before)
+      .slice(before, pong)
       .filter((f) => f.kind === "text")
       .map((f) => (JSON.parse(f.data) as Record<string, unknown>).type);
     expect(strangerText).toEqual([]);
@@ -792,14 +831,14 @@ describe("member-socket feed", () => {
     ws.send(JSON.stringify({ type: "read", chat_id: chat.id }));
     // The write is async (the socket reader's store call): poll briefly.
     let marker: { last_read_seq: string } | undefined;
-    for (let i = 0; i < 50 && marker === undefined; i++) {
+    await eventually(async () => {
       marker = (
         await stack.env.db.query<{ last_read_seq: string }>("SELECT last_read_seq FROM chat_reads WHERE chat_id = $1", [
           chat.id,
         ])
       ).rows[0];
-      if (marker === undefined) await new Promise((r) => setTimeout(r, 100));
-    }
+      return marker !== undefined;
+    }, 5_000).catch(() => {});
     expect(marker?.last_read_seq).toBe(seq);
     ws.end();
   });
@@ -1184,7 +1223,8 @@ describe("member-socket push volume", () => {
           !(f.chat as { generating: boolean }).generating,
       );
       // Trailing pushes (the run's last commit, the generating flip) land.
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await turnSettled(chat.id);
+      await quiesce(ws, legacy);
 
       const turn = textFrames(ws).slice(before);
       const kinds = turn.map((f) => f.type as string);
@@ -1287,11 +1327,14 @@ describe("member-socket view routing", () => {
 
   /** A member socket that displays `chatId` (null: a page with no chat). */
   async function viewing(chatId: string | null): Promise<ScriptedClient> {
+    const earlier = new Set(platform.hub.memberSinksOfUser(stack.memberId));
     const ws = await memberSocket();
     await waitFrame(ws, (f) => f.type === "model_list");
+    const [sink] = platform.hub.memberSinksOfUser(stack.memberId).filter((s) => !earlier.has(s));
+    expect(sink).toBeDefined();
     ws.send(JSON.stringify({ type: "sync", chat_id: chatId }));
     if (chatId !== null) await waitFrame(ws, (f) => f.type === "sync_done" && f.chat_id === chatId);
-    else await new Promise((resolve) => setTimeout(resolve, 200));
+    else await eventually(async () => sink!.view === null, 5_000);
     return ws;
   }
 
@@ -1332,7 +1375,8 @@ describe("member-socket view routing", () => {
       for (const ws of [onOther, onNothing]) {
         await waitFrame(ws, (f) => f.type === "chat_status" && f.chat_id === shown.id && f.generating === false);
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await turnSettled(shown.id);
+      await quiesce(onOther, onNothing);
       expect(viewFramesOf(onOther, marks[1]!, shown.id)).toEqual([]);
       expect(viewFramesOf(onNothing, marks[2]!, shown.id)).toEqual([]);
 
@@ -1357,7 +1401,7 @@ describe("member-socket view routing", () => {
             ),
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await quiesce(onNothing);
       expect(viewFramesOf(onNothing, marks[2]!, shown.id)).toEqual([]);
     } finally {
       onChat.end();
@@ -1390,8 +1434,8 @@ describe("member-socket view routing", () => {
           (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
         20_000,
       );
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const mark = ws.frames.length;
+      await turnSettled(chat.id);
+      const mark = (await quiesce(ws))[0]!;
       const res = await stack.env.app.inject({
         method: "POST",
         url: `/api/v1/threads/${chat.id}/compact`,
@@ -1408,7 +1452,8 @@ describe("member-socket view routing", () => {
           f.compacting === false &&
           (f.seq as number) > started.seq,
       );
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await turnSettled(chat.id);
+      await quiesce(ws);
       const states = statesOf(ws, mark, chat.id);
       expect(states.length).toBeGreaterThanOrEqual(1);
       expect(states.length).toBeLessThanOrEqual(2);
@@ -1451,8 +1496,7 @@ describe("member-socket view routing", () => {
     ]);
     const ws = await viewing(id);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const mark = ws.frames.length;
+      const mark = (await quiesce(ws))[0]!;
       const res = await stack.env.app.inject({
         method: "POST",
         url: `/api/v1/threads/${id}/compact`,
@@ -1477,7 +1521,8 @@ describe("member-socket view routing", () => {
           f.compacting === false &&
           (f.events as { event: { type: string } }[]).length > 0,
       );
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await turnSettled(id);
+      await quiesce(ws);
       const states = statesOf(ws, mark, id);
       expect(states.length).toBeGreaterThanOrEqual(1);
       expect(states.length).toBeLessThanOrEqual(2);
@@ -1507,6 +1552,7 @@ function fakeContext(options: { failQueries?: boolean } = {}) {
         handler = h;
         return () => {};
       },
+      barrier: async () => {},
     },
     hub: {
       sinksOfUser: (userId: string) =>
@@ -1547,8 +1593,6 @@ function fakeContext(options: { failQueries?: boolean } = {}) {
   };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-
 describe("feed forwarder caches", () => {
   it("evicts a chat's cached tree once its owner has no socket", async () => {
     const fake = fakeContext();
@@ -1559,7 +1603,7 @@ describe("feed forwarder caches", () => {
     fake.connected.add(fake.ownerOf("b"));
     fake.notify("guild_subagent_tree", "a");
     fake.notify("guild_subagent_tree", "b");
-    await settle();
+    await feed.idle();
     expect([...internals.subagentTrees.keys()].sort()).toEqual(["a", "b"]);
     // Each chat gets its subtree and its header facts.
     const types = fake.frames.map(({ frame }) => (frame as { type: string }).type).sort();
@@ -1571,7 +1615,7 @@ describe("feed forwarder caches", () => {
 
     // A later tree change for an unwatched chat caches nothing.
     fake.notify("guild_subagent_tree", "a");
-    await settle();
+    await feed.idle();
     expect(internals.subagentTrees.has("a")).toBe(false);
     feed.stop();
   });
@@ -1581,7 +1625,7 @@ describe("feed forwarder caches", () => {
     const feed = new FeedForwarder(fake.ctx);
     feed.start();
     for (let index = 0; index < 4_200; index += 1) feed.open(`c${index}`, `g${index}`);
-    await settle();
+    await feed.idle();
     const chats = (feed as unknown as Internals).chats;
     expect(chats.size).toBe(4_096);
     expect(chats.has("c0")).toBe(false);
@@ -1601,7 +1645,7 @@ describe("feed forwarder caches", () => {
     fake.notify("guild_thread_committed", "chat-1");
     fake.notify("guild_subagent_tree", "chat-2");
     feed.open("chat-3", "gen-1");
-    await settle();
+    await feed.idle();
     expect(warnings).toEqual(
       expect.arrayContaining([
         { channel: "guild_thread_committed", key: "chat-1" },
