@@ -693,14 +693,37 @@ export class AgentStore {
     return this.fetchOrThrow(agent.org_id, agentId);
   }
 
+  /** Brings an archived agent, or one in the deletion grace period, back
+   *  to active. */
   async restore(user: UserRow, agentId: string): Promise<Agent> {
     const { agent } = await this.requireAccess(user, agentId, "manage");
+    if (agent.status !== "archived" && agent.status !== "deleting") {
+      throw ApiError.badRequest("only an archived or deleting agent can be restored");
+    }
     await this.pool.query(
       `UPDATE agents SET status = 'active', deleted_at = NULL, purge_after = NULL, updated_at = now()
-       WHERE org_id = $1 AND id = $2`,
+       WHERE org_id = $1 AND id = $2 AND status IN ('archived', 'deleting')`,
       [agent.org_id, agentId],
     );
     return this.fetchOrThrow(agent.org_id, agentId);
+  }
+
+  /** Cancels every queued or running run of the agent, in all its threads,
+   *  and returns the chats those runs were driving so the caller can stop
+   *  their turns. Archive and delete call it: an agent leaving service
+   *  stops its work. */
+  async cancelAgentRuns(agentId: string): Promise<string[]> {
+    const res = await this.pool.query<{ chat_id: string }>(
+      `WITH cancelled AS (
+         UPDATE agent_runs r SET status = 'cancelled', finished_at = now()
+         FROM agent_threads t
+         WHERE t.id = r.thread_id AND t.agent_id = $1 AND r.status IN ('queued', 'running')
+         RETURNING t.chat_id
+       )
+       SELECT DISTINCT chat_id FROM cancelled`,
+      [agentId],
+    );
+    return res.rows.map((row) => row.chat_id);
   }
 
   /** Phase one of deletion: hide the agent and start the org grace period.

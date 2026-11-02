@@ -144,6 +144,7 @@ dbDescribe("AgentStore", () => {
     expect((await store.list(owner, { includeArchived: true })).map((a) => a.id)).toContain(agent.id);
 
     expect((await store.restore(owner, agent.id)).status).toBe("active");
+    await expect(store.restore(owner, agent.id)).rejects.toMatchObject({ status: 400 });
 
     const deleting = await store.markDeleted(owner, agent.id);
     expect(deleting.status).toBe("deleting");
@@ -244,6 +245,21 @@ dbDescribe("AgentStore", () => {
       created.push(await store.create(owner, { name: `Bulk ${i}`, model: "GLM-Test" }));
     }
     expect(created).toHaveLength(30);
+  });
+
+  it("cancelAgentRuns stops every live run of the agent and names their chats", async () => {
+    const agent = await store.create(owner, { name: "Leaving", model: "GLM-Test" });
+    const main = (await store.listThreads(agent.id, owner.id)).threads[0]!;
+    const side = await store.createThread(agent.id, owner.id, "Side");
+    const live = await store.createRun({ agent_id: agent.id, thread_id: main.id, trigger: "message", status: "running" });
+    const queued = await store.createRun({ agent_id: agent.id, thread_id: side.id, trigger: "message" });
+    const done = await store.createRun({ agent_id: agent.id, thread_id: side.id, trigger: "message", status: "succeeded" });
+    const chats = await store.cancelAgentRuns(agent.id);
+    expect(chats.sort()).toEqual([main.chat_id, side.chat_id].sort());
+    expect((await store.getRun(live.id)).status).toBe("cancelled");
+    expect((await store.getRun(queued.id)).status).toBe("cancelled");
+    expect((await store.getRun(done.id)).status).toBe("succeeded");
+    expect(await store.cancelAgentRuns(agent.id)).toEqual([]);
   });
 
   it("records runs, activity, notices and chunk search rows", async () => {

@@ -10,7 +10,7 @@ import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.
 import { submitTurn } from "../chats/submit-turn.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { rm } from "node:fs/promises";
-import path from "node:path";
+import { agentWorkspaceDir } from "./workspace-config.js";
 import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
 import { resolveIntegrations } from "../platform/integrations/plugins.js";
@@ -398,9 +398,21 @@ export function registerAgentRoutes(
     return sendJson(reply, { agent: agent });
   });
 
+  /** Stops the turns of an agent that just left service (archived or
+   *  deleting): its runs are cancelled and each chat they drove is stopped. */
+  const stopAgentWork = async (agentId: string): Promise<void> => {
+    for (const chatId of await store.cancelAgentRuns(agentId)) {
+      if (!chats.runtime.canStopChat(chatId)) continue;
+      await chats.runtime.stopChat(chatId).catch((error: unknown) => {
+        app.log.warn({ err: error, chatId }, "stopping an agent's turn failed");
+      });
+    }
+  };
+
   app.post("/api/v1/agents/:id/archive", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agent = await store.archive(user, parseUuidParam(req, "id"));
+    await stopAgentWork(agent.id);
     return sendJson(reply, { agent });
   });
 
@@ -413,6 +425,7 @@ export function registerAgentRoutes(
   app.delete("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agent = await store.markDeleted(user, parseUuidParam(req, "id"));
+    await stopAgentWork(agent.id);
     return sendJson(reply, { agent });
   });
 
@@ -435,10 +448,12 @@ export function registerAgentRoutes(
     const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
     if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
     await store.purge(user, agentId);
-    await rm(path.join(infra.config.agentWorkspaceWriteRoot, "agents", agent.org_id, agentId), {
+    await rm(agentWorkspaceDir(infra.config.agentWorkspaceWriteRoot, agent.org_id, agentId), {
       recursive: true,
       force: true,
-    }).catch(() => {});
+    }).catch((error: unknown) => {
+      app.log.warn({ err: error, agentId }, "agent workspace removal failed");
+    });
     return sendJson(reply, { purged: true });
   });
 
