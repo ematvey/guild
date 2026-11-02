@@ -56,7 +56,7 @@ export interface OutgoingDeps {
   refreshOutgoing: (update: (n: number) => number) => void;
   outgoingScope: string;
   store: ThreadViewStore;
-  setSendPending: (chatId: string | null, source: string) => void;
+  setSendPending: (chatId: string | null, source: string, key?: string | null) => void;
   openChatIdRef: RefObject<string | null>;
   loadSeq: RefObject<number>;
   projects: Project[] | null;
@@ -157,13 +157,45 @@ export function useOutgoing(deps: OutgoingDeps) {
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
     const mySeq = loadSeq.current;
+    // A first send moves the route only once the server holds the send: the
+    // scratch composer stays frozen (text visible, spinner) through create,
+    // uploads and submit, and the thread then opens on its working state.
+    // A failed submit opens the created chat too, where the failure shows.
+    const openCreated = (accepted: boolean) => {
+      const cid = command.chatId;
+      if (target !== null || !cid || !mountedRef.current) return;
+      if (loadSeq.current !== mySeq || openChatIdRef.current !== command.originChatId) return;
+      // No follow-up typing exists on the frozen composer: the sent content
+      // travels as the optimistic send, and the thread opens empty-handed.
+      writeDraft(draftStorage, cid, "");
+      writeDraft(draftStorage, command.originChatId, "");
+      pendingDraftsRef.current.set(cid, []);
+      pendingDraftsRef.current.set(command.originChatId, []);
+      persistFiles(cid, []);
+      persistFiles(command.originChatId, []);
+      promptRef.current = "";
+      setPrompt("");
+      setPending([]);
+      requestAnimationFrame(autoGrow);
+      // Seed the created chat's view with the sent message so the route
+      // push lands straight on the thread — no skeleton in between.
+      store.mutate((r) => r.optimisticSend({ chatId: cid, text: command.text,
+        key: command.id, sentAt: command.sentAt,
+        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
+      store.seed(cid);
+      justCreatedChatRef.current = cid;
+      // The turn is live server-side; until the chat's state echoing this
+      // message arrives, the pending send holds `busy`.
+      if (accepted) setSendPending(cid, "created", command.id);
+      pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
+    };
     if (target === null) {
       // First send: the chat does not exist yet, so nothing renders
       // optimistically — the composer's pending-submit spinner carries the
-      // state until the create responds and the route moves.
+      // state until the server accepts the send and the route moves.
       setPendingSubmitId(command.id);
     } else if (openChatIdRef.current === target) {
-      setSendPending(target, "optimistic_send");
+      setSendPending(target, "optimistic_send", command.id);
       store.mutate((r) => r.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
@@ -180,37 +212,9 @@ export function useOutgoing(deps: OutgoingDeps) {
         },
         created: (cid) => {
           if (!mountedRef.current) return;
-          if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
-            // The composer was held (blocked, text visible) on the scratch
-            // surface for the whole create, so no follow-up typing exists:
-            // the sent content travels as the optimistic send below, and
-            // the thread opens with an empty composer.
-            writeDraft(draftStorage, cid, "");
-            writeDraft(draftStorage, command.originChatId, "");
-            pendingDraftsRef.current.set(cid, []);
-            pendingDraftsRef.current.set(command.originChatId, []);
-            persistFiles(cid, []);
-            persistFiles(command.originChatId, []);
-            promptRef.current = "";
-            setPrompt("");
-            setPending([]);
-            requestAnimationFrame(autoGrow);
-            if (approvalMode !== "default") {
-              justCreatedApprovalRef.current = cid;
-              void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
-            }
-            // Seed the created chat's view with the sent message so the
-            // route push lands straight on the working thread — no
-            // skeleton between the scratch surface and the thread state.
-            store.mutate((r) => r.optimisticSend({ chatId: cid, text: command.text,
-              key: command.id, sentAt: command.sentAt,
-              attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
-            store.seed(cid);
-            justCreatedChatRef.current = cid;
-            // The created chat has no frame yet: the pending send holds
-            // `busy` until its own thread state arrives.
-            setSendPending(cid, "created");
-            pushRoute({ chatId: cid, projectId: command.projectId, overlay: null });
+          if (approvalMode !== "default" && openChatIdRef.current === command.originChatId) {
+            justCreatedApprovalRef.current = cid;
+            void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
           }
         },
         upload: (cid, attachment) => {
@@ -236,9 +240,11 @@ export function useOutgoing(deps: OutgoingDeps) {
             id, body.sendMode, body.skillsIndex, body.instructions, pickedAgentRef.current?.id);
         },
       });
+      openCreated(true);
       settleOutgoing(command);
     } catch (e) {
       if (!mountedRef.current) return;
+      openCreated(false);
       const cid = command.chatId ?? command.originChatId;
       store.mutate((r) => r.failSend(cid, command.id, e instanceof Error ? e.message : String(e)));
       if (openChatIdRef.current === cid) setSendPending(null, "send_failed");

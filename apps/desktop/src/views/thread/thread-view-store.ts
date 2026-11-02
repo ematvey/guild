@@ -70,11 +70,14 @@ export function createThreadViewStore(
   const compute = (): ThreadViewSnapshot => {
     const source = nav.displayedChatId ?? seeded;
     const view = reducer.view(source);
+    // A seeded target already shows its own content: the wait for its
+    // first frame is not a navigation the user can see.
+    const waiting = nav.pendingChatId !== null && nav.pendingChatId !== seeded;
     return {
       displayedChatId: nav.displayedChatId,
       pendingChatId: nav.pendingChatId,
-      navigating: nav.pendingChatId !== null,
-      loading: booting || (nav.pendingChatId !== null && nav.phase === "cold"),
+      navigating: waiting,
+      loading: booting || (waiting && nav.phase === "cold"),
       synced,
       blocks: view.blocks,
       hasMore: view.hasMore,

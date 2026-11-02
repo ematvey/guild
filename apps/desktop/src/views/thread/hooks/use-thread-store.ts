@@ -53,15 +53,22 @@ export function useThreadStore(chatId: string | null) {
   // Synchronous mirror: frame handlers retire a pending send before React
   // re-renders.
   const pendingSendRef = useRef<string | null>(null);
-  const setSendPending = (chatId: string | null, source: string): void => {
+  // The id of the user message the pending send carries: a state that does
+  // not show it yet predates the server's accept and says nothing about it.
+  const pendingKeyRef = useRef<string | null>(null);
+  const setSendPending = (chatId: string | null, source: string, key: string | null = null): void => {
+    pendingKeyRef.current = chatId === null ? null : key;
     if (pendingSendRef.current === chatId) return;
     traceEvent("busy.pending", { chat: chatId ?? "-", source, action: chatId === null ? "clear" : "set" });
     pendingSendRef.current = chatId;
     setPendingSendState(chatId);
   };
-  /** The server spoke for this chat: its `generating` owns the turn now. */
-  const retireSendPending = (chatId: string, source: string): void => {
+  /** The server spoke for this chat about this send: its `generating` owns
+   *  the turn now. `accepted` says whether the frame reflects the send. */
+  const retireSendPending = (chatId: string, source: string, accepted: (key: string) => boolean): void => {
     if (pendingAfterFrame(pendingSendRef.current, chatId) !== null) return;
+    const key = pendingKeyRef.current;
+    if (key !== null && !accepted(key)) return;
     setSendPending(null, source);
   };
 

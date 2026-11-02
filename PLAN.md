@@ -12,6 +12,17 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A first send opens its thread once the server holds it; the keyboard
+  never pans the shell (2026-11-02).** The scratch composer stays frozen
+  (text, spinner) through create, uploads and submit, and the route moves
+  only after the submit is accepted, onto a seeded thread already working.
+  A seeded target no longer counts as navigating (no progress bar, no
+  disabled composer). A pending send carries its message id and retires
+  only on a state that speaks for it (generating, its echo, or a resync
+  view), so a state from before the accept cannot flip the composer back to
+  idle. On iOS the viewport pin undoes the keyboard pan after taking the
+  visible height: the header stays and only the message list shrinks.
+
 - **A push waits for a read, not for an absent socket (2026-11-02).** The
   notifier no longer skips a push because some member socket is open. A
   finished turn records the chat's last event seq, waits four seconds

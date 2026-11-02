@@ -92,7 +92,7 @@ describe("thread view store", () => {
     store.seed("new");
     expect(store.getSnapshot().blocks.map((b) => b.text)).toEqual(["hello"]);
     open(store, "new", false);
-    expect(store.getSnapshot()).toMatchObject({ loading: true, displayedChatId: null });
+    expect(store.getSnapshot()).toMatchObject({ loading: false, navigating: false, displayedChatId: null });
     expect(store.getSnapshot().blocks.map((b) => b.text)).toEqual(["hello"]);
     deliver(store, state("new", 1, [{ ...say("new", 1, "hello"), id: "k1" }]));
     store.navigate({ type: "tree", chatId: "new" });

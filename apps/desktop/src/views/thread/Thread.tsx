@@ -813,13 +813,10 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       }),
     [displayEntries, finalAgent, lastAgent, busy, viewChatId, stopping, lastBlockIndex, blocks, openChildChat, openChat, originLink, firstTextIndex],
   );
-  // A first send's create round trip on the scratch surface: the composer
-  // freezes with its text until the route moves to the created thread.
-  const holdingFirstSend = (() => {
-    if (pendingSubmitId === null || chatId !== null) return false;
-    const c = outgoingRef.current.get(pendingSubmitId);
-    return !!c && c.chatId === null && c.originChatId === null;
-  })();
+  // A first send on the scratch surface, from the click until the server
+  // accepts it: the composer freezes with its text until the route moves to
+  // the created thread.
+  const holdingFirstSend = pendingSubmitId !== null && chatId === null;
 
   // A sidebar row shows its chat's status entry, never the row's own copy
   // of the flags (the copy only seeded the entry).
@@ -1964,11 +1961,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
                   // (create/prepare/send round trip, the chat not on the
                   // server yet) shows the pending spinner instead: there is
                   // no turn to stop and nothing to send again.
-                  const pendingCommand = pendingSubmitId !== null
-                    ? outgoingRef.current.get(pendingSubmitId)
-                    : undefined;
-                  const submitting = !!pendingCommand &&
-                    (pendingCommand.chatId ?? pendingCommand.originChatId) === (chatId ?? null);
+                  const submitting = holdingFirstSend;
                   const generating = openGenerating || (busy && !submitting);
                   const hasContent = !!prompt.trim() || pending.length > 0;
                   const mode = sendButtonState({

@@ -35,7 +35,7 @@ export interface MemberSocketDeps {
   setProjects: (projects: Project[]) => void;
   setArchivedProjects: (projects: Project[]) => void;
   store: ThreadViewStore;
-  retireSendPending: (chatId: string, source: string) => void;
+  retireSendPending: (chatId: string, source: string, accepted: (key: string) => boolean) => void;
   openChatIdRef: RefObject<string | null>;
   onThreadStateApplied: (cid: string) => void;
   setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
@@ -156,8 +156,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
     // The server spoke for this chat: the local pending send retires and
     // `generating` owns the turn from here (the route chat is the target even
-    // while the old thread is still displayed).
-    retireSendPending(cid, "thread_state");
+    // while the old thread is still displayed). A state that predates the
+    // send's accept leaves it alone: the server reserves `generating` before
+    // it echoes the message, so a state that is generating, carries the
+    // echo, or is a full resync view speaks for the send.
+    const resync = syncingChatsRef.current.has(cid);
+    retireSendPending(cid, "thread_state",
+      (key) => state.generating || resync || observedUserIdsRef.current.has(key));
     // The read mark follows the route chat, not the painted one: the first
     // state of an uncached open is what triggers the swap, and the paint ref
     // still names the old chat at this point.

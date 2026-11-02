@@ -143,8 +143,14 @@ describe("member socket → thread store (integration)", () => {
     // The composer sends: the optimistic block and the pending send.
     act(() => {
       result.current.thread.store.mutate((r) => r.optimisticSend({ chatId: CHAT, text: "go", key: "cmd-1", sentAt: 1 }));
-      result.current.thread.setSendPending(CHAT, "optimistic_send");
+      result.current.thread.setSendPending(CHAT, "optimistic_send", "cmd-1");
     });
+    expect(result.current.busy).toBe(true);
+
+    // A state that predates the server's accept (idle, no echo of the sent
+    // message) says nothing about this send: busy holds, no flicker.
+    act(() => first.deliver(threadState(2, [echo(1, "hi")], false)));
+    expect(result.current.thread.pendingSend).toBe(CHAT);
     expect(result.current.busy).toBe(true);
 
     // An unsequenced chat_status for the open chat neither retires the
@@ -160,7 +166,7 @@ describe("member socket → thread store (integration)", () => {
     expect(result.current.data.chatStatus["chat-2"]).toMatchObject({ generating: false, unread: true });
 
     // The turn's own state retires the pending send; generating holds busy.
-    act(() => first.deliver(threadState(2, [echo(1, "hi"), echo(2, "go", "cmd-1")], true)));
+    act(() => first.deliver(threadState(3, [echo(1, "hi"), echo(2, "go", "cmd-1")], true)));
     expect(result.current.thread.pendingSend).toBeNull();
     expect(result.current.busy).toBe(true);
     expect(result.current.thread.view.blocks.filter((b) => b.pending)).toEqual([]);
@@ -177,7 +183,7 @@ describe("member socket → thread store (integration)", () => {
     });
     expect(result.current.thread.view).toMatchObject({ loading: false, synced: true });
     act(() => {
-      second.deliver(threadState(3, [echo(1, "hi"), echo(2, "go", "cmd-1")], false));
+      second.deliver(threadState(4, [echo(1, "hi"), echo(2, "go", "cmd-1")], false));
       second.deliver({ type: "sync_done", chat_id: CHAT });
     });
     expect(result.current.busy).toBe(false);
