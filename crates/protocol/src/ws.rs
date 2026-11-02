@@ -5,14 +5,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Executor-owned context returned by the versioned context.prepare_v1 operation.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
-pub struct MachineContext {
-    pub instructions: Option<String>,
-    pub skills_index: String,
-    pub skill_expansions: String,
-}
-
 /// Client → server. `Sync` declares the currently open chat (None = none
 /// open); the server answers with the state-sync sequence. `ToolResult`
 /// delivers a machine-tool outcome (the WS replacement for the HTTP

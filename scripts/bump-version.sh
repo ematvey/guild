@@ -14,8 +14,7 @@ fi
 cd "$(dirname "$0")/.."
 
 FILES=(
-  Cargo.toml                            # [workspace.package] version — protocol, guild-core, app-server
-  apps/desktop/src-tauri/Cargo.toml     # the Tauri app (outside the workspace)
+  Cargo.toml                            # [workspace.package] version — every crate, the Tauri app included (version.workspace)
   apps/desktop/src-tauri/tauri.conf.json
   apps/desktop/package.json
   apps/server/package.json
@@ -34,15 +33,14 @@ done
 
 # Refresh the lockfiles so CI/bindings checks see the new member versions.
 # `cargo update -w` touches only workspace members in the lock, external
-# deps stay pinned. The src-tauri app has its own lock.
+# deps stay pinned. The Tauri app is a workspace member: one lock.
 if command -v cargo >/dev/null; then
   cargo update -w --quiet
-  (cd apps/desktop/src-tauri && cargo update -w --quiet)
-  echo "lockfiles refreshed"
+  echo "lockfile refreshed"
 else
-  echo "cargo not found — run 'cargo update -w' in / and apps/desktop/src-tauri before committing" >&2
+  echo "cargo not found — run 'cargo update -w' before committing" >&2
 fi
 
 echo
 echo "All product versions set to $V. Verify with:"
-echo "  git grep -n '$V' -- Cargo.toml 'apps/*/package.json' 'packages/*/package.json' 'apps/desktop/src-tauri/tauri.conf.json' 'apps/desktop/src-tauri/Cargo.toml'"
+echo "  git grep -n '$V' -- Cargo.toml 'apps/*/package.json' 'packages/*/package.json' 'apps/desktop/src-tauri/tauri.conf.json'"

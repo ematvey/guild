@@ -9,9 +9,53 @@
     "Request": { "$ref": "#/$defs/Request" },
     "RpcError": { "$ref": "#/$defs/RpcError" },
     "Response": { "$ref": "#/$defs/Response" },
-    "Event": { "$ref": "#/$defs/Event" }
+    "Event": { "$ref": "#/$defs/Event" },
+    "NoParams": { "$ref": "#/$defs/NoParams" },
+    "OkResult": { "$ref": "#/$defs/OkResult" },
+    "LoginParams": { "$ref": "#/$defs/LoginParams" },
+    "PairParams": { "$ref": "#/$defs/PairParams" },
+    "LoginResult": { "$ref": "#/$defs/LoginResult" },
+    "SessionResult": { "$ref": "#/$defs/SessionResult" },
+    "SessionClearParams": { "$ref": "#/$defs/SessionClearParams" },
+    "WorkspaceListResult": { "$ref": "#/$defs/WorkspaceListResult" },
+    "WorkspaceSwitchParams": { "$ref": "#/$defs/WorkspaceSwitchParams" },
+    "MachineIdentifyParams": { "$ref": "#/$defs/MachineIdentifyParams" },
+    "DaemonHelloResult": { "$ref": "#/$defs/DaemonHelloResult" },
+    "RegistryPublishParams": { "$ref": "#/$defs/RegistryPublishParams" },
+    "RegistryPublishResult": { "$ref": "#/$defs/RegistryPublishResult" },
+    "RegistryInstallParams": { "$ref": "#/$defs/RegistryInstallParams" },
+    "RegistryInstallResult": { "$ref": "#/$defs/RegistryInstallResult" },
+    "RegistryUninstallParams": { "$ref": "#/$defs/RegistryUninstallParams" },
+    "RegistryUninstallResult": { "$ref": "#/$defs/RegistryUninstallResult" },
+    "FsScopesResult": { "$ref": "#/$defs/FsScopesResult" },
+    "FsPathParams": { "$ref": "#/$defs/FsPathParams" },
+    "FsWriteTextParams": { "$ref": "#/$defs/FsWriteTextParams" },
+    "FsReadTextResult": { "$ref": "#/$defs/FsReadTextResult" },
+    "FsDirEntry": { "$ref": "#/$defs/FsDirEntry" },
+    "FsListDirResult": { "$ref": "#/$defs/FsListDirResult" },
+    "FsExistsResult": { "$ref": "#/$defs/FsExistsResult" }
   },
   "additionalProperties": false,
+  "methods": {
+    "$comment": "Every method the engine dispatches (crates/app-server/src/jsonrpc_loop.rs METHODS, tested equal), each with its params and result definitions. `webview: true` marks the methods the desktop webview may call (apps/desktop/src-tauri/src/lib.rs WEBVIEW_RPC_METHODS, tested equal); the rest are CLI-socket only. protocol/check.mjs resolves every reference.",
+    "login": { "webview": true, "params": { "$ref": "#/$defs/LoginParams" }, "result": { "$ref": "#/$defs/LoginResult" } },
+    "pair": { "webview": true, "params": { "$ref": "#/$defs/PairParams" }, "result": { "$ref": "#/$defs/LoginResult" } },
+    "session.info": { "webview": true, "params": { "$ref": "#/$defs/NoParams" }, "result": { "$ref": "#/$defs/SessionResult" } },
+    "session.clear": { "webview": true, "params": { "$ref": "#/$defs/SessionClearParams" }, "result": { "$ref": "#/$defs/OkResult" } },
+    "workspace.list": { "webview": true, "params": { "$ref": "#/$defs/NoParams" }, "result": { "$ref": "#/$defs/WorkspaceListResult" } },
+    "workspace.switch": { "webview": true, "params": { "$ref": "#/$defs/WorkspaceSwitchParams" }, "result": { "$ref": "#/$defs/SessionResult" } },
+    "machine.identify": { "webview": true, "params": { "$ref": "#/$defs/MachineIdentifyParams" }, "result": { "$ref": "#/$defs/OkResult" } },
+    "daemon.hello": { "webview": false, "params": { "$ref": "#/$defs/NoParams" }, "result": { "$ref": "#/$defs/DaemonHelloResult" } },
+    "daemon.shutdown": { "webview": false, "params": { "$ref": "#/$defs/NoParams" }, "result": { "$ref": "#/$defs/OkResult" } },
+    "registry.publish": { "webview": true, "params": { "$ref": "#/$defs/RegistryPublishParams" }, "result": { "$ref": "#/$defs/RegistryPublishResult" } },
+    "registry.install": { "webview": false, "params": { "$ref": "#/$defs/RegistryInstallParams" }, "result": { "$ref": "#/$defs/RegistryInstallResult" } },
+    "registry.uninstall": { "webview": true, "params": { "$ref": "#/$defs/RegistryUninstallParams" }, "result": { "$ref": "#/$defs/RegistryUninstallResult" } },
+    "fs.scopes": { "webview": true, "params": { "$ref": "#/$defs/NoParams" }, "result": { "$ref": "#/$defs/FsScopesResult" } },
+    "fs.read_text": { "webview": true, "params": { "$ref": "#/$defs/FsPathParams" }, "result": { "$ref": "#/$defs/FsReadTextResult" } },
+    "fs.list_dir": { "webview": true, "params": { "$ref": "#/$defs/FsPathParams" }, "result": { "$ref": "#/$defs/FsListDirResult" } },
+    "fs.exists": { "webview": true, "params": { "$ref": "#/$defs/FsPathParams" }, "result": { "$ref": "#/$defs/FsExistsResult" } },
+    "fs.write_text": { "webview": true, "params": { "$ref": "#/$defs/FsWriteTextParams" }, "result": { "$ref": "#/$defs/OkResult" } }
+  },
   "$defs": {
     "Json": {
       "description": "Any JSON value. serde_json::Value in Rust, Json in TypeScript."
@@ -77,7 +121,7 @@
     },
 
     "Event": {
-      "description": "An unsolicited server push: streaming deltas and status.",
+      "description": "An unsolicited engine line. The engine sends one kind: `rpc.error`, for a request line it could not parse that carried no id.",
       "type": "object",
       "required": ["protocol", "event", "payload"],
       "additionalProperties": false,
@@ -89,6 +133,174 @@
           "description": "Always serialized; `#[serde(default)]`."
         }
       }
+    },
+
+    "NoParams": {
+      "description": "A method that takes no params: `{}`; unknown keys are ignored.",
+      "type": "object"
+    },
+    "OkResult": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "const": true } }
+    },
+    "LoginParams": {
+      "type": "object",
+      "required": ["base_url", "email", "password"],
+      "properties": {
+        "base_url": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "machine_id": { "type": "string", "description": "The webview's per-install machine id; omitted, the stored one or a fresh one applies." }
+      }
+    },
+    "PairParams": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "description": "`g1|<server_url>|<secret>`; the code carries the server." },
+        "machine_id": { "type": "string" }
+      }
+    },
+    "LoginResult": {
+      "type": "object",
+      "required": ["ok", "user"],
+      "properties": {
+        "ok": { "const": true },
+        "user": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/UserInfo" }
+      }
+    },
+    "SessionResult": {
+      "description": "The active session (`session.info`, `workspace.switch`).",
+      "type": "object",
+      "required": ["base_url", "token", "email"],
+      "properties": {
+        "base_url": { "type": "string" },
+        "token": { "type": "string" },
+        "email": { "type": ["string", "null"] }
+      }
+    },
+    "SessionClearParams": {
+      "type": "object",
+      "properties": {
+        "base_url": { "type": "string", "description": "The workspace to sign out of; omitted, the active one." }
+      }
+    },
+    "WorkspaceListResult": {
+      "type": "object",
+      "required": ["active", "workspaces"],
+      "properties": {
+        "active": { "type": ["string", "null"] },
+        "workspaces": { "type": "array", "items": { "$ref": "#/$defs/Json" } }
+      }
+    },
+    "WorkspaceSwitchParams": {
+      "type": "object",
+      "required": ["base_url"],
+      "properties": { "base_url": { "type": "string" } }
+    },
+    "MachineIdentifyParams": {
+      "type": "object",
+      "required": ["machine_id"],
+      "properties": { "machine_id": { "type": "string" } }
+    },
+    "DaemonHelloResult": {
+      "type": "object",
+      "required": ["version", "protocol", "build", "pid"],
+      "properties": {
+        "version": { "type": "string" },
+        "protocol": { "type": "integer", "minimum": 0 },
+        "build": { "type": "string" },
+        "pid": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "RegistryPublishParams": {
+      "type": "object",
+      "required": ["kind", "dir", "version"],
+      "properties": {
+        "kind": { "type": "string" },
+        "dir": { "type": "string", "description": "Absolute path of the skill dir." },
+        "version": { "type": "string" }
+      }
+    },
+    "RegistryPublishResult": {
+      "type": "object",
+      "required": ["slug", "version"],
+      "properties": { "slug": { "type": "string" }, "version": { "type": "string" } }
+    },
+    "RegistryInstallParams": {
+      "type": "object",
+      "required": ["slug"],
+      "properties": {
+        "slug": { "type": "string" },
+        "version": { "type": ["string", "null"], "description": "Omitted or null: the latest approved version." },
+        "project_dir": { "type": "string", "description": "Required unless `global`; per call, never remembered." },
+        "global": { "type": "boolean", "description": "Install into the home skill scope." }
+      }
+    },
+    "RegistryInstallResult": {
+      "type": "object",
+      "required": ["name", "path"],
+      "properties": { "name": { "type": "string" }, "path": { "type": "string" } }
+    },
+    "RegistryUninstallParams": {
+      "type": "object",
+      "required": ["slug"],
+      "properties": {
+        "slug": { "type": "string" },
+        "project_dir": { "type": ["string", "null"], "description": "Required unless `global`; per call, never remembered." },
+        "global": { "type": "boolean" }
+      }
+    },
+    "RegistryUninstallResult": {
+      "type": "object",
+      "required": ["uninstalled"],
+      "properties": { "uninstalled": { "type": "string" } }
+    },
+    "FsScopesResult": {
+      "type": "object",
+      "required": ["config_dir", "home"],
+      "properties": { "config_dir": { "type": "string" }, "home": { "type": "string" } }
+    },
+    "FsPathParams": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "description": "Absolute, or relative to `project_dir`." },
+        "project_dir": { "type": "string", "description": "The bound project; its tree joins the allowed roots for this call." }
+      }
+    },
+    "FsWriteTextParams": {
+      "type": "object",
+      "required": ["path", "body"],
+      "properties": {
+        "path": { "type": "string" },
+        "body": { "type": "string" },
+        "project_dir": { "type": "string" }
+      }
+    },
+    "FsReadTextResult": {
+      "type": "object",
+      "required": ["content"],
+      "properties": { "content": { "type": "string" } }
+    },
+    "FsDirEntry": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["dir", "file", "other"], "description": "A symlink is classified by its target; a dangling one is `other`." }
+      }
+    },
+    "FsListDirResult": {
+      "type": "object",
+      "required": ["entries"],
+      "properties": { "entries": { "type": "array", "items": { "$ref": "#/$defs/FsDirEntry" } } }
+    },
+    "FsExistsResult": {
+      "type": "object",
+      "required": ["exists"],
+      "properties": { "exists": { "type": "boolean" } }
     }
   }
 }

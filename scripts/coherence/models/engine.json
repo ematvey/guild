@@ -87,7 +87,7 @@
         "ToolFailure",
         "ReadFile",
         "WriteFile",
-        "EditFile",
+        "RawFsError",
         "RunCommand"
       ],
       "aliases": [
@@ -261,11 +261,7 @@
       "reason": "infrastructure"
     },
     {
-      "where": "crates/app-server/src/chat_stream.rs",
-      "reason": "infrastructure"
-    },
-    {
-      "where": "crates/app-server/src/dtrace.rs",
+      "where": "crates/app-server/src/trace.rs",
       "reason": "infrastructure"
     },
     {
@@ -309,7 +305,7 @@
       "reason": "infrastructure"
     },
     {
-      "where": "crates/app-server/src/sync.rs",
+      "where": "crates/guild-core/src/sync.rs",
       "reason": "infrastructure"
     }
   ],

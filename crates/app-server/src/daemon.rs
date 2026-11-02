@@ -281,18 +281,15 @@ pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<
         return Ok(()); // another daemon owns the endpoint (and the link)
     }
     spawn_machine_link(&shared);
-    // Every entry point owns a reaper for its host lifetime: without it,
-    // completed chat streams accumulate in Shared.streams until shutdown.
-    // host_shared_socket itself stays reaper-free — the reclaiming entry
-    // manages a fresh reaper per host cycle instead.
-    let reaper = spawn_reaper(&shared);
-    let result = host_shared_socket(path, shared).await;
-    reaper.abort();
-    result
+    host_shared_socket(path, shared).await
 }
 
 /// Poll cadence for the reclaim/park loops below.
 const RECLAIM_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Pause after a failed accept, so a persistent condition (fd exhaustion)
+/// does not spin the loop.
+const ACCEPT_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// How long a retired socket host holds off before attempting a reclaim:
 /// `daemon install` runs retire → poll-free → `enable --now` within about
@@ -317,26 +314,18 @@ const RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 /// this process (the webview keeps dispatching), so each new host cycle
 /// relatches it to false before hosting again.
 pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
-    // One live link + watcher + reaper set at a time, tied to HOSTING, not
-    // to cycle attempts: it is spawned when this process starts hosting and
-    // torn down when it parks or retires. A failed host cycle (a bind race,
-    // an accept error) neither respawns nor tears the link down — the link
-    // is independent of the CLI socket, and a persistently failing bind
-    // must not kill the link once per retry.
-    let mut link_cycle: Option<(
-        tokio::task::JoinHandle<()>,
-        tokio::task::JoinHandle<()>,
-        tokio::task::JoinHandle<()>,
-    )> = None;
-    let teardown = |link_cycle: &mut Option<(
-        tokio::task::JoinHandle<()>,
-        tokio::task::JoinHandle<()>,
-        tokio::task::JoinHandle<()>,
-    )>| {
-        if let Some((link, watcher, reaper)) = link_cycle.take() {
+    // One live link + watcher pair at a time, tied to HOSTING, not to cycle
+    // attempts: it is spawned when this process starts hosting and torn
+    // down when it parks or retires. A failed host cycle (a bind race, an
+    // accept error) neither respawns nor tears the link down — the link is
+    // independent of the CLI socket, and a persistently failing bind must
+    // not kill the link once per retry.
+    type LinkCycle = (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>);
+    let mut link_cycle: Option<LinkCycle> = None;
+    let teardown = |link_cycle: &mut Option<LinkCycle>| {
+        if let Some((link, watcher)) = link_cycle.take() {
             link.abort();
             watcher.abort();
-            reaper.abort();
         }
     };
     loop {
@@ -360,10 +349,7 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
             shared.shutdown.send_replace(false);
         }
         if link_cycle.is_none() {
-            link_cycle = {
-                let (link, watcher) = spawn_machine_link(&shared);
-                Some((link, watcher, spawn_reaper(&shared)))
-            };
+            link_cycle = Some(spawn_machine_link(&shared));
         }
         match host_shared_socket(path.clone(), shared.clone()).await {
             Ok(()) => {
@@ -372,9 +358,8 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
                 teardown(&mut link_cycle);
             }
             Err(e) => {
-                // The bind failed: keep the link and the reaper alive and
-                // retry the host.
-                crate::dtrace::dtrace(&format!("daemon host cycle failed: {e}"));
+                // The bind failed: keep the link alive and retry the host.
+                crate::trace!("daemon host cycle failed: {e}");
                 eprintln!("guild: daemon host cycle failed: {e}");
                 tokio::time::sleep(RECLAIM_POLL).await;
             }
@@ -421,29 +406,6 @@ fn spawn_machine_link(
     )
 }
 
-/// Reaps finished chat streams so the JoinSet doesn't grow unbounded. One
-/// reaper per host cycle: the caller aborts it with the link/watcher pair
-/// before the next cycle's spawn — a failed host cycle must not leave a
-/// reaper behind.
-fn spawn_reaper(shared: &Shared) -> tokio::task::JoinHandle<()> {
-    let streams = shared.streams.clone();
-    let mut reaper_shutdown = shared.shutdown.subscribe();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
-                _ = reaper_shutdown.changed() => {
-                    if *reaper_shutdown.borrow_and_update() {
-                        return;
-                    }
-                }
-            }
-            let mut guard = streams.lock().await;
-            while guard.try_join_next().is_some() {}
-        }
-    })
-}
-
 async fn host_shared_socket(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
     let shutdown_rx = shared.shutdown.subscribe();
 
@@ -476,7 +438,16 @@ async fn unix_accept_loop(
                 }
             }
             accepted = listener.accept() => {
-                let (stream, _) = accepted.context("daemon accept")?;
+                // Accept errors are per-connection or transient (EMFILE,
+                // ECONNABORTED): log, back off briefly, keep serving.
+                let stream = match accepted {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        crate::trace!("accept: failed: {e}");
+                        tokio::time::sleep(ACCEPT_BACKOFF).await;
+                        continue;
+                    }
+                };
                 let shared = shared.clone();
                 tokio::task::spawn_blocking(move || {
                     let rt = tokio::runtime::Handle::current();
@@ -509,31 +480,38 @@ async fn windows_accept_loop(
     let pipe_name = path.to_string_lossy().into_owned();
     let mut server = create_pipe_server_instance(&pipe_name, true)?;
     loop {
-        crate::dtrace::dtrace("accept: waiting for client (listening instance ready)");
+        crate::trace!("accept: waiting for client (listening instance ready)");
         tokio::select! {
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow_and_update() {
-                    crate::dtrace::dtrace("accept: shutdown signal, exiting");
+                    crate::trace!("accept: shutdown signal, exiting");
                     return Ok(());
                 }
             }
             connected = server.connect() => {
-                connected.context("daemon pipe connect")?;
-                crate::dtrace::dtrace("accept: client connected to instance");
+                if let Err(e) = connected {
+                    // A client that vanished mid-connect breaks only this
+                    // instance: replace it and keep listening.
+                    crate::trace!("accept: pipe connect failed: {e}");
+                    tokio::time::sleep(ACCEPT_BACKOFF).await;
+                    server = create_pipe_server_instance(&pipe_name, false)?;
+                    continue;
+                }
+                crate::trace!("accept: client connected to instance");
                 let client = server;
                 match create_pipe_server_instance(&pipe_name, false) {
                     Ok(s) => {
-                        crate::dtrace::dtrace("accept: next listening instance created");
+                        crate::trace!("accept: next listening instance created");
                         server = s;
                     }
                     Err(e) => {
-                        crate::dtrace::dtrace(&format!("accept: FAILED to create next instance: {e} (serving current client with no new listener)"));
+                        crate::trace!("accept: FAILED to create next instance: {e} (serving current client with no new listener)");
                         return Err(e.into());
                     }
                 }
                 let shared = shared.clone();
                 tokio::task::spawn_blocking(move || {
-                    crate::dtrace::dtrace("conn: run_connection starting (spawn_blocking)");
+                    crate::trace!("conn: run_connection starting (spawn_blocking)");
                     let rt = tokio::runtime::Handle::current();
                     let (rd, wr) = tokio::io::split(client);
                     // SyncIoBridge bridges the async halves to the std
@@ -541,7 +519,7 @@ async fn windows_accept_loop(
                     let rd = tokio_util::io::SyncIoBridge::new(rd);
                     let wr = tokio_util::io::SyncIoBridge::new(wr);
                     let _ = rt.block_on(run_connection(&shared, rd, wr));
-                    crate::dtrace::dtrace("conn: run_connection returned");
+                    crate::trace!("conn: run_connection returned");
                 });
             }
         }
@@ -680,18 +658,6 @@ fn current_user_sid() -> anyhow::Result<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::user_pipe_suffix;
-
-    #[test]
-    fn pipe_suffix_is_stable_hex() {
-        let s = user_pipe_suffix("alice");
-        assert_eq!(s.len(), 16);
-        assert_eq!(s, user_pipe_suffix("alice"));
-    }
-}
-
 /// Line reader that may run concurrently with a writer on the same pipe.
 /// See [`Pair`] for why the Windows path peeks instead of blocking.
 pub struct LineReader {
@@ -793,66 +759,13 @@ pub fn client_pipe_path() -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
-mod entry_reaper_tests {
-    use super::*;
-    use crate::jsonrpc_loop::Shared;
+mod tests {
+    use super::user_pipe_suffix;
 
-    /// Shared shape for a daemon entry: every completed chat stream the
-    /// reaper must drain lands in `streams`.
-    type Entry = fn(
-        PathBuf,
-        Shared,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
-    >;
-
-    async fn drive_entry_reaping(entry: Entry) {
-        let path = std::env::temp_dir().join(format!(
-            "guild-reap-{}-{}",
-            std::process::id(),
-            uuid::Uuid::now_v7().simple()
-        ));
-        let shared = Shared::new(Default::default());
-        let daemon = tokio::spawn(entry(path.clone(), shared.clone()));
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-        // Three stream tasks that finish immediately: without a reaper they
-        // stay in the JoinSet forever.
-        {
-            let mut streams = shared.streams.lock().await;
-            for _ in 0..3 {
-                streams.spawn(async {});
-            }
-        }
-        // One reaper cadence (10 s) plus margin.
-        tokio::time::sleep(std::time::Duration::from_secs(12)).await;
-        {
-            let mut streams = shared.streams.lock().await;
-            assert!(
-                streams.try_join_next().is_none(),
-                "the daemon entry's reaper drained the completed stream tasks"
-            );
-        }
-        shared.shutdown.send(true).ok();
-        daemon.abort();
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn the_ordinary_daemon_entry_reaps_completed_stream_tasks() {
-        drive_entry_reaping(|p, s| Box::pin(async move { run_daemon_shared(p, s).await })).await;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn the_reclaiming_daemon_entry_reaps_completed_stream_tasks() {
-        // This dev box runs a live guild-daemon unit; the reclaiming entry
-        // would wait for it to retire forever. The override pins the probe.
-        crate::daemon_install::set_unit_active_override(Some(false));
-        drive_entry_reaping(|p, s| {
-            Box::pin(async move { run_daemon_shared_reclaiming(p, s).await })
-        })
-        .await;
-        crate::daemon_install::set_unit_active_override(None);
+    #[test]
+    fn pipe_suffix_is_stable_hex() {
+        let s = user_pipe_suffix("alice");
+        assert_eq!(s.len(), 16);
+        assert_eq!(s, user_pipe_suffix("alice"));
     }
 }

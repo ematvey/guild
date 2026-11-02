@@ -1,4 +1,5 @@
-//! File tools: read, write, edit — all scoped to the project dir.
+//! File tools (read, write) scoped to the project dir, and the raw file
+//! ops behind the server's machine file adapter.
 
 use super::workspace::{self, WorkspaceKind};
 use super::{resolve_scoped, resolve_scoped_in, truncate, Tool, ToolFailure, ToolOutcome};
@@ -69,6 +70,7 @@ const WSL_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// File bytes: WSL transport for distro paths, direct fs for everything
 /// else (native paths, and extra read roots on the host such as skill dirs).
+#[cfg(test)]
 async fn read_bytes(path: &Path) -> Result<Vec<u8>, ToolFailure> {
     read_bytes_capped(path, usize::MAX).await
 }
@@ -429,6 +431,149 @@ impl Tool for ReadFile {
     }
 }
 
+/// Cap on one raw file read (`fs.read_raw_v1`): a larger file fails with
+/// `too_large` instead of arriving truncated.
+pub const MAX_RAW_READ_BYTES: usize = 8 * 1024 * 1024;
+
+/// A failed raw file op: a FileError-style code plus a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawFsError {
+    /// `not_found`, `permission_denied`, `is_directory`, `invalid`,
+    /// `too_large` or `unknown`.
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl RawFsError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn io(path: &Path, e: &std::io::Error) -> Self {
+        let code = match e.kind() {
+            std::io::ErrorKind::NotFound => "not_found",
+            std::io::ErrorKind::PermissionDenied => "permission_denied",
+            std::io::ErrorKind::IsADirectory => "is_directory",
+            _ => "unknown",
+        };
+        Self::new(code, format!("{}: {e}", path.display()))
+    }
+
+    /// The wire form: `{"code", "message"}`.
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({ "code": self.code, "message": self.message })
+    }
+}
+
+fn scoped_raw(
+    workdir: &Path,
+    extra_roots: &[std::path::PathBuf],
+    path: &str,
+) -> Result<std::path::PathBuf, RawFsError> {
+    resolve_scoped_in(workdir, extra_roots, path).map_err(|e| match e {
+        ToolFailure::InvalidInput(m) if m.starts_with("path not found") => {
+            RawFsError::new("not_found", m)
+        }
+        other => RawFsError::new("invalid", other.to_string()),
+    })
+}
+
+fn mtime_ms(meta: &std::fs::Metadata) -> Option<f64> {
+    let t = meta.modified().ok()?;
+    let d = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(d.as_secs_f64() * 1000.0)
+}
+
+fn kind_name(meta: &std::fs::Metadata) -> &'static str {
+    if meta.is_file() {
+        "file"
+    } else if meta.is_dir() {
+        "directory"
+    } else {
+        "other"
+    }
+}
+
+/// `fs.stat_v1`: metadata of one scoped path, following symlinks.
+/// `{"exists": false}` for a missing path, else `{"exists": true, "kind",
+/// "size", "mtime_ms"}` with kind `file`, `directory` or `other`.
+pub async fn stat_raw(
+    workdir: &Path,
+    extra_roots: &[std::path::PathBuf],
+    path: &str,
+) -> Result<Value, RawFsError> {
+    let resolved = match scoped_raw(workdir, extra_roots, path) {
+        Ok(p) => p,
+        Err(e) if e.code == "not_found" => return Ok(serde_json::json!({ "exists": false })),
+        Err(e) => return Err(e),
+    };
+    match tokio::fs::metadata(&resolved).await {
+        Ok(meta) => Ok(serde_json::json!({
+            "exists": true,
+            "kind": kind_name(&meta),
+            "size": meta.len(),
+            "mtime_ms": mtime_ms(&meta),
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(serde_json::json!({ "exists": false }))
+        }
+        Err(e) => Err(RawFsError::io(&resolved, &e)),
+    }
+}
+
+/// `fs.read_raw_v1`: the exact bytes of one scoped regular file, base64
+/// encoded, as `{"size", "mtime_ms", "data_b64"}`. A file over `max_bytes`
+/// fails with `too_large`; nothing is truncated or re-encoded.
+pub async fn read_raw(
+    workdir: &Path,
+    extra_roots: &[std::path::PathBuf],
+    path: &str,
+    max_bytes: usize,
+) -> Result<Value, RawFsError> {
+    let resolved = scoped_raw(workdir, extra_roots, path)?;
+    let meta = tokio::fs::metadata(&resolved)
+        .await
+        .map_err(|e| RawFsError::io(&resolved, &e))?;
+    if meta.is_dir() {
+        return Err(RawFsError::new(
+            "is_directory",
+            format!("{}: is a directory", resolved.display()),
+        ));
+    }
+    if !meta.is_file() {
+        return Err(RawFsError::new(
+            "invalid",
+            format!("{}: not a regular file", resolved.display()),
+        ));
+    }
+    let too_large = |size: u64| {
+        RawFsError::new(
+            "too_large",
+            format!(
+                "{}: {size} bytes exceeds the {max_bytes}-byte machine file transfer limit",
+                resolved.display()
+            ),
+        )
+    };
+    if meta.len() > max_bytes as u64 {
+        return Err(too_large(meta.len()));
+    }
+    let bytes = read_bytes_capped(&resolved, max_bytes.saturating_add(1))
+        .await
+        .map_err(|e| RawFsError::new("unknown", e.to_string()))?;
+    if bytes.len() > max_bytes {
+        return Err(too_large(bytes.len() as u64));
+    }
+    Ok(serde_json::json!({
+        "size": bytes.len(),
+        "mtime_ms": mtime_ms(&meta),
+        "data_b64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    }))
+}
+
 pub struct WriteFile;
 
 #[async_trait]
@@ -457,64 +602,6 @@ impl Tool for WriteFile {
                 "path": path.display().to_string(),
             })),
         })
-    }
-}
-
-pub struct EditFile;
-
-#[async_trait]
-impl Tool for EditFile {
-    fn spec(&self) -> ToolSpec {
-        protocol::api::client_tool_spec("edit_file").expect("built-in edit_file spec")
-    }
-
-    async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
-        let path = resolve_scoped(
-            workdir,
-            args["path"]
-                .as_str()
-                .ok_or_else(|| ToolFailure::InvalidInput("missing path".into()))?,
-        )?;
-        let old = args["oldText"]
-            .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing oldText".into()))?;
-        let new = args["newText"]
-            .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing newText".into()))?;
-        let bytes = read_bytes(&path).await?;
-        let content = String::from_utf8(bytes).map_err(|_| {
-            ToolFailure::Execution(format!(
-                "read {}: file is not valid UTF-8 — edit_file is text only",
-                path.display()
-            ))
-        })?;
-        let count = content.matches(old).count();
-        match count {
-            0 => Err(ToolFailure::InvalidInput(format!(
-                "old text not found in {}; provide the exact current text",
-                path.display()
-            ))),
-            n if n > 1 => Err(ToolFailure::InvalidInput(format!(
-                "old text appears {n} times in {}; include more surrounding context so it is unique",
-                path.display()
-            ))),
-            _ => {
-                // Read-modify-write, not atomic: a change landing between the
-                // read and the write is silently overwritten (last write
-                // wins). Accepted for this tool shape; a size/mtime guard
-                // would be the follow-up if it ever matters.
-                let updated = content.replacen(old, new, 1);
-                write_bytes(&path, updated.as_bytes()).await?;
-                Ok(ToolOutcome {
-            images: Vec::new(),
-                    output_for_model: format!("edited {}", path.display()),
-                    meta: Some(serde_json::json!({
-                        "card": "diff",
-                        "path": path.display().to_string(),
-                    })),
-                })
-            }
-        }
     }
 }
 
@@ -648,5 +735,84 @@ mod tests {
         assert!(resolve_scoped(base, "../outside.txt").is_err());
         assert!(resolve_scoped(base, "/etc/passwd").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn decode(v: &Value) -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(v["data_b64"].as_str().unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn read_raw_returns_exact_bytes_past_the_model_read_limits() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("guild-read-raw-{}", std::process::id()));
+            tokio::fs::create_dir_all(&dir).await.unwrap();
+            // >2000 CRLF lines, >64 KB, no trailing newline.
+            let mut text = (0..5000)
+                .map(|i| format!("line {i} with some padding text"))
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            text.push_str("\r\nlast");
+            assert!(text.len() > 64 * 1024);
+            tokio::fs::write(dir.join("big.txt"), &text).await.unwrap();
+            let out = read_raw(&dir, &[], "big.txt", MAX_RAW_READ_BYTES)
+                .await
+                .unwrap();
+            assert_eq!(decode(&out), text.as_bytes());
+            assert_eq!(out["size"], text.len());
+            assert!(out["mtime_ms"].as_f64().unwrap() > 0.0);
+
+            // Binary content round-trips as bytes, not a placeholder.
+            let bin = [0xFFu8, 0xFE, 0x00, 0x01, b'\n'];
+            tokio::fs::write(dir.join("b.bin"), bin).await.unwrap();
+            let out = read_raw(&dir, &[], "b.bin", MAX_RAW_READ_BYTES)
+                .await
+                .unwrap();
+            assert_eq!(decode(&out), bin);
+
+            // Over the cap: an error, never a truncated payload.
+            let err = read_raw(&dir, &[], "big.txt", 1024).await.unwrap_err();
+            assert_eq!(err.code, "too_large");
+            let err = read_raw(&dir, &[], "missing.txt", MAX_RAW_READ_BYTES)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, "not_found");
+            let err = read_raw(&dir, &[], ".", MAX_RAW_READ_BYTES)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, "is_directory");
+            let err = read_raw(&dir, &[], "../../etc/passwd", MAX_RAW_READ_BYTES)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, "invalid");
+            tokio::fs::remove_dir_all(&dir).await.ok();
+        });
+    }
+
+    #[test]
+    fn stat_raw_reports_kind_size_and_absence() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("guild-stat-raw-{}", std::process::id()));
+            tokio::fs::create_dir_all(dir.join("sub")).await.unwrap();
+            tokio::fs::write(dir.join("f.txt"), b"abc\r\n")
+                .await
+                .unwrap();
+            let f = stat_raw(&dir, &[], "f.txt").await.unwrap();
+            assert_eq!(f["exists"], true);
+            assert_eq!(f["kind"], "file");
+            assert_eq!(f["size"], 5);
+            let d = stat_raw(&dir, &[], "sub").await.unwrap();
+            assert_eq!(d["kind"], "directory");
+            let missing = stat_raw(&dir, &[], "nope/deeper.txt").await.unwrap();
+            assert_eq!(missing, serde_json::json!({"exists": false}));
+            assert_eq!(
+                stat_raw(&dir, &[], "../outside").await.unwrap_err().code,
+                "invalid"
+            );
+            tokio::fs::remove_dir_all(&dir).await.ok();
+        });
     }
 }

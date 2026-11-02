@@ -126,12 +126,12 @@ mod tests {
 
     #[test]
     fn request_serializes_with_protocol_field() {
-        let r = Request::new(1, "chat.send", serde_json::json!({"text": "hi"}));
+        let r = Request::new(1, "session.info", serde_json::json!({}));
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["protocol"], 1);
         assert_eq!(v["jsonrpc"], "2.0");
-        assert_eq!(v["method"], "chat.send");
-        assert_eq!(v["params"]["text"], "hi");
+        assert_eq!(v["method"], "session.info");
+        assert_eq!(v["params"], serde_json::json!({}));
         assert!(r.is_valid());
     }
 

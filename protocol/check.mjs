@@ -108,6 +108,34 @@ async function main() {
     ajv.addSchema(schema);
   }
 
+  // A method table (rpc.schema.json `methods`): every entry names its
+  // webview exposure and a params and result definition that compiles.
+  const methodProblems = [];
+  let methods = 0;
+  for (const [schemaName, schema] of schemas) {
+    for (const [method, entry] of Object.entries(schema.methods ?? {})) {
+      if (method === '$comment') continue;
+      methods += 1;
+      if (typeof entry.webview !== 'boolean') methodProblems.push(`${schemaName}.methods.${method}: webview is not a boolean`);
+      for (const part of ['params', 'result']) {
+        const ref = entry[part]?.$ref;
+        if (typeof ref !== 'string' || !ref.startsWith('#/$defs/')) {
+          methodProblems.push(`${schemaName}.methods.${method}.${part}: not a #/$defs reference`);
+          continue;
+        }
+        try {
+          ajv.compile({ $ref: `${schema.$id}${ref}` });
+        } catch (err) {
+          methodProblems.push(`${schemaName}.methods.${method}.${part}: ${err.message}`);
+        }
+      }
+    }
+  }
+  if (methodProblems.length > 0) {
+    for (const item of methodProblems) console.error(item);
+    fail(`${methodProblems.length} method table problem(s)`);
+  }
+
   let frames = 0;
   const seen = new Map(); // `${schema}.${root}` -> Set of type values
   const roots = new Map(); // schema name -> Set of fixture roots
@@ -261,7 +289,7 @@ async function main() {
   console.log(
     `protocol: ${schemas.size} schema(s), ${fixtureNames.length} fixture file(s), ` +
       `${seen.size} frame root(s), ${frames} frame(s), coverage complete, ` +
-      `${typedProperties} property type(s) match TypeScript`,
+      `${typedProperties} property type(s) match TypeScript, ${methods} rpc method(s) resolve`,
   );
 }
 

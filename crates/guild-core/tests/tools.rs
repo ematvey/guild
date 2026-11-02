@@ -53,40 +53,25 @@ async fn write_file_overwrites_and_creates() {
 }
 
 #[tokio::test]
-async fn edit_file_uniqueness_rules() {
-    let dir = scratch("edit");
-    std::fs::write(dir.join("a.txt"), "alpha\nbeta\nalpha\n").unwrap();
-    // not found
-    let err = EditFile
-        .run(
-            &dir,
-            json!({"path": "a.txt", "oldText": "zzz", "newText": "q"}),
-        )
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("not found"));
-    // ambiguous
-    let err = EditFile
-        .run(
-            &dir,
-            json!({"path": "a.txt", "oldText": "alpha", "newText": "q"}),
-        )
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("2 times"));
-    // success
-    let out = EditFile
-        .run(
-            &dir,
-            json!({"path": "a.txt", "oldText": "beta", "newText": "gamma"}),
-        )
+async fn write_file_then_read_raw_round_trips_bytes_exactly() {
+    let dir = scratch("roundtrip");
+    let content = "a\r\nb\r\n\r\nno trailing newline";
+    WriteFile
+        .run(&dir, json!({"path": "crlf.txt", "content": content}))
         .await
         .unwrap();
-    assert_eq!(out.meta.unwrap()["card"], "diff");
     assert_eq!(
-        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
-        "alpha\ngamma\nalpha\n"
+        std::fs::read(dir.join("crlf.txt")).unwrap(),
+        content.as_bytes()
     );
+    let raw = read_raw(&dir, &[], "crlf.txt", MAX_RAW_READ_BYTES)
+        .await
+        .unwrap();
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw["data_b64"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(bytes, content.as_bytes());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -139,9 +124,10 @@ async fn registry_validates_schema_before_running() {
 #[tokio::test]
 async fn builtin_specs_are_complete() {
     let reg = ToolRegistry::builtins();
-    for name in ["read_file", "write_file", "edit_file", "execute"] {
+    for name in ["read_file", "write_file", "execute"] {
         assert!(reg.get(name).is_some(), "{name}");
     }
+    assert!(reg.get("edit_file").is_none());
     let specs: Vec<ToolSpec> = reg.specs();
     assert_eq!(specs.len(), reg.names().len());
     assert!(specs.iter().all(|s| !s.description.is_empty()));
@@ -153,10 +139,6 @@ async fn escape_rejection_consistent_across_fs_tools() {
     for (tool, args) in [
         ("read_file", json!({"path": "../../etc/passwd"})),
         ("write_file", json!({"path": "../../etc/x", "content": "x"})),
-        (
-            "edit_file",
-            json!({"path": "../x", "oldText": "a", "newText": "b"}),
-        ),
     ] {
         let err = ToolRegistry::builtins()
             .run(tool, &dir, args, None)

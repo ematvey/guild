@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use protocol::ws::{MachineContext, WsClientMsg, WsServerMsg};
+use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -257,16 +257,6 @@ fn rest_fixtures_match_the_schema() {
     for root in roots {
         check_rest_root(&root);
     }
-}
-
-#[test]
-fn machine_context_matches_the_schema_fixtures() {
-    let frames = fixture("socket.MachineContext.json");
-    let parsed: Vec<MachineContext> = round_trip("socket.MachineContext.json", frames);
-    assert!(
-        !parsed.is_empty(),
-        "the machine-context fixture must not be empty"
-    );
 }
 
 // The JSON-RPC envelope fixtures, one file per root: rpc.<Root>.json.

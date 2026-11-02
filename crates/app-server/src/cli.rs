@@ -1,10 +1,13 @@
-//! Headless CLI verbs. All cloud-touching verbs go through the engine's
-//! local socket (hosted by the running desktop app or a headless `daemon`),
-//! so the hosting engine owns the session; `verify` stays offline. Shared
-//! by the guild-app-server and Guild binaries.
+//! Headless CLI verbs. Every cloud-touching verb reaches the engine's local
+//! socket (hosted by the running desktop app or a headless `daemon`), so
+//! the hosting engine owns the session; `chat` borrows that session and
+//! streams from the gateway itself; `verify` stays offline. Shared by the
+//! guild-app-server and Guild binaries.
 
+use crate::cloud::{CloudClient, CloudError};
 use crate::daemon_client::DaemonClient;
 use anyhow::Context as _;
+use protocol::api::{Message, StreamEvent};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -42,32 +45,73 @@ pub fn cmd_login(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `chat [--model M] "text"`: one plain (tool-less) turn in a fresh chat.
+/// The hosting engine lends its session (`session.info`); the turn itself
+/// runs between this process and the gateway, the reply streaming to
+/// stdout. Without `--model` the server picks the org's default route.
 pub fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
     let text = args.last().context("missing prompt text")?.clone();
-    let model = flag(args, "--model").unwrap_or_else(|_| crate::jsonrpc_loop::DEFAULT_MODEL.into());
-    let mut client = DaemonClient::attach()?;
-    let (res, events) = client.call_until_event(
-        "chat.send",
-        json!({"text": text, "model": model}),
-        "chat.done",
-    )?;
-    for ev in &events {
-        if ev["event"] == "chat.delta" {
-            if let Some(c) = ev["payload"]["content"].as_str() {
-                print!("{c}");
-            }
-        }
-    }
+    let model = flag(args, "--model").unwrap_or_default();
+    let session = DaemonClient::attach()?.call("session.info", json!({}))?;
+    let cloud = CloudClient {
+        base_url: session["base_url"]
+            .as_str()
+            .context("session.info returned no base_url")?
+            .to_string(),
+        token: session["token"]
+            .as_str()
+            .context("session.info returned no token")?
+            .to_string(),
+    };
+    crate::machine_link::ensure_crypto_provider();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let done = rt.block_on(async {
+        let chat_id = cloud.create_chat(None).await?;
+        let stream = cloud
+            .chat_stream(chat_id, &model, &[Message::user(text)])
+            .await?;
+        let mut out = std::io::stdout();
+        let done = print_chat(stream, &mut out).await?;
+        anyhow::Ok((chat_id, done))
+    })?;
     println!();
-    if let Some(chat_id) = res["chat_id"].as_str() {
-        if let Some(cost) = res["cost_usd"].as_f64() {
-            eprintln!(
-                "cost ${cost:.6} ({} in / {} out, chat {chat_id})",
-                res["tokens_in"], res["tokens_out"]
-            );
+    let (chat_id, (cost, tokens_in, tokens_out)) = done;
+    eprintln!("cost ${cost:.6} ({tokens_in} in / {tokens_out} out, chat {chat_id})");
+    Ok(())
+}
+
+/// Writes one plain completion's text deltas to `out` as they arrive and
+/// returns the Done frame's (cost, tokens in, tokens out). An Error frame,
+/// or a stream that ends without Done, is an error.
+async fn print_chat(
+    stream: impl futures::Stream<Item = Result<StreamEvent, CloudError>>,
+    out: &mut impl std::io::Write,
+) -> anyhow::Result<(f64, u32, u32)> {
+    use futures::StreamExt as _;
+    let mut stream = std::pin::pin!(stream);
+    while let Some(item) = stream.next().await {
+        match item? {
+            StreamEvent::Delta { content } => {
+                write!(out, "{content}")?;
+                out.flush()?;
+            }
+            StreamEvent::Done {
+                cost_usd,
+                tokens_in,
+                tokens_out,
+                ..
+            } => return Ok((cost_usd, tokens_in, tokens_out)),
+            StreamEvent::Error { code, message } => {
+                anyhow::bail!("stream error [{code}]: {message}")
+            }
+            // A plain completion declares no tools; reasoning and the other
+            // frame kinds are not part of this surface.
+            _ => {}
         }
     }
-    Ok(())
+    anyhow::bail!("stream ended without done event")
 }
 
 pub fn cmd_publish(args: &[String]) -> anyhow::Result<()> {
@@ -139,6 +183,56 @@ fn absolute_cli_path(path: &str) -> anyhow::Result<PathBuf> {
     } else {
         std::env::current_dir()?.join(path)
     })
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+    use futures::stream;
+
+    /// Deltas print as they arrive, non-text frames are skipped, Done ends
+    /// the turn with its usage; an Error frame or a missing Done fails.
+    #[tokio::test]
+    async fn print_chat_streams_text_and_returns_the_done_usage() {
+        let frames: Vec<Result<StreamEvent, CloudError>> = vec![
+            Ok(StreamEvent::Delta {
+                content: "hi ".into(),
+            }),
+            Ok(StreamEvent::ThinkingDelta {
+                content: "hmm".into(),
+            }),
+            Ok(StreamEvent::Delta {
+                content: "there".into(),
+            }),
+            Ok(StreamEvent::Done {
+                message_id: uuid::Uuid::now_v7(),
+                cost_usd: 0.02,
+                tokens_in: 5,
+                tokens_out: 3,
+            }),
+        ];
+        let mut out = Vec::new();
+        let done = print_chat(stream::iter(frames), &mut out).await.unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "hi there");
+        assert_eq!(done, (0.02, 5, 3));
+
+        let frames: Vec<Result<StreamEvent, CloudError>> = vec![Ok(StreamEvent::Error {
+            code: "model".into(),
+            message: "boom".into(),
+        })];
+        let err = print_chat(stream::iter(frames), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("boom"), "{err}");
+
+        let frames: Vec<Result<StreamEvent, CloudError>> = vec![Ok(StreamEvent::Delta {
+            content: "partial".into(),
+        })];
+        let err = print_chat(stream::iter(frames), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("without done"), "{err}");
+    }
 }
 
 #[cfg(test)]

@@ -356,11 +356,11 @@ pub struct ChatCompletionRequest {
     /// Agentic tool calling: declared tools for this turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolSpec>>,
-    /// Optional system prompt (agent sessions set this).
+    /// Optional system prompt appended by the caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
     /// True when the calling client can execute machine tools (read_file/execute/
-    /// edit_file/write_file) — i.e. the Tauri desktop app. Web clients cannot, and
+    /// write_file) — i.e. the Tauri desktop app. Web clients cannot, and
     /// declaring the tools there makes the model call them and the durable
     /// turn suspend for the 5-minute client-tool timeout with no one to
     /// answer it.
@@ -441,7 +441,7 @@ pub enum StreamEvent {
         call: ToolCall,
     },
     /// A tool call is being executed: `executor` says whether the attached
-    /// client must run it (machine tools: read_file/execute/edit_file/write_file) or it runs
+    /// client must run it (machine tools: read_file/execute/write_file) or it runs
     /// server-side (integrations, e.g. web_search). Clients that cannot
     /// execute client tools just display it.
     ToolStarted {
@@ -461,7 +461,7 @@ pub enum StreamEvent {
         content: String,
         is_error: bool,
     },
-    /// A client-tool call is awaiting user approval (phase 2 gate). All
+    /// A client-tool call is awaiting user approval. All
     /// attached clients show an approval card; first Approve/Deny wins.
     ApprovalRequested {
         call_id: String,
@@ -647,7 +647,7 @@ pub enum ThreadEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<UsagePayload>,
     },
-    /// A client-tool call is awaiting user approval (phase 2). Log-only:
+    /// A client-tool call is awaiting user approval. Log-only:
     /// excluded from model-facing history derivation.
     ApprovalRequest {
         call_id: String,
@@ -719,10 +719,10 @@ pub enum ThreadEvent {
     ChildClosed { thread_id: Uuid },
 }
 
-/// The fixed set of machine tools executed by the attached client. This is
-/// the single definition of the built-in tool schemas: the guild-core
-/// registry re-exports these specs verbatim, so what the model is told and
-/// what the executor validates can never drift.
+/// The machine tools a dispatched call may name, with the argument schemas
+/// the machine executor validates it against (the guild-core registry uses
+/// these specs verbatim). The model-facing tool definitions belong to the
+/// TS server's harness.
 pub fn client_tool_specs() -> Vec<ToolSpec> {
     fn spec(
         name: &str,
@@ -762,16 +762,6 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
                 "content": str_prop
             }),
             &["path", "content"],
-        ),
-        spec(
-            "edit_file",
-            "Replace one exact occurrence of `oldText` in a file with `newText`. Fails when oldText is not found or is ambiguous.",
-            serde_json::json!({
-                "path": str_prop,
-                "oldText": str_prop,
-                "newText": str_prop
-            }),
-            &["path", "oldText", "newText"],
         ),
         spec(
             "execute",

@@ -8,7 +8,7 @@
 //! role rides the engine's machine link, and all display state reaches the
 //! webview over the webview's own member WebSocket. The shell's webview
 //! surface is the engine rpc bridge (submit + poll, allowlisted methods),
-//! local folder browsing, the daemon trace toggle, and the updater.
+//! local folder browsing, the engine trace toggle, and the updater.
 
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
 use guild_app_server::sync::LockExt;
@@ -21,63 +21,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
-
-/// Client-side IPC trace: one line per rpc step into the per-user cache dir
-/// (`dirs::cache_dir()/guild/`, owner-only, size-capped), so a wedge can be
-/// diagnosed from the log without interactive debugging (the GUI's own
-/// console is not visible to us). A fixed name in the shared temp dir would
-/// be world-readable and would grow without bound for a tray-resident app.
-pub fn ipc_trace(event: &str, detail: &str) {
-    let Some(dir) = dirs::cache_dir().map(|d| d.join("guild")) else {
-        return;
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    ipc_trace_to(
-        &dir.join("guild-rpc.log"),
-        IPC_TRACE_MAX_BYTES,
-        event,
-        detail,
-    );
-}
-
-/// Size cap for the IPC trace: past it the file is truncated and restarted.
-const IPC_TRACE_MAX_BYTES: u64 = 1 << 20;
-
-fn ipc_trace_to(path: &std::path::Path, cap: u64, event: &str, detail: &str) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let truncate = std::fs::metadata(path)
-        .map(|m| m.len() > cap)
-        .unwrap_or(false);
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(!truncate)
-        .truncate(truncate)
-        .write(true)
-        .open(path)
-    else {
-        return;
-    };
-    // Owner-only: the trace names rpc methods and traffic sizes of the
-    // logged-in user's session.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = f.metadata() {
-            let mut perms = meta.permissions();
-            if perms.mode() & 0o777 != 0o600 {
-                perms.set_mode(0o600);
-                let _ = f.set_permissions(perms);
-            }
-        }
-    }
-    let _ = writeln!(f, "{ts} {event} {detail}");
-}
 
 /// Pending downloaded update, waiting for the user to restart.
 #[derive(Default)]
@@ -173,7 +116,7 @@ impl Engine {
         };
         let mut results = self.results.guard();
         for id in stale {
-            ipc_trace("rpc-timeout", &format!("id={id}"));
+            guild_app_server::trace!("ipc rpc-timeout id={id}");
             results.entry(id).or_insert_with(
                 || serde_json::json!({"id": id, "error": {"message": "engine timed out"}}),
             );
@@ -186,9 +129,10 @@ impl Engine {
     }
 }
 
-/// Engine methods the webview may call. The rpc bridge refuses anything
-/// else, so script running in the webview cannot reach the rest of the
-/// engine's dispatch surface (agent runs, policy changes, shutdown).
+/// Engine methods the webview may call: the `webview: true` methods of
+/// `protocol/rpc.schema.json` (a test holds the two equal). The rpc bridge
+/// refuses anything else, so script running in the webview cannot reach
+/// the rest of the engine's dispatch surface (shutdown, CLI-only installs).
 const WEBVIEW_RPC_METHODS: &[&str] = &[
     "session.info",
     "session.clear",
@@ -213,26 +157,14 @@ fn webview_rpc_allowed(method: &str) -> bool {
     WEBVIEW_RPC_METHODS.contains(&method)
 }
 
-/// One parsed line from the engine.
-pub enum EngineLine {
-    /// A reply carrying a request id.
-    Response { id: u64, value: Value },
-    /// A server-push event.
-    Event(Value),
-}
-
-/// Pure line demux — unit-tested.
-pub fn parse_line(line: &str) -> Option<EngineLine> {
+/// The request id and envelope of one engine line when it is a JSON-RPC
+/// response (an `id`, no `event` field); None for anything else.
+pub fn parse_response(line: &str) -> Option<(u64, Value)> {
     let v: Value = serde_json::from_str(line.trim()).ok()?;
-    // A JSON-RPC response has an `id` and no `event` field.
-    if v.get("event").is_none() && v.get("id").is_some() {
-        Some(EngineLine::Response {
-            id: v["id"].as_u64()?,
-            value: v,
-        })
-    } else {
-        Some(EngineLine::Event(v))
+    if v.get("event").is_some() {
+        return None;
     }
+    Some((v.get("id")?.as_u64()?, v))
 }
 
 /// Builds the in-process engine: two unidirectional std pipes carry the
@@ -258,8 +190,8 @@ fn build_engine(shared: &Shared) -> anyhow::Result<Arc<Engine>> {
 }
 
 /// Reader for the engine→client pipe: responses complete their request.
-/// Push events belong to methods the webview does not call (see
-/// `WEBVIEW_RPC_METHODS`) and are only traced.
+/// The engine sends nothing else for a well-formed envelope; any other
+/// line is only traced.
 fn start_engine_reader(engine: Arc<Engine>, rd_out: std::io::PipeReader) {
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(rd_out);
@@ -268,24 +200,21 @@ fn start_engine_reader(engine: Arc<Engine>, rd_out: std::io::PipeReader) {
             let mut line = String::new();
             match reader.read_line(&mut line) {
                 Ok(0) => {
-                    ipc_trace("reader-exit", "eof");
+                    guild_app_server::trace!("ipc reader-exit eof");
                     break;
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    ipc_trace("reader-exit", &format!("err={e}"));
+                    guild_app_server::trace!("ipc reader-exit err={e}");
                     break;
                 }
             }
-            match parse_line(&line) {
-                Some(EngineLine::Response { id, value }) => {
-                    ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
+            match parse_response(&line) {
+                Some((id, value)) => {
+                    guild_app_server::trace!("ipc resp id={id} bytes={}", line.len());
                     engine.complete(id, value);
                 }
-                Some(EngineLine::Event(ev)) => {
-                    ipc_trace("event", ev["event"].as_str().unwrap_or("?"));
-                }
-                None => ipc_trace("unparseable", &format!("bytes={}", line.len())),
+                None => guild_app_server::trace!("ipc non-response bytes={}", line.len()),
             }
         }
         engine.fail_in_flight("engine dropped the request");
@@ -437,14 +366,15 @@ pub mod commands {
         Ok(())
     }
 
-    /// Daemon-side trace (Settings → About toggle): effective on/off and
-    /// where the log lands. The trace localizes machine-link wedges (e.g.
-    /// the Windows instant-close) without an env var set at launch.
+    /// The engine trace (Settings → About toggle): effective on/off and
+    /// where the log lands. One log carries the engine, machine-link and
+    /// webview-rpc steps, so a wedge (e.g. the Windows instant-close) is
+    /// localized without an env var set at launch.
     #[tauri::command]
     pub fn daemon_trace_state() -> Value {
         serde_json::json!({
-            "enabled": guild_app_server::dtrace::enabled(),
-            "path": guild_app_server::dtrace::trace_path().to_string_lossy(),
+            "enabled": guild_app_server::trace::enabled(),
+            "path": guild_app_server::trace::trace_path().to_string_lossy(),
         })
     }
 
@@ -454,7 +384,7 @@ pub mod commands {
     /// is a separate process and still uses GUILD_DAEMON_TRACE=1.
     #[tauri::command]
     pub fn set_daemon_trace(on: bool) -> Result<(), String> {
-        guild_app_server::dtrace::set_enabled(on);
+        guild_app_server::trace::set_enabled(on);
         let marker = guild_app_server::fs_bridge::guild_config_dir().join("daemon-trace.enabled");
         if on {
             std::fs::create_dir_all(marker.parent().expect("config dir has a parent"))
@@ -467,11 +397,11 @@ pub mod commands {
     }
 
     /// Restores the persisted trace toggle at launch: the marker file wins
-    /// over nothing; the env var needs no seeding (checked per call).
+    /// over nothing; the env var needs no seeding (the trace reads it).
     pub fn seed_daemon_trace() {
         let marker = guild_app_server::fs_bridge::guild_config_dir().join("daemon-trace.enabled");
         if marker.exists() {
-            guild_app_server::dtrace::set_enabled(true);
+            guild_app_server::trace::set_enabled(true);
         }
     }
 
@@ -626,11 +556,15 @@ pub mod commands {
         // Case-insensitive comparison on Windows only: its paths are, its
         // separators vary; elsewhere the filesystem is case-sensitive.
         let (norm_str, home_str) = (norm.to_string_lossy(), home.to_string_lossy());
+        // `get` rather than slicing: a home length that falls inside a
+        // multi-byte character of the path is "not under", not a panic.
         #[cfg(windows)]
-        let under = norm_str.len() >= home_str.len()
-            && norm_str[..home_str.len()].eq_ignore_ascii_case(&home_str)
-            && (norm_str.len() == home_str.len()
-                || norm_str[home_str.len()..].starts_with(['/', '\\']));
+        let under = norm_str
+            .get(..home_str.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(&home_str))
+            && norm_str
+                .get(home_str.len()..)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '\\']));
         #[cfg(not(windows))]
         let under = norm_str.starts_with(&*home_str)
             && (norm_str.len() == home_str.len() || norm_str[home_str.len()..].starts_with('/'));
@@ -669,7 +603,7 @@ pub mod commands {
         params: Value,
     ) -> Result<u64, String> {
         if !webview_rpc_allowed(&method) {
-            ipc_trace("rpc-refused", &format!("method={method}"));
+            guild_app_server::trace!("ipc rpc-refused method={method}");
             return Err(format!("rpc method not available to the app: {method}"));
         }
         let engine = state
@@ -678,7 +612,7 @@ pub mod commands {
             .clone()
             .ok_or_else(|| "engine not started".to_string())?;
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
-        ipc_trace("rpc-start", &format!("id={id} method={method}"));
+        guild_app_server::trace!("ipc rpc-start id={id} method={method}");
         engine.submit(id);
         let mut w = engine.writer.guard();
         if let Err(e) = w
@@ -686,13 +620,13 @@ pub mod commands {
             .and_then(|_| w.write_all(b"\n"))
             .and_then(|_| w.flush())
         {
-            ipc_trace("write-fail", &format!("id={id} err={e}"));
+            guild_app_server::trace!("ipc write-fail id={id} err={e}");
             engine.submitted.guard().remove(&id);
             *state.cell.guard() = None;
             return Err(format!("engine write failed: {e}"));
         }
         drop(w);
-        ipc_trace("write-ok", &format!("id={id}"));
+        guild_app_server::trace!("ipc write-ok id={id}");
         Ok(id)
     }
 
@@ -902,7 +836,7 @@ async fn boot_engine(app: AppHandle) {
         Ok(Ok(session)) => session,
         Ok(Err(error)) => {
             eprintln!("setup: session restore failed: {error:#}; starting signed out");
-            ipc_trace("session_restore_failed", &format!("{error:#}"));
+            guild_app_server::trace!("ipc session_restore_failed {error:#}");
             Default::default()
         }
         Err(_) => {
@@ -1081,46 +1015,38 @@ mod tests {
     }
 
     #[test]
-    fn ipc_trace_appends_then_truncates_at_cap() {
-        let dir = std::env::temp_dir().join(format!("guild-trace-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("trace.log");
-        ipc_trace_to(&path, 1000, "e1", "d1");
-        ipc_trace_to(&path, 1000, "e2", "d2");
-        let body = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(body.lines().count(), 2);
-        assert!(body.contains("e1") && body.contains("e2"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
-        // Past the cap the NEXT call truncates and restarts the file.
-        let big = "x".repeat(1200);
-        ipc_trace_to(&path, 1000, "big", &big);
-        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
-        ipc_trace_to(&path, 1000, "fresh", "after-cap");
-        let body = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(body.lines().count(), 1);
-        assert!(body.contains("fresh"));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn parse_response_takes_responses_only() {
+        let resp = r#"{"jsonrpc":"2.0","id":3,"protocol":1,"result":{"ok":true}}"#;
+        assert_eq!(parse_response(resp).map(|(id, _)| id), Some(3));
+        let ev = r#"{"protocol":1,"event":"rpc.error","payload":{"message":"bad"}}"#;
+        assert!(parse_response(ev).is_none());
+        assert!(parse_response("not json").is_none());
     }
 
+    /// The webview allowlist is exactly the rpc contract's webview method
+    /// set (`protocol/rpc.schema.json` `methods`, `webview: true`), and
+    /// every one is a method the engine dispatches.
     #[test]
-    fn parse_line_kinds() {
-        let resp = r#"{"jsonrpc":"2.0","id":3,"protocol":1,"result":{"ok":true}}"#;
-        match parse_line(resp) {
-            Some(EngineLine::Response { id, .. }) => assert_eq!(id, 3),
-            _ => panic!("expected response"),
+    fn webview_methods_match_the_rpc_contract() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../../protocol/rpc.schema.json")).unwrap();
+        let mut from_schema: Vec<&str> = schema["methods"]
+            .as_object()
+            .expect("rpc.schema.json has a methods table")
+            .iter()
+            .filter(|(_, m)| m["webview"] == Value::Bool(true))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        from_schema.sort_unstable();
+        let mut allowed = WEBVIEW_RPC_METHODS.to_vec();
+        allowed.sort_unstable();
+        assert_eq!(allowed, from_schema);
+        for method in WEBVIEW_RPC_METHODS {
+            assert!(
+                guild_app_server::jsonrpc_loop::METHODS.contains(method),
+                "{method} is not dispatched"
+            );
         }
-        let ev = r#"{"protocol":1,"event":"chat.delta","payload":{"content":"hi"}}"#;
-        match parse_line(ev) {
-            Some(EngineLine::Event(v)) => assert_eq!(v["event"], "chat.delta"),
-            _ => panic!("expected event"),
-        }
-        assert!(parse_line("not json").is_none());
     }
 
     fn test_engine() -> Engine {
