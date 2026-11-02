@@ -114,7 +114,7 @@ describe("durable integration contracts", () => {
       const settled = await submission.wait(context);
       expect(settled.status).toBe("unanswered");
       await h.waitForIdle(context);
-      const recovery = new ConversationRecovery(stack.env.db);
+      const recovery = new ConversationRecovery(stack.env.db, new ConversationMapStore(stack.env.db));
       const b = bridge(id, c);
       const records = await recovery.submissions(id, c.id);
       await b.recover(c, records);

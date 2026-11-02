@@ -14,11 +14,13 @@ import {
   type ToolExecutionResult,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
-import type { PlatformPool } from "../platform/db.js";
+import type { ChatStore } from "../platform/store/chats.js";
+import type { ThreadStore } from "../platform/store/thread.js";
 
 /** Chats read their own history; the caller resolves chat→conversation. */
 export interface ThreadHistoryDeps {
-  pool: PlatformPool;
+  chats: Pick<ChatStore, "sameOwner">;
+  threads: Pick<ThreadStore, "messagePage" | "searchOwnerMessages">;
   chatOfConversation(conversationId: ConversationId): Promise<string | null>;
 }
 
@@ -90,13 +92,6 @@ function snippetOf(text: string, lowerQuery: string): string {
   return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
 }
 
-/** Escapes the LIKE metacharacters of a user query used inside an ILIKE pattern. */
-function likeEscape(text: string): string {
-  return text.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
-
-const MESSAGE_TYPES = "('user_message','assistant_message','system_message')";
-
 /** Error result on the output channel (structuredOutput is not allowed with isError). */
 const textErr = (text: string): ToolExecutionResult => ({ output: [{ type: "text", text }], isError: true });
 
@@ -138,40 +133,18 @@ export function createThreadHistoryTools(deps: ThreadHistoryDeps): ToolRegistrat
         // Cross-chat drill-in: the target must sit in the same (org, user)
         // scope the owner's chat list shows — anything else errors without
         // leaking that the chat exists.
-        const allowed = await deps.pool.query<{ chat_id: string }>(
-          `SELECT c.id AS chat_id FROM chats c
-           WHERE c.id = $1
-             AND c.org_id = (SELECT org_id FROM chats WHERE id = $2)
-             AND c.user_id = (SELECT user_id FROM chats WHERE id = $2)`,
-          [args.chatId, ownChatId],
-        );
-        if (allowed.rows.length === 0) return textErr("not_found");
+        if (!(await deps.chats.sameOwner(ownChatId, args.chatId))) return textErr("not_found");
         chatId = args.chatId;
       }
       const limit = Math.min(Math.max(1, Math.floor(args.limit ?? DEFAULT_PAGE)), MAX_PAGE);
-      const roleClause = args.role === undefined ? "" : `AND e.type = '${args.role === "user" ? "user_message" : "assistant_message"}'`;
-      const textClause = args.text === undefined ? "" : "AND (e.payload->>'content' ILIKE $3 OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'blocks') b WHERE b->>'type' = 'text' AND b->>'text' ILIKE $3))";
-      const textParam = args.text === undefined ? [] : [`%${likeEscape(args.text)}%`];
-      const res = await deps.pool.query<{
-        seq: string;
-        type: string;
-        payload: Record<string, unknown>;
-        created_at: Date;
-      }>(
-        `SELECT e.seq, e.type, e.payload, e.created_at
-         FROM thread_events e
-         WHERE e.chat_id = $1 AND e.type IN ${MESSAGE_TYPES} ${roleClause} ${textClause}
-           ${args.beforeSeq === undefined ? "" : "AND e.seq < $2"}
-         ORDER BY e.seq DESC
-         LIMIT ${limit + 1}`,
-        args.beforeSeq === undefined
-          ? [chatId, ...textParam]
-          : [chatId, args.beforeSeq, ...textParam],
-      );
-      const more = res.rows.length > limit;
-      const rows = more ? res.rows.slice(0, limit) : res.rows;
+      const { rows, more } = await deps.threads.messagePage(chatId, {
+        ...(args.role === undefined ? {} : { role: args.role }),
+        ...(args.text === undefined ? {} : { text: args.text }),
+        ...(args.beforeSeq === undefined ? {} : { beforeSeq: args.beforeSeq }),
+        limit,
+      });
       const events = rows.map((row) => ({
-        seq: Number(row.seq),
+        seq: row.seq,
         type: row.type,
         ts: row.created_at.toISOString(),
         text: clip(eventText(row.type, row.payload)),
@@ -208,34 +181,14 @@ export function createThreadHistoryTools(deps: ThreadHistoryDeps): ToolRegistrat
       // The tool binds the requesting conversation's chat owner: the same
       // (org_id, user_id) scope ChatStore.listChats applies, so a hit is
       // always a thread the user can open.
-      const res = await deps.pool.query<{
-        chat_id: string;
-        title: string | null;
-        seq: string;
-        type: string;
-        payload: Record<string, unknown>;
-        created_at: Date;
-      }>(
-        `SELECT e.chat_id, c.title, e.seq, e.type, e.payload, e.created_at
-         FROM thread_events e
-         JOIN chats c ON c.id = e.chat_id
-         WHERE c.org_id = (SELECT org_id FROM chats WHERE id = $1)
-           AND c.user_id = (SELECT user_id FROM chats WHERE id = $1)
-           AND e.type IN ${MESSAGE_TYPES}
-           AND (e.payload->>'content' ILIKE $2
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'blocks') b
-                           WHERE b->>'type' = 'text' AND b->>'text' ILIKE $2))
-         ORDER BY e.seq DESC
-         LIMIT ${limit + 1}`,
-        [await deps.chatOfConversation(api.conversationId), `%${likeEscape(query)}%`],
-      );
+      const ownChatId = await deps.chatOfConversation(api.conversationId);
+      if (ownChatId === null) return { structuredOutput: { hits: [], truncated: false } };
+      const { rows, more: truncated } = await deps.threads.searchOwnerMessages(ownChatId, query, limit);
       const lower = query.toLowerCase();
-      const truncated = res.rows.length > limit;
-      const rows = truncated ? res.rows.slice(0, limit) : res.rows;
       const hits = rows.map((row) => ({
         chatId: row.chat_id,
         chatTitle: row.title,
-        seq: Number(row.seq),
+        seq: row.seq,
         type: row.type,
         ts: row.created_at.toISOString(),
         snippet: snippetOf(clip(eventText(row.type, row.payload), 8 * MAX_EVENT_CHARS), lower),
