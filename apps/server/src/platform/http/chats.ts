@@ -43,7 +43,7 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
  *  so every chat read and write answers one shape. */
 async function chatResponse(chats: ChatsCtx, orgId: string, userId: string, chatId: string): Promise<Chat> {
   const row = await chats.chats.getChatListRow(orgId, userId, chatId);
-  if (!row) throw new ApiError(404, "not_found", "no such chat");
+  if (!row) throw ApiError.notFound("no such chat");
   return chatWire(chats.hub, row);
 }
 

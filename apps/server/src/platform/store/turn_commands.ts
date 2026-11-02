@@ -103,7 +103,7 @@ export class TurnCommandStore {
         "SELECT project_id, machine_id, machine_label, archived_at FROM chats WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR UPDATE",
         [chat, org],
       );
-      if (!chatRow.rows[0]) throw new ApiError(404, "not_found", "no such chat");
+      if (!chatRow.rows[0]) throw ApiError.notFound("no such chat");
       const current = chatRow.rows[0];
       if (current.archived_at !== null) {
         throw new ApiError(409, "chat_archived", "chat is archived — unarchive it to send");

@@ -48,7 +48,7 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
     "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
     [chatId, orgId],
   );
-  if (generatingRow.rows.length === 0) throw new ApiError(404, "not_found", "chat not found");
+  if (generatingRow.rows.length === 0) throw ApiError.notFound("chat not found");
   const project = await chats.chats.projectOf(orgId, chatId);
   const compacting = await compactionInFlight(pool, chatId);
   return {

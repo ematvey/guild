@@ -284,7 +284,7 @@ export class PlatformContext {
     const bearer = typeof header === "string" && header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
     const xApiKey = typeof req.headers["x-api-key"] === "string" ? (req.headers["x-api-key"] as string) : null;
     const token = [bearer, xApiKey].find((t) => t !== null && t !== "") ?? null;
-    if (token === null) throw new ApiError(401, "unauthorized", "missing api key");
+    if (token === null) throw ApiError.unauthorized("missing api key");
     const row = await this.apiKeys.authenticate(token);
     if (row !== null) {
       // Usage belongs to the key's owner when user-minted, else to the
@@ -312,7 +312,7 @@ export class PlatformContext {
         internal: true,
       };
     }
-    throw new ApiError(401, "unauthorized", "invalid api key");
+    throw ApiError.unauthorized("invalid api key");
   }
 
   /** Starts the routine loop after the runtime is open. A no-op when the

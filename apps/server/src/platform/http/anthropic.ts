@@ -242,13 +242,13 @@ function imageUri(block: Record<string, unknown>): string {
   switch (typeof source["type"] === "string" ? source["type"] : "") {
     case "base64": {
       const data = typeof source["data"] === "string" && source["data"] !== "" ? source["data"] : null;
-      if (data === null) throw new ApiError(400, "bad_request", "base64 image source is missing its data");
+      if (data === null) throw ApiError.badRequest("base64 image source is missing its data");
       return `data:${typeof source["media_type"] === "string" ? source["media_type"] : "image/png"};base64,${data}`;
     }
     case "url": {
       const url = typeof source["url"] === "string" ? source["url"] : "";
       if (url.startsWith("https://") || url.startsWith("http://")) return url;
-      throw new ApiError(400, "bad_request", "url image source needs an http(s) url");
+      throw ApiError.badRequest("url image source needs an http(s) url");
     }
     default:
       throw new ApiError(

@@ -106,7 +106,7 @@ function decodeContent(role: string, content: unknown): DecodedContent {
       const type = typeof p["type"] === "string" ? p["type"] : "";
       if (type === "text") {
         if (typeof p["text"] !== "string") {
-          throw new ApiError(400, "bad_request", "text content part is missing its text");
+          throw ApiError.badRequest("text content part is missing its text");
         }
         texts.push(p["text"]);
       } else if (type === "image_url" && role === "user") {
@@ -118,26 +118,26 @@ function decodeContent(role: string, content: unknown): DecodedContent {
               ? (imageUrl as Record<string, unknown>)["url"]
               : null;
         if (typeof url !== "string") {
-          throw new ApiError(400, "bad_request", "image_url content part is missing its url");
+          throw ApiError.badRequest("image_url content part is missing its url");
         }
         out.images.push(url);
       } else if (type === "input_audio" && role === "user") {
         const inputAudio = (p["input_audio"] as Record<string, unknown> | undefined) ?? {};
         if (typeof inputAudio["data"] !== "string") {
-          throw new ApiError(400, "bad_request", "input_audio content part is missing its data");
+          throw ApiError.badRequest("input_audio content part is missing its data");
         }
         if (typeof inputAudio["format"] !== "string") {
-          throw new ApiError(400, "bad_request", "input_audio content part is missing its format");
+          throw ApiError.badRequest("input_audio content part is missing its format");
         }
         out.audio.push({ data: inputAudio["data"], format: inputAudio["format"] });
       } else {
-        throw new ApiError(400, "bad_request", `unsupported content part type: ${type}`);
+        throw ApiError.badRequest(`unsupported content part type: ${type}`);
       }
     }
     out.text = texts.join("\n");
     return out;
   }
-  throw new ApiError(400, "bad_request", "message content must be a string or an array of parts");
+  throw ApiError.badRequest("message content must be a string or an array of parts");
 }
 
 /** OpenAI request → internal (system, messages). */

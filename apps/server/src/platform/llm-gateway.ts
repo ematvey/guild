@@ -156,7 +156,7 @@ export async function dispatch(
   await enforceQuota(ctx.usage, orgId, model, route);
   const provider = forProtocol(route.protocol);
   if (provider === null) {
-    throw new ApiError(500, "internal", `unknown protocol ${route.protocol}`);
+    throw ApiError.internal(`unknown protocol ${route.protocol}`);
   }
   // The tighter limit wins when both sides set one: a client asking for
   // less than the route cap must not be billed for output it did not ask

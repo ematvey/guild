@@ -53,10 +53,10 @@ async function insertEvent(client: PoolClient, chatId: string, eventId: string, 
     [eventId, chatId, event.type, jsonbText(event)],
   );
   const row = res.rows[0];
-  if (!row) throw new ApiError(500, "internal", "thread event append returned no row");
+  if (!row) throw ApiError.internal("thread event append returned no row");
   await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
   const normalized = toRow(row);
-  if (!normalized) throw new ApiError(500, "internal", "appended thread event does not parse");
+  if (!normalized) throw ApiError.internal("appended thread event does not parse");
   return normalized;
 }
 
@@ -135,7 +135,7 @@ export class ThreadStore {
         "SELECT generating FROM chats WHERE id = $1 FOR UPDATE",
         [chatId],
       );
-      if (chat.rows.length === 0) throw new ApiError(404, "not_found", "no such chat");
+      if (chat.rows.length === 0) throw ApiError.notFound("no such chat");
       const recorded = await recordedDecision(client, chatId, callId);
       if (recorded !== undefined) return { row: recorded, appended: false };
       const row = await insertEvent(client, chatId, uuidv7(), decide(chat.rows[0]!.generating));
@@ -190,7 +190,7 @@ export class ThreadStore {
             [sourceId, chatId, found.id],
           );
           const normalized = toRow(found);
-          if (!normalized) throw new ApiError(500, "internal", "projected event does not parse");
+          if (!normalized) throw ApiError.internal("projected event does not parse");
           return normalized;
         }
       }

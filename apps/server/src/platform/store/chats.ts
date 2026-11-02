@@ -287,7 +287,7 @@ export class ChatStore {
         [projectId, orgId, userId],
       );
       const row = binding.rows[0];
-      if (!row) throw new ApiError(404, "not_found", "no such project");
+      if (!row) throw ApiError.notFound("no such project");
       const id = uuidv7();
       const res = await client.query<Record<string, unknown>>(
         `INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label)
@@ -369,7 +369,7 @@ export class ChatStore {
       [orgId, chatId, caller.id, isAdmin],
     );
     const row = res.rows[0];
-    if (!row) throw new ApiError(404, "not_found", "no such chat");
+    if (!row) throw ApiError.notFound("no such chat");
     return rowToChat(row);
   }
 
@@ -383,7 +383,7 @@ export class ChatStore {
       [orgId, chatId, caller.id],
     );
     const row = res.rows[0];
-    if (!row) throw new ApiError(404, "not_found", "no such chat");
+    if (!row) throw ApiError.notFound("no such chat");
     return rowToChat(row);
   }
 
@@ -396,7 +396,7 @@ export class ChatStore {
       [orgId, chatId],
     );
     const row = res.rows[0];
-    if (!row) throw new ApiError(404, "not_found", "no such chat");
+    if (!row) throw ApiError.notFound("no such chat");
     return rowToChat(row);
   }
 
@@ -417,7 +417,7 @@ export class ChatStore {
         "SELECT id FROM chats WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL FOR UPDATE",
         [orgId, chatId, caller.id],
       );
-      if (locked.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
+      if (locked.rowCount === 0) throw ApiError.notFound("no such chat");
       const res = await client.query<Record<string, unknown>>(
         `UPDATE chats SET title = CASE WHEN $5::bool THEN $3 ELSE title END,
            archived_at = CASE
@@ -473,7 +473,7 @@ export class ChatStore {
            deleted_at = now() AS newly_deleted`,
         [orgId, chatId, caller.id],
       );
-      if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
+      if (res.rowCount === 0) throw ApiError.notFound("no such chat");
       const root = res.rows[0]!;
       const tree = await client.query<{ thread_id: string; chat_id: string }>(
         `WITH RECURSIVE tree AS (
@@ -532,7 +532,7 @@ export class ChatStore {
           "SELECT machine_id FROM machines WHERE machine_id = $1 AND org_id = $2 FOR UPDATE",
           [machineId, orgId],
         );
-        if (known.rowCount === 0) throw new ApiError(400, "bad_request", "unknown machine");
+        if (known.rowCount === 0) throw ApiError.badRequest("unknown machine");
       }
       const res = await client.query<Record<string, unknown>>(
         `UPDATE chats SET machine_id = $3, machine_label = $4
@@ -561,7 +561,7 @@ export class ChatStore {
           [orgId, projectId, caller.id],
         );
         machine = res.rows[0];
-        if (!machine) throw new ApiError(404, "not_found", "no such project");
+        if (!machine) throw ApiError.notFound("no such project");
       }
       const res = await client.query<Record<string, unknown>>(
         `UPDATE chats SET project_id = $6, machine_id = $4, machine_label = $5
@@ -571,7 +571,7 @@ export class ChatStore {
            machine_id, machine_label, generating, project_id`,
         [orgId, chatId, caller.id, machine?.machine_id ?? null, machine?.label ?? null, projectId],
       );
-      if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
+      if (res.rowCount === 0) throw ApiError.notFound("no such chat");
       return rowToChat(res.rows[0]!);
     });
   }
@@ -620,7 +620,7 @@ export class ChatStore {
       "UPDATE chats SET approval = $4::jsonb WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL",
       [orgId, chatId, caller.id, policy === null ? null : jsonbText(policy)],
     );
-    if (res.rowCount === 0) throw new ApiError(404, "not_found", "no such chat");
+    if (res.rowCount === 0) throw ApiError.notFound("no such chat");
   }
 
   /** The chat's approval-mode override behind the read gate (null = the
@@ -630,7 +630,7 @@ export class ChatStore {
       "SELECT approval FROM chats WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
       [orgId, chatId, caller.id, caller.role === "admin"],
     );
-    if (res.rows.length === 0) throw new ApiError(404, "not_found", "no such chat");
+    if (res.rows.length === 0) throw ApiError.notFound("no such chat");
     return res.rows[0]!.approval ?? null;
   }
 
