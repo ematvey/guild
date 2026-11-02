@@ -10,7 +10,7 @@
 //! placeholder); saving writes the box, resetting clears the override and
 //! restores the default text. Per-org, admin-only (migration 0028 / org KV).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
@@ -75,11 +75,14 @@ function PromptField({
   const [error, setError] = useState<string | null>(null);
   const [saved, flashSaved, clearSaved] = useTransientFlag(1500);
 
+  // The first read: the field loads its prompt once, through the load
+  // function it mounted with.
+  const loadRef = useRef(load);
   useEffect(() => {
     setError(null);
     clearSaved();
     setLoading(true);
-    load()
+    loadRef.current()
       .then((r) => {
         setLoaded(true);
         // The field renders the CURRENT effective text filled in: the
@@ -90,9 +93,7 @@ function PromptField({
       })
       .catch(() => setError("failed to load the current prompt"))
       .finally(() => setLoading(false));
-    // load is stable per field instance
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clearSaved]);
 
   const persist = async (value: string, markCustom: boolean) => {
     if (saving) return;
