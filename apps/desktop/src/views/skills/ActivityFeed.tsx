@@ -164,24 +164,24 @@ export function activityEmptyState(filter: SkillActivityFilter): string {
 export function ActivityFeed() {
   const [filter, setFilter] = useState<SkillActivityFilter>("all");
   const [events, setEvents] = useState<SkillActivityEvent[] | null>(null);
-  // True once the current filter's fetch resolved — separates "still
-  // loading" from "the fetch failed" (both have events === null).
-  const [settled, setSettled] = useState(false);
+  // The current filter's fetch failed. The rows already shown stay; with
+  // none, the failure note replaces the skeleton.
+  const [failed, setFailed] = useState(false);
 
   // Refetch on tab mount and on every pill change (mounts are the tab
   // switch path — SkillsPanel renders the feed only while it is active).
   useEffect(() => {
     let live = true;
-    setSettled(false);
-    skillsActivity(filter)
-      // An unreachable feed shows its empty state.
-      .catch(() => [])
-      .then((result) => {
-        if (live) {
-          setEvents(result);
-          setSettled(true);
-        }
-      });
+    setFailed(false);
+    skillsActivity(filter).then(
+      (result) => {
+        if (!live) return;
+        setEvents(result);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
     return () => {
       live = false;
     };
@@ -196,9 +196,6 @@ export function ActivityFeed() {
 
   const rows = activityRows(events ?? [], filter);
   const empty = events !== null && events.length === 0 ? activityEmptyState(filter) : null;
-  // Failure note only when the fetch resolved null and there are no rows
-  // to show; a failed refetch keeps the previous rows visible.
-  const failed = settled && events === null;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
@@ -222,7 +219,7 @@ export function ActivityFeed() {
           </Button>
         ))}
       </div>
-      {events === null &&
+      {events === null && !failed &&
         [0, 1, 2].map((i) => (
           <SkeletonRows key={i} rows={1} />
         ))}
