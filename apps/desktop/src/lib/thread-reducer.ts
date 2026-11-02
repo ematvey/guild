@@ -227,7 +227,8 @@ export interface PendingSend {
   queuedMode?: "steer" | "queue";
 }
 
-/** The queued-chip fields a user_message event carries (absent = delivered). */function queuedFieldsOf(ev: { queued?: boolean; mode?: string }): {
+/** The queued-chip fields a user_message event carries (absent = delivered). */
+function queuedFieldsOf(ev: { queued?: boolean; mode?: string }): {
   queued?: boolean;
   queuedMode?: "steer" | "queue";
 } {
@@ -243,16 +244,16 @@ function stampFiles(
   start: number,
   attachments: readonly MessageAttachmentMeta[] | undefined,
   ts: string,
-  key: string,
+  key: () => string,
 ): void {
   if (attachments === undefined || attachments.length === 0) return;
   for (let j = blocks.length - 1; j >= start; j--) {
     if (blocks[j]!.kind === "text") {
-      blocks[j]!.attachments = [...attachments];
+      blocks[j] = { ...blocks[j]!, attachments: [...attachments] };
       return;
     }
   }
-  blocks.push({ kind: "text", text: "", attachments: [...attachments], ts, key });
+  append(blocks, { kind: "text", text: "", attachments: [...attachments], ts, key: key() });
 }
 
 function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
@@ -329,95 +330,178 @@ function spawnLabel(
   return { chatId: null, agentName: "Subagent", title: null };
 }
 
-interface DerivedThread {
+/** The state one event folds into: the visible blocks and the call-id maps
+ *  that join later events (tool results, approval decisions) to theirs. */
+export interface ThreadFold {
   blocks: RenderBlock[];
   toolsByCall: Map<string, ToolBlock>;
   approvalsByCall: Map<string, ApprovalBlock>;
 }
 
-/// Rebuilds the thread view from the persisted thread event log (spec C.3).
-/// Tool calls, reasoning and text are all resident thread parts — nothing
-/// disappears on refresh: every assistant block is replayed in stream order
-/// and tool results fill their matching frames. Also returns the call-id
-/// maps the incremental reducer needs to join later events.
-export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
-  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
-  let blocks: RenderBlock[] = [];
-  const toolsByCall = new Map<string, ToolBlock>();
-  const approvalsByCall = new Map<string, ApprovalBlock>();
-  for (const row of sorted) {
-    const ev = row.event;
-    const seqKey = (n: number) => `${row.seq}:${n}`;
-    let inEvent = 0;
-    switch (ev.type) {
-      case "user_message": {
-        // Event content is the model-facing turn: typed text plus inlined
-        // "[Attachment: …]" blocks, plus the skill-invocation block the
-        // client expanded for `/name` mentions. Show the typed text; the
-        // model-facing payloads stay in the event.
-        const at = ev.content.indexOf("\n\n[Attachment: ");
-        const inv = ev.content.indexOf("\n\n---\nInvoked skills");
-        const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
-        blocks.push({
-          kind: "user",
-          text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
-          attachments: ev.attachments,
-          eventId: row.id,
-          ...queuedFieldsOf(ev),
-          ts: row.created_at,
-          key: seqKey(inEvent++),
-        });
-        break;
+/** The user's typed text: event content is the model-facing turn, which
+ *  also carries inlined "[Attachment: …]" blocks and the skill-invocation
+ *  block the client expanded for `/name` mentions. */
+function typedText(content: string): string {
+  const at = content.indexOf("\n\n[Attachment: ");
+  const inv = content.indexOf("\n\n---\nInvoked skills");
+  const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
+  return cut >= 0 ? content.slice(0, cut) : content;
+}
+
+/** Appends a block. Only the thread's last block may be an error (see
+ *  `pruneStaleErrors`): a trailing error is superseded by what follows. */
+function append(blocks: RenderBlock[], block: RenderBlock): void {
+  if (blocks[blocks.length - 1]?.kind === "error") blocks.pop();
+  blocks.push(block);
+}
+
+/** Replaces the block holding `prev` with one holding `next`, searching from
+ *  the end (a join usually lands near its call). */
+function replaceTool(blocks: RenderBlock[], prev: ToolBlock, next: ToolBlock): void {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i]!;
+    if (b.kind === "tool" && b.tool === prev) {
+      blocks[i] = { ...b, tool: next };
+      return;
+    }
+  }
+}
+
+function replaceApproval(acc: ThreadFold, prev: ApprovalBlock, next: ApprovalBlock): void {
+  acc.approvalsByCall.set(next.callId, next);
+  const i = acc.blocks.findIndex((x) => x.kind === "approval" && x.approval === prev);
+  if (i >= 0) acc.blocks[i] = { ...acc.blocks[i]!, approval: next };
+}
+
+/** Folds one durable event row into `acc`, in place: the one rule set both
+ *  the full derivation and the incremental reducer use. Every block an
+ *  event creates is keyed `<seq>:<n>`, `n` counting that event's blocks, so
+ *  a key is unique within the thread and the same whichever path built it.
+ *  Blocks and tool/approval records are replaced, never mutated, so
+ *  memoized rows re-render. Keeps "only the last block may be an error"
+ *  when `acc` already satisfies it. */
+export function foldEvent(acc: ThreadFold, row: ThreadEventRow): void {
+  const ev = row.event;
+  const blocks = acc.blocks;
+  let n = 0;
+  const nextKey = () => `${row.seq}:${n++}`;
+  switch (ev.type) {
+    case "user_message": {
+      // Delivery of a queued send MOVES the echo to a fresh seq: a block for
+      // this event id already renders (the queued chip) — reposition it at
+      // the placement point (the end, in seq order) with the placement flags
+      // reconciled, instead of appending a twin. A mode update can move its
+      // seq while the input is still queued.
+      const i = blocks.findIndex((b) => b.kind === "user" && b.eventId === row.id);
+      if (i >= 0) blocks.splice(i, 1);
+      append(blocks, {
+        kind: "user",
+        text: typedText(ev.content),
+        attachments: ev.attachments,
+        eventId: row.id,
+        ...queuedFieldsOf(ev),
+        ts: row.created_at,
+        key: nextKey(),
+      });
+      break;
+    }
+    case "system_message":
+      break; // server-owned prompt, log-only
+    case "assistant_message": {
+      // This step's streamed buffers are now durable: the live reasoning
+      // block the deltas built and the trailing streamed text are superseded
+      // by this event's blocks — drop them or the step renders twice. The
+      // live block's open-time carries onto its durable successor, or the
+      // working card's elapsed clock resets at every commit.
+      let liveThinkTs: string | undefined;
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i]!;
+        if (b.kind === "reasoning" && b.key.startsWith("live-")) {
+          liveThinkTs ??= b.ts;
+          blocks.splice(i, 1);
+        } else if (b.kind === "text" && b.key.startsWith("unpersisted-")) {
+          blocks.splice(i, 1);
+        }
       }
-      case "system_message":
-        break; // server-owned prompt, log-only
-      case "assistant_message": {
-        const start = blocks.length;
-        for (const b of ev.blocks) {
-          if (b.type === "reasoning") {
-            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, ts: row.created_at, key: seqKey(inEvent++) });
-          } else if (b.type === "text") {
-            blocks.push({ kind: "text", text: b.text, ts: row.created_at, key: seqKey(inEvent++) });
+      const start = blocks.length;
+      let reasoningSeen = false;
+      for (const b of ev.blocks) {
+        if (b.type === "reasoning") {
+          append(blocks, {
+            kind: "reasoning",
+            text: "",
+            reasoningText: b.text,
+            ts: !reasoningSeen && liveThinkTs ? liveThinkTs : row.created_at,
+            key: nextKey(),
+          });
+          reasoningSeen = true;
+        } else if (b.type === "text") {
+          append(blocks, { kind: "text", text: b.text, ts: row.created_at, key: nextKey() });
+        } else {
+          const executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
+          // A live tool_started frame may have provisioned this row before
+          // the carrying message fanned out: adopt it instead of pushing a
+          // duplicate block (its arrival stamp is the call's true start).
+          const existing = acc.toolsByCall.get(b.id);
+          if (existing) {
+            const next: ToolBlock = {
+              ...existing,
+              name: b.name,
+              args: b.arguments,
+              executor,
+              ts: existing.ts ?? row.created_at,
+            };
+            acc.toolsByCall.set(b.id, next);
+            replaceTool(blocks, existing, next);
           } else {
             const tb: ToolBlock = {
               callId: b.id,
               name: b.name,
               args: b.arguments,
-              executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
-              status: "done", // filled by the matching tool_result below
+              executor,
+              status: "done", // filled by the matching tool_result
               ts: row.created_at,
             };
-            toolsByCall.set(b.id, tb);
-            blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
+            acc.toolsByCall.set(b.id, tb);
+            append(blocks, { kind: "tool", text: "", tool: tb, key: nextKey() });
           }
         }
-        if (ev.interrupted) {
-          for (let j = blocks.length - 1; j >= start; j--) {
-            if (blocks[j].kind === "text") {
-              blocks[j].interrupted = true;
-              break;
-            }
-          }
-        }
-        if (ev.error) {
-          blocks.push({ kind: "error", text: ev.error, key: seqKey(inEvent++) });
-        }
-        stampFiles(blocks, start, ev.attachments, row.created_at, seqKey(inEvent++));
-        break;
       }
-      case "tool_result": {
-        const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
-        const kind = (ev as { kind?: string | null }).kind ?? undefined;
-        const tb = toolsByCall.get(ev.call_id);
-        if (tb) {
-          tb.content = ev.content;
-          tb.status = ev.is_error ? "error" : "done";
-          tb.meta = meta;
-          tb.kind = kind;
-          tb.endTs = row.created_at;
-        } else {
-          // Orphan result (call block missing): render it anyway rather than drop it.
-          const orphan: ToolBlock = {
+      if (ev.interrupted) {
+        for (let j = blocks.length - 1; j >= start; j--) {
+          if (blocks[j]!.kind === "text") {
+            blocks[j] = { ...blocks[j]!, interrupted: true };
+            break;
+          }
+        }
+      }
+      // Files before the error: the error stays the step's last block.
+      stampFiles(blocks, start, ev.attachments, row.created_at, nextKey);
+      if (ev.error) append(blocks, { kind: "error", text: ev.error, key: nextKey() });
+      break;
+    }
+    case "tool_result": {
+      const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
+      const kind = (ev as { kind?: string | null }).kind ?? undefined;
+      const tb = acc.toolsByCall.get(ev.call_id);
+      if (tb) {
+        const next: ToolBlock = {
+          ...tb,
+          content: ev.content,
+          status: ev.is_error ? "error" : "done",
+          meta,
+          kind,
+          endTs: row.created_at,
+        };
+        acc.toolsByCall.set(tb.callId, next);
+        replaceTool(blocks, tb, next);
+      } else {
+        // Orphan result (call block missing): render it anyway rather than drop it.
+        append(blocks, {
+          kind: "tool",
+          text: "",
+          key: nextKey(),
+          tool: {
             callId: ev.call_id,
             name: ev.name || "tool",
             args: "",
@@ -428,119 +512,110 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
             kind,
             ts: row.created_at,
             endTs: row.created_at,
-          };
-          blocks.push({
-            kind: "tool",
-            text: "",
-            tool: orphan,
-            key: seqKey(inEvent++),
-          });
-        }
-        break;
+          },
+        });
       }
-      case "approval_request": {
-        const a: ApprovalBlock = {
-          callId: ev.call_id,
-          name: ev.name,
-          args: ev.arguments,
-          status: "pending", // flipped by the matching decision below
-        };
-        approvalsByCall.set(ev.call_id, a);
-        blocks.push({ kind: "approval", text: "", approval: a, key: seqKey(inEvent++) });
-        break;
-      }
-      case "approval_decision": {
-        const a = approvalsByCall.get(ev.call_id);
-        if (a) {
-          a.status = ev.expired ? "expired" : ev.approved ? "approved" : "denied";
-          a.reason = ev.reason ?? undefined;
-        }
-        break; // orphan decision: the request block carries the story
-      }
-      case "compaction":
-        // Stream-positioned: pushed at its event position, in order with the
-        // messages around it.
-        blocks.push({
-          kind: "compaction",
-          text: "",
-          key: seqKey(inEvent++),
-          compaction: {
-            summary: ev.summary,
-            model: ev.model ?? undefined,
-            keepLast: ev.keep_last ?? null,
-          },
-        });
-        break;
-      case "turn_error":
-        blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(inEvent++) });
-        break;
-      case "child_spawned":
-        blocks.push({
-          kind: "child_spawn",
-          text: "",
-          key: seqKey(inEvent++),
-          ts: row.created_at,
-          childSpawn: {
-            threadId: ev.thread_id,
-            chatId: ev.chat_id ?? null,
-            agentName: ev.agent_name || "Subagent",
-            title: ev.title || null,
-            task: ev.task || undefined,
-            startedAt: row.created_at,
-          },
-        });
-        break;
-      case "child_result":
-        blocks.push({
-          kind: "child_result",
-          text: "",
-          key: seqKey(inEvent++),
-          ts: row.created_at,
-          childResult: {
-            threadId: ev.thread_id,
-            chatId: ev.chat_id ?? spawnLabel(blocks, ev.thread_id).chatId,
-            agentName: ev.agent_name || spawnLabel(blocks, ev.thread_id).agentName,
-            title: ev.title || spawnLabel(blocks, ev.thread_id).title,
-            status: ev.status,
-            reason: ev.reason ?? undefined,
-            finalText: ev.final_text || undefined,
-            startedAt: ev.started_at || undefined,
-            finishedAt: row.created_at,
-          },
-        });
-        break;
-      case "child_closed":
-        blocks.push({
-          kind: "child_closed",
-          text: "",
-          key: seqKey(inEvent++),
-          ts: row.created_at,
-          childClosed: {
-            threadId: ev.thread_id,
-            ...spawnLabel(blocks, ev.thread_id),
-          },
-        });
-        break;
+      break;
     }
+    case "approval_request": {
+      const existing = acc.approvalsByCall.get(ev.call_id);
+      if (existing) {
+        // Replay of a card already rendered: upsert, not a blind append.
+        if (existing.status !== "pending") replaceApproval(acc, existing, { ...existing, status: "pending" });
+        break;
+      }
+      const a: ApprovalBlock = { callId: ev.call_id, name: ev.name, args: ev.arguments, status: "pending" };
+      acc.approvalsByCall.set(ev.call_id, a);
+      append(blocks, { kind: "approval", text: "", approval: a, key: nextKey() });
+      break;
+    }
+    case "approval_decision": {
+      const a = acc.approvalsByCall.get(ev.call_id);
+      if (!a) break; // orphan decision: the request block carries the story
+      if (ev.expired) {
+        // An expired card stays: no tool result tells its story — the card
+        // itself is the record that the call never ran.
+        replaceApproval(acc, a, { ...a, status: "expired", reason: ev.reason ?? undefined });
+      } else {
+        // A decided approval is not conversation content: the card goes;
+        // the denial story lives on in the tool-result frame.
+        const i = blocks.findIndex((x) => x.kind === "approval" && x.approval === a);
+        if (i >= 0) blocks.splice(i, 1);
+        acc.approvalsByCall.delete(ev.call_id);
+      }
+      break;
+    }
+    case "compaction":
+      // Stream-positioned: at its event position, in order with the
+      // messages around it.
+      append(blocks, {
+        kind: "compaction",
+        text: "",
+        key: nextKey(),
+        compaction: { summary: ev.summary, model: ev.model ?? undefined, keepLast: ev.keep_last ?? null },
+      });
+      break;
+    case "turn_error":
+      append(blocks, { kind: "error", text: `Turn failed: ${ev.message}`, key: nextKey() });
+      break;
+    case "child_spawned":
+      append(blocks, {
+        kind: "child_spawn",
+        text: "",
+        key: nextKey(),
+        ts: row.created_at,
+        childSpawn: {
+          threadId: ev.thread_id,
+          chatId: ev.chat_id ?? null,
+          agentName: ev.agent_name || "Subagent",
+          title: ev.title || null,
+          task: ev.task || undefined,
+          startedAt: row.created_at,
+        },
+      });
+      break;
+    case "child_result": {
+      const label = spawnLabel(blocks, ev.thread_id);
+      append(blocks, {
+        kind: "child_result",
+        text: "",
+        key: nextKey(),
+        ts: row.created_at,
+        childResult: {
+          threadId: ev.thread_id,
+          chatId: ev.chat_id ?? label.chatId,
+          agentName: ev.agent_name || label.agentName,
+          title: ev.title || label.title,
+          status: ev.status,
+          reason: ev.reason ?? undefined,
+          finalText: ev.final_text || undefined,
+          startedAt: ev.started_at || undefined,
+          finishedAt: row.created_at,
+        },
+      });
+      break;
+    }
+    case "child_closed":
+      append(blocks, {
+        kind: "child_closed",
+        text: "",
+        key: nextKey(),
+        ts: row.created_at,
+        childClosed: { threadId: ev.thread_id, ...spawnLabel(blocks, ev.thread_id) },
+      });
+      break;
   }
-  // Resolved approvals are decisions, not conversation content: a card whose
-  // decision event arrived is dropped, so history renders only approvals
-  // still waiting for an answer. Expired cards stay: no tool result tells
-  // their story — the card itself is the record that the call never ran.
-  return {
-    blocks: pruneStaleErrors(
-      blocks.filter(
-        (b) =>
-          !(
-            b.kind === "approval" &&
-            b.approval &&
-            (b.approval.status === "approved" || b.approval.status === "denied")
-          ),
-      ),
-    ),
-    toolsByCall,
-    approvalsByCall,
-  };
+}
+
+/// Rebuilds the thread view from the persisted thread event log (spec C.3):
+/// every row folded in seq order through `foldEvent`. Tool calls, reasoning
+/// and text are all resident thread parts — nothing disappears on refresh.
+/// Also returns the call-id maps the incremental reducer needs to join
+/// later events.
+export function deriveThread(rows: ThreadEventRow[]): ThreadFold {
+  const acc: ThreadFold = { blocks: [], toolsByCall: new Map(), approvalsByCall: new Map() };
+  for (const row of [...rows].sort((a, b) => a.seq - b.seq)) foldEvent(acc, row);
+  return acc;
 }
 
 /// A failed provider attempt's error block is transient: it renders only
@@ -855,249 +930,11 @@ export function createThreadReducer(): ThreadReducer {
   }
 
   function applyEvent(v: ChatView, row: ThreadEventRow): void {
-    const ev = row.event;
-    const seqKey = (n: number) => `${row.seq}:${n}`;
-    switch (ev.type) {
-      case "user_message": {
-        const at = ev.content.indexOf("\n\n[Attachment: ");
-        const inv = ev.content.indexOf("\n\n---\nInvoked skills");
-        const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
-        // Delivery of a queued send MOVES the echo to a fresh seq: a block
-        // for this event id already renders (the queued chip) — reposition
-        // it at the placement point (array end = seq order here) with the
-        // placement flags reconciled, instead of appending a twin. A mode
-        // update can move its seq while the input is still queued.
-        const existing = v.blocks.find((b) => b.kind === "user" && b.eventId === row.id);
-        if (existing) {
-          v.blocks = [
-            ...v.blocks.filter((b) => b !== existing),
-            {
-              ...existing,
-              text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
-              attachments: ev.attachments,
-              key: seqKey(0),
-              ts: row.created_at,
-              pending: false,
-              ...clearedQueuedFields(),
-              ...queuedFieldsOf(ev),
-            },
-          ];
-          break;
-        }
-        v.blocks.push({
-          kind: "user",
-          text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
-          attachments: ev.attachments,
-          eventId: row.id,
-          ...queuedFieldsOf(ev),
-          ts: row.created_at,
-          key: seqKey(0),
-        });
-        break;
-      }
-      case "system_message":
-        break; // server-owned prompt, log-only
-      case "assistant_message": {
-        // This step's streamed buffers are now durable: the live reasoning
-        // block the deltas built (stream frames / the state stamp) and the
-        // trailing streamed text are superseded by this event's blocks —
-        // drop them or the step renders twice (the fan-out lane has no
-        // ThreadState publish behind it to strip the buffers). The live
-        // block's open-time carries onto its durable successor, or the
-        // working card's elapsed clock resets at every commit.
-        const liveThinkTs = v.blocks
-          .filter((b) => b.kind === "reasoning" && b.key.startsWith("live-"))
-          .at(-1)?.ts;
-        v.blocks = v.blocks.filter(
-          (b) =>
-            !(b.kind === "reasoning" && b.key.startsWith("live-")) &&
-            !(b.kind === "text" && b.key.startsWith("unpersisted-")),
-        );
-        const start = v.blocks.length;
-        let reasoningSeen = false;
-        for (const b of ev.blocks) {
-          if (b.type === "reasoning") {
-            v.blocks.push({
-              kind: "reasoning",
-              text: "",
-              reasoningText: b.text,
-              ts: !reasoningSeen && liveThinkTs ? liveThinkTs : row.created_at,
-              key: seqKey(v.blocks.length - start),
-            });
-            reasoningSeen = true;
-          } else if (b.type === "text") {
-            v.blocks.push({ kind: "text", text: b.text, ts: row.created_at, key: seqKey(v.blocks.length - start) });
-          } else {
-            // A live tool_started frame may have provisioned this row before
-            // the carrying message fanned out: adopt it instead of pushing a
-            // duplicate block (its arrival stamp is the call's true start).
-            const existing = v.toolsByCall.get(b.id);
-            if (existing) {
-              existing.name = b.name;
-              existing.args = b.arguments;
-              existing.executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
-              existing.ts = existing.ts ?? row.created_at;
-            } else {
-              const tb: ToolBlock = {
-                callId: b.id,
-                name: b.name,
-                args: b.arguments,
-                executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
-                status: "done",
-                ts: row.created_at,
-              };
-              v.toolsByCall.set(b.id, tb);
-              v.blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(v.blocks.length - start) });
-            }
-          }
-        }
-        if (ev.interrupted) {
-          for (let j = v.blocks.length - 1; j >= start; j--) {
-            if (v.blocks[j].kind === "text") {
-              v.blocks[j].interrupted = true;
-              break;
-            }
-          }
-        }
-        if (ev.error) {
-          v.blocks.push({ kind: "error", text: ev.error, key: seqKey(0) });
-        }
-        stampFiles(v.blocks, start, ev.attachments, row.created_at, seqKey(0));
-        break;
-      }
-      case "tool_result": {
-        const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
-        const kind = (ev as { kind?: string | null }).kind ?? undefined;
-        const tb = v.toolsByCall.get(ev.call_id);
-        if (tb) {
-          const next: ToolBlock = {
-            ...tb,
-            content: ev.content,
-            status: ev.is_error ? "error" : "done",
-            meta,
-            kind,
-            endTs: row.created_at,
-          };
-          v.toolsByCall.set(tb.callId, next);
-          v.blocks = v.blocks.map((b) => (b.kind === "tool" && b.tool === tb ? { ...b, tool: next } : b));
-        } else {
-          const orphan: ToolBlock = {
-            callId: ev.call_id,
-            name: ev.name || "tool",
-            args: "",
-            executor: "server",
-            status: ev.is_error ? "error" : "done",
-            content: ev.content,
-            meta,
-            kind,
-            ts: row.created_at,
-            endTs: row.created_at,
-          };
-          v.blocks.push({
-            kind: "tool",
-            text: "",
-            tool: orphan,
-            key: seqKey(0),
-          });
-        }
-        break;
-      }
-      case "approval_request": {
-        const existing = v.approvalsByCall.get(ev.call_id);
-        if (existing) {
-          // Replay of a card we already render: upsert, not a blind append.
-          existing.status = "pending";
-          break;
-        }
-        const a: ApprovalBlock = {
-          callId: ev.call_id,
-          name: ev.name,
-          args: ev.arguments,
-          status: "pending",
-        };
-        v.approvalsByCall.set(ev.call_id, a);
-        v.blocks.push({ kind: "approval", text: "", approval: a, key: seqKey(0) });
-        break;
-      }
-      case "approval_decision": {
-        const a = v.approvalsByCall.get(ev.call_id);
-        if (!a) break; // orphan decision: the request block carries the story
-        if (ev.expired) {
-          a.status = "expired";
-          a.reason = ev.reason ?? undefined;
-        } else {
-          // A decided approval is not conversation content: the card goes;
-          // the denial story lives on in the tool-result frame.
-          v.blocks = v.blocks.filter((x) => !(x.kind === "approval" && x.approval === a));
-          v.approvalsByCall.delete(ev.call_id);
-        }
-        break;
-      }
-      case "compaction":
-        v.blocks.push({
-          kind: "compaction",
-          text: "",
-          key: seqKey(0),
-          compaction: {
-            summary: ev.summary,
-            model: ev.model ?? undefined,
-            keepLast: ev.keep_last ?? null,
-          },
-        });
-        break;
-      case "turn_error":
-        v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
-        break;
-      case "child_spawned":
-        v.blocks.push({
-          kind: "child_spawn",
-          text: "",
-          key: seqKey(0),
-          ts: row.created_at,
-          childSpawn: {
-            threadId: ev.thread_id,
-            chatId: ev.chat_id ?? null,
-            agentName: ev.agent_name || "Subagent",
-            title: ev.title || null,
-            task: ev.task || undefined,
-            startedAt: row.created_at,
-          },
-        });
-        break;
-      case "child_result":
-        v.blocks.push({
-          kind: "child_result",
-          text: "",
-          key: seqKey(0),
-          ts: row.created_at,
-          childResult: {
-            threadId: ev.thread_id,
-            chatId: ev.chat_id ?? spawnLabel(v.blocks, ev.thread_id).chatId,
-            agentName: ev.agent_name || spawnLabel(v.blocks, ev.thread_id).agentName,
-            title: ev.title || spawnLabel(v.blocks, ev.thread_id).title,
-            status: ev.status,
-            reason: ev.reason ?? undefined,
-            finalText: ev.final_text || undefined,
-            startedAt: ev.started_at || undefined,
-            finishedAt: row.created_at,
-          },
-        });
-        break;
-      case "child_closed":
-        v.blocks.push({
-          kind: "child_closed",
-          text: "",
-          key: seqKey(0),
-          ts: row.created_at,
-          childClosed: {
-            threadId: ev.thread_id,
-            ...spawnLabel(v.blocks, ev.thread_id),
-          },
-        });
-        break;
-    }
-    // A new event supersedes a shown error: prune keeps the error visible
-    // only while it stays the thread's latest block.
+    // A fresh array: the previous one may already be rendering.
+    v.blocks = [...v.blocks];
+    foldEvent(v, row);
+    // The live lanes may have placed blocks after an error; prune keeps an
+    // error visible only while it stays the thread's latest block.
     v.blocks = pruneStaleErrors(v.blocks);
   }
 
