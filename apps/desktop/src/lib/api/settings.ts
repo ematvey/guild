@@ -20,27 +20,17 @@ export const SETTINGS_PATHS = {
 } as const;
 
 export const registryItemsPath = (kind: string) => `/api/v1/registry/${kind}`;
-export const registryItemPath = (kind: string, slug: string) =>
-  `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`;
-export const registryReviewPath = (kind: string, slug: string) =>
-  `${registryItemPath(kind, slug)}/review`;
+export const registryItemPath = (kind: string, slug: string) => `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`;
+export const registryReviewPath = (kind: string, slug: string) => `${registryItemPath(kind, slug)}/review`;
 export const teamMembersPath = (teamId: string) => `/api/v1/admin/teams/${teamId}/members`;
-export const integrationSecretsPath = (id: string) =>
-  `/api/v1/admin/integrations/${id}/secrets`;
-export const integrationToolsPath = (id: string) =>
-  `/api/v1/admin/integrations/${id}/tools`;
+export const integrationSecretsPath = (id: string) => `/api/v1/admin/integrations/${id}/secrets`;
+export const integrationToolsPath = (id: string) => `/api/v1/admin/integrations/${id}/tools`;
 
 export const usageBreakdownPath = (group: string, from: string, to: string) =>
   `/api/v1/usage?group_by=${group}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-export const usageSeriesPath = (
-  group: string,
-  bucket: string,
-  from: string,
-  to: string,
-) =>
+export const usageSeriesPath = (group: string, bucket: string, from: string, to: string) =>
   `/api/v1/usage/series?group_by=${group}&bucket=${bucket}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-export const userUsageSeriesPath = (from: string, to: string) =>
-  usageSeriesPath("user", "day", from, to);
+export const userUsageSeriesPath = (from: string, to: string) => usageSeriesPath("user", "day", from, to);
 
 // ---- org ----
 
@@ -89,11 +79,10 @@ export function postPushTest(): Promise<{ ok: boolean; delivered: number }> {
 }
 
 export async function uploadOrgLogo(file: File): Promise<{ logo_url: string }> {
-  const res = await requestResponse(
-    "PUT",
-    `${SETTINGS_PATHS.org}/logo?content_type=${encodeURIComponent(file.type)}`,
-    { body: file, headers: { "content-type": "application/octet-stream" } },
-  );
+  const res = await requestResponse("PUT", `${SETTINGS_PATHS.org}/logo?content_type=${encodeURIComponent(file.type)}`, {
+    body: file,
+    headers: { "content-type": "application/octet-stream" },
+  });
   return (await res.json()) as { logo_url: string };
 }
 
@@ -154,18 +143,11 @@ export function createProvider<T>(body: unknown): Promise<T> {
 }
 
 export function updateProvider(slug: string, body: unknown): Promise<void> {
-  return request<void>(
-    "PUT",
-    `${SETTINGS_PATHS.gatewayProviders}/${encodeURIComponent(slug)}`,
-    body,
-  );
+  return request<void>("PUT", `${SETTINGS_PATHS.gatewayProviders}/${encodeURIComponent(slug)}`, body);
 }
 
 export function deleteProvider(slug: string): Promise<void> {
-  return request<void>(
-    "DELETE",
-    `${SETTINGS_PATHS.gatewayProviders}/${encodeURIComponent(slug)}`,
-  );
+  return request<void>("DELETE", `${SETTINGS_PATHS.gatewayProviders}/${encodeURIComponent(slug)}`);
 }
 
 export function putGatewayRoute(body: unknown): Promise<void> {
@@ -173,10 +155,7 @@ export function putGatewayRoute(body: unknown): Promise<void> {
 }
 
 export function deleteGatewayRoute(model: string): Promise<void> {
-  return request<void>(
-    "DELETE",
-    `${SETTINGS_PATHS.gatewayRoutes}/${encodeURIComponent(model)}`,
-  );
+  return request<void>("DELETE", `${SETTINGS_PATHS.gatewayRoutes}/${encodeURIComponent(model)}`);
 }
 
 // ---- MCP servers ----
@@ -215,24 +194,12 @@ export function deleteIntegration(id: string): Promise<void> {
   return request<void>("DELETE", `${SETTINGS_PATHS.integrations}/${id}`);
 }
 
-export function putIntegrationTool(
-  id: string,
-  toolName: string,
-  body: unknown,
-): Promise<void> {
-  return request<void>(
-    "PUT",
-    `${integrationToolsPath(id)}/${encodeURIComponent(toolName)}`,
-    body,
-  );
+export function putIntegrationTool(id: string, toolName: string, body: unknown): Promise<void> {
+  return request<void>("PUT", `${integrationToolsPath(id)}/${encodeURIComponent(toolName)}`, body);
 }
 
 // ---- registry ----
 
-export function reviewRegistryItem(
-  kind: string,
-  slug: string,
-  body: unknown,
-): Promise<void> {
+export function reviewRegistryItem(kind: string, slug: string, body: unknown): Promise<void> {
   return request<void>("POST", registryReviewPath(kind, slug), body);
 }

@@ -162,20 +162,30 @@ describe("read_skill", () => {
     const { deps } = fakeDeps({ control: null });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "ghost" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "ghost" }, API, CTX);
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/no such skill/i);
   });
 
   it("404-texts a tombstoned skill", async () => {
-    const { deps } = fakeDeps({ control: { tombstoned: true, latest_version: "v1", description: "x", owner_user_id: null, owner_team_id: null, maintainer_gated: false, forked_from: null } });
+    const { deps } = fakeDeps({
+      control: {
+        tombstoned: true,
+        latest_version: "v1",
+        description: "x",
+        owner_user_id: null,
+        owner_team_id: null,
+        maintainer_gated: false,
+        forked_from: null,
+      },
+    });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/no such skill|unpublished/i);
   });
@@ -185,9 +195,9 @@ describe("read_skill", () => {
     const { deps, recorded } = fakeDeps({ install, executor: "server" });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBeFalsy();
     const body = text(result);
     expect(body).toContain(
@@ -211,10 +221,12 @@ describe("read_skill", () => {
     const unpinned = fakeDeps({
       install: { slug: "hello", pinned_version: null, installed_at: "2026-01-01T00:00:00.000Z" },
     });
-    const readUnpinned = makeRuntime(unpinned.deps).tools().find((t) => t.name === "read_skill")!;
-    const latest = await (readUnpinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const readUnpinned = makeRuntime(unpinned.deps)
+      .tools()
+      .find((t) => t.name === "read_skill")!;
+    const latest = await (
+      readUnpinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(text(latest)).toContain("version v2");
     // An existing install is not re-installed by a read.
     expect(unpinned.recorded.installs).toHaveLength(0);
@@ -222,10 +234,12 @@ describe("read_skill", () => {
     const pinned = fakeDeps({
       install: { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" },
     });
-    const readPinned = makeRuntime(pinned.deps).tools().find((t) => t.name === "read_skill")!;
-    const atPin = await (readPinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const readPinned = makeRuntime(pinned.deps)
+      .tools()
+      .find((t) => t.name === "read_skill")!;
+    const atPin = await (
+      readPinned.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(text(atPin)).toContain("version v1");
     expect(text(atPin)).toContain("newer version (v2)");
   });
@@ -243,9 +257,9 @@ describe("read_skill", () => {
     });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     const body = text(result);
     expect(body).toContain("--- scripts/run.sh ---");
     expect(body).toContain("echo deploy");
@@ -256,15 +270,13 @@ describe("read_skill", () => {
     const { deps, recorded } = fakeDeps({ install: null, executor: "server" });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBeFalsy();
     // Installed without a pin: the row follows the latest version.
     expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: null }]);
-    expect(recorded.emitted).toEqual([
-      expect.objectContaining({ orgId: ORG, kind: "skill.installed" }),
-    ]);
+    expect(recorded.emitted).toEqual([expect.objectContaining({ orgId: ORG, kind: "skill.installed" })]);
     expect(recorded.materialized).toEqual([
       expect.objectContaining({ conversationId: 7, chatId: CHAT, orgId: ORG, slug: "hello", version: "v2" }),
     ]);
@@ -275,9 +287,9 @@ describe("read_skill", () => {
     const { deps } = fakeDeps({ install: null, executor: "machine" });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBeFalsy();
     expect(text(result)).toMatch(/sync/i);
   });
@@ -287,9 +299,9 @@ describe("read_skill", () => {
     const { deps } = fakeDeps({ install, executor: "server" });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBeFalsy();
     expect(text(result)).toMatch(/a newer version \(v2\) exists — ask the user before updating\./);
   });
@@ -307,9 +319,9 @@ describe("read_skill local-first", () => {
       const { deps, recorded } = fakeDeps({ dir, executor: "server" });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
-      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       const body = text(result);
       expect(body).toContain("Local skill");
@@ -336,9 +348,9 @@ describe("read_skill local-first", () => {
       const { deps, recorded } = fakeDeps({ dir, executor: "server" });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
-      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       const body = text(result);
       expect(body).toContain("# Local body");
@@ -360,9 +372,9 @@ describe("read_skill local-first", () => {
       const { deps, recorded } = fakeDeps({ dir, executor: "server" });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
-      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       expect(text(result)).toContain("# Deploy");
       expect(recorded.reads).toHaveLength(1);
@@ -378,13 +390,21 @@ describe("read_skill local-first", () => {
       writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\n", "utf8");
       const { deps } = fakeDeps({
         dir,
-        control: { tombstoned: true, latest_version: "v2", description: "x", owner_user_id: null, owner_team_id: null, maintainer_gated: false, forked_from: null },
+        control: {
+          tombstoned: true,
+          latest_version: "v2",
+          description: "x",
+          owner_user_id: null,
+          owner_team_id: null,
+          maintainer_gated: false,
+          forked_from: null,
+        },
       });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
-      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       expect(text(result)).not.toContain("the org registry has");
     } finally {
@@ -455,9 +475,9 @@ describe("search_skills", () => {
     });
     const runtime = makeRuntime(deps);
     const search = runtime.tools().find((t) => t.name === "search_skills")!;
-    const result = await (search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { query: "hello" }, API, CTX,
-    );
+    const result = await (
+      search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ query: "hello" }, API, CTX);
     expect(result.isError).toBeFalsy();
     const body = text(result);
     expect(body).toContain("- hello-skill: A skill (v2)");
@@ -482,9 +502,9 @@ describe("search_skills", () => {
     });
     const runtime = makeRuntime(deps);
     const search = runtime.tools().find((t) => t.name === "search_skills")!;
-    const result = await (search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { query: "hello" }, API, CTX,
-    );
+    const result = await (
+      search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ query: "hello" }, API, CTX);
     expect(text(result)).toContain(
       "- hello-skill: A skill (v2)\n  published by Dana Levi, on 2026-05-12, owner team CSM, forked from ops-base@v1",
     );
@@ -494,9 +514,9 @@ describe("search_skills", () => {
     const { deps } = fakeDeps({ search: [] });
     const runtime = makeRuntime(deps);
     const search = runtime.tools().find((t) => t.name === "search_skills")!;
-    const result = await (search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { query: "nope" }, API, CTX,
-    );
+    const result = await (
+      search.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ query: "nope" }, API, CTX);
     expect(result.isError).toBeFalsy();
     expect(text(result)).toBe('No org skills match "nope".');
   });
@@ -513,9 +533,9 @@ describe("push_skill", () => {
       const { deps, recorded } = fakeDeps({ dir, executor: "server", control: null, install: null, versions: [] });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
-      const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       expect(text(result)).toContain("new org skill (now in the catalog)");
       expect(recorded.upserts).toEqual([
@@ -536,9 +556,9 @@ describe("push_skill", () => {
     const { deps } = fakeDeps({ install, executor: "machine" });
     const runtime = makeRuntime(deps);
     const push = runtime.tools().find((t) => t.name === "push_skill")!;
-    const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/pushing from a machine is not available yet/);
   });
@@ -548,9 +568,9 @@ describe("push_skill", () => {
     const { deps, recorded } = fakeDeps({ install, executor: "server", gate: "forbidden" });
     const runtime = makeRuntime(deps);
     const push = runtime.tools().find((t) => t.name === "push_skill")!;
-    const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
+    const result = await (
+      push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+    )({ slug: "hello" }, API, CTX);
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/not permitted/);
     expect(recorded.upserts).toHaveLength(0);
@@ -565,12 +585,13 @@ describe("push_skill", () => {
       writeFileSync(path.join(dir, "skills", "hello", "scripts", "run.sh"), "echo hi\n", "utf8");
       const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
       const { deps, recorded } = fakeDeps({ install, executor: "server", versions: [{ version: "v1" }] });
-      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () => new NodeExecutionEnv({ cwd: dir });
+      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () =>
+        new NodeExecutionEnv({ cwd: dir });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
-      const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       expect(text(result)).toContain("v2");
       expect(recorded.upserts).toEqual([
@@ -581,7 +602,7 @@ describe("push_skill", () => {
       // The bundle carries the collected tree (SKILL.md + the extra file).
       const bundle = recorded.puts[0]!.bytes;
       expect(bundle.length).toBeGreaterThan(0);
-    expect(bundle.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]));
+      expect(bundle.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -597,12 +618,13 @@ describe("push_skill", () => {
         executor: "server",
         versions: [{ version: "v1" }, { version: "v3" }],
       });
-      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () => new NodeExecutionEnv({ cwd: dir });
+      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () =>
+        new NodeExecutionEnv({ cwd: dir });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
-      const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-        { slug: "hello" }, API, CTX,
-      );
+      const result = await (
+        push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
+      )({ slug: "hello" }, API, CTX);
       expect(result.isError).toBeFalsy();
       expect(text(result)).toContain("v4");
       expect(recorded.upserts).toEqual([

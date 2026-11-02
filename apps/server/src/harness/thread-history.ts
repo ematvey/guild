@@ -117,7 +117,9 @@ export function createThreadHistoryTools(deps: ThreadHistoryDeps): ToolRegistrat
       ),
       text: Type.Optional(Type.String({ description: "Only messages containing this text (case-insensitive)" })),
       beforeSeq: Type.Optional(
-        Type.Number({ description: "Page cursor: events older than this seq (from the previous page's nextBeforeSeq)" }),
+        Type.Number({
+          description: "Page cursor: events older than this seq (from the previous page's nextBeforeSeq)",
+        }),
       ),
       limit: Type.Optional(Type.Number({ description: `Page size, 1–${MAX_PAGE} (default ${DEFAULT_PAGE})` })),
     }),

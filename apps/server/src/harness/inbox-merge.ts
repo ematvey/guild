@@ -12,7 +12,7 @@ export async function appendToPendingSteer(
   return conversation.commit(async (tx) => {
     const inbox = await tx.doc(InboxDoc, conversation.id);
     const item = inbox.items.find((candidate) => Number(candidate.id) === submissionId);
-    if (!item || item.mode !== "steer") return false;
+    if (item?.mode !== "steer") return false;
     item.content = appendText(item.content as UserInput, text) as typeof item.content;
     return true;
   }, BACKGROUND_CONTEXT);

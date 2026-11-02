@@ -5,12 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { directBaseTools } from "../../harness/agent-tools.js";
 
-const base = [
-  { name: "read" },
-  { name: "bash" },
-  { name: "codemode" },
-  { name: "send_message" },
-];
+const base = [{ name: "read" }, { name: "bash" }, { name: "codemode" }, { name: "send_message" }];
 
 describe("directBaseTools", () => {
   it("offers every tool when the agent follows all tools", () => {

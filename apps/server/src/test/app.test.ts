@@ -2,7 +2,7 @@
 // not-found envelope for unmatched routes, the SPA fallback, the member
 // socket upgrade). No external services and no upstream.
 
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { buildApp, GUILD_TS_SERVER_VERSION } from "../app.js";
@@ -34,7 +34,14 @@ const TEST_ENV = {
 };
 
 function makeApp() {
-  return buildApp(loadConfig({ ...TEST_ENV, GUILD_DATABASE_URL: database.url, GUILD_WEB_DIST: `/tmp/${database.name}-missing-web-dist`, GUILD_LOG_LEVEL: "silent" }));
+  return buildApp(
+    loadConfig({
+      ...TEST_ENV,
+      GUILD_DATABASE_URL: database.url,
+      GUILD_WEB_DIST: `/tmp/${database.name}-missing-web-dist`,
+      GUILD_LOG_LEVEL: "silent",
+    }),
+  );
 }
 
 describe("health route (native)", () => {

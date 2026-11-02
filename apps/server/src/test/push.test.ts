@@ -92,7 +92,13 @@ describe("the notifier", () => {
     const { sent, sender } = fakeSender();
     const notifier = notifierWith(sender, 12, 12);
     await store.upsert(stack.orgId, stack.memberId, sub("present", "https://push/present"));
-    await notifier.turnEnded({ orgId: stack.orgId, userId: stack.memberId, chatId: "chat-1", title: "T", failed: false });
+    await notifier.turnEnded({
+      orgId: stack.orgId,
+      userId: stack.memberId,
+      chatId: "chat-1",
+      title: "T",
+      failed: false,
+    });
     expect(sent).toEqual([]);
   });
 
@@ -100,7 +106,13 @@ describe("the notifier", () => {
     const { sent, sender } = fakeSender();
     const notifier = notifierWith(sender, 12, 9);
     await store.upsert(stack.orgId, stack.memberId, sub("behind", "https://push/behind"));
-    await notifier.turnEnded({ orgId: stack.orgId, userId: stack.memberId, chatId: "chat-4", title: "T", failed: false });
+    await notifier.turnEnded({
+      orgId: stack.orgId,
+      userId: stack.memberId,
+      chatId: "chat-4",
+      title: "T",
+      failed: false,
+    });
     expect(sent.length).toBeGreaterThan(0);
   });
 

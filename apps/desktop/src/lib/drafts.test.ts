@@ -1,15 +1,7 @@
 // Pure-logic tests for lib/drafts (no DOM; storage is a fake over a Map).
 
 import { describe, expect, it } from "vitest";
-import {
-  canPersistDraft,
-  clearDrafts,
-  draftKey,
-  gcDrafts,
-  readDraft,
-  writeDraft,
-  type DraftStorage,
-} from "./drafts";
+import { canPersistDraft, clearDrafts, draftKey, gcDrafts, readDraft, writeDraft, type DraftStorage } from "./drafts";
 
 function fakeStorage(seed: Record<string, string> = {}): DraftStorage {
   const map = new Map(Object.entries(seed));
@@ -141,12 +133,19 @@ it("requires complete archived and active inventories before collecting drafts",
   const { completeDraftInventory } = await import("./drafts");
   expect(completeDraftInventory([{ id: "active" }], null, null)).toBeNull();
   expect(completeDraftInventory(null, [{ id: "archived" }], null)).toBeNull();
-  expect([...completeDraftInventory([{ id: "active" }], [{ id: "archived" }], "open")!]).toEqual(["active", "archived", "open"]);
+  expect([...completeDraftInventory([{ id: "active" }], [{ id: "archived" }], "open")!]).toEqual([
+    "active",
+    "archived",
+    "open",
+  ]);
 });
 
-
 it("signout clears persisted outgoing commands with composer drafts", () => {
-  const storage = fakeStorage({ "guild:outgoing:account:message": "payload", "guild:draft:a": "text", unrelated: "keep" });
+  const storage = fakeStorage({
+    "guild:outgoing:account:message": "payload",
+    "guild:draft:a": "text",
+    unrelated: "keep",
+  });
   clearDrafts(storage);
   expect(keys(storage)).toEqual(["unrelated"]);
 });

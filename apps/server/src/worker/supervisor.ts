@@ -103,7 +103,9 @@ export class ForkSupervisor {
   private turnEnded: ((chatId: string, failed: boolean) => Promise<void>) | null = null;
   private submitRemote: ((chatId: string, input: SubmitTurnInput) => Promise<number>) | null = null;
 
-  setStreamSink(sink: GenerationStreamSink | null): void { this.streamSink = sink; }
+  setStreamSink(sink: GenerationStreamSink | null): void {
+    this.streamSink = sink;
+  }
 
   /** A turn ended in a worker: the server's push lane runs here, where the
    *  member sockets are. */
@@ -195,7 +197,7 @@ export class ForkSupervisor {
    *  before the ready handshake queues and flushes on ready. */
   private async ensureWorker(chatId: string): Promise<Handle> {
     const existing = this.handles.get(chatId);
-    if (existing && existing.alive && !existing.retiring) {
+    if (existing?.alive && !existing.retiring) {
       await existing.ready;
       existing.lastUsed = Date.now();
       return existing;
@@ -335,8 +337,12 @@ export class ForkSupervisor {
           handle.buffers = { text: "", thinking: "" };
           this.streamSink?.open(chatId, message.generationId);
           break;
-        case "event": this.streamSink?.event(chatId, message.event); break;
-        case "dirty": this.streamSink?.dirty(chatId); break;
+        case "event":
+          this.streamSink?.event(chatId, message.event);
+          break;
+        case "dirty":
+          this.streamSink?.dirty(chatId);
+          break;
         case "close":
           handle.buffers = { text: "", thinking: "" };
           this.streamSink?.close(chatId);
@@ -344,7 +350,8 @@ export class ForkSupervisor {
         case "buffers":
           for (const key of ["text", "thinking"] as const) {
             const update = message[key];
-            if (update) handle.buffers[key] = "replace" in update ? update.replace : handle.buffers[key] + update.append;
+            if (update)
+              handle.buffers[key] = "replace" in update ? update.replace : handle.buffers[key] + update.append;
           }
           break;
       }
@@ -352,7 +359,8 @@ export class ForkSupervisor {
     }
     if (message.t === "turn-ended") {
       void this.turnEnded?.(message.chatId, message.failed).catch((error: unknown) =>
-        this.log.warn({ err: error, chatId: message.chatId }, "turn-end hook failed"));
+        this.log.warn({ err: error, chatId: message.chatId }, "turn-end hook failed"),
+      );
       return;
     }
     if (message.t === "ready") {
@@ -504,13 +512,15 @@ export class ForkSupervisor {
     const handle = this.handles.get(chatId);
     // No worker owns this chat, so nothing of it is in flight here.
     if (handle === undefined) return Promise.resolve();
-    return this.request<void>(chatId, { t: "stop" }, this.options.stopSettleTimeoutMs ?? STOP_SETTLE_TIMEOUT_MS).catch((error: unknown) => {
-      if (!(error instanceof WorkerRequestTimeout)) throw error;
-      // The abort mark was committed before the worker began to wait, so the
-      // journal ends the turn on respawn. The stuck process is unrecoverable.
-      this.log.warn({ chatId }, "stop did not settle; killing the stuck worker");
-      handle.child.kill("SIGKILL");
-    });
+    return this.request<void>(chatId, { t: "stop" }, this.options.stopSettleTimeoutMs ?? STOP_SETTLE_TIMEOUT_MS).catch(
+      (error: unknown) => {
+        if (!(error instanceof WorkerRequestTimeout)) throw error;
+        // The abort mark was committed before the worker began to wait, so the
+        // journal ends the turn on respawn. The stuck process is unrecoverable.
+        this.log.warn({ chatId }, "stop did not settle; killing the stuck worker");
+        handle.child.kill("SIGKILL");
+      },
+    );
   }
 
   compact(chatId: string): Promise<number | null> {
@@ -588,4 +598,3 @@ export class ForkSupervisor {
     await Promise.allSettled([...this.spawning.values(), ...this.recovering.values()]);
   }
 }
-

@@ -16,11 +16,10 @@ export function modKey(): "⌘" | "Ctrl" {
   return isApple ? "⌘" : "Ctrl";
 }
 
-const chip =
-  "rounded border border-border bg-muted px-1 font-sans text-xs font-medium leading-5 text-muted-foreground";
+const chip = "rounded border border-border bg-muted px-1 font-sans text-xs font-medium leading-5 text-muted-foreground";
 
 export function HotkeyHint({ combo, browserCombo }: { combo: string; browserCombo?: string }) {
-  const parts = (HAS_SHELL ? combo : browserCombo ?? combo).split("+");
+  const parts = (HAS_SHELL ? combo : (browserCombo ?? combo)).split("+");
   return (
     <span className="ml-2 inline-flex items-center gap-0.5">
       {parts.map((part) => (

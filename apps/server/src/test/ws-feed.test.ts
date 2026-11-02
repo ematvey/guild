@@ -36,7 +36,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_fix_test_" });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   base = `http://127.0.0.1:${port}`;
@@ -70,7 +72,13 @@ beforeAll(async () => {
     method: "PUT",
     url: "/api/v1/admin/gateway/routes",
     headers: { authorization: `Bearer ${stack.adminToken}`, "content-type": "application/json" },
-    payload: { model: "GLM-Slow-Model", provider: "mock-slow-openai", price_in: 2.0, price_out: 4.0, quota_monthly_usd: null },
+    payload: {
+      model: "GLM-Slow-Model",
+      provider: "mock-slow-openai",
+      price_in: 2.0,
+      price_out: 4.0,
+      quota_monthly_usd: null,
+    },
   });
   if (route.statusCode !== 200) throw new Error(`slow route create failed: ${route.body}`);
 }, 60_000);
@@ -122,17 +130,14 @@ async function waitFrame(
   predicate: (frame: Record<string, unknown>) => boolean,
   timeoutMs = 15_000,
 ): Promise<Record<string, unknown>> {
-  const found = await ws.until(
-    (f) => {
-      if (f.kind !== "text") return false;
-      try {
-        return predicate(JSON.parse(f.data) as Record<string, unknown>);
-      } catch {
-        return false;
-      }
-    },
-    timeoutMs,
-  );
+  const found = await ws.until((f) => {
+    if (f.kind !== "text") return false;
+    try {
+      return predicate(JSON.parse(f.data) as Record<string, unknown>);
+    } catch {
+      return false;
+    }
+  }, timeoutMs);
   return JSON.parse((found as { data: string }).data) as Record<string, unknown>;
 }
 
@@ -163,7 +168,9 @@ async function strangerToken(email: string, orgId = stack.orgId): Promise<string
 }
 
 describe("member-socket feed", () => {
-  it("delivers a submitted turn's live frames and terminal state to the socket (the hang fix)", { timeout: TEST_TIMEOUT }, async () => {
+  it("delivers a submitted turn's live frames and terminal state to the socket (the hang fix)", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("feed turn");
     const ws = await memberSocket();
 
@@ -278,7 +285,8 @@ describe("member-socket feed", () => {
         f.chat_id === chat.id &&
         ((f.type === "thread_events" &&
           (f.events as { event: { type: string } }[]).some((e) => e.event.type === "user_message")) ||
-          (f.type === "thread_state" && f.generating === true &&
+          (f.type === "thread_state" &&
+            f.generating === true &&
             (f.events as { event: { type: string } }[]).some((e) => e.event.type === "user_message"))),
       20_000,
     );
@@ -302,7 +310,9 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
-  it("answers sync with SyncBegin → SubagentTree → byte-exact ThreadState → SyncDone", { timeout: TEST_TIMEOUT }, async () => {
+  it("answers sync with SyncBegin → SubagentTree → byte-exact ThreadState → SyncDone", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("sync chat");
     const ws = await memberSocket();
 
@@ -431,9 +441,7 @@ describe("member-socket feed", () => {
       expect(status.generating).toBe(true);
       // Give the dropped sync time to drain, then check it opened nothing.
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const syncFrames = textFrames(ws).filter(
-        (f) => f.type === "sync_begin" || f.type === "sync_done",
-      );
+      const syncFrames = textFrames(ws).filter((f) => f.type === "sync_begin" || f.type === "sync_done");
       expect(syncFrames).toEqual([]);
     } finally {
       await stack.env.db.query("UPDATE users SET org_id = $1 WHERE id = $2", [stack.orgId, stack.memberId]);
@@ -441,7 +449,9 @@ describe("member-socket feed", () => {
     }
   });
 
-  it("defers a live tree that arrives inside a sync bracket until after SyncDone", { timeout: TEST_TIMEOUT }, async () => {
+  it("defers a live tree that arrives inside a sync bracket until after SyncDone", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("sync gate");
     const agentId = crypto.randomUUID();
     await stack.env.db.query(
@@ -472,7 +482,9 @@ describe("member-socket feed", () => {
     const ws = await memberSocket();
     const originalTree = platform.sockets.subagentTree;
     let releaseTree: () => void = () => {};
-    const treeGate = new Promise<void>((resolve) => { releaseTree = resolve; });
+    const treeGate = new Promise<void>((resolve) => {
+      releaseTree = resolve;
+    });
     platform.sockets.subagentTree = async (args) => {
       await treeGate;
       return originalTree(args);
@@ -481,14 +493,18 @@ describe("member-socket feed", () => {
     // bracket is still open, the gate must defer it. No production hook.
     const sinks = platform.hub.sinksOfUser(stack.memberId);
     let markQueued: () => void = () => {};
-    const queued = new Promise<void>((resolve) => { markQueued = resolve; });
+    const queued = new Promise<void>((resolve) => {
+      markQueued = resolve;
+    });
     const restoreSends = sinks.map((sink) => {
       const original = sink.send.bind(sink);
       sink.send = (msg: Parameters<typeof sink.send>[0]) => {
         if (msg.type === "subagent_tree" && msg.chat_id === chat.id) markQueued();
         return original(msg);
       };
-      return () => { sink.send = original; };
+      return () => {
+        sink.send = original;
+      };
     });
     try {
       ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
@@ -520,7 +536,9 @@ describe("member-socket feed", () => {
       const doneIndex = frames.findIndex((f) => f.type === "sync_done" && f.chat_id === chat.id);
       const treeFrames = frames
         .map((frame, index) => ({ frame, index }))
-        .filter(({ frame, index }) => index > beginIndex && frame.type === "subagent_tree" && frame.chat_id === chat.id);
+        .filter(
+          ({ frame, index }) => index > beginIndex && frame.type === "subagent_tree" && frame.chat_id === chat.id,
+        );
       expect(treeFrames.length).toBeGreaterThanOrEqual(2);
       const bracketTree = treeFrames[0]!;
       const liveTree = treeFrames[treeFrames.length - 1]!;
@@ -535,7 +553,9 @@ describe("member-socket feed", () => {
     }
   });
 
-  it("fans a committed event out to every socket of the owner, and to no stranger", { timeout: TEST_TIMEOUT }, async () => {
+  it("fans a committed event out to every socket of the owner, and to no stranger", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("fanout chat");
     const first = await memberSocket();
     const second = await memberSocket();
@@ -589,7 +609,9 @@ describe("member-socket feed", () => {
        VALUES ('fix-presence-m1', $1, $2, 'Desk')`,
       [stack.orgId, stack.memberId],
     );
-    await stack.env.db.query("UPDATE chats SET machine_id = 'fix-presence-m1', machine_label = 'Desk' WHERE id = $1", [chat.id]);
+    await stack.env.db.query("UPDATE chats SET machine_id = 'fix-presence-m1', machine_label = 'Desk' WHERE id = $1", [
+      chat.id,
+    ]);
 
     const browser = await memberSocket();
     // The connect push carries the machine offline, so the online flip
@@ -636,7 +658,9 @@ describe("member-socket feed", () => {
     browser.end();
   });
 
-  it("pushes machine_status to the owner's member socket on connect and disconnect", { timeout: TEST_TIMEOUT }, async () => {
+  it("pushes machine_status to the owner's member socket on connect and disconnect", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const machineId = "fix-status-m1";
     await stack.env.db.query(
       `INSERT INTO machines (machine_id, org_id, user_id, label)
@@ -658,10 +682,7 @@ describe("member-socket feed", () => {
     await machine.open();
 
     // No poll: the flip itself is a frame, so it lands at once.
-    const online = await waitFrame(
-      browser,
-      (f) => f.type === "machine_status" && f.machine_id === machineId,
-    );
+    const online = await waitFrame(browser, (f) => f.type === "machine_status" && f.machine_id === machineId);
     expect(online.online).toBe(true);
 
     machine.end();
@@ -674,7 +695,9 @@ describe("member-socket feed", () => {
     browser.end();
   });
 
-  it("the HTTP thread list agrees with the hub — same truth as the machines list", { timeout: TEST_TIMEOUT }, async () => {
+  it("the HTTP thread list agrees with the hub — same truth as the machines list", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     // Regression: GET /api/v1/chats hardcoded machine_online=false, so the
     // webchat showed the "machine is offline" banner while the sidebar's
     // machines-derived pin showed green (an always-online machine never
@@ -685,7 +708,9 @@ describe("member-socket feed", () => {
        VALUES ('fix-http-m1', $1, $2, 'Desk')`,
       [stack.orgId, stack.memberId],
     );
-    await stack.env.db.query("UPDATE chats SET machine_id = 'fix-http-m1', machine_label = 'Desk' WHERE id = $1", [chat.id]);
+    await stack.env.db.query("UPDATE chats SET machine_id = 'fix-http-m1', machine_label = 'Desk' WHERE id = $1", [
+      chat.id,
+    ]);
 
     const onlineOf = async (): Promise<boolean | undefined> => {
       const res = await stack.env.app.inject({
@@ -720,7 +745,9 @@ describe("member-socket feed", () => {
     expect(await onlineOf()).toBe(false);
   });
 
-  it("keeps a delegated child chat out of the thread_list push and the HTTP list", { timeout: TEST_TIMEOUT }, async () => {
+  it("keeps a delegated child chat out of the thread_list push and the HTTP list", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("delegated child");
     const agentId = crypto.randomUUID();
     await stack.env.db.query(
@@ -758,9 +785,8 @@ describe("member-socket feed", () => {
       "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, 'user_message', $3)",
       [eventId, chat.id, JSON.stringify({ type: "user_message", text: "read me" })],
     );
-    const seq = (
-      await stack.env.db.query<{ seq: string }>("SELECT seq FROM thread_events WHERE id = $1", [eventId])
-    ).rows[0]!.seq;
+    const seq = (await stack.env.db.query<{ seq: string }>("SELECT seq FROM thread_events WHERE id = $1", [eventId]))
+      .rows[0]!.seq;
 
     const ws = await memberSocket();
     ws.send(JSON.stringify({ type: "read", chat_id: chat.id }));
@@ -768,10 +794,9 @@ describe("member-socket feed", () => {
     let marker: { last_read_seq: string } | undefined;
     for (let i = 0; i < 50 && marker === undefined; i++) {
       marker = (
-        await stack.env.db.query<{ last_read_seq: string }>(
-          "SELECT last_read_seq FROM chat_reads WHERE chat_id = $1",
-          [chat.id],
-        )
+        await stack.env.db.query<{ last_read_seq: string }>("SELECT last_read_seq FROM chat_reads WHERE chat_id = $1", [
+          chat.id,
+        ])
       ).rows[0];
       if (marker === undefined) await new Promise((r) => setTimeout(r, 100));
     }
@@ -830,10 +855,7 @@ describe("member-socket feed", () => {
 
     const ws = await memberSocket();
     ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
-    const syncTree = await waitFrame(
-      ws,
-      (f) => f.type === "subagent_tree" && f.chat_id === chat.id,
-    );
+    const syncTree = await waitFrame(ws, (f) => f.type === "subagent_tree" && f.chat_id === chat.id);
     expect((syncTree.nodes as { thread_id: string }[]).map((n) => n.thread_id)).toEqual([rootThread]);
 
     // A child thread + run changes the subtree: the NOTIFY pushes it whole.
@@ -861,17 +883,20 @@ describe("member-socket feed", () => {
       headers: auth(stack.memberToken),
     });
     expect(workingList.statusCode).toBe(200);
-    const workingRow = (JSON.parse(workingList.body) as { chats: { id: string; working: boolean }[] })
-      .chats.find((row) => row.id === chat.id);
+    const workingRow = (JSON.parse(workingList.body) as { chats: { id: string; working: boolean }[] }).chats.find(
+      (row) => row.id === chat.id,
+    );
     expect(workingRow?.working).toBe(true);
 
     // The thread insert pushes the new node before its run exists; the run
     // pushes it again with its status.
     const pushed = await waitFrame(
       ws,
-      (f) => f.type === "subagent_tree" && f.chat_id === chat.id
-        && (f.nodes as { status: string | null }[]).length === 2
-        && (f.nodes as { status: string | null }[])[1]!.status === "running",
+      (f) =>
+        f.type === "subagent_tree" &&
+        f.chat_id === chat.id &&
+        (f.nodes as { status: string | null }[]).length === 2 &&
+        (f.nodes as { status: string | null }[])[1]!.status === "running",
     );
     const nodes = pushed.nodes as { thread_id: string; parent_thread_id: string | null; status: string | null }[];
     expect(nodes.map((n) => [n.thread_id, n.parent_thread_id, n.status])).toEqual([
@@ -884,8 +909,10 @@ describe("member-socket feed", () => {
     await notifySubagentTree(platform.pool, childThread);
     const done = await waitFrame(
       ws,
-      (f) => f.type === "subagent_tree" && f.chat_id === chat.id
-        && (f.nodes as { status: string | null }[]).some((n) => n.status === "succeeded"),
+      (f) =>
+        f.type === "subagent_tree" &&
+        f.chat_id === chat.id &&
+        (f.nodes as { status: string | null }[]).some((n) => n.status === "succeeded"),
     );
     expect((done.nodes as { status: string | null }[])[1]!.status).toBe("succeeded");
 
@@ -895,8 +922,9 @@ describe("member-socket feed", () => {
       headers: auth(stack.memberToken),
     });
     expect(doneList.statusCode).toBe(200);
-    const doneRow = (JSON.parse(doneList.body) as { chats: { id: string; working: boolean }[] })
-      .chats.find((row) => row.id === chat.id);
+    const doneRow = (JSON.parse(doneList.body) as { chats: { id: string; working: boolean }[] }).chats.find(
+      (row) => row.id === chat.id,
+    );
     expect(doneRow?.working).toBe(false);
     ws.end();
   });
@@ -921,10 +949,7 @@ describe("member-socket feed", () => {
       payload: { name: "Renamed workspace" },
     });
     expect(renamed.statusCode).toBe(200);
-    const info = await waitFrame(
-      ws,
-      (f) => f.type === "workspace_identity" && f.name === "Renamed workspace",
-    );
+    const info = await waitFrame(ws, (f) => f.type === "workspace_identity" && f.name === "Renamed workspace");
     expect(info.name).toBe("Renamed workspace");
     // Restore the harness's name for the tests that follow.
     await stack.env.app.inject({
@@ -957,10 +982,7 @@ describe("member-socket feed", () => {
       payload: { enabled: false },
     });
     expect(off.statusCode).toBe(200);
-    const pushed = await waitFrame(
-      ws,
-      (f) => f.type === "workspace_identity" && f.telemetry === false,
-    );
+    const pushed = await waitFrame(ws, (f) => f.type === "workspace_identity" && f.telemetry === false);
     expect(pushed.telemetry).toBe(false);
 
     const org = await stack.env.app.inject({
@@ -990,7 +1012,14 @@ describe("member-socket feed", () => {
       method: "PUT",
       url: "/api/v1/admin/gateway/routes",
       headers: auth(stack.adminToken),
-      payload: { model: "GLM-Pushed-Model", alias: "Pushed", provider: "mock-slow-openai", price_in: 1, price_out: 1, quota_monthly_usd: null },
+      payload: {
+        model: "GLM-Pushed-Model",
+        alias: "Pushed",
+        provider: "mock-slow-openai",
+        price_in: 1,
+        price_out: 1,
+        quota_monthly_usd: null,
+      },
     });
     expect(added.statusCode).toBe(200);
     const pushed = await waitFrame(
@@ -1012,7 +1041,9 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
-  it("pushes the member's profile on connect and when an admin changes the role", { timeout: TEST_TIMEOUT }, async () => {
+  it("pushes the member's profile on connect and when an admin changes the role", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     type Profile = { id: string; role: string };
     const me = await stack.env.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(stack.memberToken) });
     const memberId = (JSON.parse(me.body) as Profile).id;
@@ -1050,9 +1081,7 @@ describe("member-socket feed", () => {
       ws,
       (f) =>
         f.type === "thread_list" &&
-        (f.chats as { id: string; title?: string }[]).some(
-          (c) => c.id === chat.id && c.title === "Renamed chat",
-        ),
+        (f.chats as { id: string; title?: string }[]).some((c) => c.id === chat.id && c.title === "Renamed chat"),
     );
 
     const archived = await stack.env.app.inject({
@@ -1064,9 +1093,7 @@ describe("member-socket feed", () => {
     expect(archived.statusCode).toBe(200);
     await waitFrame(
       ws,
-      (f) =>
-        f.type === "archived_thread_list" &&
-        (f.chats as { id: string }[]).some((c) => c.id === chat.id),
+      (f) => f.type === "archived_thread_list" && (f.chats as { id: string }[]).some((c) => c.id === chat.id),
     );
     ws.end();
   });
@@ -1089,9 +1116,7 @@ describe("member-socket feed", () => {
     const project = JSON.parse(res.body) as { id: string };
     await waitFrame(
       ws,
-      (f) =>
-        f.type === "project_list" &&
-        (f.projects as { id: string }[]).some((p) => p.id === project.id),
+      (f) => f.type === "project_list" && (f.projects as { id: string }[]).some((p) => p.id === project.id),
     );
     ws.end();
   });
@@ -1125,7 +1150,9 @@ describe("member-socket push volume", () => {
     "member_profile",
   ]);
 
-  it("a plain turn sends the changed chat row and its context usage, never the workspace bracket", { timeout: TEST_TIMEOUT }, async () => {
+  it("a plain turn sends the changed chat row and its context usage, never the workspace bracket", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const chat = await createChat("push volume");
     const ws = await rowSocket();
     const legacy = await memberSocket();
@@ -1150,9 +1177,11 @@ describe("member-socket push volume", () => {
       // The list row settles with the turn: spinner off, unread dot on.
       await waitFrame(
         ws,
-        (f) => f.type === "chat_row" && (f.chat as { id: string }).id === chat.id
-          && (f.chat as { unread: boolean; generating: boolean }).unread
-          && !(f.chat as { generating: boolean }).generating,
+        (f) =>
+          f.type === "chat_row" &&
+          (f.chat as { id: string }).id === chat.id &&
+          (f.chat as { unread: boolean; generating: boolean }).unread &&
+          !(f.chat as { generating: boolean }).generating,
       );
       // Trailing pushes (the run's last commit, the generating flip) land.
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1166,7 +1195,9 @@ describe("member-socket push volume", () => {
       expect(rows.every((f) => (f.chat as { id: string }).id === chat.id)).toBe(true);
 
       // A client without chat_row gets the list, and only the list.
-      const legacyKinds = textFrames(legacy).slice(legacyBefore).map((f) => f.type as string);
+      const legacyKinds = textFrames(legacy)
+        .slice(legacyBefore)
+        .map((f) => f.type as string);
       expect(legacyKinds).toContain("thread_list");
       expect(legacyKinds.filter((kind) => WORKSPACE_FRAMES.has(kind) && kind !== "thread_list")).toEqual([]);
     } finally {
@@ -1215,8 +1246,11 @@ describe("member-socket push volume", () => {
       expect(turn.statusCode).toBe(200);
       await waitFrame(
         ws,
-        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.generating === false
-          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === chat.id &&
+          f.generating === false &&
+          (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
         20_000,
       );
       const res = await stack.env.app.inject({
@@ -1232,8 +1266,11 @@ describe("member-socket push volume", () => {
       // settlement's forced republish can carry a newer state.
       const settled = await waitFrame(
         ws,
-        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.compacting === false
-          && (f.seq as number) > started.seq,
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === chat.id &&
+          f.compacting === false &&
+          (f.seq as number) > started.seq,
       );
       expect(settled.generating).toBe(false);
     } finally {
@@ -1265,7 +1302,9 @@ describe("member-socket view routing", () => {
       .map((f) => JSON.parse(f.data) as Record<string, unknown>)
       .filter((f) => VIEW_FRAMES.has(f.type as string) && f.chat_id === chatId);
 
-  it("sends a chat's view only to the sockets showing it, and its status to all", { timeout: TEST_TIMEOUT }, async () => {
+  it("sends a chat's view only to the sockets showing it, and its status to all", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const shown = await createChat("routed view");
     const other = await createChat("routed other");
     const onChat = await viewing(shown.id);
@@ -1282,8 +1321,11 @@ describe("member-socket view routing", () => {
       expect(res.statusCode).toBe(200);
       await waitFrame(
         onChat,
-        (f) => f.type === "thread_state" && f.chat_id === shown.id && f.generating === false
-          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === shown.id &&
+          f.generating === false &&
+          (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
         20_000,
       );
       // The spinner flip is a sidebar fact: every socket sees it.
@@ -1307,9 +1349,12 @@ describe("member-socket view routing", () => {
       for (const ws of [onChat, onOther]) {
         await waitFrame(
           ws,
-          (f) => f.type === "thread_state" && f.chat_id === shown.id
-            && (f.events as { event: { type: string; content?: string } }[])
-              .some((e) => e.event.type === "system_message" && e.event.content === "after the switch"),
+          (f) =>
+            f.type === "thread_state" &&
+            f.chat_id === shown.id &&
+            (f.events as { event: { type: string; content?: string } }[]).some(
+              (e) => e.event.type === "system_message" && e.event.content === "after the switch",
+            ),
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -1338,8 +1383,11 @@ describe("member-socket view routing", () => {
       expect(turn.statusCode).toBe(200);
       await waitFrame(
         ws,
-        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.generating === false
-          && (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === chat.id &&
+          f.generating === false &&
+          (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
         20_000,
       );
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1354,8 +1402,11 @@ describe("member-socket view routing", () => {
       const started = JSON.parse(res.body) as { seq: number };
       await waitFrame(
         ws,
-        (f) => f.type === "thread_state" && f.chat_id === chat.id && f.compacting === false
-          && (f.seq as number) > started.seq,
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === chat.id &&
+          f.compacting === false &&
+          (f.seq as number) > started.seq,
       );
       await new Promise((resolve) => setTimeout(resolve, 600));
       const states = statesOf(ws, mark, chat.id);
@@ -1385,7 +1436,7 @@ describe("member-socket view routing", () => {
     await conversation.commit(async (tx) => {
       for (let i = 0; i < 3; i++) {
         await tx.appendEntry(UserEntry, conversation.id, {
-          model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }],
+          model: [{ role: "user", content: `${i}:${"old context ".repeat(5000)}`, timestamp: i }],
         });
       }
     }, BACKGROUND_CONTEXT);
@@ -1418,8 +1469,14 @@ describe("member-socket view routing", () => {
         });
         return (JSON.parse(status.body) as { status: string }).status === "completed";
       }, 20_000);
-      await waitFrame(ws, (f) => f.type === "thread_state" && f.chat_id === id && f.compacting === false
-        && (f.events as { event: { type: string } }[]).length > 0);
+      await waitFrame(
+        ws,
+        (f) =>
+          f.type === "thread_state" &&
+          f.chat_id === id &&
+          f.compacting === false &&
+          (f.events as { event: { type: string } }[]).length > 0,
+      );
       await new Promise((resolve) => setTimeout(resolve, 600));
       const states = statesOf(ws, mark, id);
       expect(states.length).toBeGreaterThanOrEqual(1);

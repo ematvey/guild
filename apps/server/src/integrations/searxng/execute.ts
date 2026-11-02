@@ -3,7 +3,13 @@ import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- searxng ----------
 
-export async function searxngExecute(config: JsonObject, tool: string, args: JsonObject, _secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function searxngExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  _secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   if (tool !== "web_search") throw new Error(`searxng integration has no tool ${tool}`);
   const query = args["query"];
   if (typeof query !== "string") throw new Error("web_search requires query");
@@ -30,4 +36,3 @@ export async function searxngExecute(config: JsonObject, tool: string, args: Jso
   if (out === "") out = "No results.";
   return { content: out, meta: { card: "web", kind: "search", sources, truncated } };
 }
-

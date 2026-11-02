@@ -47,15 +47,7 @@ export async function insertChunks(pool: PlatformPool, chunks: AgentChunkInput[]
       await client.query(
         `INSERT INTO agent_thread_chunks (id, thread_id, agent_id, seq_from, seq_to, ts, text, tsv)
          VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7, to_tsvector('simple', $7))`,
-        [
-          uuidv7(),
-          chunk.thread_id,
-          chunk.agent_id,
-          chunk.seq_from,
-          chunk.seq_to,
-          chunk.ts ?? null,
-          chunk.text,
-        ],
+        [uuidv7(), chunk.thread_id, chunk.agent_id, chunk.seq_from, chunk.seq_to, chunk.ts ?? null, chunk.text],
       );
     }
   });
@@ -81,9 +73,7 @@ export async function chunkThread(
 
   const flush = (): void => {
     if (current.length === 0) return;
-    const text = current
-      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
-      .join("\n\n");
+    const text = current.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n\n");
     chunks.push({
       thread_id: args.threadId,
       agent_id: args.agentId,

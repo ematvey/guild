@@ -43,18 +43,9 @@ import {
 } from "../agents/agents-route";
 import { clampSkillsRoute, parseSkillsRoute, skillsRoutePath, type SkillsRoute } from "../skills/skills-route";
 import { canonicalSettings } from "../settings/section-nav";
-import {
-  DEFAULT_USAGE,
-  parseUsageQuery,
-  usageQueryString,
-  type UsageQuery,
-} from "../settings/usage-route";
+import { DEFAULT_USAGE, parseUsageQuery, usageQueryString, type UsageQuery } from "../settings/usage-route";
 
-export type ChatOverlay =
-  | { kind: "device" }
-  | { kind: "onboard" }
-  | { kind: "install" }
-  | null;
+export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | { kind: "install" } | null;
 export interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
@@ -94,14 +85,15 @@ const decodeSegment = (segment: string): string | null => {
 /** True when a keystroke is an IME committing a candidate rather than a
  *  submit: `isComposing` on the native event, or the legacy 229 keyCode that
  *  Safari reports for the same thing. */
-export const isImeEnter = (e: {
-  keyCode?: number;
-  nativeEvent?: { isComposing?: boolean };
-}): boolean => e.nativeEvent?.isComposing === true || e.keyCode === 229;
+export const isImeEnter = (e: { keyCode?: number; nativeEvent?: { isComposing?: boolean } }): boolean =>
+  e.nativeEvent?.isComposing === true || e.keyCode === 229;
 
 export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   const usage = parseUsageQuery(search);
-  const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  const raw = pathname
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean);
   const decoded = raw.map(decodeSegment);
   // A malformed escape cannot name anything: fall back to the default route
   // instead of throwing from a render-time initializer (an error boundary
@@ -197,11 +189,44 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   const newChat = parts[0] === "new" && chatId === null;
   if (newChat) parts.shift();
   if (parts[0] === "device")
-    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
+    return {
+      chatId,
+      projectId,
+      tab,
+      overlay: { kind: "device" },
+      skills: null,
+      agents: null,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+      newChat: false,
+    };
   if (parts[0] === "onboard" || parts[0] === "help")
-    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
+    return {
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      overlay: { kind: "onboard" },
+      skills: null,
+      agents: null,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+      newChat: false,
+    };
   if (parts[0] === "install")
-    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "install" }, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat: false };
+    return {
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      overlay: { kind: "install" },
+      skills: null,
+      agents: null,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+      newChat: false,
+    };
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -229,9 +254,31 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1), search);
-    return { chatId: null, projectId: null, overlay: null, skills, agents: null, tab: "chats", settingsSection: null, settingsDetail: null, usage, newChat: false };
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills,
+      agents: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+      newChat: false,
+    };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat };
+  return {
+    chatId,
+    projectId,
+    tab,
+    overlay: null,
+    skills: null,
+    agents: null,
+    settingsSection: null,
+    settingsDetail: null,
+    usage,
+    newChat,
+  };
 };
 
 export interface RoutePatch {
@@ -311,7 +358,18 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
         : tab === "settings" && sk === null && ag === null
           ? route.settingsDetail
           : null;
-  return { chatId, projectId, overlay: ov, skills: sk, agents: ag, tab, newChat, settingsSection, settingsDetail, usage: "usage" in next ? (next.usage as UsageQuery) : route.usage };
+  return {
+    chatId,
+    projectId,
+    overlay: ov,
+    skills: sk,
+    agents: ag,
+    tab,
+    newChat,
+    settingsSection,
+    settingsDetail,
+    usage: "usage" in next ? (next.usage as UsageQuery) : route.usage,
+  };
 };
 
 /** Path segments, decoded, with empty segments dropped; null when an escape
@@ -327,7 +385,9 @@ const pathSegments = (pathname: string): string[] | null => {
  *  canonical one, or the route is neither surface. */
 export const canonicalSurfacePath = (route: ChatRoute, pathname: string): string | null => {
   if (route.agents === null && route.skills === null) return null;
-  const canonical = chatRoutePath(null, null, null, route.skills, "chats", null, null, false, route.agents).split("?")[0];
+  const canonical = chatRoutePath(null, null, null, route.skills, "chats", null, null, false, route.agents).split(
+    "?",
+  )[0];
   const want = pathSegments(canonical);
   const have = pathSegments(pathname);
   if (want === null || have === null) return null;
@@ -358,9 +418,7 @@ export const chatRoutePath = (
     return tab === "work" ? "/work/new" : "/chats/new";
   }
   const base = projectId
-    ? `/project/${encodeURIComponent(projectId)}${
-        chatId ? `/thread/${encodeURIComponent(chatId)}` : ""
-      }`
+    ? `/project/${encodeURIComponent(projectId)}${chatId ? `/thread/${encodeURIComponent(chatId)}` : ""}`
     : chatId
       ? `/thread/${encodeURIComponent(chatId)}`
       : tab === "work"
@@ -387,12 +445,8 @@ export const chatRoutePath = (
   // the path (tab picks navigate to bare /settings and keep the pane-state
   // section instead).
   if (tab === "settings")
-    return `/settings${
-      settingsSection !== null ? `/${encodeURIComponent(settingsSection)}` : ""
-    }${
-      settingsDetail !== null
-        ? "/" + settingsDetail.split("/").map(encodeURIComponent).join("/")
-        : ""
+    return `/settings${settingsSection !== null ? `/${encodeURIComponent(settingsSection)}` : ""}${
+      settingsDetail !== null ? `/${settingsDetail.split("/").map(encodeURIComponent).join("/")}` : ""
     }${settingsSection === "usage" ? usageQueryString(usage) : ""}`;
   return base || "/";
 };

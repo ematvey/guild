@@ -203,7 +203,9 @@ describe("M2 gateway: api keys + admin + quota + internal key", () => {
       headers: { authorization: `Bearer ${stack.adminToken}` },
     });
     const providers2 = (JSON.parse(ok.body) as { providers: Record<string, unknown>[] }).providers;
-    expect(providers2.find((p) => p["provider"] === "my-provider")!["key_masked"]).toBe("•".repeat("sk-secret-1".length));
+    expect(providers2.find((p) => p["provider"] === "my-provider")!["key_masked"]).toBe(
+      "•".repeat("sk-secret-1".length),
+    );
 
     const del = await stack.env.app.inject({
       method: "DELETE",
@@ -375,8 +377,16 @@ describe("M2 gateway: api keys + admin + quota + internal key", () => {
 
     // The internal key never appears in any API listing (it is not a row).
     const lists = await Promise.all([
-      stack.env.app.inject({ method: "GET", url: "/api/v1/api-keys", headers: { authorization: `Bearer ${stack.memberToken}` } }),
-      stack.env.app.inject({ method: "GET", url: "/api/v1/admin/api-keys", headers: { authorization: `Bearer ${stack.adminToken}` } }),
+      stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/api-keys",
+        headers: { authorization: `Bearer ${stack.memberToken}` },
+      }),
+      stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/admin/api-keys",
+        headers: { authorization: `Bearer ${stack.adminToken}` },
+      }),
     ]);
     for (const res2 of lists) {
       expect(res2.body).not.toContain(internalKey);
@@ -401,5 +411,4 @@ describe("M2 gateway: api keys + admin + quota + internal key", () => {
     expect(member.statusCode).toBe(200);
     expect(JSON.parse(member.body)).toHaveProperty("today_cost_usd");
   });
-
 });

@@ -145,7 +145,11 @@ dbDescribe("subagent tree tools", () => {
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
 
-    const result = await spawn(context, { agent: targetAgent.name, task: "Write the report", name: "quarterly report" });
+    const result = await spawn(context, {
+      agent: targetAgent.name,
+      task: "Write the report",
+      name: "quarterly report",
+    });
     expect(result.agent_name).toBe(targetAgent.name);
     expect(result.title).toBe("quarterly report");
     expect(result.status).toBe("running");
@@ -200,9 +204,9 @@ dbDescribe("subagent tree tools", () => {
     const thread = await store.threads.createThread(parentAgent.id, owner.id, "Long name");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const context = await contextFor({ thread, run: parentRun, fake: fakeRuntime() });
-    await expect(
-      spawn(context, { agent: targetAgent.name, task: "x", name: "n".repeat(81) }),
-    ).rejects.toThrow(/at most 80 characters/);
+    await expect(spawn(context, { agent: targetAgent.name, task: "x", name: "n".repeat(81) })).rejects.toThrow(
+      /at most 80 characters/,
+    );
   });
 
   it("enforces the depth and per-node child limits", async () => {
@@ -237,9 +241,7 @@ dbDescribe("subagent tree tools", () => {
       Array.from({ length: 8 }, (_, index) => spawn(context, { agent: targetAgent.name, task: `task ${index}` })),
     );
     const spawned = results.filter((result) => result.status === "fulfilled");
-    const refused = results.filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
+    const refused = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     expect(spawned).toHaveLength(3);
     expect(refused).toHaveLength(5);
     for (const result of refused) expect(result.reason).toMatchObject({ code: "child_limit" });
@@ -429,10 +431,9 @@ dbDescribe("subagent tree tools", () => {
       code: "agent_deleting",
     });
     expect(fake.submitted.length).toBe(submittedBefore);
-    const runs = await env!.db.query<{ n: number }>(
-      "SELECT count(*)::int AS n FROM agent_runs WHERE thread_id = $1",
-      [child.thread_id],
-    );
+    const runs = await env!.db.query<{ n: number }>("SELECT count(*)::int AS n FROM agent_runs WHERE thread_id = $1", [
+      child.thread_id,
+    ]);
     expect(runs.rows[0]!.n).toBe(1);
   });
 
@@ -460,8 +461,18 @@ dbDescribe("subagent tree tools", () => {
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
     const child = await spawn(context, { agent: targetAgent.name, task: "start" });
-    const grandchildThread = await store.threads.createChildThread(child.thread_id, targetAgent.id, owner.id, "Grandchild");
-    await makeRun({ agentId: targetAgent.id, threadId: grandchildThread.id, depth: 2, parentRunId: (await store.runs.getRun(child.run_id)).id });
+    const grandchildThread = await store.threads.createChildThread(
+      child.thread_id,
+      targetAgent.id,
+      owner.id,
+      "Grandchild",
+    );
+    await makeRun({
+      agentId: targetAgent.id,
+      threadId: grandchildThread.id,
+      depth: 2,
+      parentRunId: (await store.runs.getRun(child.run_id)).id,
+    });
 
     const children = await list(context);
     expect(children).toHaveLength(1);
@@ -482,7 +493,12 @@ dbDescribe("subagent tree tools", () => {
     const context = await contextFor({ thread, run: parentRun, fake });
     const child = await spawn(context, { agent: targetAgent.name, task: "start" });
     const childThread = await store.threads.threadById(child.thread_id);
-    const grandchildThread = await store.threads.createChildThread(child.thread_id, targetAgent.id, owner.id, "Grandchild");
+    const grandchildThread = await store.threads.createChildThread(
+      child.thread_id,
+      targetAgent.id,
+      owner.id,
+      "Grandchild",
+    );
     const grandchildRun = await makeRun({
       agentId: targetAgent.id,
       threadId: grandchildThread.id,
@@ -518,7 +534,12 @@ dbDescribe("subagent tree tools", () => {
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
     const child = await spawn(context, { agent: targetAgent.name, task: "start" });
-    const grandchildThread = await store.threads.createChildThread(child.thread_id, targetAgent.id, owner.id, "Grandchild");
+    const grandchildThread = await store.threads.createChildThread(
+      child.thread_id,
+      targetAgent.id,
+      owner.id,
+      "Grandchild",
+    );
     await makeRun({
       agentId: targetAgent.id,
       threadId: grandchildThread.id,

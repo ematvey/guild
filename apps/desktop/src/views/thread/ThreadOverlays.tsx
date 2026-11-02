@@ -2,13 +2,7 @@
 // onboarding guide, the "Add to Home Screen" guide and the create-project
 // dialog.
 import { useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { apiOnboarded } from "../../lib/api/servers";
 import { machineId } from "../../lib/machine-rpc";
 import { HAS_ENGINE, installState, installSurface, type InstallState } from "../../lib/session";
@@ -19,32 +13,19 @@ import { InstallSteps, OnboardingGuide, type OnboardingExit } from "../onboardin
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import type { RoutePatch } from "./route";
 
-
 /** The `/install` dialog: the address a help link or a colleague can share. */
-function InstallGuide({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [state, setState] = useState<InstallState>(() =>
-    installState(installSurface()),
-  );
+function InstallGuide({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [state, setState] = useState<InstallState>(() => installState(installSurface()));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add Guild to your Home Screen</DialogTitle>
           <DialogDescription>
-            It opens like an app, without the browser bars, and it is the copy
-            that can notify you later.
+            It opens like an app, without the browser bars, and it is the copy that can notify you later.
           </DialogDescription>
         </DialogHeader>
-        <InstallSteps
-          state={state}
-          onRecheck={() => setState(installState(installSurface()))}
-        />
+        <InstallSteps state={state} onRecheck={() => setState(installState(installSurface()))} />
       </DialogContent>
     </Dialog>
   );

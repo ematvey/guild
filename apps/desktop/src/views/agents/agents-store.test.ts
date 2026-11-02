@@ -72,10 +72,16 @@ describe("agents store", () => {
 
   it("lets a thread frame win over a late seed and re-seeds after a reconnect", async () => {
     let resolveSeed: (rows: AgentThread[]) => void = () => {};
-    api.listAgentThreads.mockReturnValueOnce(new Promise((resolve) => { resolveSeed = resolve; }));
+    api.listAgentThreads.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSeed = resolve;
+      }),
+    );
     const { result } = renderHook(() => useAgentThreads("a1"));
     act(() => applyAgentThreads("a1", [thread("t1", "pushed")]));
-    await act(async () => { resolveSeed([thread("t1", "stale")]); });
+    await act(async () => {
+      resolveSeed([thread("t1", "stale")]);
+    });
     expect(result.current.rows?.map((t) => t.title)).toEqual(["pushed"]);
 
     api.listAgentThreads.mockResolvedValueOnce([thread("t1", "after reconnect")]);
@@ -85,7 +91,11 @@ describe("agents store", () => {
 
   it("keeps a run pushed before its agent's seed and merges it over the read", async () => {
     let resolveSeed: (rows: AgentRun[]) => void = () => {};
-    api.listAgentRuns.mockReturnValueOnce(new Promise((resolve) => { resolveSeed = resolve; }));
+    api.listAgentRuns.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSeed = resolve;
+      }),
+    );
     const { result } = renderHook(() => useAgentRuns("a1"));
     act(() => applyAgentRun(run("r2", "succeeded", "2026-11-02T00:00:00Z")));
     expect(result.current.rows).toBeNull();
@@ -108,16 +118,26 @@ describe("agents store", () => {
 
   it("drops a seed that lands after sign-out", async () => {
     let resolveSeed: (rows: AgentThread[]) => void = () => {};
-    api.listAgentThreads.mockReturnValueOnce(new Promise((resolve) => { resolveSeed = resolve; }));
+    api.listAgentThreads.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSeed = resolve;
+      }),
+    );
     api.listAgentThreads.mockReturnValue(new Promise(() => {}));
     const { result } = renderHook(() => useAgentThreads("a1"));
     act(() => resetSessionState());
-    await act(async () => { resolveSeed([thread("t1", "previous user")]); });
+    await act(async () => {
+      resolveSeed([thread("t1", "previous user")]);
+    });
     expect(result.current.rows).toBeNull();
   });
 
   it("moves a trace row with its run and builds a row for a new run", () => {
-    const pushed = { ...run("r1", "failed", "2026-11-01T00:00:00Z"), error_message: "boom", finished_at: "2026-11-01T00:01:00Z" };
+    const pushed = {
+      ...run("r1", "failed", "2026-11-01T00:00:00Z"),
+      error_message: "boom",
+      finished_at: "2026-11-01T00:01:00Z",
+    };
     const row = traceFromRun({ ...pushed, status: "running", error_message: null, finished_at: null });
     expect(row).toMatchObject({ trace_id: "r1", status: "running", finished_at: null });
     const moved: TraceRow = traceWithRun(row, pushed);
@@ -137,8 +157,17 @@ describe("agents store", () => {
 
     const summary = {
       totals: {
-        traces: 4, failed_traces: 0, calls: 9, tool_calls: 0, errors: 0, tokens_in: 1000,
-        tokens_out: 100, reasoning_tokens: 0, cost_usd: 0, p50_ms: 0, p95_ms: 0,
+        traces: 4,
+        failed_traces: 0,
+        calls: 9,
+        tool_calls: 0,
+        errors: 0,
+        tokens_in: 1000,
+        tokens_out: 100,
+        reasoning_tokens: 0,
+        cost_usd: 0,
+        p50_ms: 0,
+        p95_ms: 0,
       },
       by_day: [],
     } satisfies ActivitySummary;
@@ -152,20 +181,35 @@ describe("agents store", () => {
     const row = traceFromRun(running);
     expect(row).toMatchObject({ call_count: 0, tool_count: 0 });
     const done = {
-      ...running, status: "succeeded" as const, finished_at: "2026-11-01T00:00:02Z", call_count: 3, tool_count: 1,
+      ...running,
+      status: "succeeded" as const,
+      finished_at: "2026-11-01T00:00:02Z",
+      call_count: 3,
+      tool_count: 1,
     };
     const moved = traceWithRun(row, done);
     expect(moved).toMatchObject({ call_count: 3, tool_count: 1 });
     expect(traceFromRun(done)).toMatchObject({ call_count: 3, tool_count: 1 });
     // A frame without counts, or with older ones, keeps what the row holds.
-    expect(traceWithRun(moved, { ...done, call_count: undefined, tool_count: undefined }))
-      .toMatchObject({ call_count: 3, tool_count: 1 });
+    expect(traceWithRun(moved, { ...done, call_count: undefined, tool_count: undefined })).toMatchObject({
+      call_count: 3,
+      tool_count: 1,
+    });
     expect(traceWithRun({ ...moved, call_count: 5 }, done)).toMatchObject({ call_count: 5, tool_count: 1 });
 
     const summary = {
       totals: {
-        traces: 1, failed_traces: 0, calls: 0, tool_calls: 0, errors: 0, tokens_in: 0,
-        tokens_out: 0, reasoning_tokens: 0, cost_usd: 0, p50_ms: 0, p95_ms: 0,
+        traces: 1,
+        failed_traces: 0,
+        calls: 0,
+        tool_calls: 0,
+        errors: 0,
+        tokens_in: 0,
+        tokens_out: 0,
+        reasoning_tokens: 0,
+        cost_usd: 0,
+        p50_ms: 0,
+        p95_ms: 0,
       },
       by_day: [],
     } satisfies ActivitySummary;

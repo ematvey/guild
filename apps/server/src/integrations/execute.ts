@@ -85,5 +85,3 @@ export async function callPlugin(
   }
   return { content: result.content };
 }
-
-

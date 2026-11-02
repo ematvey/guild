@@ -61,9 +61,7 @@ export function Frame({
       {open && (
         // No card boundary: the content just continues below the row as
         // smaller, grayer text, indented under the label.
-        <div className={FRAME_BODY_CLASS}>
-          {children}
-        </div>
+        <div className={FRAME_BODY_CLASS}>{children}</div>
       )}
     </div>
   );

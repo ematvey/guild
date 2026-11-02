@@ -105,22 +105,14 @@ async function assertCanManage(
 ): Promise<void> {
   if (user.role === "admin") return;
   if (control.owner_user_id !== null && control.owner_user_id === user.id) return;
-  if (
-    control.owner_team_id !== null &&
-    (await auth.teams.isMember(user.org_id, control.owner_team_id, user.id))
-  ) {
+  if (control.owner_team_id !== null && (await auth.teams.isMember(user.org_id, control.owner_team_id, user.id))) {
     return;
   }
   throw ApiError.forbidden("only the skill's owner or its team can change it");
 }
 
 /** Best-effort org event emission (the feed must never fail a route). */
-async function emitEvent(
-  auth: IdentityCtx,
-  orgId: string,
-  kind: string,
-  payload: unknown,
-): Promise<void> {
+async function emitEvent(auth: IdentityCtx, orgId: string, kind: string, payload: unknown): Promise<void> {
   try {
     await auth.events.emit(orgId, kind, payload);
   } catch {
@@ -249,7 +241,8 @@ export function registerSkillRoutes(
       const sourceSlug = at > 0 ? forkedFrom.slice(0, at) : forkedFrom;
       const fromVersion =
         typeof body["from_version"] === "string" ? body["from_version"] : at > 0 ? forkedFrom.slice(at + 1) : undefined;
-      const sourceVersion = fromVersion ?? (await gateway.registry.itemControl(user.org_id, "skill", sourceSlug))?.latest_version;
+      const sourceVersion =
+        fromVersion ?? (await gateway.registry.itemControl(user.org_id, "skill", sourceSlug))?.latest_version;
       if (sourceVersion === undefined || sourceVersion === null) {
         throw ApiError.notFound("no such source skill");
       }
@@ -264,7 +257,11 @@ export function registerSkillRoutes(
       const parsed = await parseBundle(bytes);
       const sourceManifest = meta.manifest as { description?: unknown } | null;
       const forkDescription = singleLineDescription(
-        description !== "" ? description : typeof sourceManifest?.description === "string" ? sourceManifest.description : "",
+        description !== ""
+          ? description
+          : typeof sourceManifest?.description === "string"
+            ? sourceManifest.description
+            : "",
       );
       const manifest: Manifest = { kind: "skill", slug, version: "v1", description: forkDescription };
       try {
@@ -277,7 +274,16 @@ export function registerSkillRoutes(
         if (entry.file && entry.path !== "manifest.json") files[entry.path] = entry.content!;
       }
       await publishBundleBytes(
-        gateway, auth, objects, user, "skill", slug, "v1", forkDescription, manifest, packBundle(files),
+        gateway,
+        auth,
+        objects,
+        user,
+        "skill",
+        slug,
+        "v1",
+        forkDescription,
+        manifest,
+        packBundle(files),
       );
       const provenance = `${sourceSlug}@${sourceVersion}`;
       await gateway.registry.setForkedFrom(user.org_id, "skill", slug, provenance);
@@ -307,7 +313,14 @@ export function registerSkillRoutes(
     // (v1,v3) must yield v4, not a silent overwrite of v3.
     const version = nextVersion(versions);
     await publishBundleBytes(
-      gateway, auth, objects, user, "skill", slug, version, description,
+      gateway,
+      auth,
+      objects,
+      user,
+      "skill",
+      slug,
+      version,
+      description,
       { kind: "skill", slug, version, description },
       buildSkillBundle(slug, version, description, bodyText, files),
     );
@@ -329,7 +342,14 @@ export function registerSkillRoutes(
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
     const version = nextVersion(versions);
     await publishBundleBytes(
-      gateway, auth, objects, user, "skill", slug, version, description,
+      gateway,
+      auth,
+      objects,
+      user,
+      "skill",
+      slug,
+      version,
+      description,
       { kind: "skill", slug, version, description },
       buildSkillBundle(slug, version, description, bodyText, files),
     );
@@ -345,9 +365,7 @@ export function registerSkillRoutes(
     // "changes" = authorship events (spec §1.1); "all" adds install/pin
     // activity and unpublish.
     const kinds =
-      filter === "changes"
-        ? ["registry.published", "registry.updated", "registry.forked"]
-        : ["registry.%", "skill.%"];
+      filter === "changes" ? ["registry.published", "registry.updated", "registry.forked"] : ["registry.%", "skill.%"];
     const events = await auth.events.listKindPrefixed(user.org_id, kinds, 200);
     sendJson(reply, {
       events: events.map((ev) => ({ ts: ev.created_at, kind: ev.kind, payload: ev.payload })),
@@ -457,7 +475,8 @@ export function registerSkillRoutes(
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");
     // No version in the body installs unpinned: the row follows the latest
     // published version until the user pins one explicitly.
-    const requested = typeof optionalJsonBody(req)["version"] === "string" ? (optionalJsonBody(req)["version"] as string) : null;
+    const requested =
+      typeof optionalJsonBody(req)["version"] === "string" ? (optionalJsonBody(req)["version"] as string) : null;
     if (requested !== null) await gateway.registry.getVersion(user.org_id, "skill", slug, requested); // 404 when missing
     const install = await skills.install(user.org_id, user.id, slug, requested);
     await emitEvent(auth, user.org_id, "skill.installed", {

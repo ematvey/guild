@@ -5,7 +5,7 @@
 import { chown, lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Logger } from "pino";
-import { DockerClient, DockerError, type ExecStream } from "./docker.js";
+import { type DockerClient, DockerError, type ExecStream } from "./docker.js";
 import {
   LABEL,
   SANDBOX_UID,
@@ -70,18 +70,29 @@ export class SandboxManager {
       throw new Error(`docker runtime ${this.config.runtime} is not configured on this host`);
     }
     if (this.config.runtime !== "runsc" && !this.config.allowRunc) {
-      throw new Error(`refusing runtime ${this.config.runtime}: sandboxes require runsc (GUILD_SANDBOX_ALLOW_RUNC=1 overrides)`);
+      throw new Error(
+        `refusing runtime ${this.config.runtime}: sandboxes require runsc (GUILD_SANDBOX_ALLOW_RUNC=1 overrides)`,
+      );
     }
     try {
       await this.docker.request("GET", `/images/${encodeURIComponent(this.config.image)}/json`);
     } catch (error) {
-      this.log.warn({ err: error, image: this.config.image }, "sandbox image not found; sandbox creation will fail until it is built");
+      this.log.warn(
+        { err: error, image: this.config.image },
+        "sandbox image not found; sandbox creation will fail until it is built",
+      );
     }
     await this.prepareDataRoot();
     await this.removeStale();
-    this.reaper = setInterval(() => void this.reap().catch((error) => this.log.warn({ err: error }, "reap failed")), 30_000);
+    this.reaper = setInterval(
+      () => void this.reap().catch((error) => this.log.warn({ err: error }, "reap failed")),
+      30_000,
+    );
     this.reaper.unref();
-    this.volumeWatch = setInterval(() => void this.volumesAlive().then((dead) => dead !== null && this.restartForVolume(dead)), 10_000);
+    this.volumeWatch = setInterval(
+      () => void this.volumesAlive().then((dead) => dead !== null && this.restartForVolume(dead)),
+      10_000,
+    );
     this.volumeWatch.unref();
   }
 
@@ -139,7 +150,10 @@ export class SandboxManager {
 
   private async list(): Promise<ContainerSummary[]> {
     const filters = JSON.stringify({ label: [`${LABEL}.project=${this.config.project}`] });
-    return this.docker.request<ContainerSummary[]>("GET", `/containers/json?all=true&filters=${encodeURIComponent(filters)}`);
+    return this.docker.request<ContainerSummary[]>(
+      "GET",
+      `/containers/json?all=true&filters=${encodeURIComponent(filters)}`,
+    );
   }
 
   private async inspect(name: string): Promise<ContainerInspect | null> {
@@ -155,9 +169,11 @@ export class SandboxManager {
     const previous = this.locks.get(name) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(fn);
     this.locks.set(name, next);
-    void next.finally(() => {
-      if (this.locks.get(name) === next) this.locks.delete(name);
-    }).catch(() => {});
+    void next
+      .finally(() => {
+        if (this.locks.get(name) === next) this.locks.delete(name);
+      })
+      .catch(() => {});
     return next;
   }
 
@@ -313,7 +329,10 @@ export class SandboxManager {
     });
     await this.docker.request("POST", `/exec/${exec.Id}/start`, { Detach: true, Tty: false });
     for (let i = 0; i < 50; i++) {
-      const info = await this.docker.request<{ Running: boolean; ExitCode: number | null }>("GET", `/exec/${exec.Id}/json`);
+      const info = await this.docker.request<{ Running: boolean; ExitCode: number | null }>(
+        "GET",
+        `/exec/${exec.Id}/json`,
+      );
       if (!info.Running) return info.ExitCode === 0;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -337,7 +356,11 @@ export class SandboxManager {
       await this.withLock(name, () => this.removeSandbox(name));
       throw new RunnerError(503, "sandbox workspace mount is dead; the sandbox was removed");
     }
-    const exec = await this.docker.request<{ Id: string }>("POST", `/containers/${name}/exec`, agentExecSpec(this.config));
+    const exec = await this.docker.request<{ Id: string }>(
+      "POST",
+      `/containers/${name}/exec`,
+      agentExecSpec(this.config),
+    );
     const stream = await this.docker.execAttach(exec.Id);
     const usage = this.touch(name);
     usage.attached++;

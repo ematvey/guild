@@ -5,8 +5,14 @@
 // Anthropic `{"type":"error",…}`).
 
 import { ApiError, TextError } from "./errors.js";
-import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "./provider/types.js";
-import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "./usage.js";
+import {
+  forProtocol,
+  ProviderError,
+  type InternalMessage,
+  type ProviderChunk,
+  type ToolSpec,
+} from "./provider/types.js";
+import { enforceQuota, newRequestId, type UsageEvent, type UsageSink, usageCostUsd, errorText } from "./usage.js";
 import type { TraceStore } from "./trace.js";
 import type { GatewayStore } from "./store/gateway.js";
 
@@ -171,22 +177,24 @@ export async function dispatch(
   } else {
     maxTokens = routeCap ?? clientCap ?? 0;
   }
-  const stream = await provider.chatStream({
-    model,
-    system,
-    messages,
-    apiKey: route.apiKey,
-    baseUrl: route.baseUrl,
-    tools,
-    maxTokens,
-    // A client that names its own temperature wins; otherwise the route's
-    // configured default applies (null = provider default).
-    temperature: clientTemperature ?? route.temperature,
-  }).catch((error: unknown) => {
-    throw new ProxyError(
-      new ApiError(502, "provider_error", error instanceof ProviderError ? error.message : errorText(error)),
-    );
-  });
+  const stream = await provider
+    .chatStream({
+      model,
+      system,
+      messages,
+      apiKey: route.apiKey,
+      baseUrl: route.baseUrl,
+      tools,
+      maxTokens,
+      // A client that names its own temperature wins; otherwise the route's
+      // configured default applies (null = provider default).
+      temperature: clientTemperature ?? route.temperature,
+    })
+    .catch((error: unknown) => {
+      throw new ProxyError(
+        new ApiError(502, "provider_error", error instanceof ProviderError ? error.message : errorText(error)),
+      );
+    });
   return {
     stream,
     model,
@@ -318,8 +326,19 @@ export async function accumulate(
 }
 
 /** The accumulated stream's visible completion size (trace completion_chars). */
-export function completionChars(acc: { text: string; reasoning: string; calls: NonNullable<InternalMessage["tool_calls"]> }): number {
-  return acc.text.length + acc.reasoning.length + acc.calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : JSON.stringify(c.arguments ?? null).length), 0);
+export function completionChars(acc: {
+  text: string;
+  reasoning: string;
+  calls: NonNullable<InternalMessage["tool_calls"]>;
+}): number {
+  return (
+    acc.text.length +
+    acc.reasoning.length +
+    acc.calls.reduce(
+      (n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : JSON.stringify(c.arguments ?? null).length),
+      0,
+    )
+  );
 }
 
 /** Renders the provider's canonical finish reason (or the shape-derived
@@ -441,7 +460,10 @@ export async function recordUsageSync(
     requestId,
   );
   await usage.record(event);
-  await emitTrace(credential, model, provider, priceIn, priceOut, counters, requestId, { ...opts, finishReason: opts.finishReason ?? null });
+  await emitTrace(credential, model, provider, priceIn, priceOut, counters, requestId, {
+    ...opts,
+    finishReason: opts.finishReason ?? null,
+  });
 }
 
 /** Usage recording for a stream that exited without its final frame
@@ -462,16 +484,7 @@ export function recordUsageDropped(
   void (async () => {
     const requestId = opts.requestId ?? opts.trace?.requestId ?? newRequestId();
     await usage.record(
-      usageEvent(
-        credential,
-        model,
-        provider,
-        priceIn,
-        priceOut,
-        counters.tokensIn,
-        counters.tokensOut,
-        requestId,
-      ),
+      usageEvent(credential, model, provider, priceIn, priceOut, counters.tokensIn, counters.tokensOut, requestId),
     );
     await emitTrace(credential, model, provider, priceIn, priceOut, counters, requestId, {
       ...opts,

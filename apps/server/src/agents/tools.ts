@@ -4,23 +4,13 @@
 // the thread-history tools' exposure.
 
 import { Type } from "typebox";
-import {
-  defineTool,
-  type ToolExecutionResult,
-  type ToolRegistration,
-} from "@earendil-works/pi-durable";
+import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { deriveTitleFromMessage, type AgentStore } from "./store.js";
 import { search, type AgentSearchHit } from "./search.js";
-import {
-  createRoutine,
-  deleteRoutine,
-  listRoutines,
-  scheduleReminder,
-  updateRoutine,
-} from "./routines.js";
+import { createRoutine, deleteRoutine, listRoutines, scheduleReminder, updateRoutine } from "./routines.js";
 import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
@@ -304,15 +294,11 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               description: "Thread type; omit for user threads only",
             }),
           ),
-          archived: Type.Optional(
-            Type.Boolean({ description: "true = archived only; omit or false = active only" }),
-          ),
+          archived: Type.Optional(Type.Boolean({ description: "true = archived only; omit or false = active only" })),
           deleted: Type.Optional(
             Type.Boolean({ description: "true = deleted only; omit or false hides deleted threads" }),
           ),
-          parent_thread_id: Type.Optional(
-            Type.String({ description: "Only the children of this thread id" }),
-          ),
+          parent_thread_id: Type.Optional(Type.String({ description: "Only the children of this thread id" })),
           sort: Type.Optional(
             Type.Union(
               [
@@ -499,8 +485,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
     tools.push(
       defineTool({
         name: "delete_routine",
-        description:
-          "Delete a routine and stop its schedule. Use only after the user has confirmed the deletion.",
+        description: "Delete a routine and stop its schedule. Use only after the user has confirmed the deletion.",
         parameters: Type.Object({
           routine_id: Type.String({ description: "The routine id" }),
         }),
@@ -561,4 +546,3 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
 
   return tools;
 }
-

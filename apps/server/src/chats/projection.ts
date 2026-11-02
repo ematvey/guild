@@ -110,7 +110,7 @@ export class TranscriptProjection {
         return;
       case "pi.assistant": {
         const message = entry.model?.find((m) => m.role === "assistant");
-        if (!message || message.role !== "assistant") return;
+        if (message?.role !== "assistant") return;
         state.step += 1;
         state.currentModel = message.model;
         const blocks: Block[] = [];
@@ -161,7 +161,7 @@ export class TranscriptProjection {
       }
       case "pi.tool-result": {
         const result = entry.model?.find((m) => m.role === "toolResult");
-        if (!result || result.role !== "toolResult") return;
+        if (result?.role !== "toolResult") return;
         const content = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
         // The tool-owned widget payload rides the result details' reserved
         // `guild_meta` key (integration tools, spec C.2); other tools carry

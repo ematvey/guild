@@ -164,7 +164,11 @@ export class AgentFiles {
   /** Resolves a relative path inside the agent root (lexical containment)
    *  and resolves the root itself. The final segment may be a symlink: the
    *  metadata reads report it instead of following it. */
-  private async resolvePath(orgId: string, agentId: string, relPath: string | undefined): Promise<{
+  private async resolvePath(
+    orgId: string,
+    agentId: string,
+    relPath: string | undefined,
+  ): Promise<{
     root: string;
     realRoot: string;
     rel: string;

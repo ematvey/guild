@@ -67,9 +67,7 @@ export function composeAgentInstructions(
     budget -= block.length;
     workspace.push(block);
   }
-  parts.push(
-    `<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`,
-  );
+  parts.push(`<agent_workspace path="${AGENT_WORKSPACE_PATH}">\n${workspace.join("\n\n")}\n</agent_workspace>`);
   if (thread?.type === "routine") {
     const name = (thread.routineName ?? "a routine").replace(/"/g, "&quot;");
     parts.push(
@@ -83,7 +81,8 @@ export function composeAgentInstructions(
   }
   if (thread?.origin !== undefined && thread.origin !== null) {
     const title = thread.origin.title.replace(/"/g, "&quot;");
-    const from = thread.routineName === null ? "an agent run" : `the routine "${thread.routineName.replace(/"/g, "&quot;")}"`;
+    const from =
+      thread.routineName === null ? "an agent run" : `the routine "${thread.routineName.replace(/"/g, "&quot;")}"`;
     parts.push(
       [
         `<opened_by_agent thread="${thread.origin.thread_id}" title="${title}">`,
@@ -101,9 +100,7 @@ export function composeAgentInstructions(
         `This thread was spawned by the agent ${spawnedBy.parent_name}.`,
         "Ending your turn is how you reply to the spawner: your final text, plus any files you attach with send_file, " +
           "is delivered to the parent thread. To ask a question, end your turn with the question.",
-        spawnedBy.can_spawn
-          ? "You can spawn further child agents."
-          : "You cannot spawn further child agents.",
+        spawnedBy.can_spawn ? "You can spawn further child agents." : "You cannot spawn further child agents.",
         "</spawned_by>",
       ].join("\n"),
     );

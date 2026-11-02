@@ -42,8 +42,19 @@ describe("integration catalog", () => {
   it("ships Grafana with the observability tools", () => {
     const grafana = integrationByName("grafana")!;
     expect(grafana.categories).toEqual(["observability"]);
-    expect(grafana.toolSpecs({ base_url: "https://grafana.example.test" }).map((t) => t.name).sort()).toEqual([
-      "api", "get_dashboard", "list_alerts", "list_dashboards", "list_datasources", "query_logs", "query_metrics",
+    expect(
+      grafana
+        .toolSpecs({ base_url: "https://grafana.example.test" })
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual([
+      "api",
+      "get_dashboard",
+      "list_alerts",
+      "list_dashboards",
+      "list_datasources",
+      "query_logs",
+      "query_metrics",
     ]);
   });
 });
@@ -79,10 +90,7 @@ describe("trait tools", () => {
   });
 
   it("name the provider's raw tool for dispatch", async () => {
-    const turns = await resolveIntegrations(
-      gateway([{ name: "firecrawl", config: {}, enabled: true }]),
-      "org-1",
-    );
+    const turns = await resolveIntegrations(gateway([{ name: "firecrawl", config: {}, enabled: true }]), "org-1");
     const trait = turns[0]!.tools.find((t) => t.trait === "web_fetch")!;
     expect(trait.spec.name).toBe("web_fetch");
     expect(trait.raw).toBe("web_fetch");
@@ -112,23 +120,36 @@ describe("grafana execute", () => {
         return;
       }
       if (url.startsWith("/api/datasources/uid/PROM1/resources/api/v1/query")) {
-        res.end(JSON.stringify({
-          status: "success",
-          data: { resultType: "vector", result: [{ metric: { job: "api" }, value: [1, "42"] }] },
-        }));
+        res.end(
+          JSON.stringify({
+            status: "success",
+            data: { resultType: "vector", result: [{ metric: { job: "api" }, value: [1, "42"] }] },
+          }),
+        );
         return;
       }
       if (url.startsWith("/api/datasources/proxy/uid/LOKI1/loki/api/v1/query_range")) {
-        res.end(JSON.stringify({
-          status: "success",
-          data: { resultType: "streams", result: [{ stream: { app: "api" }, values: [["1700000000000000000", "boom"]] }] },
-        }));
+        res.end(
+          JSON.stringify({
+            status: "success",
+            data: {
+              resultType: "streams",
+              result: [{ stream: { app: "api" }, values: [["1700000000000000000", "boom"]] }],
+            },
+          }),
+        );
         return;
       }
       if (url.startsWith("/api/alertmanager/grafana/api/v2/alerts")) {
-        res.end(JSON.stringify([
-          { labels: { alertname: "HighLatency", severity: "warning" }, annotations: { summary: "p95 over 2s" }, startsAt: "2026-10-26T10:00:00Z" },
-        ]));
+        res.end(
+          JSON.stringify([
+            {
+              labels: { alertname: "HighLatency", severity: "warning" },
+              annotations: { summary: "p95 over 2s" },
+              startsAt: "2026-10-26T10:00:00Z",
+            },
+          ]),
+        );
         return;
       }
       res.statusCode = 404;

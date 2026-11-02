@@ -5,11 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  CONFIG_FILES,
-  readAgentConfig,
-  seedAgentWorkspace,
-} from "../../agents/workspace-config.js";
+import { CONFIG_FILES, readAgentConfig, seedAgentWorkspace } from "../../agents/workspace-config.js";
 
 const dirs: string[] = [];
 function workspace(): string {

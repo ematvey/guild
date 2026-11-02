@@ -3,11 +3,7 @@
 // child reports back by ending its turn.
 
 import { Type } from "typebox";
-import {
-  defineTool,
-  type ToolExecutionResult,
-  type ToolRegistration,
-} from "@earendil-works/pi-durable";
+import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { IdentityStore, UserRow } from "../platform/store/identity.js";
@@ -68,11 +64,7 @@ export class SubagentError extends Error {
 /** Resolves a spawn reference (an agent id or name) among the agents the
  *  requester can see. A name several visible agents share resolves to the
  *  requester's own agent when there is one, and is otherwise ambiguous. */
-export async function resolveSpawnTarget(
-  store: AgentStore,
-  requester: UserRow,
-  reference: string,
-): Promise<Agent> {
+export async function resolveSpawnTarget(store: AgentStore, requester: UserRow, reference: string): Promise<Agent> {
   const ref = reference.trim();
   if (ref === "") throw new SubagentError("invalid_target", "agent must not be empty");
   const candidates = await store.findVisible(requester, ref);
@@ -279,8 +271,7 @@ export async function spawn(
   });
   // The spawner names the session; without one the task's first line is the
   // fallback label. The title is locked when the spawner chose it.
-  const title =
-    requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
+  const title = requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
   const titleLocked = requestedName !== "";
   const userId = context.parentRun.user_id ?? context.requester.id;
   let thread: AgentThread;
@@ -448,35 +439,31 @@ export async function closeThread(
 }
 
 /** Cancels the subtree rooted at a child the caller owns. */
-export async function cancel(
-  context: SubagentsToolContext,
-  args: { thread_id: string },
-): Promise<CancelResult> {
+export async function cancel(context: SubagentsToolContext, args: { thread_id: string }): Promise<CancelResult> {
   const thread = await childThread(context, args.thread_id);
   return cancelThread(context, thread.id);
 }
 
 /** Closes the subtree rooted at a child the caller owns. */
-export async function close(
-  context: SubagentsToolContext,
-  args: { thread_id: string },
-): Promise<CloseResult> {
+export async function close(context: SubagentsToolContext, args: { thread_id: string }): Promise<CloseResult> {
   const thread = await childThread(context, args.thread_id);
   return closeThread(context, thread.id);
 }
 
 /** Builds the per-run subagent context; null when the chat has no running
  *  run (plain chats and turns before admission). */
-export async function subagentsContextForChat(args: RequesterReads & {
-  pool: PlatformPool;
-  store: AgentStore;
-  threads: ThreadStore;
-  agent: Agent;
-  chatId: string;
-  runtime: SubagentsRuntime;
-  maxDepth: number;
-  maxChildrenPerNode: number;
-}): Promise<SubagentsToolContext | null> {
+export async function subagentsContextForChat(
+  args: RequesterReads & {
+    pool: PlatformPool;
+    store: AgentStore;
+    threads: ThreadStore;
+    agent: Agent;
+    chatId: string;
+    runtime: SubagentsRuntime;
+    maxDepth: number;
+    maxChildrenPerNode: number;
+  },
+): Promise<SubagentsToolContext | null> {
   const parentRun = await args.store.runs.runningRunForChat(args.chatId);
   if (parentRun === null) return null;
   const requester = await requesterForChat(args, args.chatId);
@@ -646,8 +633,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
     }),
     defineTool({
       name: "read_thread",
-      description:
-        "Read a bounded transcript excerpt from a child thread (max 200 events, 20k chars).",
+      description: "Read a bounded transcript excerpt from a child thread (max 200 events, 20k chars).",
       parameters: Type.Object({
         thread_id: Type.String({ description: "The child thread id" }),
         from_seq: Type.Optional(Type.Number({ description: "First event seq to include" })),
@@ -667,8 +653,7 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
     }),
     defineTool({
       name: "list",
-      description:
-        "List the direct children of this thread with their latest run status, depth and elapsed time.",
+      description: "List the direct children of this thread with their latest run status, depth and elapsed time.",
       parameters: Type.Object({}),
       structuredOutputSchema: listOutput,
       replay: "safe",

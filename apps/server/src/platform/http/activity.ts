@@ -117,8 +117,7 @@ function parseAttributes(value: unknown): Record<string, unknown> {
 function renderTrace(row: Record<string, unknown>): Record<string, unknown> {
   const started = typeof row["started_at"] === "string" ? new Date(`${row["started_at"].replace(" ", "T")}Z`) : null;
   const finished = typeof row["finished_at"] === "string" ? new Date(`${row["finished_at"].replace(" ", "T")}Z`) : null;
-  const duration =
-    started === null ? 0 : Math.max(0, (finished?.getTime() ?? Date.now()) - started.getTime());
+  const duration = started === null ? 0 : Math.max(0, (finished?.getTime() ?? Date.now()) - started.getTime());
   return {
     trace_id: row["trace_id"],
     org_id: row["org_id"],
@@ -163,8 +162,7 @@ function renderSession(row: Record<string, unknown>): Record<string, unknown> {
     errors: number(row["errors"]),
     started_at: iso(row["started_at"]),
     ended_at: iso(row["ended_at"]),
-    duration_ms:
-      started === null ? 0 : Math.max(0, (ended?.getTime() ?? started.getTime()) - started.getTime()),
+    duration_ms: started === null ? 0 : Math.max(0, (ended?.getTime() ?? started.getTime()) - started.getTime()),
   };
 }
 
@@ -260,9 +258,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
         ...(caller === undefined || caller === "" ? {} : { caller }),
         ...(status === undefined || status === "" ? {} : { status }),
         ...(queryParam(req, "model") === undefined ? {} : { model: queryParam(req, "model")! }),
-        ...(queryParam(req, "q") === undefined || queryParam(req, "q") === ""
-          ? {}
-          : { query: queryParam(req, "q")! }),
+        ...(queryParam(req, "q") === undefined || queryParam(req, "q") === "" ? {} : { query: queryParam(req, "q")! }),
         limit: limitOf(req),
         offset: offsetOf(req),
       });

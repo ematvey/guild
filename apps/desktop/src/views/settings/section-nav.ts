@@ -19,20 +19,12 @@ export interface DetailCodec<View> {
 }
 
 /** A section whose sub-pages are a create form ("new") or one row id. */
-export type EntityDetail =
-  | { kind: "list" }
-  | { kind: "new" }
-  | { kind: "row"; id: string };
+export type EntityDetail = { kind: "list" } | { kind: "new" } | { kind: "row"; id: string };
 
 export const entityDetailCodec: DetailCodec<EntityDetail> = {
   parse: (detail) =>
-    detail === null
-      ? { kind: "list" }
-      : detail === "new"
-        ? { kind: "new" }
-        : { kind: "row", id: detail },
-  format: (view) =>
-    view.kind === "list" ? null : view.kind === "new" ? "new" : view.id,
+    detail === null ? { kind: "list" } : detail === "new" ? { kind: "new" } : { kind: "row", id: detail },
+  format: (view) => (view.kind === "list" ? null : view.kind === "new" ? "new" : view.id),
 };
 
 /** A section whose sub-pages are one row id (no create form). */
@@ -44,9 +36,7 @@ export const rowDetailCodec: DetailCodec<string | null> = {
 export const REGISTRY_KINDS = ["mcp", "integration"] as const;
 export type RegistryKind = (typeof REGISTRY_KINDS)[number];
 
-export type RegistryDetail =
-  | { kind: "list" }
-  | { kind: "item"; itemKind: RegistryKind; slug: string };
+export type RegistryDetail = { kind: "list" } | { kind: "item"; itemKind: RegistryKind; slug: string };
 
 /** The registry section's sub-page grammar: "<kind>/<slug>" or the list. */
 export const registryDetailCodec: DetailCodec<RegistryDetail> = {
@@ -88,7 +78,7 @@ export type SettingsSectionId = keyof typeof SECTION_DETAILS;
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = "account";
 
 export function isSettingsSection(id: string): id is SettingsSectionId {
-  return Object.prototype.hasOwnProperty.call(SECTION_DETAILS, id);
+  return Object.hasOwn(SECTION_DETAILS, id);
 }
 
 /** The workspace sections only an admin may open. */

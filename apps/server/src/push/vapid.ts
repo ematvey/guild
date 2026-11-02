@@ -28,10 +28,7 @@ export async function vapidKeys(kv: KvStore): Promise<VapidKeys> {
 }
 
 async function read(kv: KvStore): Promise<VapidKeys | null> {
-  const [publicKey, privateKey] = await Promise.all([
-    kv.get(VAPID_PUBLIC_KEY),
-    kv.get(VAPID_PRIVATE_KEY),
-  ]);
+  const [publicKey, privateKey] = await Promise.all([kv.get(VAPID_PUBLIC_KEY), kv.get(VAPID_PRIVATE_KEY)]);
   if (publicKey === null || privateKey === null) return null;
   return { publicKey, privateKey };
 }

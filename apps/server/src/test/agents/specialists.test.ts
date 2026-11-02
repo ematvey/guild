@@ -102,10 +102,7 @@ describe("specialist pack", () => {
   it("a second install updates in place and leaves notes intact", async () => {
     const { orgId, owner } = await makeOrg();
     const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), workspaceRoot: root });
-    await installSpecialists(
-      { store, workspaceRoot: root },
-      { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },
-    );
+    await installSpecialists({ store, workspaceRoot: root }, { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" });
 
     const clients = (await store.list(owner, { includeArchived: true })).find(
       (agent) => agent.resources["specialist"] === "clients",

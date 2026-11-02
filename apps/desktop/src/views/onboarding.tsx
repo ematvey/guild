@@ -9,20 +9,24 @@
 // share one state model with the guide's "On your phone" section.
 
 import { useState } from "react";
-import { Bell, Bot, Check, FolderKanban, KeyRound, MessagesSquare, MonitorSmartphone, Package, Plus, Share, Smartphone, X } from "lucide-react";
+import {
+  Bell,
+  Bot,
+  Check,
+  FolderKanban,
+  KeyRound,
+  MessagesSquare,
+  MonitorSmartphone,
+  Package,
+  Plus,
+  Share,
+  Smartphone,
+  X,
+} from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
-import {
-  installOffered,
-  installState,
-  installSurface,
-  type InstallState,
-} from "../lib/session";
+import { Dialog, DialogContent, DialogTitle } from "@guild/ui/components/dialog";
+import { installOffered, installState, installSurface, type InstallState } from "../lib/session";
 
 /** Where the guide should land the user when it closes; null = the plain
  *  close (Done, skip, Esc, ✕). WebChat completes onboarding and pushes the
@@ -73,8 +77,7 @@ export function InstallSteps({
         </p>
         <p className="flex items-start gap-2.5">
           <Bell className="mt-0.5 size-4 shrink-0" />
-          Notifications reach this copy only. If you delete the icon, they
-          stop.
+          Notifications reach this copy only. If you delete the icon, they stop.
         </p>
       </div>
     );
@@ -83,9 +86,8 @@ export function InstallSteps({
   if (state === "other") {
     return (
       <p className={`text-muted-foreground ${text}`}>
-        This page already runs as an app in your browser. The Home Screen
-        install is for iPhone and iPad. On a Mac, Safari's File → Add to Dock
-        does the same job.
+        This page already runs as an app in your browser. The Home Screen install is for iPhone and iPad. On a Mac,
+        Safari's File → Add to Dock does the same job.
       </p>
     );
   }
@@ -95,8 +97,7 @@ export function InstallSteps({
       <div className={`space-y-3 text-muted-foreground ${text}`}>
         <p className="flex items-start gap-2.5 text-foreground">
           <Smartphone className="mt-0.5 size-4 shrink-0" />
-          This browser cannot install Guild, and its copy cannot receive
-          notifications.
+          This browser cannot install Guild, and its copy cannot receive notifications.
         </p>
         <p>
           Open this address in <b>Safari</b>, then follow the steps there.
@@ -114,16 +115,11 @@ export function InstallSteps({
     return (
       <div className={`space-y-3 text-muted-foreground ${text}`}>
         <ol className="space-y-2.5">
-          <InstallStep n={1}>
-            Tap the browser menu — the three dots in the top corner.
-          </InstallStep>
+          <InstallStep n={1}>Tap the browser menu — the three dots in the top corner.</InstallStep>
           <InstallStep n={2}>
-            Tap <b>Install app</b> (older versions say{" "}
-            <b>Add to Home screen</b>).
+            Tap <b>Install app</b> (older versions say <b>Add to Home screen</b>).
           </InstallStep>
-          <InstallStep n={3}>
-            Confirm, then open Guild from the new icon.
-          </InstallStep>
+          <InstallStep n={3}>Confirm, then open Guild from the new icon.</InstallStep>
         </ol>
         <p className="flex items-start gap-2.5 border-t border-border pt-3">
           <Bell className="mt-0.5 size-4 shrink-0" />
@@ -142,27 +138,23 @@ export function InstallSteps({
     <div className={`space-y-3 text-muted-foreground ${text}`}>
       <ol className="space-y-2.5">
         <InstallStep n={1}>
-          Tap the <Share className="inline size-4 align-text-bottom" />{" "}
-          <b>Share</b> button in the toolbar. It is the square with an arrow
-          pointing up.
+          Tap the <Share className="inline size-4 align-text-bottom" /> <b>Share</b> button in the toolbar. It is the
+          square with an arrow pointing up.
         </InstallStep>
         <InstallStep n={2}>
           Scroll the list and tap{" "}
           <b>
-            <Plus className="inline size-4 align-text-bottom" /> Add to Home
-            Screen
+            <Plus className="inline size-4 align-text-bottom" /> Add to Home Screen
           </b>
           .
         </InstallStep>
         <InstallStep n={3}>
-          Tap <b>Add</b>, then open Guild from the new icon on your Home
-          Screen.
+          Tap <b>Add</b>, then open Guild from the new icon on your Home Screen.
         </InstallStep>
       </ol>
       <p className="flex items-start gap-2.5 border-t border-border pt-3">
         <Bell className="mt-0.5 size-4 shrink-0" />
-        Only the installed copy can receive notifications. A tab in Safari
-        cannot.
+        Only the installed copy can receive notifications. A tab in Safari cannot.
       </p>
       {onRecheck && (
         <Button variant="outline" size="sm" onClick={onRecheck}>
@@ -185,13 +177,7 @@ function coarsePointer(): boolean {
 
 /** The full-screen install offer: a phone that is not installed gets the
  *  steps on their own screen, at reading size, with one large action. */
-function InstallSheet({
-  state,
-  onDismiss,
-}: {
-  state: InstallState;
-  onDismiss: () => void;
-}) {
+function InstallSheet({ state, onDismiss }: { state: InstallState; onDismiss: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
       <div className="mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col">
@@ -200,8 +186,7 @@ function InstallSheet({
             <Smartphone className="size-12 text-muted-foreground" />
             <h1 className="text-2xl font-semibold leading-tight">Install Guild</h1>
             <p className="text-base text-muted-foreground">
-              It opens full screen, without browser bars, and it is the copy
-              that can notify you.
+              It opens full screen, without browser bars, and it is the copy that can notify you.
             </p>
           </div>
           <InstallSteps state={state} large />
@@ -238,12 +223,7 @@ export function InstallPrompt() {
     // A narrow desktop window is not a phone; only a touch pointer makes an
     // unnamed browser worth the sheet.
     if (state === "other" && !coarsePointer()) return null;
-    return (
-      <InstallSheet
-        state={state === "other" ? "android" : state}
-        onDismiss={close}
-      />
-    );
+    return <InstallSheet state={state === "other" ? "android" : state} onDismiss={close} />;
   }
   if (!installOffered(surface)) return null;
   return (
@@ -258,8 +238,7 @@ export function InstallPrompt() {
             Add Guild to your Home Screen
           </button>
           <p className="mt-0.5 text-muted-foreground">
-            It opens without the browser bars, and it is the copy that can
-            notify you.
+            It opens without the browser bars, and it is the copy that can notify you.
           </p>
           {open && (
             <div className="mt-2.5">
@@ -283,23 +262,17 @@ function DesktopSection() {
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
       <p>
-        The website version runs safely in the cloud — it talks to you but
-        can't touch your own files. The desktop app lives on your computer, so
-        an assistant there can work with your things directly: open your
-        folders, edit documents, run tasks for you.
+        The website version runs safely in the cloud — it talks to you but can't touch your own files. The desktop app
+        lives on your computer, so an assistant there can work with your things directly: open your folders, edit
+        documents, run tasks for you.
       </p>
       <Step n={1}>
-        Click the round avatar at the very bottom of the left bar and choose{" "}
-        <b>Set up a device</b>.
+        Click the round avatar at the very bottom of the left bar and choose <b>Set up a device</b>.
       </Step>
-      <Step n={2}>
-        Download the app for your computer (Mac, Windows or Linux) and install
-        it like any normal app.
-      </Step>
+      <Step n={2}>Download the app for your computer (Mac, Windows or Linux) and install it like any normal app.</Step>
       <Step n={3}>
-        Open the app on your computer and enter the one-time code from that
-        same dialog — that links it to your account. After that, your computer
-        shows up under Settings → Machines.
+        Open the app on your computer and enter the one-time code from that same dialog — that links it to your account.
+        After that, your computer shows up under Settings → Machines.
       </Step>
     </div>
   );
@@ -309,23 +282,18 @@ function GatewaySection() {
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
       <p>
-        A gateway key is like a password that lets another app or script use
-        Guild's AI. You only need this if you want to connect something of
-        yours to Guild — normal chatting never needs a key.
+        A gateway key is like a password that lets another app or script use Guild's AI. You only need this if you want
+        to connect something of yours to Guild — normal chatting never needs a key.
       </p>
       <Step n={1}>
-        Open <b>Settings → Gateway</b> and click <b>New API key</b>. Copy
-        the key it gives you — it starts with <code>gk_</code> and is shown
-        only once.
+        Open <b>Settings → Gateway</b> and click <b>New API key</b>. Copy the key it gives you — it starts with{" "}
+        <code>gk_</code> and is shown only once.
       </Step>
       <Step n={2}>
-        The same page shows the exact address and ready-made examples to paste
-        into the app you're connecting. Follow those.
+        The same page shows the exact address and ready-made examples to paste into the app you're connecting. Follow
+        those.
       </Step>
-      <p>
-        Lost a key or done with it? You can delete it any time on the same
-        page and make a new one.
-      </p>
+      <p>Lost a key or done with it? You can delete it any time on the same page and make a new one.</p>
     </div>
   );
 }
@@ -334,37 +302,27 @@ function ChatSection() {
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
       <p>
-        Click <b>Chats</b> in the left bar, type what you want in your own
-        words, and press send — like texting, but the assistant can actually
-        do things for you, not just talk.
+        Click <b>Chats</b> in the left bar, type what you want in your own words, and press send — like texting, but the
+        assistant can actually do things for you, not just talk.
       </p>
       <p>
-        When it needs to do something important — edit files, run commands —
-        Guild checks with you first. How much it may do on its own is set per
-        chat, with the approval button next to the message box (it shows
-        the chat's current mode):
+        When it needs to do something important — edit files, run commands — Guild checks with you first. How much it
+        may do on its own is set per chat, with the approval button next to the message box (it shows the chat's current
+        mode):
       </p>
       <Step n={1}>
-        <b>Ask for approval</b> — Guild asks you before anything potentially
-        unsafe. Safest choice.
+        <b>Ask for approval</b> — Guild asks you before anything potentially unsafe. Safest choice.
       </Step>
       <Step n={2}>
-        <b>Approve for me</b> — a separate AI checks each action for you and
-        only stops the risky ones.
+        <b>Approve for me</b> — a separate AI checks each action for you and only stops the risky ones.
       </Step>
       <Step n={3}>
-        <b>Full access</b> — the assistant acts on its own, within your
-        organization's rules.
+        <b>Full access</b> — the assistant acts on its own, within your organization's rules.
       </Step>
+      <p>The setting applies to that chat only. A chat you never set follows your organization's default policy.</p>
       <p>
-        The setting applies to that chat only. A chat you never set follows
-        your organization's default policy.
-      </p>
-      <p>
-        Two handy extras: type <code>/</code> in the message box for{" "}
-        <b>skills</b> and built-in <b>commands</b> (see the Skills topic), and
-        click the <b>+</b> button next to the message box to attach images,
-        audio, or other files.
+        Two handy extras: type <code>/</code> in the message box for <b>skills</b> and built-in <b>commands</b> (see the
+        Skills topic), and click the <b>+</b> button next to the message box to attach images, audio, or other files.
       </p>
     </div>
   );
@@ -374,23 +332,19 @@ function SkillsSection() {
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
       <p>
-        A skill is a ready-made recipe the assistant follows — for a report
-        format, a coding task, any routine you repeat. Instead of explaining
-        it every time, you type <code>/</code> in the message box and pick
-        the skill.
+        A skill is a ready-made recipe the assistant follows — for a report format, a coding task, any routine you
+        repeat. Instead of explaining it every time, you type <code>/</code> in the message box and pick the skill.
       </p>
       <Step n={1}>
-        Click <b>Skills</b> in the left bar. The <b>Catalog</b> tab lists
-        skills shared across your organization — open one to see what it
-        does, then install it for your own chats.
+        Click <b>Skills</b> in the left bar. The <b>Catalog</b> tab lists skills shared across your organization — open
+        one to see what it does, then install it for your own chats.
       </Step>
       <Step n={2}>
         Use <code>/</code> in any chat to run an installed skill.
       </Step>
       <p>
-        On the desktop app you can also write your own skills (the{" "}
-        <b>On this machine</b> tab) and publish them to the Catalog for
-        everyone.
+        On the desktop app you can also write your own skills (the <b>On this machine</b> tab) and publish them to the
+        Catalog for everyone.
       </p>
     </div>
   );
@@ -400,21 +354,20 @@ function ProjectsSection() {
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
       <p>
-        A project is a home for one piece of work — say, a report, a website,
-        or a big research job. It keeps related chats together and gives the
-        assistant one place to keep its files.
+        A project is a home for one piece of work — say, a report, a website, or a big research job. It keeps related
+        chats together and gives the assistant one place to keep its files.
       </p>
       <Step n={1}>
-        Click <b>Projects</b> in the left bar, then <b>New project</b>. Give
-        it a name and a folder on one of your computers.
+        Click <b>Projects</b> in the left bar, then <b>New project</b>. Give it a name and a folder on one of your
+        computers.
       </Step>
       <Step n={2}>
-        Start chats inside the project — they automatically work with that
-        folder, so you never have to explain where things are.
+        Start chats inside the project — they automatically work with that folder, so you never have to explain where
+        things are.
       </Step>
       <p>
-        Project chats work like any other chat — including the approval
-        setting next to the message box, explained in the <b>Chatting</b>
+        Project chats work like any other chat — including the approval setting next to the message box, explained in
+        the <b>Chatting</b>
         topic.
       </p>
     </div>
@@ -426,14 +379,10 @@ function InstallSection() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        On a phone or tablet, Guild works best from a Home Screen icon: it
-        opens without the browser bars, and that copy is the one that can
-        notify you later.
+        On a phone or tablet, Guild works best from a Home Screen icon: it opens without the browser bars, and that copy
+        is the one that can notify you later.
       </p>
-      <InstallSteps
-        state={state}
-        onRecheck={() => setState(installState(installSurface()))}
-      />
+      <InstallSteps state={state} onRecheck={() => setState(installState(installSurface()))} />
     </div>
   );
 }
@@ -451,14 +400,13 @@ const SECTIONS: {
     body: () => (
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          Guild is your private AI workspace. You chat with assistants here,
-          and they don't just talk — they do the work.
+          Guild is your private AI workspace. You chat with assistants here, and they don't just talk — they do the
+          work.
         </p>
         <p>
-          You're already set up to chat. Pick any topic on the right to learn
-          the things people add later: an app for their own computer, a way
-          to connect their other tools, ready-made skills, and projects to
-          keep work organized. You can skip all of it.
+          You're already set up to chat. Pick any topic on the right to learn the things people add later: an app for
+          their own computer, a way to connect their other tools, ready-made skills, and projects to keep work
+          organized. You can skip all of it.
         </p>
       </div>
     ),
@@ -500,7 +448,12 @@ export function OnboardingGuide({
   const Icon = section.icon;
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onDone(null); }}>
+    <Dialog
+      open
+      onOpenChange={(o) => {
+        if (!o) onDone(null);
+      }}
+    >
       <DialogContent className="max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-3xl">
         <DialogTitle className="sr-only">Guild guide</DialogTitle>
         <div className="grid grid-cols-1 sm:min-h-[26rem] sm:grid-cols-[minmax(0,1fr)_13rem]">

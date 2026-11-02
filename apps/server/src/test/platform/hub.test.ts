@@ -211,9 +211,9 @@ describe("LiveHub — machine_request correlation", () => {
     // Forged responses from other connections/orgs are ignored.
     hub.resolveMachineResponse({ ...machine, conn_id: uuidv7() }, requestId, true, { forged: true }, null);
     hub.resolveMachineResponse({ ...machine, org_id: uuidv7() }, requestId, true, { forged: true }, null);
-    expect(
-      await Promise.race([pending, new Promise((r) => setTimeout(() => r("still-pending"), 50))]),
-    ).toBe("still-pending");
+    expect(await Promise.race([pending, new Promise((r) => setTimeout(() => r("still-pending"), 50))])).toBe(
+      "still-pending",
+    );
     hub.resolveMachineResponse(machine, requestId, true, { executor: true }, null);
     await expect(pending).resolves.toEqual({ ok: true, value: { executor: true } });
   });
@@ -295,9 +295,11 @@ describe("wire codec", () => {
     expect(parseClientMsg('{"type":"read"}')).toBeNull();
     expect(parseClientMsg('{"type":"read","chat_id":"nope"}')).toBeNull();
     expect(
-      (parseClientMsg(
-        '{"type":"tool_result","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"old","content":"text","is_error":false,"meta":null}',
-      ) as { images: string[] }).images,
+      (
+        parseClientMsg(
+          '{"type":"tool_result","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"old","content":"text","is_error":false,"meta":null}',
+        ) as { images: string[] }
+      ).images,
     ).toEqual([]);
     expect(parseClientMsg("not json")).toBeNull();
     expect(parseClientMsg('{"type":"unknown_variant"}')).toBeNull();
@@ -315,7 +317,9 @@ describe("wire codec", () => {
         name: "execute",
         arguments: "{}",
       }),
-    ).toBe('{"type":"tool_dispatch","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"c1","name":"execute","arguments":"{}"}');
+    ).toBe(
+      '{"type":"tool_dispatch","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"c1","name":"execute","arguments":"{}"}',
+    );
     expect(
       serializeServerMsg({
         type: "tool_dispatch",
@@ -325,7 +329,9 @@ describe("wire codec", () => {
         arguments: "{}",
         workdir: "/w",
       }),
-    ).toBe('{"type":"tool_dispatch","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"c1","name":"execute","arguments":"{}","workdir":"/w"}');
+    ).toBe(
+      '{"type":"tool_dispatch","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"c1","name":"execute","arguments":"{}","workdir":"/w"}',
+    );
     expect(serializeServerMsg({ type: "error", message: "x" })).toBe('{"type":"error","message":"x"}');
     expect(serializeServerMsg({ type: "thread_list", chats: [] })).toBe('{"type":"thread_list","chats":[]}');
     expect(

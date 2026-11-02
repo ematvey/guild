@@ -11,7 +11,8 @@ const plugin: IntegrationPlugin = {
     title: "Firecrawl",
     version: "1.0.0",
     publisher: "Guild",
-    summary: "Search the web and fetch pages as markdown through a self-hosted Firecrawl API (plus site link mapping; crawl jobs are not exposed as tools)",
+    summary:
+      "Search the web and fetch pages as markdown through a self-hosted Firecrawl API (plus site link mapping; crawl jobs are not exposed as tools)",
     description:
       "Adds web search, web fetch, and site mapping to chats through a " +
       "self-hosted Firecrawl API.\n\n" +
@@ -93,11 +94,15 @@ const plugin: IntegrationPlugin = {
     const headers: Record<string, string> = {};
     const key = secretOrNull(secrets, "api_key");
     if (key !== null) headers["authorization"] = `Bearer ${key}`;
-    const res = await fetch(base + "/", fetchTimeout(PROBE_TIMEOUT_MS, { headers })).catch((error: unknown) => {
-      const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+    const res = await fetch(`${base}/`, fetchTimeout(PROBE_TIMEOUT_MS, { headers })).catch((error: unknown) => {
+      const cause =
+        error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new Error(`firecrawl unreachable: ${cause}`);
     });
-    const body = await readBodyCapped(res, 64 * 1024).then((read) => read.text, () => "");
+    const body = await readBodyCapped(res, 64 * 1024).then(
+      (read) => read.text,
+      () => "",
+    );
     if (!res.ok) throw new Error(`firecrawl rejected the connection (${res.status} ${res.statusText})`);
     if (!body.includes("Firecrawl API")) {
       throw new Error("firecrawl: unexpected response at / (not a Firecrawl API?)");

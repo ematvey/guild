@@ -17,11 +17,16 @@ export interface ChatStatusEntry {
 export type ChatStatus = Record<string, ChatStatusEntry>;
 
 export function statusFromThreads(chats: ChatSummary[]): ChatStatus {
-  return Object.fromEntries(chats.map(chat => [chat.id, {
-    generating: !!chat.generating,
-    working: !!chat.working,
-    unread: !!chat.unread,
-  }]));
+  return Object.fromEntries(
+    chats.map((chat) => [
+      chat.id,
+      {
+        generating: !!chat.generating,
+        working: !!chat.working,
+        unread: !!chat.unread,
+      },
+    ]),
+  );
 }
 
 /** A chat's status after the server reported its own turn's generating
@@ -36,7 +41,7 @@ export function statusAfterGenerating(
   return {
     generating,
     working: prev?.working ?? false,
-    unread: watching ? false : !generating && prev?.generating ? true : prev?.unread ?? false,
+    unread: watching ? false : !generating && prev?.generating ? true : (prev?.unread ?? false),
   };
 }
 
@@ -55,9 +60,7 @@ export function workingForChat(
   // The list row's working flag is a first-paint fallback. Once the live
   // tree exists it is authoritative for descendants: a finished run must
   // clear the spinner even while the list row is stale.
-  const descendantWorking = nodes === undefined
-    ? !!chat?.working
-    : hasRunningSubagent(nodes);
+  const descendantWorking = nodes === undefined ? !!chat?.working : hasRunningSubagent(nodes);
   return !!chat?.generating || descendantWorking;
 }
 
@@ -225,11 +228,7 @@ export function threadAccess(input: {
  * local fact — a chat this client sent to whose own frame has not arrived
  * yet — and it retires the moment the server speaks for that chat, so no
  * caller has to remember to clear a flag. */
-export function busyFrom(
-  generating: boolean,
-  pendingSend: string | null,
-  openChatId: string | null,
-): boolean {
+export function busyFrom(generating: boolean, pendingSend: string | null, openChatId: string | null): boolean {
   return generating || (pendingSend !== null && pendingSend === openChatId);
 }
 
@@ -238,10 +237,7 @@ export function busyFrom(
  *  chat-status frame carries no seq and never retires it: it can arrive
  *  before the state that says the turn is live. Frames for any other chat
  *  leave it alone. */
-export function pendingAfterFrame(
-  pendingSend: string | null,
-  frameChatId: string,
-): string | null {
+export function pendingAfterFrame(pendingSend: string | null, frameChatId: string): string | null {
   return pendingSend === frameChatId ? null : pendingSend;
 }
 
@@ -311,11 +307,8 @@ export function tabPaneLayout(
             : "chat";
     return { aside: false, mainPane, expandsPanel: false };
   }
-  if (route.skills !== null)
-    return { aside: false, mainPane: "skillsPage", expandsPanel: false };
-  if (route.agents !== null)
-    return { aside: false, mainPane: "agentsPage", expandsPanel: false };
-  if (route.tab === "settings")
-    return { aside: true, mainPane: "settingsPage", expandsPanel: true };
+  if (route.skills !== null) return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  if (route.agents !== null) return { aside: false, mainPane: "agentsPage", expandsPanel: false };
+  if (route.tab === "settings") return { aside: true, mainPane: "settingsPage", expandsPanel: true };
   return { aside: true, mainPane: "chat", expandsPanel: true };
 }

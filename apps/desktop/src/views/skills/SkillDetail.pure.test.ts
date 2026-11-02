@@ -113,9 +113,16 @@ describe("detailActions", () => {
   });
 
   it("editAccess maps the gate flag plus owner kind to a user-facing label", () => {
-    const open = { maintainer_gated: false, owner: { kind: "team" as const, id: "t1", label: "Platform", avatar_url: null } };
+    const open = {
+      maintainer_gated: false,
+      owner: { kind: "team" as const, id: "t1", label: "Platform", avatar_url: null },
+    };
     const team = { ...open, maintainer_gated: true };
-    const user = { ...open, maintainer_gated: true, owner: { kind: "user" as const, id: "u1", label: "dmitri", avatar_url: null } };
+    const user = {
+      ...open,
+      maintainer_gated: true,
+      owner: { kind: "user" as const, id: "u1", label: "dmitri", avatar_url: null },
+    };
     expect(editAccessLabel(editAccess(open), open.owner.label)).toBe("Anyone can edit");
     expect(editAccessLabel(editAccess(team), team.owner.label)).toBe("Team Platform can edit");
     expect(editAccessLabel(editAccess(user), user.owner.label)).toBe("Owner can edit");
@@ -176,7 +183,12 @@ describe("detailLoadState", () => {
 
 describe("pinSummary", () => {
   it("lists version × count pairs, or the no-pins text", () => {
-    expect(pinSummary([{ version: "v2", count: 4 }, { version: "v3", count: 1 }])).toBe("v2 × 4 · v3 × 1");
+    expect(
+      pinSummary([
+        { version: "v2", count: 4 },
+        { version: "v3", count: 1 },
+      ]),
+    ).toBe("v2 × 4 · v3 × 1");
     expect(pinSummary([])).toBe("No pins yet.");
   });
 });
@@ -204,7 +216,12 @@ describe("readBars", () => {
     // A lone entry is its own peak (full height); a near-zero entry against
     // a high peak clamps to the 2px floor.
     expect(readBars([{ day: "2026-10-13", reads: 1 }])).toEqual([40]);
-    expect(readBars([{ day: "2026-10-12", reads: 1 }, { day: "2026-10-13", reads: 32 }])).toEqual([2, 40]);
+    expect(
+      readBars([
+        { day: "2026-10-12", reads: 1 },
+        { day: "2026-10-13", reads: 32 },
+      ]),
+    ).toEqual([2, 40]);
   });
 });
 
@@ -274,13 +291,7 @@ describe("bundleFilePaths (the Files section's manifest list)", () => {
 
 describe("buildFileTree (the file tree from the manifest paths)", () => {
   it("nests paths under dirs, dirs before files, alphabetical", () => {
-    const tree = buildFileTree([
-      "SKILL.md",
-      "scripts/run.sh",
-      "refs/api.md",
-      "refs/intro.md",
-      "scripts/check.sh",
-    ]);
+    const tree = buildFileTree(["SKILL.md", "scripts/run.sh", "refs/api.md", "refs/intro.md", "scripts/check.sh"]);
     expect(tree.map((n) => `${n.kind}:${n.name}`)).toEqual(["dir:refs", "dir:scripts", "file:SKILL.md"]);
     const scripts = tree.find((n) => n.name === "scripts")!;
     expect(scripts.path).toBe("scripts");

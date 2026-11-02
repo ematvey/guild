@@ -79,7 +79,10 @@ describe("LLM gateway endpoints", () => {
       return JSON.parse(res.body) as { models: string[]; aliases: Record<string, string> };
     };
 
-    expect((await put({ model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    expect(
+      (await put({ model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 }))
+        .statusCode,
+    ).toBe(200);
     let listed = await models();
     expect(listed.models).toContain("m-alias");
     expect(listed.models).not.toContain("m-alias-v2");
@@ -87,7 +90,18 @@ describe("LLM gateway endpoints", () => {
 
     // Rename the route: the row moves, no second route appears, the alias
     // stays with it.
-    expect((await put({ original_model: "m-alias", model: "m-alias-v2", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    expect(
+      (
+        await put({
+          original_model: "m-alias",
+          model: "m-alias-v2",
+          alias: "Guild Fast",
+          provider: "mock-openai",
+          price_in: 0,
+          price_out: 0,
+        })
+      ).statusCode,
+    ).toBe(200);
     listed = await models();
     expect(listed.models).toContain("m-alias-v2");
     expect(listed.models).not.toContain("m-alias");
@@ -96,19 +110,46 @@ describe("LLM gateway endpoints", () => {
 
     // Renaming onto an existing id is a conflict, not an overwrite.
     await put({ model: "m-alias", alias: "Other", provider: "mock-openai", price_in: 0, price_out: 0 });
-    const clash = await put({ original_model: "m-alias-v2", model: "m-alias", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    const clash = await put({
+      original_model: "m-alias-v2",
+      model: "m-alias",
+      alias: "Guild Fast",
+      provider: "mock-openai",
+      price_in: 0,
+      price_out: 0,
+    });
     expect(clash.statusCode).toBe(409);
 
     // A display name identifies a route to users, so it cannot repeat — in
     // either the create or the rename path, and regardless of case.
-    const dupName = await put({ model: "m-alias-3", alias: "guild fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    const dupName = await put({
+      model: "m-alias-3",
+      alias: "guild fast",
+      provider: "mock-openai",
+      price_in: 0,
+      price_out: 0,
+    });
     expect(dupName.statusCode).toBe(409);
-    expect((await put({ model: "m-alias-3", alias: "Third", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
-    const renameDup = await put({ original_model: "m-alias-3", model: "m-alias-3", alias: "Guild Fast", provider: "mock-openai", price_in: 0, price_out: 0 });
+    expect(
+      (await put({ model: "m-alias-3", alias: "Third", provider: "mock-openai", price_in: 0, price_out: 0 }))
+        .statusCode,
+    ).toBe(200);
+    const renameDup = await put({
+      original_model: "m-alias-3",
+      model: "m-alias-3",
+      alias: "Guild Fast",
+      provider: "mock-openai",
+      price_in: 0,
+      price_out: 0,
+    });
     expect(renameDup.statusCode).toBe(409);
     // Unnamed routes may repeat the empty default.
-    expect((await put({ model: "m-alias-4", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
-    expect((await put({ model: "m-alias-5", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode).toBe(200);
+    expect(
+      (await put({ model: "m-alias-4", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode,
+    ).toBe(200);
+    expect(
+      (await put({ model: "m-alias-5", alias: "", provider: "mock-openai", price_in: 0, price_out: 0 })).statusCode,
+    ).toBe(200);
   });
 
   it("route temperature: default applies when the client sends none, client value wins", async () => {
@@ -204,7 +245,10 @@ describe("LLM gateway endpoints", () => {
     // Stream frames: role frame, reasoning, content, mixed, final, [DONE].
     // Each provider chunk becomes its own SSE frame (Rust emits one
     // chat.completion.chunk per parsed delta chunk).
-    const frames = text.split("\n\n").filter((f) => f.startsWith("data: ")).map((f) => f.slice(6));
+    const frames = text
+      .split("\n\n")
+      .filter((f) => f.startsWith("data: "))
+      .map((f) => f.slice(6));
     expect(frames[0]).toContain('"role":"assistant"');
     expect(frames[1]).toContain('"reasoning_content":"thinking hard"');
     expect(frames[2]).toContain('"content":"answer"');
@@ -222,7 +266,7 @@ describe("LLM gateway endpoints", () => {
     const scripted = await startMockUpstream([
       {
         body:
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","function":{"name":"get_weather","arguments":"{\\"city\\":\\\"oslo\\""}}]}}]}\n\n' +
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","function":{"name":"get_weather","arguments":"{\\"city\\":\\"oslo\\""}}]}}]}\n\n' +
           'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}\n\n' +
           'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
           "data: [DONE]\n\n",
@@ -311,7 +355,7 @@ describe("LLM gateway endpoints", () => {
     expect((replayCalls[0]!["function"] as Record<string, unknown>)["arguments"]).toBe('{"city":"oslo"}');
     expect(msgs[3]!["tool_call_id"]).toBe("call_x");
     expect(msgs[3]!["content"]).toBe("snow");
-        const b2 = JSON.parse(t2.body) as Record<string, any>;
+    const b2 = JSON.parse(t2.body) as Record<string, any>;
     expect(b2["choices"][0]["message"]["content"]).toBe("sunny");
     expect(b2["usage"]["prompt_tokens"]).toBe(5);
     await scripted.stop();
@@ -351,7 +395,10 @@ describe("LLM gateway endpoints", () => {
       headers: { "x-api-key": stack.apiKey, "content-type": "application/json" },
       payload: {
         model: "m-claude",
-        system: [{ type: "text", text: "be terse" }, { type: "text", text: "and kind" }],
+        system: [
+          { type: "text", text: "be terse" },
+          { type: "text", text: "and kind" },
+        ],
         messages: [
           { role: "user", content: "weather?" },
           {
@@ -391,7 +438,10 @@ describe("LLM gateway endpoints", () => {
     const msgs = upstream.body["messages"] as Record<string, unknown>[];
     // Assistant tool_use turn; the [tool_result, image, text] user
     // continuation rides ONE user content array.
-    expect((msgs[1]!["content"] as unknown[]).map((b) => (b as Record<string, unknown>)["type"])).toEqual(["text", "tool_use"]);
+    expect((msgs[1]!["content"] as unknown[]).map((b) => (b as Record<string, unknown>)["type"])).toEqual([
+      "text",
+      "tool_use",
+    ]);
     expect((msgs[1]!["content"] as Record<string, unknown>[])[1]!["input"]).toEqual({ city: "oslo" });
     const lastBlocks = msgs[2]!["content"] as Record<string, unknown>[];
     // The adapter emits the turn's text before its images (the internal

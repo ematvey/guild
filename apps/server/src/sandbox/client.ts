@@ -43,7 +43,10 @@ export class RunnerClient {
   }
 
   async health(): Promise<{ runtime: string; image: string; network: string }> {
-    const res = await fetch(`${this.baseUrl}/v1/healthz`, { headers: this.headers(), signal: AbortSignal.timeout(5_000) });
+    const res = await fetch(`${this.baseUrl}/v1/healthz`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) throw new Error(`sandbox runner health: ${res.status}`);
     return (await res.json()) as { runtime: string; image: string; network: string };
   }
@@ -80,7 +83,10 @@ export class RunnerClient {
       const closeListeners: Array<(error?: Error) => void> = [];
       let closed = false;
       let opened = false;
-      const timer = setTimeout(() => fail(new SandboxRunnerError(`sandbox attach timed out after ${this.attachTimeoutMs} ms`, 0)), this.attachTimeoutMs);
+      const timer = setTimeout(
+        () => fail(new SandboxRunnerError(`sandbox attach timed out after ${this.attachTimeoutMs} ms`, 0)),
+        this.attachTimeoutMs,
+      );
       timer.unref?.();
       /** Settles the open promise exactly once. The socket is terminated, so
        *  an upgrade that never answers cannot leave the caller waiting. */
@@ -139,7 +145,7 @@ interface PoolEntry {
  *  retry would only repeat the wait. */
 function recoverable(error: unknown): boolean {
   if (error instanceof SandboxRunnerError) return error.status === 503;
-  const code = ((error as { cause?: NodeJS.ErrnoException }).cause ?? error as NodeJS.ErrnoException).code;
+  const code = ((error as { cause?: NodeJS.ErrnoException }).cause ?? (error as NodeJS.ErrnoException)).code;
   return code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE";
 }
 

@@ -54,7 +54,5 @@ export function mentionCandidates(
       .filter((s) => !s.disabled)
       .map((s) => ({ name: s.name, description: s.description, builtin: false, org: s.org === true })),
   ];
-  return pool
-    .filter((c) => query === "" || c.name.startsWith(query))
-    .slice(0, 6);
+  return pool.filter((c) => query === "" || c.name.startsWith(query)).slice(0, 6);
 }

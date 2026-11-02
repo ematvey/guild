@@ -105,13 +105,7 @@ export function DataTable<T>({
                       <th
                         key={header.id}
                         aria-sort={
-                          dir === "asc"
-                            ? "ascending"
-                            : dir === "desc"
-                              ? "descending"
-                              : canSort
-                                ? "none"
-                                : undefined
+                          dir === "asc" ? "ascending" : dir === "desc" ? "descending" : canSort ? "none" : undefined
                         }
                         className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground"
                       >
@@ -164,7 +158,8 @@ export function DataTable<T>({
                     tabIndex={onRowClick ? 0 : undefined}
                     className={cn(
                       "border-b border-border/60 transition-colors last:border-b-0",
-                      onRowClick && "cursor-pointer hover:bg-accent/40 focus-visible:outline focus-visible:outline-foreground/60",
+                      onRowClick &&
+                        "cursor-pointer hover:bg-accent/40 focus-visible:outline focus-visible:outline-foreground/60",
                     )}
                   >
                     {row.getVisibleCells().map((cell) => (

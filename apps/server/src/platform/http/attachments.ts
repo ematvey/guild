@@ -22,7 +22,12 @@ function safeContentType(raw: string): string {
   return value.toLowerCase();
 }
 
-export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext, chats: ChatStore): void {
+export function registerAttachmentRoutes(
+  app: FastifyInstance,
+  ctx: IdentityCtx,
+  infra: InfraContext,
+  chats: ChatStore,
+): void {
   // Deprecated alias: /api/v1/chats/:chatId/attachments (the thread-domain
   // rename — /api/v1/threads/:chatId/attachments is primary).
   const uploadAttachment = async (req: FastifyRequest, reply: FastifyReply) => {
@@ -36,9 +41,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     const chat = await chats.getOwnChat(user.org_id, chatId, user);
     const id = uuidv7();
     const key = attachmentObjectKey(user.org_id, id, filename);
-    const bytes = Buffer.isBuffer(req.body)
-      ? req.body
-      : Buffer.from(typeof req.body === "string" ? req.body : []);
+    const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === "string" ? req.body : []);
     try {
       await infra.objects.put(key, bytes);
     } catch (error) {
@@ -65,9 +68,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     const chatId = parseUuidParam(req, "chatId");
     await chats.getChat(user.org_id, chatId, user);
     const rows = await ctx.attachments.list(user.org_id, chatId);
-    return reply
-      .status(200)
-      .send({ attachments: rows.map((r) => sortedJson(r)) });
+    return reply.status(200).send({ attachments: rows.map((r) => sortedJson(r)) });
   };
   app.get("/api/v1/chats/:chatId/attachments", listAttachments);
   app.get("/api/v1/threads/:chatId/attachments", listAttachments);

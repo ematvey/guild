@@ -515,9 +515,7 @@ export class SkillRuntime {
           slug: install.slug,
           version,
           bundle_sha256: meta.bundle_sha256 ?? "",
-          ...(meta.publisher_label != null && meta.publisher_label !== ""
-            ? { publisher: meta.publisher_label }
-            : {}),
+          ...(meta.publisher_label != null && meta.publisher_label !== "" ? { publisher: meta.publisher_label } : {}),
           ...(meta.published_at != null && meta.published_at !== "" ? { published_at: meta.published_at } : {}),
           ...(this.deps.selfBaseUrl !== undefined
             ? { url: `${this.deps.selfBaseUrl}/api/v1/registry/skill/${install.slug}/${version}/bundle` }
@@ -853,7 +851,7 @@ export class SkillRuntime {
     }
     const objects = this.deps.objects;
     const control = await this.deps.registry.itemControl(orgId, "skill", slug);
-    if (control !== null && control.tombstoned) {
+    if (control?.tombstoned) {
       return this.errorResult(`skill ${slug} is unpublished — ask an owner to republish it first`);
     }
     const isTeamMember =

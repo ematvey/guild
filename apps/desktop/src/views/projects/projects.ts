@@ -45,7 +45,8 @@ export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
       stateless.push(chat);
       continue;
     }
-    (chatsByProject[chat.project_id] ??= []).push(chat);
+    chatsByProject[chat.project_id] ??= [];
+    chatsByProject[chat.project_id]!.push(chat);
   }
   stateless.sort(byRecentActivity);
   for (const chats of Object.values(chatsByProject)) chats.sort(byRecentActivity);
@@ -138,8 +139,6 @@ export function uncUp(cwd: string): string {
   return `${WSL_HOST_PREFIX}${rest.slice(0, cut + 1)}`;
 }
 
-
-
 /** Joins a segment onto a canonical Linux path (trailing slash). */
 export function linuxJoin(cwd: string, name: string): string {
   return cwd.endsWith("/") ? `${cwd}${name}/` : `${cwd}/${name}/`;
@@ -157,18 +156,13 @@ export function linuxUp(cwd: string): string {
 /** Canonical Linux directory path: exactly one leading and trailing slash,
  * collapsed separators. The distro root is `/`. */
 export function linuxCanonical(path: string): string {
-  const body = `/${path.replace(/^\/+/, "")}`
-    .replace(/\/{2,}/g, "/")
-    .replace(/\/+$/, "");
+  const body = `/${path.replace(/^\/+/, "")}`.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
   return `${body}/`;
 }
 
 /** Breadcrumbs of a canonical Linux path; the root crumb carries the
  * distro name (its label in the UI). */
-export function linuxBreadcrumbs(
-  distro: string,
-  cwd: string,
-): { label: string; path: string }[] {
+export function linuxBreadcrumbs(distro: string, cwd: string): { label: string; path: string }[] {
   const segs = cwd.replace(/^\/+/, "").replace(/\/+$/, "").split("/").filter(Boolean);
   const out = [{ label: distro, path: "/" }];
   let acc = "/";
@@ -289,17 +283,11 @@ export function pickerReducer(state: PickerState, event: PickerEvent): PickerSta
     case "choose_source":
       return pickerFor(event.source, event.root);
     case "loading":
-      return state.cwd === event.path
-        ? { ...state, entries: null, error: null }
-        : state;
+      return state.cwd === event.path ? { ...state, entries: null, error: null } : state;
     case "loaded":
-      return state.cwd === event.path
-        ? { ...state, entries: event.entries, highlight: 0, error: null }
-        : state;
+      return state.cwd === event.path ? { ...state, entries: event.entries, highlight: 0, error: null } : state;
     case "failed":
-      return state.cwd === event.path
-        ? { ...state, entries: null, error: event.error }
-        : state;
+      return state.cwd === event.path ? { ...state, entries: null, error: event.error } : state;
     case "error":
       return { ...state, error: event.message };
     case "descend": {

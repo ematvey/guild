@@ -24,7 +24,19 @@ describe("applyRoutePatch (navigation precedence)", () => {
     const next = applyRoutePatch(route(), { chatId: "c1", newChat: true });
     expect(next.chatId).toBe("c1");
     expect(next.newChat).toBe(false);
-    expect(chatRoutePath(next.chatId, next.projectId, next.overlay, next.skills, next.tab, next.settingsSection, next.settingsDetail, next.newChat, next.agents)).toBe("/thread/c1");
+    expect(
+      chatRoutePath(
+        next.chatId,
+        next.projectId,
+        next.overlay,
+        next.skills,
+        next.tab,
+        next.settingsSection,
+        next.settingsDetail,
+        next.newChat,
+        next.agents,
+      ),
+    ).toBe("/thread/c1");
   });
 
   it("a project-bound address implies the Work tab", () => {
@@ -135,31 +147,27 @@ describe("workingForChat", () => {
   });
 
   it("ignores a stale list working flag once the live tree is done", () => {
-    expect(workingForChat(
-      { generating: false, working: true },
-      [node("succeeded"), node("cancelled")],
-    )).toBe(false);
+    expect(workingForChat({ generating: false, working: true }, [node("succeeded"), node("cancelled")])).toBe(false);
   });
 
   it("still reports working from the live tree while the list row is stale", () => {
-    expect(workingForChat(
-      { generating: false, working: false },
-      [node("running")],
-    )).toBe(true);
+    expect(workingForChat({ generating: false, working: false }, [node("running")])).toBe(true);
   });
 });
 
 describe("clearSubagentTrees", () => {
   it("drops every cached tree so the list working flag is the fallback", () => {
-    const trees = applySubagentTree({}, "parent", [{
-      thread_id: "t1",
-      parent_thread_id: null,
-      title: "child",
-      agent_name: "agent",
-      depth: 1,
-      status: "running",
-      chat_id: "child",
-    }]);
+    const trees = applySubagentTree({}, "parent", [
+      {
+        thread_id: "t1",
+        parent_thread_id: null,
+        title: "child",
+        agent_name: "agent",
+        depth: 1,
+        status: "running",
+        chat_id: "child",
+      },
+    ]);
     expect(workingForChat({ generating: false, working: false }, trees.parent)).toBe(true);
     const cleared = clearSubagentTrees();
     expect(cleared).toEqual({});
@@ -171,15 +179,17 @@ describe("clearSubagentTrees", () => {
 describe("applySubagentTree", () => {
   it("keeps the tree for a chat that is not open", () => {
     const first = applySubagentTree({}, "open", []);
-    const second = applySubagentTree(first, "background", [{
-      thread_id: "t1",
-      chat_id: "background",
-      parent_thread_id: null,
-      agent_name: "a",
-      title: "background work",
-      depth: 1,
-      status: "running",
-    }]);
+    const second = applySubagentTree(first, "background", [
+      {
+        thread_id: "t1",
+        chat_id: "background",
+        parent_thread_id: null,
+        agent_name: "a",
+        title: "background work",
+        depth: 1,
+        status: "running",
+      },
+    ]);
     expect(second.open).toEqual([]);
     expect(second.background).toHaveLength(1);
     expect(second).not.toBe(first);

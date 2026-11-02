@@ -18,10 +18,13 @@ describe("refreshSession ignores stale responses", () => {
       removeItem: (k: string) => void store.delete(k),
     });
     const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
-      calls.push(`${input} ${(init?.headers as Record<string, string>)?.authorization ?? ""}`);
-      return fetchImpl(input, init);
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        calls.push(`${input} ${(init?.headers as Record<string, string>)?.authorization ?? ""}`);
+        return fetchImpl(input, init);
+      }),
+    );
     return { calls, store };
   }
 
@@ -50,7 +53,8 @@ describe("refreshSession ignores stale responses", () => {
   it("a fresh account's refresh still applies its own response", async () => {
     const { calls } = stubBrowser(async () => ({
       status: 200,
-      ok: true, json: async () => ({ token: "rotated" }),
+      ok: true,
+      json: async () => ({ token: "rotated" }),
     }));
     const { refreshSession, setToken, getToken } = await import("./session");
 

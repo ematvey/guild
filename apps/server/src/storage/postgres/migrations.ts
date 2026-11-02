@@ -193,15 +193,15 @@ export async function applyPostgresMigrations(
 			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 			version INTEGER NOT NULL CHECK (version >= 0)
 		)`);
-    await tx.query(
-      "INSERT INTO durable_schema (singleton, version) VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING",
-    );
+    await tx.query("INSERT INTO durable_schema (singleton, version) VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING");
     const rows = await tx.query<{ version: number }>("SELECT version FROM durable_schema WHERE singleton = 1");
     if (rows.length === 0) throw new Error("Durable Postgres schema metadata is missing");
     const currentVersion = migrations.at(-1)?.version ?? 0;
     const appliedVersion = rows[0]!.version;
     if (appliedVersion > currentVersion) {
-      throw new Error(`Durable Postgres schema version ${appliedVersion} is newer than supported version ${currentVersion}`);
+      throw new Error(
+        `Durable Postgres schema version ${appliedVersion} is newer than supported version ${currentVersion}`,
+      );
     }
     for (const migration of migrations) {
       if (migration.version <= appliedVersion) continue;

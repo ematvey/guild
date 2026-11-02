@@ -19,7 +19,14 @@ class FakeChild extends EventEmitter {
   send(message: Record<string, unknown>): void {
     this.sent.push(message);
     if (this.answers.has(message["t"] as string)) {
-      setImmediate(() => this.emit("message", { t: "result", ref: message["ref"], ok: true, data: this.answers.get(message["t"] as string) }));
+      setImmediate(() =>
+        this.emit("message", {
+          t: "result",
+          ref: message["ref"],
+          ok: true,
+          data: this.answers.get(message["t"] as string),
+        }),
+      );
     }
   }
   kill(signal: string): boolean {

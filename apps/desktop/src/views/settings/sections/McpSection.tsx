@@ -31,13 +31,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
@@ -88,14 +82,9 @@ function ToolCount({ serverId }: { serverId: string }) {
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
-    <Badge
-      variant="outline"
-      className="border-transparent bg-accent text-muted-foreground"
-    >
+    <Badge variant="outline" className="border-transparent bg-accent text-muted-foreground">
       <span
-        className={`mr-1.5 inline-block size-1.5 rounded-full ${
-          enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
-        }`}
+        className={`mr-1.5 inline-block size-1.5 rounded-full ${enabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
       />
       {enabled ? "enabled" : "disabled"}
     </Badge>
@@ -125,24 +114,16 @@ function HeaderEditor({
             className="w-48"
             placeholder="Header name"
             value={row.key}
-            onChange={(e) =>
-              onChange(rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
-            }
+            onChange={(e) => onChange(rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
           />
           <Input
             className="flex-1"
             type="password"
             placeholder={previews?.[i]?.masked ?? "value (write-only)"}
             value={row.value}
-            onChange={(e) =>
-              onChange(rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
-            }
+            onChange={(e) => onChange(rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onChange(rows.filter((_, j) => j !== i))}
-          >
+          <Button variant="ghost" size="sm" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
             <Trash2 className="size-4" />
           </Button>
         </div>
@@ -204,9 +185,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
         accessorKey: "created_at",
         header: "Created",
         cell: ({ row }) => (
-          <span className="text-xs text-muted-foreground">
-            {row.original.created_at.slice(0, 10)}
-          </span>
+          <span className="text-xs text-muted-foreground">{row.original.created_at.slice(0, 10)}</span>
         ),
       },
     ],
@@ -218,7 +197,12 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
 
   if (view !== null) {
     if (rows === null) {
-      if (list.error) return <p role="alert" className="text-sm text-destructive">{list.error}</p>;
+      if (list.error)
+        return (
+          <p role="alert" className="text-sm text-destructive">
+            {list.error}
+          </p>
+        );
       return (
         <div className="space-y-2">
           <SkeletonForm />
@@ -229,22 +213,12 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
     if (!server) {
       return (
         <div>
-          <PageHeader
-            title="MCP servers"
-            back={{ label: "MCP servers", onClick: () => open(null) }}
-          />
+          <PageHeader title="MCP servers" back={{ label: "MCP servers", onClick: () => open(null) }} />
           <p className="text-sm text-muted-foreground">This server no longer exists.</p>
         </div>
       );
     }
-    return (
-      <McpDetail
-        key={server.id}
-        server={server}
-        onChanged={reload}
-        onBack={() => open(null)}
-      />
-    );
+    return <McpDetail key={server.id} server={server} onChanged={reload} onBack={() => open(null)} />;
   }
 
   return (
@@ -308,7 +282,9 @@ function AddServerDialog({
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setProbe(null); }, [name, url, headers]);
+  useEffect(() => {
+    setProbe(null);
+  }, [name, url, headers]);
 
   const reset = () => {
     setName("");
@@ -365,8 +341,7 @@ function AddServerDialog({
         <DialogHeader>
           <DialogTitle>Add MCP server</DialogTitle>
           <DialogDescription>
-            A streamable-HTTP MCP server. Private/loopback IP addresses are rejected unless the
-            server allows them.
+            A streamable-HTTP MCP server. Private/loopback IP addresses are rejected unless the server allows them.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -379,20 +354,14 @@ function AddServerDialog({
           <Field label="Headers" hint="Sent on every request; values are encrypted at rest and write-only.">
             <HeaderEditor rows={headers} onChange={setHeaders} />
           </Field>
-          {probe !== null && !probe.ok && (
-            <p className="text-sm text-destructive">Test failed: {probe.error}</p>
-          )}
-          {probe !== null && probe.ok && (
+          {probe !== null && !probe.ok && <p className="text-sm text-destructive">Test failed: {probe.error}</p>}
+          {probe?.ok && (
             <p className="text-sm text-muted-foreground">
-              Connected — {(probe.tools?.length ?? 0)} tools: {(probe.tools ?? []).map((t) => t.name).join(", ")}
+              Connected — {probe.tools?.length ?? 0} tools: {(probe.tools ?? []).map((t) => t.name).join(", ")}
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              disabled={busy || name === "" || url === ""}
-              onClick={testConnection}
-            >
+            <Button variant="outline" disabled={busy || name === "" || url === ""} onClick={testConnection}>
               Test connection
             </Button>
             <Button disabled={busy || name === "" || url === ""} onClick={finish}>
@@ -405,15 +374,7 @@ function AddServerDialog({
   );
 }
 
-function McpDetail({
-  server,
-  onChanged,
-  onBack,
-}: {
-  server: ServerRow;
-  onChanged: () => void;
-  onBack: () => void;
-}) {
+function McpDetail({ server, onChanged, onBack }: { server: ServerRow; onChanged: () => void; onBack: () => void }) {
   const [name, setName] = useState(server.name);
   const [url, setUrl] = useState(server.url);
   const [enabled, setEnabled] = useState(server.enabled);
@@ -525,9 +486,7 @@ function McpDetail({
         <div className="rounded-lg border border-border">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Tools</div>
           {probe === null ? (
-            <p className="px-4 py-3 text-xs text-muted-foreground">
-              Run “Test connection” to list the server's tools.
-            </p>
+            <p className="px-4 py-3 text-xs text-muted-foreground">Run “Test connection” to list the server's tools.</p>
           ) : !probe.ok ? (
             <p className="px-4 py-3 text-sm text-destructive">{probe.error}</p>
           ) : (probe.tools?.length ?? 0) === 0 ? (
@@ -551,9 +510,7 @@ function McpDetail({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {server.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Its tools stop being offered in your chats immediately.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Its tools stop being offered in your chats immediately.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

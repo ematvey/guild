@@ -111,7 +111,9 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     }
     const { emailKey, addressKey } = attemptKeys(req, email);
     if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
-      throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
+      throw tooManyAttempts(
+        Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)),
+      );
     }
     const userCount = await ctx.identity.userCount();
     if (userCount > 0) {
@@ -127,15 +129,14 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     const fields = requireStringFields(body, ["email", "password"]);
     const { emailKey, addressKey } = attemptKeys(req, fields["email"]!);
     if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
-      throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
+      throw tooManyAttempts(
+        Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)),
+      );
     }
     let user: UserRow;
     let authGeneration: number;
     try {
-      [user, authGeneration] = await ctx.identity.authenticateWithGeneration(
-        fields["email"]!,
-        fields["password"]!,
-      );
+      [user, authGeneration] = await ctx.identity.authenticateWithGeneration(fields["email"]!, fields["password"]!);
     } catch (error) {
       loginThrottle.recordFailure(emailKey);
       addressThrottle.recordFailure(addressKey);
@@ -223,9 +224,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx): void
   app.get("/api/v1/auth/pairing-tokens", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const rows = await ctx.pairing.listOutstanding(user.id);
-    const tokens = rows.map((t) =>
-      sortedJson({ id: t.id, created_at: t.created_at, expires_at: t.expires_at }),
-    );
+    const tokens = rows.map((t) => sortedJson({ id: t.id, created_at: t.created_at, expires_at: t.expires_at }));
     return reply.status(200).send({ tokens });
   });
 
@@ -283,8 +282,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx): void
  *  rejection texts match the captured serde strings (fixtures/
  *  m7-rust-capture.json). */
 function validateApprovalPolicy(value: unknown): void {
-  const reject = (detail: string): ApiError =>
-    ApiError.badRequest(`invalid approval policy: ${detail}`);
+  const reject = (detail: string): ApiError => ApiError.badRequest(`invalid approval policy: ${detail}`);
   const serdeKind = (v: unknown): string => {
     if (v === null) return "null";
     if (typeof v === "number") return Number.isInteger(v) ? `integer \`${v}\`` : `floating point \`${v}\``;

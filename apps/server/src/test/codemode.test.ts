@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { GuildRuntime } from "../harness/runtime.js";
@@ -55,7 +55,9 @@ beforeAll(async () => {
   probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
@@ -107,7 +109,7 @@ async function createChat(title: string): Promise<string> {
   const chatId = (JSON.parse(res.body) as { id: string }).id;
   // The scripted model's tool calls must run without the interactive
   // approval gate (the product's per-chat policy knob).
-  await stack.env.db.query("UPDATE chats SET approval = '{\"default\":\"full_access\"}' WHERE id = $1", [chatId]);
+  await stack.env.db.query('UPDATE chats SET approval = \'{"default":"full_access"}\' WHERE id = $1', [chatId]);
   return chatId;
 }
 
@@ -162,7 +164,10 @@ describe("codemode over the chat loop", () => {
       await turnSettled(chatId);
 
       const body = await firstRequest();
-      const tools = body["tools"] as { type: string; function: { name: string; description?: string; parameters: Record<string, unknown> } }[];
+      const tools = body["tools"] as {
+        type: string;
+        function: { name: string; description?: string; parameters: Record<string, unknown> };
+      }[];
       const codemode = tools.find((t) => t.function?.name === "codemode");
       expect(codemode).toBeDefined();
       expect(codemode!.function.description).toContain("Run JavaScript that calls other tools");
@@ -174,7 +179,10 @@ describe("codemode over the chat loop", () => {
       // The codemode section lands in the system prompt (the extension's
       // own section, not a guild duplicate).
       const messages = body["messages"] as { role: string; content: unknown }[];
-      const system = messages.filter((m) => m.role === "system").map((m) => String(m.content)).join("\n");
+      const system = messages
+        .filter((m) => m.role === "system")
+        .map((m) => String(m.content))
+        .join("\n");
       expect(system).toContain("Tools scripts can call (`await tools.<name>(args)`)");
       expect(system).toContain("### `read`");
       expect(system).toContain("### `bash`");
@@ -213,7 +221,9 @@ describe("codemode over the chat loop", () => {
       await turnSettled(chatId);
 
       const events = await threadEvents(chatId);
-      const call = (events as unknown as { event: { type?: string; blocks?: { type: string; name?: string; id?: string } }[] }[])
+      const call = (
+        events as unknown as { event: { type?: string; blocks?: { type: string; name?: string; id?: string } }[] }[]
+      )
         .flatMap((e) => (e.event as { blocks?: { type: string; name?: string; id?: string }[] }).blocks ?? [])
         .find((b) => b.type === "tool_call" && b.name === "codemode");
       expect(call).toBeDefined();
@@ -245,7 +255,15 @@ describe("codemode over the chat loop", () => {
       const bad = 'await new Promise((resolve) => setTimeout(resolve, 100));\nreturn "done";';
       scriptFor(
         { body: toolCallSse("codemode", JSON.stringify({ code: bad }), "call_cm_bad") },
-        { body: toolCallSse("codemode", JSON.stringify({ code: 'await tools.write({ path: "cm-lint.txt", content: "ok" });\nreturn await tools.read({ path: "cm-lint.txt" });' }), "call_cm_retry") },
+        {
+          body: toolCallSse(
+            "codemode",
+            JSON.stringify({
+              code: 'await tools.write({ path: "cm-lint.txt", content: "ok" });\nreturn await tools.read({ path: "cm-lint.txt" });',
+            }),
+            "call_cm_retry",
+          ),
+        },
         { body: finalSse },
       );
       await submitTurn(chatId, "wait then read");
@@ -291,7 +309,9 @@ describe("codemode over the chat loop", () => {
       await turnSettled(chatId);
 
       const events = await threadEvents(chatId);
-      const codemodeResults = toolResults(events).filter((e) => !(e.event as { call_id: string }).call_id.includes("/c"));
+      const codemodeResults = toolResults(events).filter(
+        (e) => !(e.event as { call_id: string }).call_id.includes("/c"),
+      );
       expect(codemodeResults.length).toBeGreaterThanOrEqual(2);
       const second = codemodeResults[codemodeResults.length - 1]!.event as { content: string; is_error: boolean };
       expect(second.is_error).toBe(false);
@@ -401,7 +421,10 @@ describe("codemode over the chat loop", () => {
       }
       // The codemode section lists the script-only tools for the model.
       const messages = body["messages"] as { role: string; content: unknown }[];
-      const system = messages.filter((m) => m.role === "system").map((m) => String(m.content)).join("\n");
+      const system = messages
+        .filter((m) => m.role === "system")
+        .map((m) => String(m.content))
+        .join("\n");
       expect(system).toContain("### `thread_history`");
       expect(system).toContain("### `thread_search`");
     },
@@ -442,7 +465,7 @@ describe("codemode over the chat loop", () => {
       expect(result.is_error).toBe(false);
       expect(result.content).toContain("discussing the");
       expect(result.content).toContain("history-search-other");
-      expect(result.content).toContain('readBack\":true');
+      expect(result.content).toContain('readBack":true');
     },
     TEST_TIMEOUT,
   );

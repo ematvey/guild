@@ -121,9 +121,7 @@ export function NotificationsSection() {
                 <li key={row.device_id}>
                   {row.platform === "android" ? "Android" : "Browser"} · registered{" "}
                   {new Date(row.created_at).toLocaleDateString()}
-                  {row.last_error !== null && (
-                    <span className="text-destructive"> · last error: {row.last_error}</span>
-                  )}
+                  {row.last_error !== null && <span className="text-destructive"> · last error: {row.last_error}</span>}
                 </li>
               ))}
             </ul>
@@ -131,7 +129,12 @@ export function NotificationsSection() {
         </FactCard>
       </FactGrid>
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled={busy || rows === null || rows.length === 0} onClick={() => void test()}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || rows === null || rows.length === 0}
+          onClick={() => void test()}
+        >
           <BellRing className="mr-1 size-3.5" />
           Send a test notification
         </Button>

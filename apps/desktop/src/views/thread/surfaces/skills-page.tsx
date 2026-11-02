@@ -22,7 +22,9 @@ export function SkillsPage({
       <SkillsPanel
         me={me}
         route={clampSkillsRoute(route, HAS_ENGINE)}
-        onNavigate={(next: SkillsRoute, options?: { replace?: boolean }) => pushRoute({ ...SURFACE_BASE, skills: next }, options)}
+        onNavigate={(next: SkillsRoute, options?: { replace?: boolean }) =>
+          pushRoute({ ...SURFACE_BASE, skills: next }, options)
+        }
       />
     </div>
   );

@@ -30,8 +30,7 @@ export async function apiErrorFrom(res: Response): Promise<ApiError> {
   try {
     const envelope = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
     if (typeof envelope.error?.code === "string") code = envelope.error.code;
-    if (typeof envelope.error?.message === "string" && envelope.error.message !== "")
-      message = envelope.error.message;
+    if (typeof envelope.error?.message === "string" && envelope.error.message !== "") message = envelope.error.message;
   } catch {
     // Non-JSON body: the status stands.
   }
@@ -47,11 +46,7 @@ export interface RawInit {
 /** Sends one request and returns the successful response; throws ApiError
  *  for any non-2xx answer. For bodies that are not JSON (uploads, blobs,
  *  streams). */
-export async function requestResponse(
-  method: string,
-  path: string,
-  init: RawInit = {},
-): Promise<Response> {
+export async function requestResponse(method: string, path: string, init: RawInit = {}): Promise<Response> {
   const send = (): Promise<Response> => {
     const token = getToken();
     return fetch(apiUrl(path), {

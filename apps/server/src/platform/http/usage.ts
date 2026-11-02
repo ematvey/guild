@@ -9,13 +9,7 @@ import type { IdentityCtx, InfraContext } from "../route-contexts.js";
 import { errorText, startOfDayUtc, startOfMonthUtc } from "../usage.js";
 import { isUuid } from "../time.js";
 import type { UserRow } from "../store/identity.js";
-import {
-  UsageReports,
-  usageGroupNames,
-  type UsageFilters,
-  type UsageGroup,
-  type UsageScope,
-} from "../store/usage.js";
+import { UsageReports, usageGroupNames, type UsageFilters, type UsageGroup, type UsageScope } from "../store/usage.js";
 
 function parseGroup(groupBy: string | undefined): UsageGroup {
   if (groupBy === undefined || groupBy === "user") return "user";

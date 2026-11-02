@@ -84,11 +84,7 @@ export function resetSubagentTrees(): void {
 
 /** A row as the sidebar shows it: its flags come from the chat's status
  *  entry, never the row's own copy (the copy only seeded the entry). */
-export function sidebarRow(
-  c: ChatSummary,
-  status: ChatStatus,
-  trees: Record<string, ChatSubagentNode[]>,
-): ChatSummary {
+export function sidebarRow(c: ChatSummary, status: ChatStatus, trees: Record<string, ChatSubagentNode[]>): ChatSummary {
   const entry = status[c.id] ?? c;
   return { ...c, generating: !!entry.generating, unread: !!entry.unread, working: workingForChat(entry, trees[c.id]) };
 }

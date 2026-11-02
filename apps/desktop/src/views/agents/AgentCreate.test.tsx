@@ -21,9 +21,7 @@ describe("AgentCreate step address", () => {
   it("replaces a deep link past the empty name step with the name step", async () => {
     const onNavigate = vi.fn();
     render(<AgentCreate step="visibility" onNavigate={onNavigate} />);
-    await waitFor(() =>
-      expect(onNavigate).toHaveBeenCalledWith({ view: "new", step: "name" }, { replace: true }),
-    );
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ view: "new", step: "name" }, { replace: true }));
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
@@ -35,7 +33,15 @@ describe("AgentCreate step address", () => {
   });
 
   it("stops at the first step that still needs input", () => {
-    const empty = { name: "", description: "", model: "", tools: [], toolsMode: "selected" as const, visibility: "private" as const, teamIds: [] };
+    const empty = {
+      name: "",
+      description: "",
+      model: "",
+      tools: [],
+      toolsMode: "selected" as const,
+      visibility: "private" as const,
+      teamIds: [],
+    };
     expect(reachableStep("model", empty)).toBe("name");
   });
 });

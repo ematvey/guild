@@ -15,10 +15,30 @@ function source(file: string, start: string, end: string): string {
 describe("round 3 integration config", () => {
   it.each([false, true])("excludes required secrets with MCP=%s", (isMcp) => {
     const code = transpile(source("./integration-config.tsx", "  const buildConfig =", "  const save ="));
-    const build = new Function("isMcp", "advancedText", "initialConfig", "mcpUrl", "fields", "draft", "policy", "cleanPolicy", "fieldLabel", `${code}; return buildConfig;`)(
-      isMcp, "{}", {}, "https://example.test/mcp",
-      [{ name: "api_key", kind: "secret", required: true }, { name: "label", kind: "string", required: true }],
-      { label: "changed" }, {}, () => ({}), (field: { name: string }) => field.name,
+    const build = new Function(
+      "isMcp",
+      "advancedText",
+      "initialConfig",
+      "mcpUrl",
+      "fields",
+      "draft",
+      "policy",
+      "cleanPolicy",
+      "fieldLabel",
+      `${code}; return buildConfig;`,
+    )(
+      isMcp,
+      "{}",
+      {},
+      "https://example.test/mcp",
+      [
+        { name: "api_key", kind: "secret", required: true },
+        { name: "label", kind: "string", required: true },
+      ],
+      { label: "changed" },
+      {},
+      () => ({}),
+      (field: { name: string }) => field.name,
     );
     // New credentials and retained stored credentials both bypass ordinary config.
     expect(build()).toMatchObject({ label: "changed" });
@@ -31,16 +51,29 @@ describe("round 3 API key cache", () => {
     const code = source("./GatewaySection.tsx", "  async function create()", "  async function revoke()");
     let epoch = 0;
     let resolve!: (result: unknown) => void;
-    const response = new Promise((done) => { resolve = done; });
+    const response = new Promise((done) => {
+      resolve = done;
+    });
     const setKeys = vi.fn();
-    const create = new Function("createMyApiKey", "currentCacheEpoch", "cacheEpochChanged", "setKeys", `
+    const create = new Function(
+      "createMyApiKey",
+      "currentCacheEpoch",
+      "cacheEpochChanged",
+      "setKeys",
+      `
       let lastKeys = null;
       const name = 'private';
       const toast = { error() {}, success() {} };
       const setIssued = () => {}, setCreating = () => {}, setName = () => {};
       ${code}
       return { create, cached: () => lastKeys };
-    `)(() => response, () => epoch, (old: number) => old !== epoch, setKeys);
+    `,
+    )(
+      () => response,
+      () => epoch,
+      (old: number) => old !== epoch,
+      setKeys,
+    );
     const pending = create.create();
     epoch++;
     resolve({ key: { id: "A-private-key" }, plaintext: "secret" });
@@ -49,7 +82,6 @@ describe("round 3 API key cache", () => {
     expect(setKeys).not.toHaveBeenCalled();
   });
 });
-
 
 describe("round 3 device installers", () => {
   it("keeps both Mac DMGs and excludes updater archives", () => {

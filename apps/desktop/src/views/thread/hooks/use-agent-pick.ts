@@ -60,15 +60,18 @@ export function useAgentPick(viewChatId: string | null, childTree: ChatTree | nu
 
   /** A pick from the menu: an open chat rebinds at once; a new chat binds
    *  on its first send. */
-  const pickAgent = useCallback((agent: Agent) => {
-    setPickedAgent(agent);
-    pickedAgentRef.current = agent;
-    if (viewChatId !== null) {
-      void bindChatAgent(viewChatId, agent.id).then((ok) => {
-        if (!ok) toast.error("Could not switch the agent for this chat");
-      });
-    }
-  }, [viewChatId]);
+  const pickAgent = useCallback(
+    (agent: Agent) => {
+      setPickedAgent(agent);
+      pickedAgentRef.current = agent;
+      if (viewChatId !== null) {
+        void bindChatAgent(viewChatId, agent.id).then((ok) => {
+          if (!ok) toast.error("Could not switch the agent for this chat");
+        });
+      }
+    },
+    [viewChatId],
+  );
 
   return { allAgents, agentsList, pickedAgent, pickedAgentRef, agentLocked, personalAgent, shownAgent, pickAgent };
 }

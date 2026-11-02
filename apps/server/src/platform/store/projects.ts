@@ -25,7 +25,8 @@ export interface ProjectRow {
 
 const ROW_COLUMNS =
   "p.id, p.org_id, p.user_id, p.name, p.folder, p.machine_id, " +
-  utcText("p.created_at") + " AS created_at, " +
+  utcText("p.created_at") +
+  " AS created_at, " +
   "coalesce(m.label, p.machine_id) AS machine_label";
 const ROW_FROM = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
@@ -74,9 +75,7 @@ export class ProjectStore {
   /** Tells the feed that this user's workspace lists moved. Runs inside the
    *  writing transaction, so the notify lands with the commit. */
   private async notifyWorkspace(client: PoolClient, orgId: string, userId: string): Promise<void> {
-    await client.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: userId }),
-    ]);
+    await client.query("SELECT pg_notify('guild_workspace', $1)", [JSON.stringify({ org_id: orgId, user_id: userId })]);
   }
 
   async create(orgId: string, userId: string, name: string, folder: string, machineId: string): Promise<ProjectRow> {
@@ -90,10 +89,7 @@ export class ProjectStore {
         );
       } catch (error) {
         if ((error as { code?: string }).code === "23505") {
-          throw ApiError.conflict(
-            "folder_taken",
-            "a project for this folder already exists on this machine",
-          );
+          throw ApiError.conflict("folder_taken", "a project for this folder already exists on this machine");
         }
         throw error;
       }
@@ -155,31 +151,28 @@ export class ProjectStore {
       try {
         const updRes = await client.query(
           "UPDATE projects SET " +
-          "name = COALESCE($3, name), " +
-          "folder = COALESCE($4, folder), " +
-          "machine_id = COALESCE($5, machine_id), " +
-          "archived_at = CASE " +
-          "WHEN $6::bool IS NULL THEN archived_at " +
-          "WHEN $6::bool THEN now() " +
-          "ELSE NULL END " +
-          "WHERE org_id = $1 AND id = $2 AND user_id = $7 RETURNING id",
+            "name = COALESCE($3, name), " +
+            "folder = COALESCE($4, folder), " +
+            "machine_id = COALESCE($5, machine_id), " +
+            "archived_at = CASE " +
+            "WHEN $6::bool IS NULL THEN archived_at " +
+            "WHEN $6::bool THEN now() " +
+            "ELSE NULL END " +
+            "WHERE org_id = $1 AND id = $2 AND user_id = $7 RETURNING id",
           [orgId, projectId, name, folder, machineId, archived, userId],
         );
         if (updRes.rows.length === 0) throw ApiError.notFound("no such project");
         id = updRes.rows[0]!.id as string;
       } catch (error) {
         if ((error as { code?: string }).code === "23505") {
-          throw ApiError.conflict(
-            "folder_taken",
-            "a project for this folder already exists on this machine",
-          );
+          throw ApiError.conflict("folder_taken", "a project for this folder already exists on this machine");
         }
         throw error;
       }
       await client.query(
         "UPDATE chats SET machine_id = p.machine_id, machine_label = coalesce(m.label, p.machine_id) " +
-        "FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id " +
-        "WHERE p.id = $1 AND chats.project_id = p.id",
+          "FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id " +
+          "WHERE p.id = $1 AND chats.project_id = p.id",
         [id],
       );
       await this.notifyWorkspace(client, orgId, userId);
@@ -193,10 +186,11 @@ export class ProjectStore {
    *  The machine binding is project-derived, so the unlink clears it too. */
   async delete(orgId: string, projectId: string, userId: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
-      const res = await client.query(
-        "DELETE FROM projects WHERE org_id = $1 AND id = $2 AND user_id = $3",
-        [orgId, projectId, userId],
-      );
+      const res = await client.query("DELETE FROM projects WHERE org_id = $1 AND id = $2 AND user_id = $3", [
+        orgId,
+        projectId,
+        userId,
+      ]);
       if (res.rowCount === 0) throw ApiError.notFound("no such project");
       await client.query(
         "UPDATE chats SET project_id = NULL, machine_id = NULL, machine_label = NULL WHERE project_id = $1",

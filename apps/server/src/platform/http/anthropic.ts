@@ -334,7 +334,16 @@ async function handleMessages(
   const [system, internal] = toInternal(req0);
   const tools = req0.tools !== undefined && req0.tools !== null ? toToolSpecs(req0.tools) : null;
 
-  const call = await dispatch(gateway, credential.orgId, req0.model, system, internal, tools, req0.max_tokens ?? null, clientTemperature(req0.temperature));
+  const call = await dispatch(
+    gateway,
+    credential.orgId,
+    req0.model,
+    system,
+    internal,
+    tools,
+    req0.max_tokens ?? null,
+    clientTemperature(req0.temperature),
+  );
   const model = call.model;
   const provider = call.provider;
 
@@ -433,7 +442,7 @@ function streamEvents(
 
   let stopReason: string | null = null;
 
-  const frames = async function* (): AsyncIterable<string> {
+  const frames = (async function* (): AsyncIterable<string> {
     let settled = false;
     try {
       yield send("message_start", {
@@ -551,31 +560,15 @@ function streamEvents(
         delta: { stop_reason: stop, stop_sequence: null },
         usage: { output_tokens: tokensOut, input_tokens: tokensIn },
       });
-      await recordUsageSync(
-        gateway.usage,
-        credential,
-        model,
-        call.provider,
-        call.priceIn,
-        call.priceOut,
-        counters,
-      );
+      await recordUsageSync(gateway.usage, credential, model, call.provider, call.priceIn, call.priceOut, counters);
       settled = true;
       yield send("message_stop", { type: "message_stop" });
     } finally {
       if (!settled) {
-        recordUsageDropped(
-          gateway.usage,
-          credential,
-          model,
-          call.provider,
-          call.priceIn,
-          call.priceOut,
-          counters,
-        );
+        recordUsageDropped(gateway.usage, credential, model, call.provider, call.priceIn, call.priceOut, counters);
       }
     }
-  }();
+  })();
 
   sseReply(reply, frames);
 }

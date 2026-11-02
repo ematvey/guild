@@ -23,10 +23,13 @@ export interface PushSubscriptionRow {
 
 const COLUMNS =
   "id, org_id, user_id, device_id, endpoint, p256dh, auth, platform, " +
-  utcText("created_at") + " AS created_at, " +
-  utcText("last_seen_at") + " AS last_seen_at, " +
+  utcText("created_at") +
+  " AS created_at, " +
+  utcText("last_seen_at") +
+  " AS last_seen_at, " +
   "last_error, " +
-  utcText("failed_at") + " AS failed_at";
+  utcText("failed_at") +
+  " AS failed_at";
 
 /** What a browser sends when it subscribes. */
 export interface PushSubscriptionInput {
@@ -50,12 +53,13 @@ export class PushStore {
       // This device's previous endpoint is dead by definition (the browser
       // minted a new one). It must go first: the (user, device) unique index
       // would otherwise reject the insert.
-      await client.query(
-        "DELETE FROM push_subscriptions WHERE user_id = $1 AND device_id = $2 AND endpoint <> $3",
-        [userId, input.device_id, input.endpoint],
-      );
+      await client.query("DELETE FROM push_subscriptions WHERE user_id = $1 AND device_id = $2 AND endpoint <> $3", [
+        userId,
+        input.device_id,
+        input.endpoint,
+      ]);
       const res = await client.query<PushSubscriptionRow>(
-      `INSERT INTO push_subscriptions
+        `INSERT INTO push_subscriptions
          (id, org_id, user_id, device_id, endpoint, p256dh, auth, platform, user_agent)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (endpoint) DO UPDATE SET
@@ -89,10 +93,10 @@ export class PushStore {
   /** Removes one endpoint. Scoped to the caller: an endpoint is a capability,
    *  and a member cannot delete another member's row. */
   async remove(userId: string, endpoint: string): Promise<boolean> {
-    const res = await this.pool.query(
-      "DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2",
-      [userId, endpoint],
-    );
+    const res = await this.pool.query("DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2", [
+      userId,
+      endpoint,
+    ]);
     return (res.rowCount ?? 0) > 0;
   }
 
@@ -116,10 +120,10 @@ export class PushStore {
       await this.removeByEndpoint(endpoint);
       return;
     }
-    await this.pool.query(
-      "UPDATE push_subscriptions SET last_error = $2, failed_at = now() WHERE endpoint = $1",
-      [endpoint, message.slice(0, 200)],
-    );
+    await this.pool.query("UPDATE push_subscriptions SET last_error = $2, failed_at = now() WHERE endpoint = $1", [
+      endpoint,
+      message.slice(0, 200),
+    ]);
   }
 
   async markSeen(endpoint: string): Promise<void> {

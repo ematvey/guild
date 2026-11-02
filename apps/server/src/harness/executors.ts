@@ -99,7 +99,8 @@ export class ConversationExecutors {
     if (chatId === null) {
       // Unmapped conversations have no org to sandbox under; only the
       // in-process executor serves them.
-      if (this.deps.config.sandbox.mode !== "inprocess-unsafe") throw new Error("no chat is bound to this conversation");
+      if (this.deps.config.sandbox.mode !== "inprocess-unsafe")
+        throw new Error("no chat is bound to this conversation");
       const dir = `${this.deps.config.sandboxRoot}/${conversationId}`;
       await mkdir(dir, { recursive: true });
       return new NodeExecutionEnv({ cwd: dir });
@@ -160,7 +161,9 @@ export class ConversationExecutors {
   }
 
   async close(): Promise<void> {
-    await this.sandboxes?.close().catch((error: unknown) => this.deps.log.warn({ err: error }, "sandbox pool close failed"));
+    await this.sandboxes
+      ?.close()
+      .catch((error: unknown) => this.deps.log.warn({ err: error }, "sandbox pool close failed"));
   }
 
   /** The sandbox target of a conversation: the agent workspace for an agent

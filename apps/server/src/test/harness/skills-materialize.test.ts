@@ -69,9 +69,11 @@ function makeFixture(): Fixture {
       byUserAndSlug: async () => null,
       listForUser: async () => installs,
     },
-    events: { emit: async () => {
-      throw new Error("not used here");
-    } },
+    events: {
+      emit: async () => {
+        throw new Error("not used here");
+      },
+    },
     teams: { isMember: async () => false },
     objects: {
       get: async (key) => {
@@ -163,7 +165,9 @@ describe("materializeIntoSandbox", () => {
     fx.objects.set(`registry/${ORG}/skill/broken/v1/bundle.tar.gz`, Buffer.from("this is not gzip"));
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
+    await expect(
+      fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root })),
+    ).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
     expect(fx.warns.length).toBeGreaterThan(0);
     expect(fx.warns[0]).toMatch(/broken/);
@@ -184,7 +188,9 @@ describe("materializeIntoSandbox", () => {
     fx.installs.push({ slug: "ghost-version", pinned_version: "v9", installed_at: "t" });
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
+    await expect(
+      fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root })),
+    ).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(root, "skills", "ghost-object"))).toBe(false);
     expect(existsSync(path.join(root, "skills", "ghost-version"))).toBe(false);
@@ -193,13 +199,18 @@ describe("materializeIntoSandbox", () => {
 
   it("skips a bundle whose bytes do not match the recorded sha256", async () => {
     seedSkill(fx, "tampered", "v1", "# Tampered");
-    fx.objects.set(`registry/${ORG}/skill/tampered/v1/bundle.tar.gz`, packBundle({
-      "manifest.json": "{}",
-      "SKILL.md": "# Swapped",
-    }));
+    fx.objects.set(
+      `registry/${ORG}/skill/tampered/v1/bundle.tar.gz`,
+      packBundle({
+        "manifest.json": "{}",
+        "SKILL.md": "# Swapped",
+      }),
+    );
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
+    await expect(
+      fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root })),
+    ).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "tampered"))).toBe(false);
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
   });
@@ -250,6 +261,8 @@ describe("materializeSkill (the read_skill install-on-use dep)", () => {
   it("throws for a missing object (the read_skill caller catches)", async () => {
     fx.installs.push({ slug: "ghost", pinned_version: "v1", installed_at: "t" });
     const root = newRoot();
-    await expect(fx.runtime.materializeSkill(ORG, "ghost", "v1", new NodeExecutionEnv({ cwd: root }))).rejects.toThrow(/no object|no such skill version/);
+    await expect(fx.runtime.materializeSkill(ORG, "ghost", "v1", new NodeExecutionEnv({ cwd: root }))).rejects.toThrow(
+      /no object|no such skill version/,
+    );
   });
 });

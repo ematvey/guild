@@ -3,7 +3,7 @@
 // loop, so registry updates never interleave.
 
 import { uuidv7 } from "../platform/time.js";
-import { SocketSink } from "./sink.js";
+import type { SocketSink } from "./sink.js";
 import type { WsServerMsg } from "./protocol.js";
 
 export const MAX_SOCKETS_PER_USER = 32;
@@ -49,9 +49,7 @@ interface MachineSlot {
   shutdown: () => void;
 }
 
-export type MachineRequestResult =
-  | { ok: true; value: unknown }
-  | { ok: false; error: MachineRequestError };
+export type MachineRequestResult = { ok: true; value: unknown } | { ok: false; error: MachineRequestError };
 
 interface PendingMachineRequest {
   connection_id: string;
@@ -122,11 +120,7 @@ export class LiveHub {
       // applies within one user only).
       return { kind: "foreign_owner" };
     }
-    if (
-      old !== null &&
-      this.owners.get(machineId) !== undefined &&
-      this.owners.get(machineId) !== instance
-    ) {
+    if (old !== null && this.owners.get(machineId) !== undefined && this.owners.get(machineId) !== instance) {
       // The 0.5.25 live-slot rule (see above).
       return { kind: "displaced" };
     }
@@ -327,11 +321,7 @@ export class LiveHub {
     if (!pending) return;
     if (pending.connection_id !== member.conn_id || pending.org_id !== member.org_id) return;
     this.machineRequests.delete(requestId);
-    pending.settle(
-      ok
-        ? { settled: "payload", payload: payload ?? null }
-        : { settled: "rejected", error },
-    );
+    pending.settle(ok ? { settled: "payload", payload: payload ?? null } : { settled: "rejected", error });
   }
 
   machineOnline(machineId: string): boolean {
@@ -356,10 +346,7 @@ export class LiveHub {
     const out: [string, string][] = [];
     for (const [id, slot] of this.machines) {
       if (slot.holder.user_id !== userId) continue;
-      out.push([
-        id,
-        slot.holder.label !== null && slot.holder.label !== "" ? slot.holder.label : id,
-      ]);
+      out.push([id, slot.holder.label !== null && slot.holder.label !== "" ? slot.holder.label : id]);
     }
     return out;
   }

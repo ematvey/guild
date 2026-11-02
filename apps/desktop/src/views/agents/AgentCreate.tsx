@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Loader2,
-  Lock,
-  Plus,
-  Users,
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2, Lock, Plus, Users } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -39,9 +31,7 @@ const STEPS: ReadonlyArray<readonly [Step, string, string]> = [
   ["visibility", "Visibility", "Choose who can see and use the agent."],
 ];
 
-const VISIBILITY_OPTIONS: ReadonlyArray<
-  readonly [AgentVisibility, string, string, typeof Lock]
-> = [
+const VISIBILITY_OPTIONS: ReadonlyArray<readonly [AgentVisibility, string, string, typeof Lock]> = [
   ["private", "Private", "Only you can see and use this agent.", Lock],
   ["team", "Team", "Your teams can use this agent.", Users],
   ["org", "Organization", "Every member can use this agent.", Users],
@@ -68,9 +58,7 @@ export function validateAgentStep(
     case "model":
       return value.model === "" ? "Pick a model." : null;
     case "tools":
-      return value.toolsMode === "selected" && value.tools.length === 0
-        ? "Select at least one tool."
-        : null;
+      return value.toolsMode === "selected" && value.tools.length === 0 ? "Select at least one tool." : null;
     case "visibility":
       if (value.visibility === "team" && value.teamIds.length === 0) {
         return "Select at least one team.";
@@ -82,10 +70,7 @@ export function validateAgentStep(
 /** The step the wizard shows for a requested step: a deep link or reload
  *  past an unfinished step (the form lives only in this page) lands on the
  *  first step that still needs input. */
-export function reachableStep(
-  requested: Step,
-  value: Parameters<typeof validateAgentStep>[1],
-): Step {
+export function reachableStep(requested: Step, value: Parameters<typeof validateAgentStep>[1]): Step {
   for (const [id] of STEPS) {
     if (id === requested) return id;
     if (validateAgentStep(id, value) !== null) return id;
@@ -214,16 +199,15 @@ export function AgentCreate({
 
   const toggleTool = (toolName: string) => {
     setTools((current) =>
-      current.includes(toolName)
-        ? current.filter((n) => n !== toolName)
-        : [...current, toolName],
+      current.includes(toolName) ? current.filter((n) => n !== toolName) : [...current, toolName],
     );
   };
   const allTools = catalog ?? SAFE_BASELINE_TOOLS;
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader variant="bar"
+      <PageHeader
+        variant="bar"
         title="Create agent"
         description={`Step ${stepIndex + 1} of ${STEPS.length} · ${STEPS[stepIndex]![1]}`}
         actions={
@@ -281,9 +265,7 @@ export function AgentCreate({
                   if (e.key === "Enter") next();
                 }}
               />
-              <p className="text-xs text-muted-foreground">
-                Agents are user-named and never renamed automatically.
-              </p>
+              <p className="text-xs text-muted-foreground">Agents are user-named and never renamed automatically.</p>
               <label htmlFor="agent-description" className="pt-2 text-sm font-medium">
                 Description
               </label>
@@ -319,9 +301,7 @@ export function AgentCreate({
                       type="button"
                       onClick={() => setModel(option.id)}
                       className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm outline-none transition-colors ${
-                        model === option.id
-                          ? "border-foreground bg-accent"
-                          : "border-border hover:bg-accent/50"
+                        model === option.id ? "border-foreground bg-accent" : "border-border hover:bg-accent/50"
                       }`}
                     >
                       <span
@@ -334,9 +314,7 @@ export function AgentCreate({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium">{modelLabel(option)}</span>
                         {option.alias !== "" && (
-                          <span className="block truncate font-mono text-2xs text-muted-foreground">
-                            {option.id}
-                          </span>
+                          <span className="block truncate font-mono text-2xs text-muted-foreground">{option.id}</span>
                         )}
                       </span>
                     </button>
@@ -374,9 +352,7 @@ export function AgentCreate({
                   />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">Choose tools</span>
-                    <span className="block text-xs text-muted-foreground">
-                      Only the tools selected below.
-                    </span>
+                    <span className="block text-xs text-muted-foreground">Only the tools selected below.</span>
                   </span>
                 </label>
               </div>
@@ -386,27 +362,17 @@ export function AgentCreate({
                   {toolsMode === "all" ? "All available" : `${tools.length} selected`}
                 </span>
                 <div className="flex-1" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setTools(allTools.map((t) => t.name))}
-                >
+                <Button variant="outline" size="sm" onClick={() => setTools(allTools.map((t) => t.name))}>
                   Select all tools
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setTools([...SAFE_BASELINE_NAMES])}
-                >
+                <Button variant="ghost" size="sm" onClick={() => setTools([...SAFE_BASELINE_NAMES])}>
                   Safe baseline
                 </Button>
               </div>
               {catalogError !== null && <ErrorState message={catalogError} />}
               {groups.map((group) => (
                 <div key={group.group} className="space-y-1.5">
-                  <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    {group.group}
-                  </p>
+                  <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{group.group}</p>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {group.tools.map((tool) => {
                       const checked = tools.includes(tool.name);
@@ -424,12 +390,8 @@ export function AgentCreate({
                             onChange={() => toggleTool(tool.name)}
                           />
                           <span className="min-w-0">
-                            <span className="block text-sm font-medium">
-                              {tool.label || tool.name}
-                            </span>
-                            <span className="block text-xs text-muted-foreground">
-                              {tool.description}
-                            </span>
+                            <span className="block text-sm font-medium">{tool.label || tool.name}</span>
+                            <span className="block text-xs text-muted-foreground">{tool.description}</span>
                           </span>
                         </label>
                       );
@@ -442,60 +404,55 @@ export function AgentCreate({
 
           {step === "visibility" && (
             <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {VISIBILITY_OPTIONS.map(([id, label, body, Icon]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setVisibility(id)}
-                  className={`flex flex-col gap-2 rounded-lg border p-3 text-left outline-none transition-colors ${
-                    visibility === id
-                      ? "border-foreground bg-accent"
-                      : "border-border hover:bg-accent/50"
-                  }`}
-                >
-                  <Icon className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{label}</span>
-                  <span className="text-xs text-muted-foreground">{body}</span>
-                </button>
-              ))}
-            </div>
-            {visibility === "team" && (
-              <div className="space-y-2 rounded-lg border border-border p-3">
-                <p className="text-sm font-medium">Teams</p>
-                {teams.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    You are not a member of any team yet. An admin can add you under Settings →
-                    Teams.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {teams.map((team) => {
-                      const checked = teamIds.includes(team.id);
-                      return (
-                        <label
-                          key={team.id}
-                          className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() =>
-                              setTeamIds((current) =>
-                                checked
-                                  ? current.filter((id) => id !== team.id)
-                                  : [...current, team.id],
-                              )
-                            }
-                          />
-                          <span className="truncate">{team.name}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {VISIBILITY_OPTIONS.map(([id, label, body, Icon]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setVisibility(id)}
+                    className={`flex flex-col gap-2 rounded-lg border p-3 text-left outline-none transition-colors ${
+                      visibility === id ? "border-foreground bg-accent" : "border-border hover:bg-accent/50"
+                    }`}
+                  >
+                    <Icon className="size-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">{label}</span>
+                    <span className="text-xs text-muted-foreground">{body}</span>
+                  </button>
+                ))}
               </div>
-            )}
+              {visibility === "team" && (
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <p className="text-sm font-medium">Teams</p>
+                  {teams.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      You are not a member of any team yet. An admin can add you under Settings → Teams.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {teams.map((team) => {
+                        const checked = teamIds.includes(team.id);
+                        return (
+                          <label
+                            key={team.id}
+                            className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setTeamIds((current) =>
+                                  checked ? current.filter((id) => id !== team.id) : [...current, team.id],
+                                )
+                              }
+                            />
+                            <span className="truncate">{team.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -510,7 +467,11 @@ export function AgentCreate({
               <ArrowLeft />
               {stepIndex === 0 ? "Cancel" : "Back"}
             </Button>
-            <Button size="sm" onClick={next} disabled={submitting || (step === "model" && models !== null && models.length === 0)}>
+            <Button
+              size="sm"
+              onClick={next}
+              disabled={submitting || (step === "model" && models !== null && models.length === 0)}
+            >
               {submitting && <Loader2 className="animate-spin" />}
               {stepIndex === STEPS.length - 1 ? (
                 <>

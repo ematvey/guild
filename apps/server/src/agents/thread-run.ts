@@ -107,7 +107,8 @@ export async function startThreadRun(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const detail = input.recordStack === true && error instanceof Error && error.stack ? `${message}\n${error.stack}` : message;
+    const detail =
+      input.recordStack === true && error instanceof Error && error.stack ? `${message}\n${error.stack}` : message;
     await deps.store.runs
       .updateRun(run.id, {
         status: "failed",

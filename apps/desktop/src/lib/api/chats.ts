@@ -53,10 +53,7 @@ export async function listChats(): Promise<ChatSummary[] | null> {
 
 /// Renames and/or archives a chat. Archived chats drop out of `listChats`
 /// but direct links still resolve; `archived: false` unarchives.
-export async function updateChat(
-  id: string,
-  patch: { title?: string; archived?: boolean },
-): Promise<void> {
+export async function updateChat(id: string, patch: { title?: string; archived?: boolean }): Promise<void> {
   await request<unknown>("PATCH", thread(id), patch);
 }
 
@@ -79,10 +76,7 @@ export async function createChat(title: string, projectId?: string | null): Prom
   }
 }
 
-export async function uploadAttachment(
-  chatId: string,
-  file: File,
-): Promise<MessageAttachmentMeta> {
+export async function uploadAttachment(chatId: string, file: File): Promise<MessageAttachmentMeta> {
   const query = `filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`;
   const res = await requestResponse("POST", `${thread(chatId)}/attachments?${query}`, { body: file });
   return (await res.json()) as MessageAttachmentMeta;
@@ -200,9 +194,14 @@ export async function withdrawQueued(chatId: string, messageId: string): Promise
  *  outcome reaches the view as the durable compaction event in the thread
  *  state. False when there was nothing to compact. */
 export async function compactChat(chatId: string): Promise<{ seq?: number } | null> {
-  const started = await request<{ task_id: number | null; seq?: number }>("POST", `${thread(chatId)}/compact`, undefined, {
-    headers: clientHeaders(),
-  });
+  const started = await request<{ task_id: number | null; seq?: number }>(
+    "POST",
+    `${thread(chatId)}/compact`,
+    undefined,
+    {
+      headers: clientHeaders(),
+    },
+  );
   if (started.task_id === null) return null;
   if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) {
     throw new ApiError("invalid_response", "Invalid compaction task response", 200);
@@ -212,11 +211,12 @@ export async function compactChat(chatId: string): Promise<{ seq?: number } | nu
 
 /** The chat's agent and whether the picker may move it. A thread belongs to
  *  its agent: shared agents and Main threads keep theirs. */
-export async function chatAgentBinding(
-  chatId: string,
-): Promise<{ agent: unknown | null; switcheable: boolean }> {
+export async function chatAgentBinding(chatId: string): Promise<{ agent: unknown | null; switcheable: boolean }> {
   try {
-    const body = await request<{ agent?: unknown; switcheable?: boolean } | undefined>("GET", `${thread(chatId)}/agent`);
+    const body = await request<{ agent?: unknown; switcheable?: boolean } | undefined>(
+      "GET",
+      `${thread(chatId)}/agent`,
+    );
     return { agent: body?.agent ?? null, switcheable: body?.switcheable !== false };
   } catch {
     return { agent: null, switcheable: true };

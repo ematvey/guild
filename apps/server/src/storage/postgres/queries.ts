@@ -169,10 +169,9 @@ export async function submissionRequestId(db: DurableQueryable, submissionId: nu
 
 /** Whether an abort was requested for a task; null when the task is gone. */
 export async function taskAbortRequested(db: DurableQueryable, taskId: number): Promise<boolean | null> {
-  const result = await db.query<{ abort_requested: boolean }>(
-    "SELECT abort_requested FROM tasks WHERE id = $1",
-    [taskId],
-  );
+  const result = await db.query<{ abort_requested: boolean }>("SELECT abort_requested FROM tasks WHERE id = $1", [
+    taskId,
+  ]);
   return result.rows[0]?.abort_requested ?? null;
 }
 

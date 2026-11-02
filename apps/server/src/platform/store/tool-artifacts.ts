@@ -50,7 +50,9 @@ export function artifactUuid(chatId: string, callId: string): string {
 }
 
 const ROW_COLUMNS =
-  "id, org_id, chat_id, filename, content_type, size_bytes, tool_name, call_id, " + utcText("created_at") + " AS created_at";
+  "id, org_id, chat_id, filename, content_type, size_bytes, tool_name, call_id, " +
+  utcText("created_at") +
+  " AS created_at";
 
 export class ToolArtifactStore {
   constructor(private readonly pool: PlatformPool) {}

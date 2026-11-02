@@ -2,19 +2,12 @@
 // readable JSON and the model response's tool calls.
 
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  Check,
-  Copy,
-  Wrench,
-} from "lucide-react";
+import { Check, Copy, Wrench } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@guild/ui/lib/utils";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
-import {
-  getSpanPayloads,
-  type SpanRow,
-} from "./agents-api";
+import { getSpanPayloads, type SpanRow } from "./agents-api";
 import { compact, money, ms, statusLabel, toneOf } from "./activity-format";
 import { JsonView } from "./JsonView";
 import { MessagesView, payloadMessages } from "./MessagesView";
@@ -62,8 +55,7 @@ export function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boole
   const response = parseObject(responseRaw);
   const messages = payloadMessages(request?.["messages"]);
   const responseContent = typeof response?.["content"] === "string" ? response["content"] : "";
-  const inputText =
-    messages !== null && !rawInput ? JSON.stringify(request?.["messages"]) : span.input || requestRaw;
+  const inputText = messages !== null && !rawInput ? JSON.stringify(request?.["messages"]) : span.input || requestRaw;
   const outputText = responseContent || span.output || responseRaw;
   const attributesText = JSON.stringify(span.attributes, null, 2);
 
@@ -139,15 +131,7 @@ export function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boole
   );
 }
 
-export function SpanSection({
-  title,
-  copy,
-  children,
-}: {
-  title: string;
-  copy?: string;
-  children: ReactNode;
-}) {
+export function SpanSection({ title, copy, children }: { title: string; copy?: string; children: ReactNode }) {
   return (
     <section>
       <div className="flex items-center justify-between gap-2 px-3 py-1.5">
@@ -229,9 +213,7 @@ export function SpanOverview({ span }: { span: SpanRow }) {
         <Meta label="Latency" value={ms(span.duration_ms)} />
         <Meta label="Status" value={statusLabel(span.status)} />
         {finishReason !== "" && <Meta label="Finish" value={finishReason} />}
-        {verdict !== undefined && verdict !== null && (
-          <Meta label="Verdict" value={String(verdict)} />
-        )}
+        {verdict !== undefined && verdict !== null && <Meta label="Verdict" value={String(verdict)} />}
       </dl>
       {verdictReason !== "" && <p className="text-2xs text-muted-foreground">{verdictReason}</p>}
       {span.error !== "" && (

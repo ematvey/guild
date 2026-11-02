@@ -15,8 +15,6 @@ export async function resolveProjectDir(): Promise<string | null> {
     .slice()
     .sort(byRecentActivity)
     .find((c) => c.project_id && projects.some((p) => p.id === c.project_id));
-  const chosen = recent
-    ? projects.find((p) => p.id === recent.project_id)!
-    : projects[0];
+  const chosen = recent ? projects.find((p) => p.id === recent.project_id)! : projects[0];
   return chosen.folder;
 }

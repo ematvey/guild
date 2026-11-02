@@ -99,7 +99,7 @@ export function deriveTitleFromMessage(message: string): string {
     title = (space >= max / 2 ? stem.slice(0, space) : stem).replace(/[\s,;:.\-–—]+$/, "");
     cut = true;
   }
-  if (cut) title = title.replace(/[\s,;:.\-–—]+$/, "") + "…";
+  if (cut) title = `${title.replace(/[\s,;:.\-–—]+$/, "")}…`;
   return title.charAt(0).toUpperCase() + title.slice(1);
 }
 
@@ -124,7 +124,13 @@ export class AgentThreadStore {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
     await withTransaction(this.pool, async (client) => {
-      const chat = await this.chats.createChatOn(client, agent.org_id, userId, title.trim() === "" ? null : title, null);
+      const chat = await this.chats.createChatOn(
+        client,
+        agent.org_id,
+        userId,
+        title.trim() === "" ? null : title,
+        null,
+      );
       await client.query(
         `INSERT INTO agent_threads
            (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id)
@@ -165,7 +171,13 @@ export class AgentThreadStore {
         const children = Number(count.rows[0]?.count ?? 0);
         if (children >= maxChildren) throw new ChildLimitReached(children, maxChildren);
       }
-      const chat = await this.chats.createChatOn(client, agent.org_id, userId, title.trim() === "" ? null : title, null);
+      const chat = await this.chats.createChatOn(
+        client,
+        agent.org_id,
+        userId,
+        title.trim() === "" ? null : title,
+        null,
+      );
       await client.query(
         `INSERT INTO agent_threads
            (id, agent_id, user_id, chat_id, title, title_locked, type, parent_thread_id, depth)
@@ -221,10 +233,13 @@ export class AgentThreadStore {
     }
     const column = sort.startsWith("created") ? "t.created_at" : "t.last_activity_at";
     const descending = sort.endsWith("_desc");
-    const cursor = options.cursor === undefined || options.cursor === null ? null : decodeThreadCursor(options.cursor, sort);
+    const cursor =
+      options.cursor === undefined || options.cursor === null ? null : decodeThreadCursor(options.cursor, sort);
     if (cursor !== null) {
       params.push(cursor.at, cursor.id);
-      where.push(`(${column}, t.id) ${descending ? "<" : ">"} ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
+      where.push(
+        `(${column}, t.id) ${descending ? "<" : ">"} ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+      );
     }
     params.push(limit + 1);
     const res = await this.pool.query<Record<string, unknown>>(
@@ -295,9 +310,10 @@ export class AgentThreadStore {
   /** One thread row by id without caller scoping. Tree tools resolve a child
    *  by id and check the parent edge themselves. */
   async threadById(threadId: string): Promise<AgentThread | null> {
-    const res = await this.pool.query<Record<string, unknown>>(`SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.id = $1`, [
-      threadId,
-    ]);
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS} FROM agent_threads t WHERE t.id = $1`,
+      [threadId],
+    );
     const row = res.rows[0];
     return row === undefined ? null : toThread(row);
   }

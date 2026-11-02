@@ -59,7 +59,7 @@ export class KvStore {
   async put(key: string, value: string): Promise<void> {
     await this.pool.query(
       "INSERT INTO server_kv (key, value, updated_at) VALUES ($1, $2, now()) " +
-      "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
       [key, value],
     );
   }

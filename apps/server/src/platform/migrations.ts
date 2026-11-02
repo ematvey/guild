@@ -36,7 +36,9 @@ export async function applyPlatformMigrations(
   const dir = options.dir ?? platformMigrationsDir();
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
   } catch (error) {
     throw new Error(`platform migrations directory is unreadable: ${dir} (${(error as Error).message})`);
   }
@@ -92,7 +94,14 @@ export async function applyPlatformMigrations(
 
 /** Workers verify the schema; only the server applies migrations. */
 export async function assertPlatformSchema(pool: PlatformPool): Promise<void> {
-  const latest = readdirSync(platformMigrationsDir()).filter(file => file.endsWith(".sql")).sort().at(-1)?.replace(/\.sql$/, "");
-  const result = await pool.query<{present:boolean}>("SELECT EXISTS(SELECT 1 FROM schema_history WHERE name=$1) AS present",[latest]);
+  const latest = readdirSync(platformMigrationsDir())
+    .filter((file) => file.endsWith(".sql"))
+    .sort()
+    .at(-1)
+    ?.replace(/\.sql$/, "");
+  const result = await pool.query<{ present: boolean }>(
+    "SELECT EXISTS(SELECT 1 FROM schema_history WHERE name=$1) AS present",
+    [latest],
+  );
   if (!result.rows[0]?.present) throw new Error("platform schema requires server migration");
 }

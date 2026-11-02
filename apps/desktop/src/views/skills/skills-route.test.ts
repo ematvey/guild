@@ -31,7 +31,10 @@ describe("skills route: files and catalog query", () => {
       expect(roundTrip(path)).toBe(path);
     }
     expect(parseSkillsRoute(["code-review", "files", "scripts", "run.sh"])).toEqual({
-      view: "catalog", slug: "code-review", editor: null, file: "scripts/run.sh",
+      view: "catalog",
+      slug: "code-review",
+      editor: null,
+      file: "scripts/run.sh",
     });
   });
 
@@ -61,7 +64,9 @@ describe("skills route: files and catalog query", () => {
     const route = parseChatRoute("/skills/x", "?q=rev");
     expect(route.skills?.catalog?.q).toBe("rev");
     expect(routePath(route)).toBe("/skills/x?q=rev");
-    const back = applyRoutePatch(route, { skills: { view: "catalog", slug: null, editor: null, catalog: route.skills!.catalog } });
+    const back = applyRoutePatch(route, {
+      skills: { view: "catalog", slug: null, editor: null, catalog: route.skills!.catalog },
+    });
     expect(routePath(back)).toBe("/skills?q=rev");
   });
 

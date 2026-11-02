@@ -30,7 +30,12 @@ export interface IntegrationGateway extends PluginSecretSource {
   };
   registry: {
     approvedBundle(orgId: string, kind: string, slug: string): Promise<[string, string] | null>;
-    getVersion(orgId: string, kind: string, slug: string, version: string): Promise<{ manifest: unknown; bundle_sha256: string | null; object_key: string }>;
+    getVersion(
+      orgId: string,
+      kind: string,
+      slug: string,
+      version: string,
+    ): Promise<{ manifest: unknown; bundle_sha256: string | null; object_key: string }>;
   };
 }
 
@@ -79,7 +84,11 @@ export function unnamespacedTool(slug: string, tool: string): string | null {
 /** The manifest whose content an admin's approval covers: resolved only
  *  while the item is approved AND the approval's recorded version is still
  *  the latest — a republish resets the review status. */
-export async function registryManifestIfApproved(gateway: IntegrationGateway, orgId: string, slug: string): Promise<JsonObject | null> {
+export async function registryManifestIfApproved(
+  gateway: IntegrationGateway,
+  orgId: string,
+  slug: string,
+): Promise<JsonObject | null> {
   const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) return null;
   const [version, bundleSha256] = approved;
@@ -167,9 +176,10 @@ export async function resolveIntegrations(
     // An installed v2 bundle is the admin's explicit choice — a row
     // carrying an mcp.url resolves as MCP even when a compiled-in connector
     // of the same slug exists.
-    const mcpUrl = config["mcp"] !== null && typeof config["mcp"] === "object" && !Array.isArray(config["mcp"])
-      ? (config["mcp"] as JsonObject)["url"]
-      : undefined;
+    const mcpUrl =
+      config["mcp"] !== null && typeof config["mcp"] === "object" && !Array.isArray(config["mcp"])
+        ? (config["mcp"] as JsonObject)["url"]
+        : undefined;
     if (typeof mcpUrl !== "string" || mcpUrl === "") {
       const connector = integrationByName(row.name);
       if (connector === undefined) continue; // unknown kind with no mcp.url — nothing to resolve
@@ -246,7 +256,7 @@ export async function resolveIntegrations(
       secretNames,
       identityKey:
         auth !== null && typeof auth === "object" && typeof (auth as JsonObject)["identity_key"] === "string"
-          ? (auth as JsonObject)["identity_key"] as string
+          ? ((auth as JsonObject)["identity_key"] as string)
           : "email",
     });
   }
@@ -275,7 +285,11 @@ function assignTraits(turns: IntegrationTurn[]): void {
       const spec = traitSpec(trait);
       if (spec === undefined) continue;
       claimed.add(trait);
-      kept.push({ ...info, trait, spec: { name: spec.name, description: spec.description, parameters: spec.parameters } });
+      kept.push({
+        ...info,
+        trait,
+        spec: { name: spec.name, description: spec.description, parameters: spec.parameters },
+      });
     }
     turn.tools = kept;
   }

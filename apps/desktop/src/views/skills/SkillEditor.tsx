@@ -31,13 +31,7 @@ import { MD_CLASS, mdComponents } from "../markdown";
 import { diffLines, type DiffLine } from "./skill-diff";
 import { FileTree } from "./FileTree";
 import { buildFileTree, filePathError, isMarkdownPath } from "./skill-files";
-import {
-  myTeams,
-  skillsDetail,
-  skillsSave,
-  skillsSource,
-  type EditorTeam,
-} from "./skills-api";
+import { myTeams, skillsDetail, skillsSave, skillsSource, type EditorTeam } from "./skills-api";
 
 /** Create publishes a fresh v1; edit publishes the next version of a
  *  fixed slug. */
@@ -105,7 +99,10 @@ export function editPayload(form: EditorForm): {
 
 /** The request each mode saves with: create POSTs the full payload,
  *  edit PUTs description + body + files at the fixed slug. */
-export function saveRequest(mode: EditorMode, form: EditorForm): {
+export function saveRequest(
+  mode: EditorMode,
+  form: EditorForm,
+): {
   method: "POST" | "PUT";
   path: string;
   body: ReturnType<typeof createPayload> | ReturnType<typeof editPayload>;
@@ -169,11 +166,7 @@ function baseFiles(base: ReviewBase): Map<string, string> {
 /** The publish guard's diff: create mode treats everything as added (full
  *  content diff); edit mode diffs each file against the latest published
  *  version, flagging deletions and a description-only change. */
-export function reviewChanges(
-  mode: EditorMode,
-  form: EditorForm,
-  base: ReviewBase | null,
-): ReviewSummary {
+export function reviewChanges(mode: EditorMode, form: EditorForm, base: ReviewBase | null): ReviewSummary {
   if (mode === "create" || base === null) {
     return {
       changes: [...draftFiles(form)].map(([path, content]) => ({
@@ -276,7 +269,10 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
       // and the review diff both run against the latest published content
       // (a pinned install must not silently select an older version).
       const loaded = await skillsDetail(slug ?? "")
-        .then(async (detail) => ({ detail, source: await skillsSource(slug ?? "", detail.latest_version ?? undefined) }))
+        .then(async (detail) => ({
+          detail,
+          source: await skillsSource(slug ?? "", detail.latest_version ?? undefined),
+        }))
         .catch(() => null);
       if (!live) return;
       if (loaded === null) {
@@ -307,10 +303,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
     };
   }, [mode, slug]);
 
-  const paths = useMemo(
-    () => ["SKILL.md", ...form.files.map((f) => f.path)],
-    [form.files],
-  );
+  const paths = useMemo(() => ["SKILL.md", ...form.files.map((f) => f.path)], [form.files]);
   const tree = useMemo(() => buildFileTree(paths), [paths]);
   const currentPath = paths.includes(selectedPath) ? selectedPath : "SKILL.md";
   const currentFile = form.files.find((f) => f.path === currentPath);
@@ -375,9 +368,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
           <span className="truncate font-semibold">{slug}</span>
         </div>
         <div className="px-3 pb-3">
-          <p className="text-sm text-muted-foreground">
-            Skill not found, or its source could not be loaded.
-          </p>
+          <p className="text-sm text-muted-foreground">Skill not found, or its source could not be loaded.</p>
           <Button variant="outline" size="sm" className="mt-2" onClick={onBack}>
             Back to skills
           </Button>
@@ -510,12 +501,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
                 </div>
               </div>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => setAddingFile(true)}
-              >
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setAddingFile(true)}>
                 <Plus className="size-3.5" />
                 New file
               </Button>
@@ -538,28 +524,25 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
             <div className="flex items-center gap-1">
               <span className="truncate font-mono text-xs text-muted-foreground">{currentPath}</span>
               <span className="flex-1" />
-              {markdown && (
-                <>
-                  {(
-                    [
-                      ["write", "Write"],
-                      ["preview", "Preview"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <Button
-                      key={value}
-                      variant={pane === value ? "secondary" : "ghost"}
-                      size="sm"
-                      aria-pressed={pane === value}
-                      aria-label={`${label} pane`}
-                      disabled={busy}
-                      onClick={() => setPane(value)}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </>
-              )}
+              {markdown &&
+                (
+                  [
+                    ["write", "Write"],
+                    ["preview", "Preview"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Button
+                    key={value}
+                    variant={pane === value ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={pane === value}
+                    aria-label={`${label} pane`}
+                    disabled={busy}
+                    onClick={() => setPane(value)}
+                  >
+                    {label}
+                  </Button>
+                ))}
               <Button
                 size="sm"
                 disabled={busy || blocked || !canSave(form, mode)}
@@ -572,12 +555,14 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
             {blocked && (
               <p className="rounded-md border border-border bg-secondary px-2.5 py-2 text-sm text-secondary-foreground">
                 This skill has files the editor cannot read as text (binary, or over 256 KiB):{" "}
-                <span className="font-mono">{unreadable.join(", ")}</span>. Publishing here would drop
-                them, so the save is blocked.
+                <span className="font-mono">{unreadable.join(", ")}</span>. Publishing here would drop them, so the save
+                is blocked.
               </p>
             )}
             {markdown && pane === "preview" ? (
-              <div className={`min-h-64 flex-1 overflow-y-auto rounded-md border border-border p-3 text-sm ${MD_CLASS}`}>
+              <div
+                className={`min-h-64 flex-1 overflow-y-auto rounded-md border border-border p-3 text-sm ${MD_CLASS}`}
+              >
                 {currentContent.trim() === "" ? (
                   <p className="text-muted-foreground">Nothing to preview yet.</p>
                 ) : (
@@ -590,9 +575,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", on
               <Textarea
                 value={currentContent}
                 placeholder={
-                  currentPath === "SKILL.md"
-                    ? "# Skill name\n\nMarkdown instructions for the agent."
-                    : "File contents"
+                  currentPath === "SKILL.md" ? "# Skill name\n\nMarkdown instructions for the agent." : "File contents"
                 }
                 aria-label={`${currentPath} contents`}
                 className="min-h-64 flex-1 font-mono text-sm"
@@ -636,8 +619,7 @@ function diffLineClass(type: DiffLine["type"]): string {
  *  scrollable line diff (mono is file content, not UI text). */
 function FileDiff({ change }: { change: ReviewChange }) {
   const shown = change.diff.slice(0, MAX_DIFF_LINES);
-  const statusLabel =
-    change.status === "added" ? "new file" : change.status === "deleted" ? "deleted" : "modified";
+  const statusLabel = change.status === "added" ? "new file" : change.status === "deleted" ? "deleted" : "modified";
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
@@ -657,9 +639,7 @@ function FileDiff({ change }: { change: ReviewChange }) {
           </div>
         ))}
         {change.diff.length > shown.length && (
-          <p className="px-3 py-1 text-muted-foreground">
-            … {change.diff.length - shown.length} more lines
-          </p>
+          <p className="px-3 py-1 text-muted-foreground">… {change.diff.length - shown.length} more lines</p>
         )}
       </div>
     </div>
@@ -719,14 +699,12 @@ function ReviewDialog({
           ))}
           {!review.hasChanges && (
             <p className="text-sm text-muted-foreground">
-              No changes against the published {baseVersion === "latest" ? "latest version" : "content"} —
-              nothing to publish.
+              No changes against the published {baseVersion === "latest" ? "latest version" : "content"} — nothing to
+              publish.
             </p>
           )}
           {review.hasChanges && review.changes.length === 0 && review.descriptionChanged && (
-            <p className="text-sm text-muted-foreground">
-              Only the description changes; no bundle file changes.
-            </p>
+            <p className="text-sm text-muted-foreground">Only the description changes; no bundle file changes.</p>
           )}
         </div>
         <DialogFooter>

@@ -91,7 +91,8 @@ const TX_WATCHDOG_MS = 45_000;
 /** Destroys the client's socket so a stalled query settles as an error
  *  instead of hanging forever; the broken client leaves the pool. */
 function destroyClient(client: Queryable, reason: Error): void {
-  const stream = (client as unknown as { connection?: { stream?: { destroy(error?: Error): void } } }).connection?.stream;
+  const stream = (client as unknown as { connection?: { stream?: { destroy(error?: Error): void } } }).connection
+    ?.stream;
   stream?.destroy(reason);
 }
 
@@ -141,7 +142,9 @@ export class PgPoolDatabase implements PostgresDatabase {
     // Read-only snapshot: idempotent as a whole, so a connection-level
     // failure retries instead of failing the durable session.
     this.consumeFault();
-    return withDbRetries(() => this.isolatedTransaction(callback, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", false));
+    return withDbRetries(() =>
+      this.isolatedTransaction(callback, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", false),
+    );
   }
 
   private async isolatedTransaction<T>(

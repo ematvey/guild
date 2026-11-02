@@ -10,8 +10,8 @@
 #   scripts/check.sh --fast          # skip cargo test and the server suite
 #   scripts/check.sh --only <name>   # one check
 #
-# Check names: cargo-test server-test desktop-test clippy fmt windows protocol
-#              coherence typecheck
+# Check names: cargo-test server-test desktop-test clippy fmt biome windows
+#              protocol coherence typecheck
 set -u
 
 cd "$(dirname "$0")/.."
@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ALL_CHECKS="cargo-test server-test desktop-test clippy fmt windows protocol coherence typecheck"
+ALL_CHECKS="cargo-test server-test desktop-test clippy fmt biome windows protocol coherence typecheck"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
 check_cargo_test() { cargo nextest run --workspace; }
@@ -46,6 +46,8 @@ check_server_test() { npm test --workspace apps/server; }
 check_desktop_test() { cd apps/desktop && npm test; }
 check_clippy() { cargo clippy --workspace --all-targets -- -D warnings; }
 check_fmt() { cargo fmt --all -- --check; }
+# Format and lint for the TypeScript and JavaScript trees (biome.json).
+check_biome() { ./node_modules/.bin/biome ci . --colors=off; }
 check_windows() { ./scripts/check-windows.sh; }
 check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }

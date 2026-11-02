@@ -104,7 +104,8 @@ describe("pending steer content merge", () => {
         return items.map((item) => ({
           id: Number(item.id),
           mode: item.mode,
-          content: item.mode === "write" ? "" : typeof item.content === "string" ? item.content : JSON.stringify(item.content),
+          content:
+            item.mode === "write" ? "" : typeof item.content === "string" ? item.content : JSON.stringify(item.content),
         }));
       }, BACKGROUND_CONTEXT);
     await until(async () => {
@@ -130,9 +131,8 @@ describe("pending steer content merge", () => {
     }, BACKGROUND_CONTEXT);
     await until(
       async () =>
-        (
-          await stack.env.db.query<{ status: string }>("SELECT status FROM submissions WHERE id=$1", [firstId])
-        ).rows[0]?.status === "done",
+        (await stack.env.db.query<{ status: string }>("SELECT status FROM submissions WHERE id=$1", [firstId])).rows[0]
+          ?.status === "done",
     );
     const userTexts = (body: Record<string, unknown>) =>
       ((body["messages"] as { role: string; content: unknown }[] | undefined) ?? [])

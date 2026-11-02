@@ -194,10 +194,7 @@ export type DetailLoadError = "missing" | "unreachable";
  *  unreachable (any other failure), or ready (payload in hand). */
 export type DetailLoadState = "loading" | DetailLoadError | "ready";
 
-export function detailLoadState(
-  detail: SkillDetailData | null,
-  loadError: DetailLoadError | null,
-): DetailLoadState {
+export function detailLoadState(detail: SkillDetailData | null, loadError: DetailLoadError | null): DetailLoadState {
   if (detail !== null) return "ready";
   return loadError ?? "loading";
 }
@@ -229,9 +226,7 @@ function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => v
         <span className="truncate font-semibold">{slug}</span>
       </nav>
       <div className="flex-1" />
-      {actions !== undefined && (
-        <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
-      )}
+      {actions !== undefined && <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
   );
 }
@@ -249,7 +244,15 @@ export interface SkillDetailProps {
   onSelectFile?: (path: string) => void;
 }
 
-export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKILL.md", onSelectFile }: SkillDetailProps) {
+export function SkillDetail({
+  slug,
+  me,
+  onBack,
+  onEdit,
+  onOpenSkill,
+  file = "SKILL.md",
+  onSelectFile,
+}: SkillDetailProps) {
   const [detail, setDetail] = useState<SkillDetailData | null>(null);
   const [loadError, setLoadError] = useState<DetailLoadError | null>(null);
   // The catalog row moves when anyone publishes, gates, unpublishes or
@@ -298,11 +301,16 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
     let live = true;
     setSource(null);
     setSourceLoading(true);
-    skillsSource(detail.slug).then((s) => {
-      if (live) { setSource(s); setSourceLoading(false); }
-    }).catch(() => {
-      if (live) setSourceLoading(false);
-    });
+    skillsSource(detail.slug)
+      .then((s) => {
+        if (live) {
+          setSource(s);
+          setSourceLoading(false);
+        }
+      })
+      .catch(() => {
+        if (live) setSourceLoading(false);
+      });
     return () => {
       live = false;
     };
@@ -369,7 +377,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
   const actions = detailActions(detail, me);
   const forkDraft = forkPayload(detail, forkSlug.trim());
   const files = source === null ? null : bundleFilePaths(source);
-  const currentPath = files !== null && files.includes(selectedFile) ? selectedFile : "SKILL.md";
+  const currentPath = files?.includes(selectedFile) ? selectedFile : "SKILL.md";
   const tree = files === null ? [] : buildFileTree(files);
   const fileCount = files?.length;
 
@@ -379,36 +387,33 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
       ? `${source?.skill_md.split("\n").length ?? 0} lines`
       : `${selectedSourceFile?.size ?? 0} bytes`;
   const extraBody = selectedSourceFile?.content ?? null;
-  const viewerBody =
-    sourceLoading ? <SkeletonText lines={6} className="p-4" /> : source === null ? (
-      <p className="p-10 text-center text-sm text-muted-foreground">
-        File contents unavailable — the bundle manifest could not be loaded.
-      </p>
-    ) : currentPath !== "SKILL.md" && extraBody === null ? (
-      <p className="p-10 text-center text-sm text-muted-foreground">
-        No text preview — this file is binary or larger than 256 KiB. Download the bundle to read it.
-      </p>
-    ) : currentPath !== "SKILL.md" && isMarkdownPath(currentPath) ? (
-      <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-          {extraBody!}
-        </Markdown>
-      </div>
-    ) : currentPath !== "SKILL.md" ? (
-      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">
-        {extraBody}
-      </pre>
-    ) : !rawSkillMd ? (
-      <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-          {skillMdPreviewBody(source.skill_md)}
-        </Markdown>
-      </div>
-    ) : (
-      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">
-        {source.skill_md}
-      </pre>
-    );
+  const viewerBody = sourceLoading ? (
+    <SkeletonText lines={6} className="p-4" />
+  ) : source === null ? (
+    <p className="p-10 text-center text-sm text-muted-foreground">
+      File contents unavailable — the bundle manifest could not be loaded.
+    </p>
+  ) : currentPath !== "SKILL.md" && extraBody === null ? (
+    <p className="p-10 text-center text-sm text-muted-foreground">
+      No text preview — this file is binary or larger than 256 KiB. Download the bundle to read it.
+    </p>
+  ) : currentPath !== "SKILL.md" && isMarkdownPath(currentPath) ? (
+    <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {extraBody!}
+      </Markdown>
+    </div>
+  ) : currentPath !== "SKILL.md" ? (
+    <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">{extraBody}</pre>
+  ) : !rawSkillMd ? (
+    <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {skillMdPreviewBody(source.skill_md)}
+      </Markdown>
+    </div>
+  ) : (
+    <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">{source.skill_md}</pre>
+  );
   const viewer = (
     <div className="max-h-[55vh] min-w-0 flex-1 overflow-y-auto rounded-lg border border-border bg-card">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3.5 py-2 text-xs font-medium text-muted-foreground">
@@ -422,7 +427,10 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
           >
             {rawSkillMd ? "Preview" : "Raw"}
           </button>
-        )}        <span className="shrink-0 tabular-nums">{sourceLoading ? <Skeleton className="h-3 w-12" /> : source === null ? "" : viewerMeta}</span>
+        )}{" "}
+        <span className="shrink-0 tabular-nums">
+          {sourceLoading ? <Skeleton className="h-3 w-12" /> : source === null ? "" : viewerMeta}
+        </span>
       </div>
       {viewerBody}
     </div>
@@ -560,9 +568,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
             )}
             {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
           </div>
-          {detail.description !== "" && (
-            <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>
-          )}
+          {detail.description !== "" && <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>}
           {detail.owner !== null && (
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
               owned by
@@ -583,9 +589,12 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
             <div className="mt-3.5 flex items-start gap-2.5 rounded-lg border border-border bg-secondary px-3.5 py-2.5 text-sm text-secondary-foreground">
               <Info className="mt-0.5 size-[15px] shrink-0 text-muted-foreground" />
               <span>
-                <span className="font-semibold">{editAccessLabel(editAccess(detail), detail.owner?.label)}.</span> Anyone in the org can
-                browse, install, and fork this skill — but publishing updates is limited to{" "}
-                {detail.owner?.kind === "team" ? `the ${detail.owner.label} team` : `the owner (${detail.owner?.label ?? "unknown"})`} and org admins.
+                <span className="font-semibold">{editAccessLabel(editAccess(detail), detail.owner?.label)}.</span>{" "}
+                Anyone in the org can browse, install, and fork this skill — but publishing updates is limited to{" "}
+                {detail.owner?.kind === "team"
+                  ? `the ${detail.owner.label} team`
+                  : `the owner (${detail.owner?.label ?? "unknown"})`}{" "}
+                and org admins.
               </span>
             </div>
           )}
@@ -628,8 +637,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
                     <tr key={v.version} className="border-b border-border last:border-b-0">
                       <td className="px-2.5 py-2 font-semibold">{v.version}</td>
                       <td className="px-2.5 py-2">
-                        {label.date}{" "}
-                        <span className="text-muted-foreground">({label.rel})</span>
+                        {label.date} <span className="text-muted-foreground">({label.rel})</span>
                       </td>
                       <td className="px-2.5 py-2 text-muted-foreground">
                         {v.publisher !== null && v.publisher !== "" ? (
@@ -645,15 +653,10 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
                           "—"
                         )}
                       </td>
-                      <td
-                        className="px-2.5 py-2 text-2xs text-muted-foreground"
-                        title={v.bundle_sha256 ?? undefined}
-                      >
+                      <td className="px-2.5 py-2 text-2xs text-muted-foreground" title={v.bundle_sha256 ?? undefined}>
                         {shaPrefix(v.bundle_sha256)}
                       </td>
-                      <td className="px-2.5 py-2 text-right text-muted-foreground tabular-nums">
-                        {pinCount}
-                      </td>
+                      <td className="px-2.5 py-2 text-right text-muted-foreground tabular-nums">{pinCount}</td>
                       <td className="whitespace-nowrap px-2.5 py-2 text-right">
                         {isMyPin && (
                           <Badge variant="outline" className="text-muted-foreground">
@@ -668,10 +671,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
                             disabled={busy}
                             aria-label={`Pin ${detail.slug} at ${v.version}`}
                             onClick={() =>
-                              void run(
-                                () => skillsPin(detail.slug, v.version),
-                                `Pinned ${detail.slug} at ${v.version}`,
-                              )
+                              void run(() => skillsPin(detail.slug, v.version), `Pinned ${detail.slug} at ${v.version}`)
                             }
                           >
                             Pin
@@ -709,9 +709,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
             </div>
             <div className="min-w-[240px] flex-1 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-xl font-semibold">{detail.read_stats?.total ?? 0}</span>
-              <span className="block text-xs text-muted-foreground">
-                reads in the last 30 days
-              </span>
+              <span className="block text-xs text-muted-foreground">reads in the last 30 days</span>
               {detail.read_stats != null && detail.read_stats.series.length > 0 && (
                 <svg
                   viewBox="0 0 260 44"
@@ -753,8 +751,10 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
                   size="sm"
                   disabled={busy || forkSlug.trim() === "" || forkSlug.trim() === detail.slug}
                   onClick={() =>
-                    void run(() => skillsFork(forkDraft), `Forked ${detail.slug} as ${forkSlug.trim()}`, () =>
-                      onOpenSkill?.(forkSlug.trim()),
+                    void run(
+                      () => skillsFork(forkDraft),
+                      `Forked ${detail.slug} as ${forkSlug.trim()}`,
+                      () => onOpenSkill?.(forkSlug.trim()),
                     )
                   }
                 >

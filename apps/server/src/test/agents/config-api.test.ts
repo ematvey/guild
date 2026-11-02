@@ -39,9 +39,11 @@ describe("agent workspace config over HTTP", () => {
       payload: { name: "Config agent", model: "GLM-Test-Model" },
     });
     expect(created.statusCode).toBe(200);
-    const agent = (JSON.parse(created.body) as {
-      agent: { id: string; org_id: string };
-    }).agent;
+    const agent = (
+      JSON.parse(created.body) as {
+        agent: { id: string; org_id: string };
+      }
+    ).agent;
 
     const dir = agentWorkspaceDir(root, agent.org_id, agent.id);
     expect(existsSync(path.join(dir, "AGENTS.md"))).toBe(true);
@@ -134,5 +136,4 @@ describe("agent workspace config over HTTP", () => {
     expect(cleared.statusCode).toBe(200);
     expect((JSON.parse(cleared.body) as { agent: { description: string } }).agent.description).toBe("");
   });
-
 });

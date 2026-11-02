@@ -1,4 +1,15 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, excerpt, clampNumber, callVendorApi, githubApiUrl, type JsonRequestErrors } from "../shared.js";
+import {
+  LIST_TIMEOUT_MS,
+  VENDOR_API_MAX_CHARS,
+  secretOrNull,
+  pathSegment,
+  requestJson,
+  excerpt,
+  clampNumber,
+  callVendorApi,
+  githubApiUrl,
+  type JsonRequestErrors,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- github ----------
@@ -69,7 +80,13 @@ function githubRepoLine(i: number, hit: JsonObject): string {
   return `${i + 1}. ${fullName} (${language === "" ? "?" : language}, ★${stars}) ${url}\n   ${description}\n`;
 }
 
-export async function githubExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function githubExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("github secret 'token' is not stored");
   const api = githubApiUrl(config);
@@ -213,4 +230,3 @@ export async function githubExecute(config: JsonObject, tool: string, args: Json
       throw new Error(`github integration has no tool ${tool}`);
   }
 }
-

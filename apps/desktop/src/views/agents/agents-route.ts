@@ -5,13 +5,7 @@
 
 import type { AgentRunStatus, AgentStatus, AgentTrigger, AgentVisibility } from "@guild/wire/rest";
 
-export type AgentTab =
-  | "overview"
-  | "threads"
-  | "routines"
-  | "files"
-  | "activity"
-  | "settings";
+export type AgentTab = "overview" | "threads" | "routines" | "files" | "activity" | "settings";
 
 export type ActivityTab = "traces" | "calls" | "chats";
 export type ActivityPeriod = "24h" | "7d" | "30d";
@@ -119,7 +113,6 @@ export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["settings", "Settings"],
 ];
 
-
 const decode = (segment: string): string | null => {
   try {
     return decodeURIComponent(segment);
@@ -137,19 +130,19 @@ export function segment(value: string): string {
  *  is not an agents route (the chat router then keeps its own route). */
 export function parseAgentsRoute(url: string): AgentsRoute | null {
   const [pathname, search = ""] = url.split("?");
-  const raw = pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  const raw = pathname
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean);
   const decoded = raw.map(decode);
   if (decoded.some((part) => part === null)) return null;
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
-  if (parts[0] === "activity" && parts.length === 1)
-    return { view: "activity", filters: filtersFrom(search) };
-  if (parts[0] === "runs" && parts[1])
-    return { view: "run", runId: parts[1], ...traceViewFrom(search) };
+  if (parts[0] === "activity" && parts.length === 1) return { view: "activity", filters: filtersFrom(search) };
+  if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1], ...traceViewFrom(search) };
   // A turn with no agent run has no run id; its trace id owns its own route.
-  if (parts[0] === "traces" && parts[1])
-    return { view: "trace", traceId: parts[1], ...traceViewFrom(search) };
+  if (parts[0] === "traces" && parts[1]) return { view: "trace", traceId: parts[1], ...traceViewFrom(search) };
   // Old activity chat links used /sessions/<id>; they now resolve to the
   // canonical /chats/<id> address.
   if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
@@ -176,12 +169,9 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
   }
   if (head === "files") {
     const filePath = rest.slice(1).join("/");
-    return filePath
-      ? { view: "agent", agentId, tab: "files", filePath }
-      : { view: "agent", agentId, tab: "files" };
+    return filePath ? { view: "agent", agentId, tab: "files", filePath } : { view: "agent", agentId, tab: "files" };
   }
-  if (head === "activity")
-    return { view: "agent", agentId, tab: "activity", filters: filtersFrom(search) };
+  if (head === "activity") return { view: "agent", agentId, tab: "activity", filters: filtersFrom(search) };
   if (head === "settings") return { view: "agent", agentId, tab: "settings" };
   // An unknown tab segment is the agent root, not a dead URL.
   return { view: "agent", agentId, tab: "overview" };
@@ -193,9 +183,7 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "directory":
       return "/agents";
     case "new":
-      return route.step === undefined || route.step === "name"
-        ? "/agents/new"
-        : `/agents/new/${route.step}`;
+      return route.step === undefined || route.step === "name" ? "/agents/new" : `/agents/new/${route.step}`;
     case "activity":
       return `/activity${filtersSearch(route.filters)}`;
     case "run":
@@ -207,14 +195,9 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
-      if (route.tab === "routines" && route.routineId)
-        return `${base}/routines/${segment(route.routineId)}`;
+      if (route.tab === "routines" && route.routineId) return `${base}/routines/${segment(route.routineId)}`;
       if (route.tab === "files" && route.filePath)
-        return `${base}/files/${route.filePath
-          .split("/")
-          .filter(Boolean)
-          .map(segment)
-          .join("/")}`;
+        return `${base}/files/${route.filePath.split("/").filter(Boolean).map(segment).join("/")}`;
       if (route.tab === "activity")
         return `${base}/activity${filtersSearch(route.filters ?? DEFAULT_ACTIVITY_FILTERS)}`;
       return `${base}/${route.tab}`;
@@ -228,9 +211,7 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 }
 
 /** The rail tab that owns an agents route. */
-export function agentsRailTab(
-  route: AgentsRoute,
-): "agents" | "activity" {
+export function agentsRailTab(route: AgentsRoute): "agents" | "activity" {
   if (route.view === "activity" || route.view === "run" || route.view === "trace" || route.view === "chat")
     return "activity";
   return "agents";
@@ -244,9 +225,7 @@ export function agentTabRoute(agentId: string, tab: AgentTab): AgentsRoute {
 }
 
 /** Breadcrumbs for a workspace path. The root crumb is the workspace. */
-export function fileBreadcrumbs(
-  path: string,
-): { label: string; path: string }[] {
+export function fileBreadcrumbs(path: string): { label: string; path: string }[] {
   const clean = path.replace(/^\/+|\/+$/g, "");
   const out = [{ label: "Workspace", path: "" }];
   if (clean === "") return out;
@@ -278,29 +257,69 @@ export function fileExtension(name: string): string {
 }
 
 /** How the file preview renders a name. */
-export type FilePreviewKind =
-  | "text"
-  | "image"
-  | "pdf"
-  | "csv"
-  | "audio"
-  | "video"
-  | "binary";
+export type FilePreviewKind = "text" | "image" | "pdf" | "csv" | "audio" | "video" | "binary";
 
 const TEXT_EXTENSIONS = new Set([
-  "txt", "md", "markdown", "json", "jsonl", "yaml", "yml", "toml", "ini",
-  "cfg", "conf", "log", "csv", "tsv", "js", "jsx", "ts", "tsx", "css",
-  "html", "htm", "xml", "svg", "sh", "bash", "zsh", "fish", "py", "rb",
-  "go", "rs", "java", "kt", "c", "h", "cc", "cpp", "hpp", "cs", "php",
-  "sql", "graphql", "gql", "vue", "svelte", "lua", "r", "swift", "m",
-  "dockerfile", "makefile", "gitignore", "env", "lock",
+  "txt",
+  "md",
+  "markdown",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "log",
+  "csv",
+  "tsv",
+  "js",
+  "jsx",
+  "ts",
+  "tsx",
+  "css",
+  "html",
+  "htm",
+  "xml",
+  "svg",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "hpp",
+  "cs",
+  "php",
+  "sql",
+  "graphql",
+  "gql",
+  "vue",
+  "svelte",
+  "lua",
+  "r",
+  "swift",
+  "m",
+  "dockerfile",
+  "makefile",
+  "gitignore",
+  "env",
+  "lock",
 ]);
 
 /** Preview kind from a file name. Unknown extensions are binary downloads. */
 export function previewKindOf(name: string): FilePreviewKind {
   const ext = fileExtension(name);
-  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"].includes(ext))
-    return "image";
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"].includes(ext)) return "image";
   if (ext === "pdf") return "pdf";
   if (ext === "csv") return "csv";
   if (ext === "tsv") return "csv";
@@ -348,4 +367,3 @@ export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   team: "Team",
   org: "Organization",
 };
-

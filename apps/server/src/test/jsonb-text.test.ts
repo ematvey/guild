@@ -45,9 +45,9 @@ describe("jsonbText against Postgres", () => {
   });
 
   it("rejects the raw JSON.stringify escape and accepts jsonbText", async () => {
-    await expect(
-      db.query("SELECT $1::jsonb", [JSON.stringify({ text: "a\ud83db" })]),
-    ).rejects.toMatchObject({ code: "22P02" });
+    await expect(db.query("SELECT $1::jsonb", [JSON.stringify({ text: "a\ud83db" })])).rejects.toMatchObject({
+      code: "22P02",
+    });
 
     const text = jsonbText({ text: "a\ud83db" });
     await db.query("INSERT INTO probe (v) VALUES ($1::jsonb)", [text]);
@@ -56,14 +56,10 @@ describe("jsonbText against Postgres", () => {
   });
 
   it("accepts a property name that held U+0000 only after jsonbText", async () => {
-    await expect(
-      db.query("SELECT $1::jsonb", [JSON.stringify({ "a\u0000b": 1 })]),
-    ).rejects.toThrow();
+    await expect(db.query("SELECT $1::jsonb", [JSON.stringify({ "a\u0000b": 1 })])).rejects.toThrow();
 
     await db.query("INSERT INTO probe (v) VALUES ($1::jsonb)", [jsonbText({ "a\u0000b": 1 })]);
-    const back = await db.query<{ v: Record<string, number> }>(
-      "SELECT v FROM probe WHERE v ? 'a\uFFFDb' LIMIT 1",
-    );
+    const back = await db.query<{ v: Record<string, number> }>("SELECT v FROM probe WHERE v ? 'a\uFFFDb' LIMIT 1");
     expect(Object.keys(back.rows[0]!.v)).toEqual(["a\uFFFDb"]);
   });
 });

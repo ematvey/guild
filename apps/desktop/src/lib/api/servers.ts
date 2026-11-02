@@ -41,11 +41,7 @@ export async function serverSwitch(baseUrl: string): Promise<void> {
 /** Signs one server out (active when omitted) — full engine sign-out, not
  * the webview-token-only default. */
 export async function serverSignOut(baseUrl?: string): Promise<void> {
-  const res = await rpcCall(
-    "session.clear",
-    baseUrl ? { base_url: baseUrl } : {},
-    30_000,
-  );
+  const res = await rpcCall("session.clear", baseUrl ? { base_url: baseUrl } : {}, 30_000);
   if (res.error) throw new Error(res.error.message ?? "sign-out failed");
 }
 
@@ -82,7 +78,9 @@ export async function apiLogin(
 export async function apiLogout(): Promise<void> {
   try {
     await requestResponse("POST", "/api/v1/auth/logout", { signal: AbortSignal.timeout(3000) });
-  } catch { /* Revocation is best effort; local sign-out must finish. */ }
+  } catch {
+    /* Revocation is best effort; local sign-out must finish. */
+  }
 }
 
 export async function apiMe(): Promise<{
@@ -93,7 +91,13 @@ export async function apiMe(): Promise<{
   onboarded?: boolean;
 } | null> {
   if (!getToken()) return null;
-  let v: { email: string; role?: string; display_name?: string | null; avatar_url?: string | null; onboarded?: boolean };
+  let v: {
+    email: string;
+    role?: string;
+    display_name?: string | null;
+    avatar_url?: string | null;
+    onboarded?: boolean;
+  };
   try {
     v = await request<typeof v>("GET", "/api/v1/auth/me");
   } catch (e) {
@@ -117,9 +121,10 @@ export async function apiMe(): Promise<{
 export async function apiOnboarded(): Promise<void> {
   try {
     await requestResponse("PUT", "/api/v1/me/onboarded", { signal: AbortSignal.timeout(5000) });
-  } catch { /* best effort — the wizard just re-shows on next login */ }
+  } catch {
+    /* best effort — the wizard just re-shows on next login */
+  }
 }
 
 /** A model route as chats see it: the id travels on the wire, the alias is
  *  the display name (empty when the admin has not named the route). */
-

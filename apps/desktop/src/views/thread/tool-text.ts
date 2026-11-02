@@ -52,7 +52,7 @@ export function toolDisplayName(name: string): string {
   // itself is kept.
   const bare = n.startsWith("int_") ? n.slice(4) : n;
   for (const [key, label] of Object.entries(TOOL_LABELS)) {
-    if (bare.endsWith("_" + key)) return label;
+    if (bare.endsWith(`_${key}`)) return label;
   }
   return bare.replace(/_/g, " ");
 }

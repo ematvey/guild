@@ -36,7 +36,9 @@ import { optionalUuidField, submitTurn } from "../../chats/submit-turn.js";
 /** The thread list rows — hub-aware online flags, identical to the
  *  workspace push's chat rows. */
 async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<Chat[]> {
-  const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
+  const rows = archived
+    ? await chats.chats.listArchivedChats(orgId, userId)
+    : await chats.chats.listChats(orgId, userId);
   return rows.map((row) => chatWire(chats.hub, row));
 }
 
@@ -116,7 +118,10 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
-    return reply.status(200).type("application/json").send(await threadBody(chats, gateway, user, chatId));
+    return reply
+      .status(200)
+      .type("application/json")
+      .send(await threadBody(chats, gateway, user, chatId));
   };
   // Deprecated alias: GET /api/v1/chats/:id/thread.
   app.get("/api/v1/chats/:id/thread", threadRead);
@@ -139,9 +144,10 @@ export function registerChatsRoutes(
       throw ApiError.badRequest("invalid limit");
     }
     const page = await chats.threads.listEventPage(user.org_id, chatId, { beforeSeq, limit });
-    return reply.status(200).type("application/json").send(
-      JSON.stringify({ events: page.rows.map(threadEventRowObject), has_more: page.hasMore }),
-    );
+    return reply
+      .status(200)
+      .type("application/json")
+      .send(JSON.stringify({ events: page.rows.map(threadEventRowObject), has_more: page.hasMore }));
   };
   app.get("/api/v1/threads/:id/events", threadEventsPage);
   app.get("/api/v1/chats/:id/events", threadEventsPage);
@@ -152,15 +158,15 @@ export function registerChatsRoutes(
     await chats.chats.getChat(user.org_id, chatId, user);
     const usage = await contextUsage(chats.pool, user.org_id, chatId);
     const model = queryParam(req, "model") || usage?.model || null;
-    const max = model === null ? null :
-      (await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW;
+    const max =
+      model === null
+        ? null
+        : ((await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW);
     // The measurement may come from a route the chat has since left, or from
     // one an admin retired: the alias names it for the tooltip, and a null
     // alias keeps the tooltip from naming a model it cannot identify.
     const usageModel = usage?.model ?? null;
-    const usageModelAlias = usageModel === null
-      ? null
-      : await gateway.gatewayStore.aliasOf(user.org_id, usageModel);
+    const usageModelAlias = usageModel === null ? null : await gateway.gatewayStore.aliasOf(user.org_id, usageModel);
     return { tokens: usage?.tokens ?? null, max, model, usage_model: usageModel, usage_model_alias: usageModelAlias };
   });
 
@@ -190,7 +196,12 @@ export function registerChatsRoutes(
       resolved = { ...event, turn: Math.max(1, turn) } as typeof event;
     }
     const row = await chats.threads.appendEvent(chatId, resolved);
-    return sendJson(reply, { created_at: row.created_at, event: threadEventObject(row.event), id: row.id, seq: row.seq });
+    return sendJson(reply, {
+      created_at: row.created_at,
+      event: threadEventObject(row.event),
+      id: row.id,
+      seq: row.seq,
+    });
   };
   // Deprecated alias: POST /api/v1/chats/:id/thread (the engine-path append).
   app.post("/api/v1/chats/:id/thread", appendThreadEvent);
@@ -264,7 +275,12 @@ export function registerChatsRoutes(
       throw ApiError.badRequest("title must be a string");
     }
     // An absent title keeps the current one; null or a blank string clears it.
-    const title = rawTitle === undefined ? undefined : typeof rawTitle === "string" && rawTitle.trim() !== "" ? rawTitle.trim() : null;
+    const title =
+      rawTitle === undefined
+        ? undefined
+        : typeof rawTitle === "string" && rawTitle.trim() !== ""
+          ? rawTitle.trim()
+          : null;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
     await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null);
     if (archived === true) {
@@ -304,7 +320,10 @@ export function registerChatsRoutes(
   app.post("/api/v1/gateway/chat", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
-    return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, body));
+    return reply
+      .status(200)
+      .type("application/json")
+      .send(await submitTurn(chats, gateway, auth, objects, user, body));
   });
   // The composer's agent picker: reads and sets the chat's agent. Setting it
   // before the first turn binds the chat; afterwards it moves the existing
@@ -345,7 +364,10 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
     const chatId = parseUuidParam(req, "chatId");
-    return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, body, chatId));
+    return reply
+      .status(200)
+      .type("application/json")
+      .send(await submitTurn(chats, gateway, auth, objects, user, body, chatId));
   });
 
   /** Withdraws one queued (not yet placed) mid-turn send — the desktop
@@ -362,7 +384,7 @@ export function registerChatsRoutes(
     if (command.status !== "pending" && command.status !== "submitted") {
       throw ApiError.conflict("already_settled", "message already settled");
     }
-    if (command.invocation_id !== null && command.invocation_id.startsWith("sub:")) {
+    if (command.invocation_id?.startsWith("sub:")) {
       const outcome = await chats.runtime.withdrawQueued(chatId, Number(command.invocation_id.slice(4)));
       if (outcome !== "aborted" && outcome !== "not_found") {
         throw ApiError.conflict("already_placed", "message already placed — refresh to see it delivered");
@@ -415,8 +437,20 @@ export function registerChatsRoutes(
     // journaled so a reload shows the settled card.
     const { row, appended } = await chats.threads.settleApproval(chatId, callId, (generating) =>
       generating
-        ? { type: "approval_decision", call_id: callId, approved, ...(reason !== undefined ? { reason } : {}), expired: false }
-        : { type: "approval_decision", call_id: callId, approved: false, reason: APPROVAL_EXPIRED_REASON, expired: true },
+        ? {
+            type: "approval_decision",
+            call_id: callId,
+            approved,
+            ...(reason !== undefined ? { reason } : {}),
+            expired: false,
+          }
+        : {
+            type: "approval_decision",
+            call_id: callId,
+            approved: false,
+            reason: APPROVAL_EXPIRED_REASON,
+            expired: true,
+          },
     );
     const decision = row.event as Extract<ThreadEventRow["event"], { type: "approval_decision" }>;
     if (appended && !decision.expired) {
@@ -474,7 +508,11 @@ function coerceThreadEvent(body: Record<string, unknown>): ThreadEventRow["event
   const type = body["type"];
   switch (type) {
     case "user_message":
-      return { type: "user_message", content: String(body["content"] ?? ""), attachments: attachmentsField(body["attachments"]) };
+      return {
+        type: "user_message",
+        content: String(body["content"] ?? ""),
+        attachments: attachmentsField(body["attachments"]),
+      };
     case "system_message":
       return { type: "system_message", content: String(body["content"] ?? "") };
     case "assistant_message":
@@ -498,7 +536,12 @@ function coerceThreadEvent(body: Record<string, unknown>): ThreadEventRow["event
         images: stringArrayField(body["images"], "images"),
       };
     case "approval_request":
-      return { type: "approval_request", call_id: String(body["call_id"] ?? ""), name: String(body["name"] ?? ""), arguments: String(body["arguments"] ?? "") };
+      return {
+        type: "approval_request",
+        call_id: String(body["call_id"] ?? ""),
+        name: String(body["name"] ?? ""),
+        arguments: String(body["arguments"] ?? ""),
+      };
     case "approval_decision":
       return {
         type: "approval_decision",

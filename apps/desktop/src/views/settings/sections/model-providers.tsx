@@ -4,12 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { useCachedGet } from "../use-cached-api";
-import {
-  createProvider,
-  deleteProvider,
-  SETTINGS_PATHS,
-  updateProvider,
-} from "../../../lib/api/settings";
+import { createProvider, deleteProvider, SETTINGS_PATHS, updateProvider } from "../../../lib/api/settings";
 import { Blocks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
@@ -25,19 +20,12 @@ import {
 } from "@guild/ui/components/alert-dialog";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "@guild/ui/components/empty-state";
 import { FactCard, FactGrid } from "../components/fact-card";
-
 
 export interface RouteRow {
   model: string;
@@ -71,16 +59,18 @@ const PROTOCOLS = ["openai", "anthropic"] as const;
 export function StatusDot({ enabled }: { enabled: boolean }) {
   return (
     <span
-      className={`inline-block size-2 shrink-0 rounded-full ${
-        enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
-      }`}
+      className={`inline-block size-2 shrink-0 rounded-full ${enabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
       title={enabled ? "enabled" : "disabled"}
     />
   );
 }
 
 export function Chip({ children }: { children: string }) {
-  return <Badge variant="secondary" className="uppercase">{children}</Badge>;
+  return (
+    <Badge variant="secondary" className="uppercase">
+      {children}
+    </Badge>
+  );
 }
 
 function useProviders(): { providers: ProviderRow[] | null; settled: boolean; error: string | null } {
@@ -109,7 +99,11 @@ function ProviderFormFields({
   return (
     <>
       <Field label="Name" hint="Your label for this endpoint — routes reference it by its slug.">
-        <Input value={name} placeholder="e.g. DeepSeek via OpenRouter" onChange={(e) => onPatch({ name: e.target.value })} />
+        <Input
+          value={name}
+          placeholder="e.g. DeepSeek via OpenRouter"
+          onChange={(e) => onPatch({ name: e.target.value })}
+        />
       </Field>
       <Field label="Protocol" hint="The wire shape the endpoint speaks.">
         <Select value={protocol} onValueChange={(v) => onPatch({ protocol: v })}>
@@ -118,30 +112,35 @@ function ProviderFormFields({
           </SelectTrigger>
           <SelectContent>
             {PROTOCOLS.map((p) => (
-              <SelectItem key={p} value={p}>{p}</SelectItem>
+              <SelectItem key={p} value={p}>
+                {p}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </Field>
       <Field label="Base URL">
-        <Input value={baseUrl} placeholder="https://api.openai.com" onChange={(e) => onPatch({ baseUrl: e.target.value })} />
+        <Input
+          value={baseUrl}
+          placeholder="https://api.openai.com"
+          onChange={(e) => onPatch({ baseUrl: e.target.value })}
+        />
       </Field>
       <Field label="API key" hint={keyHint}>
         {/* Stored keys preview as one bullet per stored character — the
             placeholder must read as a masked value, not an empty field. */}
-        <Input type="password" value={key} placeholder={storedKeyMasked ?? "sk-…"} onChange={(e) => onPatch({ key: e.target.value })} />
+        <Input
+          type="password"
+          value={key}
+          placeholder={storedKeyMasked ?? "sk-…"}
+          onChange={(e) => onPatch({ key: e.target.value })}
+        />
       </Field>
     </>
   );
 }
 
-export function ProviderAdd({
-  onCreated,
-  onBack,
-}: {
-  onCreated: (slug: string) => void;
-  onBack: () => void;
-}) {
+export function ProviderAdd({ onCreated, onBack }: { onCreated: (slug: string) => void; onBack: () => void }) {
   const [name, setName] = useState("");
   const [protocol, setProtocol] = useState<string>("openai");
   const [baseUrl, setBaseUrl] = useState("");
@@ -214,10 +213,7 @@ export function ProviderDetail({
   onBack: () => void;
 }) {
   const { providers, settled, error: loadError } = useProviders();
-  const p = useMemo(
-    () => providers?.find((x) => x.provider === slug) ?? null,
-    [providers, slug],
-  );
+  const p = useMemo(() => providers?.find((x) => x.provider === slug) ?? null, [providers, slug]);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [draft, setDraft] = useState<{ name: string; protocol: string; baseUrl: string; key: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -237,7 +233,12 @@ export function ProviderDetail({
     );
   }
   if (p === null) {
-    if (loadError) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
+    if (loadError)
+      return (
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      );
     return (
       <div>
         <PageHeader title={slug} back={{ label: "Models", onClick: onBack }} />
@@ -286,11 +287,7 @@ export function ProviderDetail({
   if (mode === "edit" && draft !== null) {
     return (
       <div>
-        <PageHeader
-          title="Edit provider"
-          description={slug}
-          back={{ label: "Models", onClick: onBack }}
-        />
+        <PageHeader title="Edit provider" description={slug} back={{ label: "Models", onClick: onBack }} />
         <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
           <ProviderFormFields
             name={draft.name}
@@ -366,8 +363,8 @@ export function ProviderDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {p.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Model routes on this provider stop resolving until a provider with the same slug
-              exists again. This cannot be undone.
+              Model routes on this provider stop resolving until a provider with the same slug exists again. This cannot
+              be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

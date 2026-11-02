@@ -51,7 +51,14 @@ describe("loadConfig", () => {
 
   it("refuses a numeric setting that is not a positive integer", () => {
     const base = { GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" };
-    for (const name of ["GUILD_POOL_MAX", "GUILD_APPROVAL_TIMEOUT_MS", "GUILD_CLIENT_TOOL_TIMEOUT_MS", "GUILD_RETRY_BASE_DELAY_MS", "GUILD_WORKER_LIMIT", "GUILD_WORKER_IDLE_MS"]) {
+    for (const name of [
+      "GUILD_POOL_MAX",
+      "GUILD_APPROVAL_TIMEOUT_MS",
+      "GUILD_CLIENT_TOOL_TIMEOUT_MS",
+      "GUILD_RETRY_BASE_DELAY_MS",
+      "GUILD_WORKER_LIMIT",
+      "GUILD_WORKER_IDLE_MS",
+    ]) {
       for (const value of ["abc", "0", "-5", "2.5"]) {
         expect(() => loadConfig({ ...base, [name]: value }), `${name}=${value}`).toThrow(name);
       }
@@ -64,10 +71,25 @@ describe("loadConfig", () => {
 
   it("resolves the sandbox mode", () => {
     const base = { GUILD_MASTER_KEY_HEX: "11".repeat(32), GUILD_JWT_SECRET: "s" };
-    const runner = loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://sandbox-runner:8090/", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32) });
-    expect(runner.sandbox).toEqual({ mode: "runner", runnerUrl: "http://sandbox-runner:8090", runnerToken: "t".repeat(32) });
+    const runner = loadConfig({
+      ...base,
+      GUILD_SANDBOX_RUNNER_URL: "http://sandbox-runner:8090/",
+      GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32),
+    });
+    expect(runner.sandbox).toEqual({
+      mode: "runner",
+      runnerUrl: "http://sandbox-runner:8090",
+      runnerToken: "t".repeat(32),
+    });
     expect(runner.allowShellTools).toBe(true);
-    expect(loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32), GUILD_ALLOW_SHELL_TOOLS: "0" }).allowShellTools).toBe(false);
+    expect(
+      loadConfig({
+        ...base,
+        GUILD_SANDBOX_RUNNER_URL: "http://r:1",
+        GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32),
+        GUILD_ALLOW_SHELL_TOOLS: "0",
+      }).allowShellTools,
+    ).toBe(false);
     expect(() => loadConfig({ ...base, NODE_ENV: "production" })).toThrow(/GUILD_SANDBOX/);
     expect(() => loadConfig({ ...base, NODE_ENV: "production", GUILD_SANDBOX: "inprocess-unsafe" })).toThrow(/refused/);
     expect(() => loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1" })).toThrow(/TOKEN/);
@@ -91,11 +113,13 @@ describe("loadConfig", () => {
     expect(cfg.bindHost).toBe("127.0.0.1");
     expect(cfg.bindPort).toBe(9090);
     expect(cfg.logLevel).toBe("debug");
-    expect(loadConfig({
-      GUILD_MASTER_KEY_HEX: "11".repeat(32),
-      GUILD_JWT_SECRET: "s",
-      GUILD_AGENT_WORKSPACE_ROOT: "/mnt/agents",
-    }).agentWorkspaceRoot).toBe("/mnt/agents");
+    expect(
+      loadConfig({
+        GUILD_MASTER_KEY_HEX: "11".repeat(32),
+        GUILD_JWT_SECRET: "s",
+        GUILD_AGENT_WORKSPACE_ROOT: "/mnt/agents",
+      }).agentWorkspaceRoot,
+    ).toBe("/mnt/agents");
   });
 
   it("parses IPv6-style bind addrs ([::]:8080)", () => {
@@ -117,17 +141,17 @@ describe("loadConfig", () => {
   it("requires the master key and JWT secret, and validates the key", () => {
     expect(() => loadConfig({})).toThrow(/GUILD_MASTER_KEY_HEX/);
     expect(() => loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32) })).toThrow(/GUILD_JWT_SECRET/);
-    expect(() =>
-      loadConfig({ GUILD_MASTER_KEY_HEX: "zz".repeat(32), GUILD_JWT_SECRET: "s" }),
-    ).toThrow(/64 hex chars/);
-    expect(() => loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(31), GUILD_JWT_SECRET: "s" })).toThrow(
-      /64 hex chars/,
-    );
+    expect(() => loadConfig({ GUILD_MASTER_KEY_HEX: "zz".repeat(32), GUILD_JWT_SECRET: "s" })).toThrow(/64 hex chars/);
+    expect(() => loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(31), GUILD_JWT_SECRET: "s" })).toThrow(/64 hex chars/);
   });
 
   it("normalizes GUILD_API_URL (trailing slash stripped)", () => {
-    expect(loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s", GUILD_API_URL: "https://api.example.com/" }).apiUrl).toBe(
-      "https://api.example.com",
-    );
+    expect(
+      loadConfig({
+        GUILD_MASTER_KEY_HEX: "00".repeat(32),
+        GUILD_JWT_SECRET: "s",
+        GUILD_API_URL: "https://api.example.com/",
+      }).apiUrl,
+    ).toBe("https://api.example.com");
   });
 });

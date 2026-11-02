@@ -8,7 +8,13 @@ import { createThreadReducer, deriveThread, eventsToBlocks, foldEvent, type Thre
 import type { ThreadEvent, ThreadEventRow, ThreadState } from "./thread-events";
 
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
-const file = (id: string) => ({ id, filename: `${id}.txt`, content_type: "text/plain", size_bytes: 3, modality: "document" });
+const file = (id: string) => ({
+  id,
+  filename: `${id}.txt`,
+  content_type: "text/plain",
+  size_bytes: 3,
+  modality: "document",
+});
 
 /** Deterministic PRNG (mulberry32): a failing seed reproduces. */
 function rng(seed: number): () => number {
@@ -27,7 +33,7 @@ function rng(seed: number): () => number {
  *  its row id at a later seq. */
 function genLog(seed: number, len: number): ThreadEventRow[] {
   const r = rng(seed);
-  const pick = <T,>(xs: T[]): T | undefined => xs[Math.floor(r() * xs.length)];
+  const pick = <T>(xs: T[]): T | undefined => xs[Math.floor(r() * xs.length)];
   const calls: string[] = [];
   const approvals: string[] = [];
   const threads: string[] = [];
@@ -147,7 +153,16 @@ function genLog(seed: number, len: number): ThreadEventRow[] {
 }
 
 function state(seq: number, events: ThreadEventRow[]): ThreadState {
-  return { type: "thread_state", has_more_events: false, chat_id: "c1", seq, events, text: "", thinking: "", generating: false };
+  return {
+    type: "thread_state",
+    has_more_events: false,
+    chat_id: "c1",
+    seq,
+    events,
+    text: "",
+    thinking: "",
+    generating: false,
+  };
 }
 
 /** The log as the server holds it: a re-emitted row id replaces its older seq. */
@@ -200,17 +215,36 @@ describe("foldEvent: incremental == full derivation", () => {
 
   it("an error with attachments and no text keeps its key apart and stays last", () => {
     const rows: ThreadEventRow[] = [
-      { id: "u", chat_id: "c1", seq: 1, created_at: "t", event: { type: "user_message", content: "go", attachments: [] } },
+      {
+        id: "u",
+        chat_id: "c1",
+        seq: 1,
+        created_at: "t",
+        event: { type: "user_message", content: "go", attachments: [] },
+      },
       {
         id: "a",
         chat_id: "c1",
         seq: 2,
         created_at: "t",
-        event: { type: "assistant_message", turn: 1, step: 0, model: "m", usage, blocks: [], error: "boom", attachments: [file("f")] },
+        event: {
+          type: "assistant_message",
+          turn: 1,
+          step: 0,
+          model: "m",
+          usage,
+          blocks: [],
+          error: "boom",
+          attachments: [file("f")],
+        },
       },
     ];
     const blocks = eventsToBlocks(rows);
-    expect(blocks.map((b) => [b.kind, b.key])).toEqual([["user", "1:0"], ["text", "2:0"], ["error", "2:1"]]);
+    expect(blocks.map((b) => [b.kind, b.key])).toEqual([
+      ["user", "1:0"],
+      ["text", "2:0"],
+      ["error", "2:1"],
+    ]);
     const r = createThreadReducer();
     r.open("c1");
     r.applyState(state(1, rows.slice(0, 1)));

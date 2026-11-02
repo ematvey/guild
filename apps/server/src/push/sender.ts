@@ -98,7 +98,6 @@ function describe(error: unknown): string {
   const head = typeof status === "number" ? String(status) : "";
   const tail = typeof body === "string" ? body.trim() : "";
   const message =
-    [head, tail].filter((part) => part !== "").join(" ") ||
-    (error instanceof Error ? error.message : String(error));
+    [head, tail].filter((part) => part !== "").join(" ") || (error instanceof Error ? error.message : String(error));
   return message.slice(0, 200);
 }

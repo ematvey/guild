@@ -36,9 +36,7 @@ describe("agent description", () => {
 
   it("rejects a description over 500 characters on the name step", () => {
     expect(validateAgentStep("name", { ...draft, description: "x".repeat(500) })).toBeNull();
-    expect(validateAgentStep("name", { ...draft, description: "x".repeat(501) })).toBe(
-      "Use 500 characters or fewer.",
-    );
+    expect(validateAgentStep("name", { ...draft, description: "x".repeat(501) })).toBe("Use 500 characters or fewer.");
   });
 
   it("renders the description on the directory row", () => {
@@ -47,9 +45,7 @@ describe("agent description", () => {
   });
 
   it("renders no description element when the description is empty", () => {
-    const html = renderToStaticMarkup(
-      <AgentRow agent={{ ...agent, description: "" }} onNavigate={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<AgentRow agent={{ ...agent, description: "" }} onNavigate={() => {}} />);
     expect(html).not.toContain("line-clamp-2");
   });
 });

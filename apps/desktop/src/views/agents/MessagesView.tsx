@@ -74,13 +74,7 @@ function roleClass(role: string | undefined): string {
   return ROLE_STYLE[role ?? ""] ?? "border-border text-muted-foreground";
 }
 
-export function MessagesView({
-  messages,
-  className,
-}: {
-  messages: Message[];
-  className?: string;
-}) {
+export function MessagesView({ messages, className }: { messages: Message[]; className?: string }) {
   if (messages.length === 0) {
     return <p className="text-2xs text-muted-foreground">No messages in this payload.</p>;
   }

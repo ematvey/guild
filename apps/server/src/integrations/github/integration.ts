@@ -124,7 +124,10 @@ const plugin: IntegrationPlugin = {
   async testConnection(config: JsonObject, secrets) {
     const token = secret(secrets, "token");
     await probe(
-      fetch(`${githubApiUrl(config)}/user`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${token}` } })),
+      fetch(
+        `${githubApiUrl(config)}/user`,
+        fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${token}` } }),
+      ),
       "github",
     );
   },

@@ -18,14 +18,16 @@ const sseDone = (): string =>
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
   "data: [DONE]\n\n";
 const answer = (text: string) => ({
-  body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta(text) + sseDone(),
+  body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta(text)}${sseDone()}`,
 });
 
 async function freePort(): Promise<number> {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   return port;
 }
 
@@ -75,7 +77,11 @@ describe.each([
   }
 
   async function assistantTexts(chatId: string): Promise<string[]> {
-    const thread = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${chatId}/thread`, headers: headers() });
+    const thread = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${chatId}/thread`,
+      headers: headers(),
+    });
     const events = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
     return events
       .filter((e) => e.event.type === "assistant_message")
@@ -84,8 +90,9 @@ describe.each([
 
   async function generating(chatId: string): Promise<boolean | undefined> {
     const list = await stack.env.app.inject({ method: "GET", url: "/api/v1/chats", headers: headers() });
-    return (JSON.parse(list.body) as { chats: { id: string; generating: boolean }[] }).chats.find((c) => c.id === chatId)
-      ?.generating;
+    return (JSON.parse(list.body) as { chats: { id: string; generating: boolean }[] }).chats.find(
+      (c) => c.id === chatId,
+    )?.generating;
   }
 
   it("answers a turn and settles the chat", async () => {

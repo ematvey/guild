@@ -71,7 +71,10 @@ dbDescribe("agent list feed", () => {
     await store.create(owner!, { name: "Org-wide", model: "GLM-Test", visibility: "org" });
     await store.create(owner!, { name: "Team", model: "GLM-Test", visibility: "team", team_ids: [teamId] });
     const shared = await store.create(owner!, { name: "Granted", model: "GLM-Test" });
-    await env.db.query("INSERT INTO agent_grants (agent_id, user_id, role) VALUES ($1, $2, 'user')", [shared.id, granted!.id]);
+    await env.db.query("INSERT INTO agent_grants (agent_id, user_id, role) VALUES ($1, $2, 'user')", [
+      shared.id,
+      granted!.id,
+    ]);
     const archived = await store.create(owner!, { name: "Archived", model: "GLM-Test", visibility: "org" });
     await store.lifecycle.archive(owner!, archived.id);
     await store.create(admin!, { name: "Admin's", model: "GLM-Test" });
@@ -135,7 +138,9 @@ dbDescribe("agent list feed", () => {
       expect(expected.length).toBeGreaterThan(0);
     }
     const names = (userIndex: number) =>
-      (received.get(users[userIndex]!.id)![0] as { agents: { name: string }[] }).agents.map((agent) => agent.name).sort();
+      (received.get(users[userIndex]!.id)![0] as { agents: { name: string }[] }).agents
+        .map((agent) => agent.name)
+        .sort();
     expect(names(0)).toEqual(["Archived", "Assistant", "Granted", "Org-wide", "Private", "Team"]);
     expect(names(1)).toEqual(["Archived", "Assistant", "Org-wide", "Team"]);
     expect(names(2)).toEqual(["Archived", "Assistant", "Granted", "Org-wide"]);

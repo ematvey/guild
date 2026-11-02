@@ -6,7 +6,7 @@
 // headers.
 
 import { readFileSync } from "node:fs";
-import pg from "pg";
+import type pg from "pg";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPlatformTestEnv, type PlatformTestEnv } from "../support/platform-env.js";
@@ -159,22 +159,18 @@ const PREPARE: Record<string, (ctx: { orgId: string }) => Promise<void>> = {
 const REQUEST_OVERRIDES: Record<string, Pair[]> = {};
 
 describe("golden fixtures: auth + org + events + attachments + oidc wire contracts", () => {
-  it(
-    "replays every captured request/response pair byte-semantically",
-    { timeout: 120_000 },
-    async () => {
-      let failures: string[] = [];
-      for (const fixture of fixtures) {
-        const problem = await replayFixture(fixture);
-        if (problem !== null) failures.push(problem);
-      }
-      failures = failures.filter(Boolean);
-      if (failures.length > 0) {
-        throw new Error(`golden mismatches:\n${failures.join("\n")}`);
-      }
-      expect(failures).toEqual([]);
-    },
-  );
+  it("replays every captured request/response pair byte-semantically", { timeout: 120_000 }, async () => {
+    let failures: string[] = [];
+    for (const fixture of fixtures) {
+      const problem = await replayFixture(fixture);
+      if (problem !== null) failures.push(problem);
+    }
+    failures = failures.filter(Boolean);
+    if (failures.length > 0) {
+      throw new Error(`golden mismatches:\n${failures.join("\n")}`);
+    }
+    expect(failures).toEqual([]);
+  });
 });
 
 async function replayFixture(fixture: CapturedFixture): Promise<string | null> {
@@ -191,8 +187,7 @@ async function replayFixture(fixture: CapturedFixture): Promise<string | null> {
     headers[key] = substitute(value, requestPairs);
   }
   const rawBody = fixture.request.body;
-  const payload =
-    typeof rawBody === "string" ? substitute(rawBody, requestPairs) : undefined;
+  const payload = typeof rawBody === "string" ? substitute(rawBody, requestPairs) : undefined;
 
   const res = await env.app.inject({
     method: fixture.request.method as "GET",

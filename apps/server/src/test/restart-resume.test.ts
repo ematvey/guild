@@ -44,7 +44,7 @@ interface RuntimeInternals {
 
 const PROJECT_CHAIN = '<project_instructions path="/repo/AGENTS.md">\nUse pnpm, never npm.\n</project_instructions>';
 
-const sseDelta =(content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+const sseDelta = (content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
@@ -54,7 +54,7 @@ describe("restart resume (full durability)", () => {
   it("a turn suspended by runtime close resumes and completes in a fresh app", async () => {
     // An idle chat with a finished turn: nothing pending at the restart.
     stack.mock.setResponses([
-      { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("idle answer") + sseDone() },
+      { body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("idle answer")}${sseDone()}` },
     ]);
     const idleCreated = await stack.env.app.inject({
       method: "POST",
@@ -83,7 +83,9 @@ describe("restart resume (full durability)", () => {
     });
     // The run's end drops the chat's per-run caches.
     const internals = stack.env.app.platform.runtime as unknown as RuntimeInternals;
-    await waitFor(async () => !internals.orgModels.runIds.has(idle.id) && !internals.executors.materializedTurns.has(idle.id));
+    await waitFor(
+      async () => !internals.orgModels.runIds.has(idle.id) && !internals.executors.materializedTurns.has(idle.id),
+    );
 
     // A stream slow enough to still be running when the process dies.
     stack.mock.setResponses([
@@ -146,8 +148,7 @@ describe("restart resume (full durability)", () => {
     // The next process: the model answers, the run re-drives to completion.
     stack.mock.setResponses([
       {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("resumed answer complete") + sseDone(),
+        body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("resumed answer complete")}${sseDone()}`,
       },
     ]);
     const resumedFrom = stack.mock.requests.length;
@@ -188,7 +189,7 @@ describe("restart resume (full durability)", () => {
       expect(runtime2.conversationIdForChat(chat.id)).toBeDefined();
       expect(runtime2.conversationIdForChat(idle.id)).toBeUndefined();
       stack.mock.setResponses([
-        { body: 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("idle again") + sseDone() },
+        { body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("idle again")}${sseDone()}` },
       ]);
       const again = await app2.inject({
         method: "POST",

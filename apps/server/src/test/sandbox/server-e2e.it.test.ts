@@ -79,7 +79,12 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
   }
 
   it("plain chat: shell and file tools run inside the gVisor sandbox", async () => {
-    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/chats", headers: auth(), payload: { title: "sbx-shell" } });
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "sbx-shell" },
+    });
     const chatId = (JSON.parse(created.body) as { id: string }).id;
     await stack.env.app.inject({
       method: "POST",
@@ -118,7 +123,12 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
   }, 180_000);
 
   it("plain chat: the file tools cannot reach the server's secrets", async () => {
-    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/chats", headers: auth(), payload: { title: "sbx" } });
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "sbx" },
+    });
     const chatId = (JSON.parse(created.body) as { id: string }).id;
     await stack.env.app.inject({
       method: "POST",
@@ -126,7 +136,10 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
       headers: auth(),
       payload: { default: "full_access" },
     });
-    stack.mock.setResponses([{ body: toolCallSse("read", JSON.stringify({ path: "/proc/self/environ" })) }, { body: finalSse }]);
+    stack.mock.setResponses([
+      { body: toolCallSse("read", JSON.stringify({ path: "/proc/self/environ" })) },
+      { body: finalSse },
+    ]);
     const submit = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/gateway/chat",
@@ -135,7 +148,9 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     });
     expect(submit.statusCode).toBe(200);
     const result = await toolResult(chatId);
-    expect(result.content).not.toMatch(/GUILD_MASTER_KEY_HEX|GUILD_JWT_SECRET|GUILD_DATABASE_URL|GUILD_SANDBOX_RUNNER_TOKEN/);
+    expect(result.content).not.toMatch(
+      /GUILD_MASTER_KEY_HEX|GUILD_JWT_SECRET|GUILD_DATABASE_URL|GUILD_SANDBOX_RUNNER_TOKEN/,
+    );
     expect(result.content).toMatch(/HOME=\/workspace\/\.sandbox-home/);
   }, 180_000);
 });

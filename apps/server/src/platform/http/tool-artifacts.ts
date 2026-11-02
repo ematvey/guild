@@ -25,7 +25,10 @@ export function registerToolArtifactRoutes(
     await readableByExecutor(chats, user.org_id, chatId, user);
     const rows = await chats.toolArtifacts.listForChat(user.org_id, chatId);
     // Rows render with sorted keys at every level.
-    return sendJson(reply, rows.map((r) => sortedJson(r)));
+    return sendJson(
+      reply,
+      rows.map((r) => sortedJson(r)),
+    );
   });
 
   app.get("/api/v1/tool_artifacts/:id", async (req, reply) => {

@@ -11,9 +11,7 @@
 
 export type DecisionKind = "allow" | "prompt" | "deny";
 
-export type PatternToken =
-  | { single: string }
-  | { alts: string[] };
+export type PatternToken = { single: string } | { alts: string[] };
 
 export interface PrefixRuleSpec {
   first: string;

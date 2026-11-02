@@ -25,7 +25,13 @@ import {
   missingFieldError,
 } from "../llm-gateway.js";
 import type { GatewayCtx } from "../route-contexts.js";
-import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
+import {
+  ProviderError,
+  type InternalMessage,
+  type ProviderChunk,
+  type ToolSpec,
+  type ToolCall,
+} from "../provider/types.js";
 import type { Json } from "@guild/wire/rest";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";
@@ -263,11 +269,14 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx):
     } catch (error) {
       // Auth rejections carry the error `code` field (OpenAiAuthError).
       const apiError = error as ApiError;
-      return reply.status(apiError.status).type("application/json").send(
-        JSON.stringify({
-          error: { message: apiError.message, type: "invalid_request_error", code: apiError.code },
-        }),
-      );
+      return reply
+        .status(apiError.status)
+        .type("application/json")
+        .send(
+          JSON.stringify({
+            error: { message: apiError.message, type: "invalid_request_error", code: apiError.code },
+          }),
+        );
     }
     try {
       await handleChatCompletions(gateway, credential, req, reply);
@@ -336,7 +345,16 @@ async function handleChatCompletions(
       };
   // The judge reads this to join its self-reported row to the usage event.
   reply.header("x-guild-request-id", requestId);
-  const call = await dispatch(gateway, credential.orgId, req0.model, system, messages, tools, limitField ?? null, clientTemperature(req0.temperature));
+  const call = await dispatch(
+    gateway,
+    credential.orgId,
+    req0.model,
+    system,
+    messages,
+    tools,
+    limitField ?? null,
+    clientTemperature(req0.temperature),
+  );
   const completionId = `chatcmpl-${uuidv7()}`;
   const model = call.model;
   const providerName = call.provider;
@@ -453,7 +471,7 @@ function streamChunks(
   const completionText: string[] = [];
   const completionReasoning: string[] = [];
 
-  const frames = async function* (): AsyncIterable<string> {
+  const frames = (async function* (): AsyncIterable<string> {
     // Usage records exactly
     // once on every exit path — synchronously on normal completion (before
     // the final frame), on the dropped path otherwise (provider error after
@@ -485,23 +503,24 @@ function streamChunks(
           // fragments are folded into the Done frame by the adapter layer
         } else if (item.kind === "toolCallDone") {
           yield sseDataFrame(
-            chunk({
-              tool_calls: [
-                {
-                  index: calls.length,
-                  id: item.call.id,
-                  type: "function",
-                  function: {
-                    name: item.call.name,
-                    arguments:
-                      typeof item.call.arguments === "string"
-                        ? item.call.arguments
-                        : JSON.stringify(item.call.arguments ?? null),
+            chunk(
+              {
+                tool_calls: [
+                  {
+                    index: calls.length,
+                    id: item.call.id,
+                    type: "function",
+                    function: {
+                      name: item.call.name,
+                      arguments:
+                        typeof item.call.arguments === "string"
+                          ? item.call.arguments
+                          : JSON.stringify(item.call.arguments ?? null),
+                    },
                   },
-                },
-              ],
-            },
-            null,
+                ],
+              },
+              null,
             ),
           );
           calls.push(item.call);
@@ -521,7 +540,10 @@ function streamChunks(
         {
           requestId: meta.requestId,
           trace: meta.trace,
-          completionChars: textLen + reasoningLen + calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : 0), 0),
+          completionChars:
+            textLen +
+            reasoningLen +
+            calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : 0), 0),
           finishReason: finish,
           stream: true,
         },
@@ -571,7 +593,7 @@ function streamChunks(
         );
       }
     }
-  }();
+  })();
 
   sseReply(reply, frames);
 }

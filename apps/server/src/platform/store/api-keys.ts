@@ -29,8 +29,10 @@ interface ApiKeyDbRow extends ApiKeyRow {
 
 const KEY_COLUMNS =
   "id, org_id, created_by, name, prefix, " +
-  utcText("created_at") + " AS created_at, " +
-  utcText("revoked_at") + " AS revoked_at, " +
+  utcText("created_at") +
+  " AS created_at, " +
+  utcText("revoked_at") +
+  " AS revoked_at, " +
   "user_id";
 
 export function hashKey(plaintext: string): string {

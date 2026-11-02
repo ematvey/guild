@@ -91,7 +91,10 @@ function autoToolNames(turn: IntegrationTurn): [string, string] {
 /** Recognizes an auto-tool call: `<slug>_list_tools` / `<slug>_guide`
  *  (legacy `int_<slug>_…` names tolerated). */
 // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
-function parseAutoTool(turns: IntegrationTurn[], name: string): { index: number; kind: "list_tools" | "guide" } | undefined {
+function parseAutoTool(
+  turns: IntegrationTurn[],
+  name: string,
+): { index: number; kind: "list_tools" | "guide" } | undefined {
   const stripped = name.startsWith("int_") ? name.slice(4) : name;
   for (const [index, turn] of turns.entries()) {
     const [list, guide] = autoToolNames(turn);
@@ -105,7 +108,10 @@ function parseAutoTool(turns: IntegrationTurn[], name: string): { index: number;
  *  execution gate and the audit share this matcher (legacy-prefixed names
  *  tolerated). */
 // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
-function integrationTarget(turns: IntegrationTurn[], callName: string): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
+function integrationTarget(
+  turns: IntegrationTurn[],
+  callName: string,
+): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
   for (const turn of turns) {
     const info = turn.tools.find((t) => toolMatches(turn.slug, t, callName));
     if (info !== undefined) return { turn, info };
@@ -234,7 +240,11 @@ export class IntegrationsRuntime {
    *  Guild-provided disclosure pair per plugin plus every curated-enabled
    *  connector tool. Curated-off tools are not registered at all — not
    *  declared to the model and not callable. */
-  private installOrgExtension(orgId: string, turns: IntegrationTurn[], conversationId: number): Extension<ToolRegistration> {
+  private installOrgExtension(
+    orgId: string,
+    turns: IntegrationTurn[],
+    conversationId: number,
+  ): Extension<ToolRegistration> {
     const tools: ToolRegistration[] = [];
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));

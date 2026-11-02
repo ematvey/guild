@@ -64,8 +64,12 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
       return result;
     }
     if (method === "exec") {
-      const [command, options] = args as [string | string[], (Omit<ShellExecOptions, "onOutput"> & { onOutput?: boolean }) | undefined];
-      const forwarded: ShellExecOptions | undefined = options === undefined ? undefined : { ...options, onOutput: undefined };
+      const [command, options] = args as [
+        string | string[],
+        (Omit<ShellExecOptions, "onOutput"> & { onOutput?: boolean }) | undefined,
+      ];
+      const forwarded: ShellExecOptions | undefined =
+        options === undefined ? undefined : { ...options, onOutput: undefined };
       if (options?.onOutput === true) {
         forwarded!.onOutput = (text, _context, info) =>
           send({ t: "output", id, text: sanitizeText(text), info: encodeValue(info) });
@@ -74,7 +78,11 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
     }
     if (method === "watch") {
       const [targets] = args as [Parameters<ExecutionEnv["watch"]>[0]];
-      const result = await env.watch(targets, (change) => send({ t: "watch", id, change: encodeValue(change) }), context);
+      const result = await env.watch(
+        targets,
+        (change) => send({ t: "watch", id, change: encodeValue(change) }),
+        context,
+      );
       return result.ok ? { ok: true, value: register("watcher", result.value) } : result;
     }
     if (method === "cleanup") {
@@ -117,7 +125,8 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
     call(frame.id, frame.m, frame.a, context)
       .then(
         (r) => send({ t: "result", id: frame.id, r: encodeValue(r) }),
-        (error: unknown) => send({ t: "throw", id: frame.id, message: error instanceof Error ? error.message : String(error) }),
+        (error: unknown) =>
+          send({ t: "throw", id: frame.id, message: error instanceof Error ? error.message : String(error) }),
       )
       .finally(() => inflight.delete(frame.id));
   });

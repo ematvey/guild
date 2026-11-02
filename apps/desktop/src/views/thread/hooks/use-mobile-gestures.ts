@@ -55,11 +55,16 @@ export function useMobileGestures(input: {
     const el = shell.current;
     if (!el) return;
     let startY: number | null = null;
-    const touchStart = (e: TouchEvent) => { startY = e.touches[0]?.clientY ?? null; };
+    const touchStart = (e: TouchEvent) => {
+      startY = e.touches[0]?.clientY ?? null;
+    };
     const block = (e: TouchEvent) => {
       const target = e.target as Element | null;
       const scroller = target?.closest?.("[data-scrollable]") as HTMLElement | null;
-      if (!scroller) { e.preventDefault(); return; }
+      if (!scroller) {
+        e.preventDefault();
+        return;
+      }
       const dy = startY === null ? 0 : (e.touches[0]?.clientY ?? 0) - startY;
       const atTop = scroller.scrollTop <= 0;
       const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;

@@ -49,7 +49,8 @@ export function sha256Hex(bytes: Buffer): string {
 
 const ROW_COLUMNS =
   "id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, " +
-  utcText("created_at") + " AS created_at";
+  utcText("created_at") +
+  " AS created_at";
 
 /** The wire shape, fields in wire order. */
 function row(r: Record<string, unknown>): ReleaseRow {
@@ -91,15 +92,25 @@ export class ReleaseStore {
         `INSERT INTO releases (id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, object_key)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING ${ROW_COLUMNS}`,
-        [id, version, kind, platform, filename, contentType, sizeBytes, sha256, signature, updaterSignature, notes, objectKey],
+        [
+          id,
+          version,
+          kind,
+          platform,
+          filename,
+          contentType,
+          sizeBytes,
+          sha256,
+          signature,
+          updaterSignature,
+          notes,
+          objectKey,
+        ],
       );
       return row(res.rows[0]!);
     } catch (error) {
       if ((error as { code?: string }).code === "23505") {
-        throw ApiError.conflict(
-          "release_taken",
-          "an artifact with this version/kind/platform/filename already exists",
-        );
+        throw ApiError.conflict("release_taken", "an artifact with this version/kind/platform/filename already exists");
       }
       throw error;
     }

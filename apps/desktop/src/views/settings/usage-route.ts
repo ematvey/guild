@@ -21,11 +21,8 @@ export const DEFAULT_USAGE: UsageQuery = {
   metric: "cost",
 };
 
-const oneOf = <T extends string>(
-  values: readonly T[],
-  value: string | null,
-  fallback: T,
-): T => (value !== null && (values as readonly string[]).includes(value) ? (value as T) : fallback);
+const oneOf = <T extends string>(values: readonly T[], value: string | null, fallback: T): T =>
+  value !== null && (values as readonly string[]).includes(value) ? (value as T) : fallback;
 
 /** Parses the usage query; an absent or unknown value takes its default. */
 export function parseUsageQuery(search: string): UsageQuery {

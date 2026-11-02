@@ -2,7 +2,17 @@
 // child thread's back link), the working badge, and the chat menu with its
 // rename and delete dialogs.
 import { useState } from "react";
-import { Archive, ArchiveRestore, EllipsisVertical, Link2, Loader2, Menu, PanelLeftOpen, Pencil, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  EllipsisVertical,
+  Link2,
+  Loader2,
+  Menu,
+  PanelLeftOpen,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
@@ -85,7 +95,13 @@ export function ThreadHeader({
   return (
     <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
       {isMobile ? (
-        <Button variant="ghost" size="icon" className="-ml-1.5 size-9 pointer-coarse:size-10" onClick={onOpenDrawer} aria-label="Open sidebar">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-ml-1.5 size-9 pointer-coarse:size-10"
+          onClick={onOpenDrawer}
+          aria-label="Open sidebar"
+        >
           <Menu />
         </Button>
       ) : (
@@ -153,7 +169,11 @@ export function ThreadHeader({
                 <DropdownMenuSeparator />
               </>
             )}
-            <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))}>
+            <DropdownMenuItem
+              onSelect={() =>
+                void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))
+              }
+            >
               <Link2 className="size-4" />
               Copy thread URL
             </DropdownMenuItem>
@@ -177,8 +197,7 @@ export function ThreadHeader({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this thread?</AlertDialogTitle>
             <AlertDialogDescription>
-              The thread leaves your lists and its runs stop. Its transcript is kept.
-              This cannot be undone in the app.
+              The thread leaves your lists and its runs stop. Its transcript is kept. This cannot be undone in the app.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -27,7 +27,7 @@ export class ChatDist {
     const full = join(this.dir, path);
     // The dist directory is a fixed build artifact; anything escaping it is
     // not a bundled file.
-    if (!full.startsWith(this.dir + "/")) return null;
+    if (!full.startsWith(`${this.dir}/`)) return null;
     try {
       const st = statSync(full);
       if (!st.isFile()) return null;

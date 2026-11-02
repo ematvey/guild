@@ -5,33 +5,14 @@
 
 import { useEffect, useState } from "react";
 import { useSkillActivityEvents } from "./skills-store";
-import {
-  Download,
-  EyeOff,
-  GitFork,
-  Pin,
-  RefreshCw,
-  Upload,
-  type LucideIcon,
-} from "lucide-react";
+import { Download, EyeOff, GitFork, Pin, RefreshCw, Upload, type LucideIcon } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import {
-  skillsActivity,
-  type SkillActivityEvent,
-  type SkillActivityFilter,
-} from "./skills-api";
+import { skillsActivity, type SkillActivityEvent, type SkillActivityFilter } from "./skills-api";
 
 /** Which row shape an event kind renders as; null for kinds the feed
  *  does not show. */
-export type ActivityRowKind =
-  | "publish"
-  | "update"
-  | "fork"
-  | "install"
-  | "pin"
-  | "unpublish"
-  | "uninstall";
+export type ActivityRowKind = "publish" | "update" | "fork" | "install" | "pin" | "unpublish" | "uninstall";
 
 export function activityKind(event: SkillActivityEvent): ActivityRowKind | null {
   switch (event.kind) {
@@ -98,15 +79,11 @@ export function activityText(event: SkillActivityEvent): string | null {
   const version = str(payload, "version");
   switch (kind) {
     case "publish":
-      return sentence(str(payload, "actor"), "published", "`" + slug + "`" + (version ? ` ${version}` : ""));
+      return sentence(str(payload, "actor"), "published", `\`${slug}\`${version ? ` ${version}` : ""}`);
     case "update":
       return sentence(str(payload, "actor"), "updated", `\`${slug}\` to ${version ?? "a new version"}`);
     case "fork":
-      return sentence(
-        str(payload, "actor"),
-        "forked",
-        `\`${slug}\` from ${str(payload, "forked_from") ?? slug}`,
-      );
+      return sentence(str(payload, "actor"), "forked", `\`${slug}\` from ${str(payload, "forked_from") ?? slug}`);
     case "install":
       return sentence(str(payload, "actor"), "installed", `\`${slug}\`${version ? ` ${version}` : ""}`);
     case "pin":
@@ -141,10 +118,7 @@ export interface ActivityRow {
 
 /** View-model rows for a fetch result: unknown kinds dropped, filter
  *  applied, newest first (the server already sorts that way). */
-export function activityRows(
-  events: SkillActivityEvent[],
-  filter: SkillActivityFilter,
-): ActivityRow[] {
+export function activityRows(events: SkillActivityEvent[], filter: SkillActivityFilter): ActivityRow[] {
   const rows: ActivityRow[] = [];
   for (const event of events) {
     if (!activityMatchesFilter(event, filter)) continue;
@@ -219,12 +193,12 @@ export function ActivityFeed() {
           </Button>
         ))}
       </div>
-      {events === null && !failed &&
-        [0, 1, 2].map((i) => (
-          <SkeletonRows key={i} rows={1} />
-        ))}
+      {events === null && !failed && [0, 1, 2].map((i) => <SkeletonRows key={i} rows={1} />)}
       {rows.map((row) => (
-        <div key={`${row.event.kind}:${row.event.ts}:${row.event.payload.slug ?? ""}`} className="mb-1.5 flex items-start gap-2 rounded-md border border-border p-2.5">
+        <div
+          key={`${row.event.kind}:${row.event.ts}:${row.event.payload.slug ?? ""}`}
+          className="mb-1.5 flex items-start gap-2 rounded-md border border-border p-2.5"
+        >
           <row.icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <div className="min-w-0 flex-1">
             <p className="truncate">{row.text}</p>

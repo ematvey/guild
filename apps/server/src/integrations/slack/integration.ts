@@ -97,12 +97,16 @@ const plugin: IntegrationPlugin = {
     // revoked token: the body verdict decides, not the status.
     let res: Response;
     try {
-      res = await fetch(`${base}/auth.test`, fetchTimeout(PROBE_TIMEOUT_MS, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-      }));
+      res = await fetch(
+        `${base}/auth.test`,
+        fetchTimeout(PROBE_TIMEOUT_MS, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        }),
+      );
     } catch (error) {
-      const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+      const cause =
+        error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new Error(`slack unreachable: ${cause}`);
     }
     let body: JsonObject = {};

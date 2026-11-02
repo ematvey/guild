@@ -29,10 +29,16 @@ import {
 } from "./projects";
 
 const chat = (id: string, project_id?: string, created_at = "t"): ChatSummary =>
-  ({ id, title: id, created_at, project_id } as ChatSummary);
+  ({ id, title: id, created_at, project_id }) as ChatSummary;
 
-const project = (id: string, name = id, machine_label?: string): Project =>
-  ({ id, name, folder: "C:\\x", machine_id: "m1", machine_label: machine_label ?? null, created_at: "t" });
+const project = (id: string, name = id, machine_label?: string): Project => ({
+  id,
+  name,
+  folder: "C:\\x",
+  machine_id: "m1",
+  machine_label: machine_label ?? null,
+  created_at: "t",
+});
 
 describe("sidebarGrouping", () => {
   const chats = [chat("c1", "p1"), chat("c2"), chat("c3", "p2"), chat("c4", "p1")];
@@ -82,10 +88,7 @@ describe("sidebarGrouping", () => {
   });
 
   it("sorts recents by recent activity too", () => {
-    const active = [
-      chat("quiet", undefined, "2026-10-15T09:00:00Z"),
-      chat("live", undefined, "2026-10-15T08:00:00Z"),
-    ];
+    const active = [chat("quiet", undefined, "2026-10-15T09:00:00Z"), chat("live", undefined, "2026-10-15T08:00:00Z")];
     (active[1] as ChatSummary).last_activity_at = "2026-10-15T12:00:00Z";
     expect(sidebarGrouping(active).visible.map((c) => c.id)).toEqual(["live", "quiet"]);
   });
@@ -138,10 +141,7 @@ describe("outgoingProjectId (request-wins only for an in-session pick)", () => {
 describe("recentProjects", () => {
   it("orders projects by their most recent chat and dedupes", () => {
     const chats = [chat("c1", "p2"), chat("c2", "p1"), chat("c3", "p2"), chat("c4", "p1")];
-    expect(recentProjects(chats, [project("p1"), project("p2"), project("p3")]).map((p) => p.id)).toEqual([
-      "p2",
-      "p1",
-    ]);
+    expect(recentProjects(chats, [project("p1"), project("p2"), project("p3")]).map((p) => p.id)).toEqual(["p2", "p1"]);
   });
 
   it("skips chats whose project is unknown", () => {

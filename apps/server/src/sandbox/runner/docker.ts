@@ -108,7 +108,9 @@ export class DockerClient {
         clearTimeout(timer);
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => reject(new DockerError(res.statusCode ?? 0, `exec start: ${Buffer.concat(chunks).toString("utf8")}`)));
+        res.on("end", () =>
+          reject(new DockerError(res.statusCode ?? 0, `exec start: ${Buffer.concat(chunks).toString("utf8")}`)),
+        );
       });
       const timer = setTimeout(
         () => req.destroy(new DockerError(0, `exec start: timed out after ${EXEC_START_TIMEOUT_MS} ms`)),

@@ -3,11 +3,7 @@
 
 import { ChevronUp } from "lucide-react";
 import { Avatar } from "@guild/ui/components/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@guild/ui/components/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "./desktop-tooltip";
 import { avatarChip } from "../lib/format";
 
@@ -44,10 +40,7 @@ export function UserBadge({
       />
       {!compact && (
         <>
-          <span
-            className="min-w-0 flex-1 truncate text-muted-foreground"
-            title={email}
-          >
+          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={email}>
             {displayName ?? email}
           </span>
           <ChevronUp className="size-3 shrink-0 text-muted-foreground" />

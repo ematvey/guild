@@ -86,9 +86,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const sendRead = (cid: string): boolean => {
     if (socketRef.current?.markRead(cid) !== true) return false;
     readSentRef.current.add(cid);
-    chatStatusStore.update((prev) =>
-      prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
-    );
+    chatStatusStore.update((prev) => (prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev));
     return true;
   };
 
@@ -136,25 +134,29 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     onThreadStateApplied(cid);
     settleEchoes(cid, state.events);
     const watching = cid === openChatIdRef.current && isVisible();
-    chatStatusStore.update(prev => ({ ...prev, [cid]: statusAfterGenerating(prev[cid], state.generating, watching) }));
+    chatStatusStore.update((prev) => ({
+      ...prev,
+      [cid]: statusAfterGenerating(prev[cid], state.generating, watching),
+    }));
     // ThreadState carries the chat's project fields: a live re-bind from
     // another device updates this client's row, so the chip and the sidebar
     // agree without a reload. It also carries the log through its last row:
     // that row's stamp is the chat's recent-activity sort key (the sidebar
     // fold-outs re-sort on it).
     const activity = state.events[state.events.length - 1]?.created_at;
-    chatsStore.update(prev =>
-      prev?.map(c =>
-        c.id === cid
-          ? {
-              ...c,
-              project_id: state.project_id,
-              project_name: state.project_name,
-              project_machine_label: state.project_machine_label,
-              ...(activity !== undefined ? { last_activity_at: activity } : {}),
-            }
-          : c,
-      ) ?? prev,
+    chatsStore.update(
+      (prev) =>
+        prev?.map((c) =>
+          c.id === cid
+            ? {
+                ...c,
+                project_id: state.project_id,
+                project_name: state.project_name,
+                project_machine_label: state.project_machine_label,
+                ...(activity !== undefined ? { last_activity_at: activity } : {}),
+              }
+            : c,
+        ) ?? prev,
     );
     if (cid !== openChatIdRef.current) return;
     if (syncingChatsRef.current.has(cid)) syncedAppliedRef.current.add(cid);
@@ -165,18 +167,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     // it echoes the message, so a state that is generating, carries the
     // echo, or is a full resync view speaks for the send.
     const resync = syncingChatsRef.current.has(cid);
-    retireSendPending(cid, "thread_state",
-      (key) => state.generating || resync || observedUserIdsRef.current.has(key));
+    retireSendPending(cid, "thread_state", (key) => state.generating || resync || observedUserIdsRef.current.has(key));
     // The read mark follows the route chat, not the painted one: the first
     // state of an uncached open is what triggers the swap, and the paint ref
     // still names the old chat at this point.
     if (isVisible()) {
       const lastEventId = state.events[state.events.length - 1]?.id;
-      if (
-        lastEventId !== undefined &&
-        lastReadMarkRef.current.get(cid) !== lastEventId &&
-        sendRead(cid)
-      ) {
+      if (lastEventId !== undefined && lastReadMarkRef.current.get(cid) !== lastEventId && sendRead(cid)) {
         lastReadMarkRef.current.set(cid, lastEventId);
         syncedReadRef.current.add(cid);
       }
@@ -238,9 +235,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
           chats: rows.length,
           open: open ?? "-",
           openGenerating: rows.find((c) => c.id === open)?.generating ?? "absent",
-          sending: [...outgoingRef.current.values()].some(
-            (c) => c.running && (c.chatId ?? c.originChatId) === open,
-          ),
+          sending: [...outgoingRef.current.values()].some((c) => c.running && (c.chatId ?? c.originChatId) === open),
         });
       },
       // One row changed in place: it replaces its own entry, read through
@@ -253,7 +248,10 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       // arrives) and never overrides a newer state's flag.
       onChatStatus: ({ chat_id, generating }) => {
         if (chat_id === openChatIdRef.current) return;
-        chatStatusStore.update((prev) => ({ ...prev, [chat_id]: statusAfterGenerating(prev[chat_id], generating, false) }));
+        chatStatusStore.update((prev) => ({
+          ...prev,
+          [chat_id]: statusAfterGenerating(prev[chat_id], generating, false),
+        }));
       },
       onThreadState: (state) => live().applyHistory(state),
       onSubagentTree: (cid, nodes) => {

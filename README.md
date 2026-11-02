@@ -51,17 +51,21 @@ cargo nextest run --workspace
 npm test --workspace apps/server        # TS server suite (disposable PG/CH databases)
 cd apps/desktop && npm test             # frontend vitest
 cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+./node_modules/.bin/biome ci .          # TS/JS format + lint (biome.json)
 scripts/check-windows.sh                # SKIP when the Windows target is absent
 node protocol/check.mjs                 # schema ↔ wire types ↔ fixtures, and compatibility with the last client release
 npm run coherence
-npx tsc -p <project>/tsconfig.json --noEmit   # typecheck: apps/server, apps/desktop, packages/wire
+npx tsc -p <project>/tsconfig.json --noEmit   # typecheck: apps/server, apps/desktop, packages/wire, packages/ui
 ```
 
 `--fast` keeps everything but `cargo nextest` and the server suite, so the
 typecheck runs in both modes. Vitest strips types without checking them;
 the `typecheck` check is the only place `tsc` sees the TypeScript trees.
 
-Format before you commit: `cargo fmt --all`.
+Format before you commit: `cargo fmt --all` and
+`./node_modules/.bin/biome check --write .` (the gate runs `cargo fmt --check`
+and `biome ci`; `biome.json` holds the TypeScript format and lint rules).
 
 ## Run the stack
 

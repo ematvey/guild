@@ -112,7 +112,7 @@ const plugin: IntegrationPlugin = {
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "LogQL expression, e.g. {app=\"api\"} |= \"error\"" },
+            query: { type: "string", description: 'LogQL expression, e.g. {app="api"} |= "error"' },
             datasource: { type: "string", description: "Datasource name or uid (default: the integration's)" },
             start: { type: "string", description: "Window start, RFC3339 (default now-15m)" },
             end: { type: "string", description: "Window end, RFC3339 (default now)" },
@@ -170,7 +170,10 @@ const plugin: IntegrationPlugin = {
   },
   async testConnection(config: JsonObject, secrets) {
     await probe(
-      fetch(`${grafanaBase(config)}/api/health`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${tokenOf(secrets)}` } })),
+      fetch(
+        `${grafanaBase(config)}/api/health`,
+        fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${tokenOf(secrets)}` } }),
+      ),
       "grafana",
     );
   },

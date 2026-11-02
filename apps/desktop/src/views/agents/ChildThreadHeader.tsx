@@ -4,13 +4,7 @@
 import { ArrowLeft } from "lucide-react";
 import type { ChatTree } from "../../lib/api/chats";
 
-export function ChildThreadHeader({
-  tree,
-  onBack,
-}: {
-  tree: ChatTree | null;
-  onBack: (chatId: string) => void;
-}) {
+export function ChildThreadHeader({ tree, onBack }: { tree: ChatTree | null; onBack: (chatId: string) => void }) {
   const parent = tree?.parent ?? null;
   if (!tree || !parent) return null;
   return (

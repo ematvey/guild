@@ -66,7 +66,8 @@ async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTur
   }
 }
 
-export function registerIntegrationToolRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx): void {  // `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
+export function registerIntegrationToolRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx): void {
+  // `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
   // caller's org, policy-filtered to a count only.
   app.get("/api/v1/integrations", async (req, reply) => {
     const caller = await integrationCaller(auth, req);
@@ -152,11 +153,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     const rawBody: unknown = req.body;
     let args: unknown = {};
     if (rawBody !== undefined && rawBody !== null) {
-      const text = typeof rawBody === "string"
-        ? rawBody
-        : Buffer.isBuffer(rawBody)
-          ? rawBody.toString("utf8")
-          : null;
+      const text = typeof rawBody === "string" ? rawBody : Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : null;
       if (text === null) {
         args = rawBody;
       } else if (text.length > 0) {
@@ -176,13 +173,12 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     const callId = crypto.randomUUID();
     let body: Record<string, unknown>;
     try {
-      const outcome = await callPlugin(
-        gateway,
-        turn,
-        raw,
-        args as Record<string, unknown>,
-        { orgId: caller.org, callerId: caller.userId, callId, actingAs },
-      );
+      const outcome = await callPlugin(gateway, turn, raw, args as Record<string, unknown>, {
+        orgId: caller.org,
+        callerId: caller.userId,
+        callId,
+        actingAs,
+      });
       body = { ok: true, content: outcome.content, meta: outcome.meta ?? null };
     } catch (error) {
       body = { ok: false, error: (error as Error).message };

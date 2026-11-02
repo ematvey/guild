@@ -29,10 +29,7 @@ import {
   type ShopItem,
 } from "./integration-config";
 
-export default function IntegrationsSection({
-  detail = null,
-  onDetailChange,
-}: SectionDetailProps) {
+export default function IntegrationsSection({ detail = null, onDetailChange }: SectionDetailProps) {
   const list = useCachedGet<{ items: ShopItem[] }>(SETTINGS_PATHS.integrations);
   const items = list.data?.items ?? null;
   const error = list.error;
@@ -45,14 +42,17 @@ export default function IntegrationsSection({
     if (items === null) return null;
     const q = query.trim().toLowerCase();
     if (q === "") return items;
-    return items.filter((i) =>
-      `${i.name} ${i.title} ${i.summary} ${i.categories.join(" ")}`.toLowerCase().includes(q),
-    );
+    return items.filter((i) => `${i.name} ${i.title} ${i.summary} ${i.categories.join(" ")}`.toLowerCase().includes(q));
   }, [items, query]);
 
   if (detail !== null) {
     if (items === null) {
-      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+      if (error)
+        return (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        );
       return (
         <div className="space-y-2">
           <SkeletonForm />
@@ -127,9 +127,7 @@ export default function IntegrationsSection({
                   <p className="truncate text-xs text-muted-foreground">{item.publisher}</p>
                 </div>
               </div>
-              <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                {item.summary}
-              </p>
+              <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{item.summary}</p>
               <div className="mt-auto flex items-center justify-between gap-2">
                 <CategoryBadges categories={item.categories} />
                 {item.configured ? (
@@ -180,7 +178,10 @@ function Storefront({ item, onAdded }: { item: ShopItem; onAdded: () => void }) 
               <CategoryBadges categories={item.categories} />
               {Object.keys(item.traits).length > 0 && (
                 <Badge variant="outline">
-                  Provides {Object.keys(item.traits).map((t) => TRAIT_LABELS[t] ?? t).join(", ")}
+                  Provides{" "}
+                  {Object.keys(item.traits)
+                    .map((t) => TRAIT_LABELS[t] ?? t)
+                    .join(", ")}
                 </Badge>
               )}
             </div>
@@ -189,9 +190,7 @@ function Storefront({ item, onAdded }: { item: ShopItem; onAdded: () => void }) 
             <Plus className="size-4" /> {busy ? "Adding…" : "Add integration"}
           </Button>
         </div>
-        <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-          {item.description}
-        </p>
+        <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{item.description}</p>
         {item.docs_url !== null && (
           <a
             href={item.docs_url}
@@ -210,23 +209,11 @@ function Storefront({ item, onAdded }: { item: ShopItem; onAdded: () => void }) 
   );
 }
 
-function IntegrationDetail({
-  item,
-  onChanged,
-  onBack,
-}: {
-  item: ShopItem;
-  onChanged: () => void;
-  onBack: () => void;
-}) {
+function IntegrationDetail({ item, onChanged, onBack }: { item: ShopItem; onChanged: () => void; onBack: () => void }) {
   if (!item.configured) {
     return (
       <div>
-        <PageHeader
-          title={item.title}
-          description={item.summary}
-          back={{ label: "Integrations", onClick: onBack }}
-        />
+        <PageHeader title={item.title} description={item.summary} back={{ label: "Integrations", onClick: onBack }} />
         <Storefront item={item} onAdded={onChanged} />
       </div>
     );

@@ -20,9 +20,7 @@ const childTree: ChatTree = {
 
 describe("ChildThreadHeader", () => {
   it("renders the back control, child title and agent name", () => {
-    const html = renderToStaticMarkup(
-      <ChildThreadHeader tree={childTree} onBack={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<ChildThreadHeader tree={childTree} onBack={() => {}} />);
     expect(html).toContain("Parent session");
     expect(html).toContain("Back to Parent session");
     expect(html).toContain("market scan");

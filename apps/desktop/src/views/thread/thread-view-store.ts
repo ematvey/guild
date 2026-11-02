@@ -51,8 +51,15 @@ export interface ThreadViewStore {
 }
 
 const SNAPSHOT_KEYS: (keyof ThreadViewSnapshot)[] = [
-  "displayedChatId", "pendingChatId", "navigating", "loading", "synced",
-  "blocks", "hasMore", "oldestSeq", "compacting",
+  "displayedChatId",
+  "pendingChatId",
+  "navigating",
+  "loading",
+  "synced",
+  "blocks",
+  "hasMore",
+  "oldestSeq",
+  "compacting",
 ];
 
 export function createThreadViewStore(

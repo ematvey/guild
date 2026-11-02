@@ -1,4 +1,14 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, clampNumber, callVendorApi, hubspotBaseUrl, type JsonRequestErrors } from "../shared.js";
+import {
+  LIST_TIMEOUT_MS,
+  VENDOR_API_MAX_CHARS,
+  secretOrNull,
+  pathSegment,
+  requestJson,
+  clampNumber,
+  callVendorApi,
+  hubspotBaseUrl,
+  type JsonRequestErrors,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- hubspot ----------
@@ -26,7 +36,7 @@ function hubspotSearchLine(index: number, object: string, hit: JsonObject): stri
   const id = typeof hit["id"] === "string" ? hit["id"] : "?";
   const props = (hit["properties"] ?? {}) as JsonObject;
   const values = hubspotDisplayProps(object)
-    .map((p) => (typeof props[p] === "string" ? props[p] as string : null))
+    .map((p) => (typeof props[p] === "string" ? (props[p] as string) : null))
     .filter((v): v is string => v !== null);
   return `${index + 1}. id=${id} ${values.join(" ")}`;
 }
@@ -92,7 +102,13 @@ async function hubspotUpdateDeal(base: string, token: string, args: JsonObject):
   };
 }
 
-export async function hubspotExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function hubspotExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("hubspot requires the token secret");
   const base = hubspotBaseUrl(config);
@@ -102,4 +118,3 @@ export async function hubspotExecute(config: JsonObject, tool: string, args: Jso
   if (object === undefined) throw new Error(`hubspot integration has no tool ${tool}`);
   return hubspotSearch(object, base, token, args);
 }
-

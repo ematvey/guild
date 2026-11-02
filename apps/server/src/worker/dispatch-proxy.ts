@@ -54,7 +54,10 @@ export class IpcMachineDispatch {
     };
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<MachineToolOutcome>((resolve) => {
-      timer = setTimeout(() => { this.send({ t: "dispatch_cancel", ref }); resolve(OFFLINE); }, call.timeoutMs + REPLY_GRACE_MS);
+      timer = setTimeout(() => {
+        this.send({ t: "dispatch_cancel", ref });
+        resolve(OFFLINE);
+      }, call.timeoutMs + REPLY_GRACE_MS);
       timer.unref?.();
     });
     try {

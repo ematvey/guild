@@ -86,7 +86,12 @@ describe("saveRequest", () => {
 describe("ownerOptions (the owner selector: me + my teams)", () => {
   it("always offers Me first, then one option per team", () => {
     expect(ownerOptions([])).toEqual([{ value: "", label: "Me" }]);
-    expect(ownerOptions([{ id: "t1", name: "Platform" }, { id: "t2", name: "Research" }])).toEqual([
+    expect(
+      ownerOptions([
+        { id: "t1", name: "Platform" },
+        { id: "t2", name: "Research" },
+      ]),
+    ).toEqual([
       { value: "", label: "Me" },
       { value: "t1", label: "Platform" },
       { value: "t2", label: "Research" },
@@ -192,9 +197,7 @@ describe("multi-file drafts (the editor's file tree)", () => {
         { path: "scripts/run.sh", content: "echo hi\n" },
       ],
     });
-    expect(review.changes.map((c) => [c.path, c.status])).toEqual([
-      ["references/notes.md", "modified"],
-    ]);
+    expect(review.changes.map((c) => [c.path, c.status])).toEqual([["references/notes.md", "modified"]]);
     expect(review.changes[0]!.diff).toEqual([
       { type: "ctx", text: "# notes" },
       { type: "del", text: "rule one" },

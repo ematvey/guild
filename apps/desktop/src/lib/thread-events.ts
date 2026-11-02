@@ -11,14 +11,7 @@ import type {
   MessageAttachment as MessageAttachmentMeta,
 } from "@guild/wire/rest";
 
-export type {
-  StreamEvent,
-  ThreadEvent,
-  ThreadEventRow,
-  UsagePayload,
-  ThreadBlock,
-  MessageAttachmentMeta,
-};
+export type { StreamEvent, ThreadEvent, ThreadEventRow, UsagePayload, ThreadBlock, MessageAttachmentMeta };
 
 /** The `thread_state` frame body. */
 export type ThreadState = Extract<ServerFrame, { type: "thread_state" }>;
@@ -36,10 +29,7 @@ export async function fetchThreadEventsPage(
   signal: AbortSignal,
 ): Promise<ThreadEventsPage> {
   const query = new URLSearchParams({ before: String(beforeSeq), limit: String(limit) });
-  return request<ThreadEventsPage>(
-    "GET",
-    `/api/v1/threads/${encodeURIComponent(chatId)}/events?${query}`,
-    undefined,
-    { signal },
-  );
+  return request<ThreadEventsPage>("GET", `/api/v1/threads/${encodeURIComponent(chatId)}/events?${query}`, undefined, {
+    signal,
+  });
 }

@@ -1,4 +1,17 @@
-import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, urlencode, requestJson, excerpt, clampNumber, callVendorApi, atlassianSite, type JsonRequestErrors } from "../shared.js";
+import {
+  CALL_TIMEOUT_MS,
+  VENDOR_API_MAX_CHARS,
+  secretOrNull,
+  configString,
+  pathSegment,
+  urlencode,
+  requestJson,
+  excerpt,
+  clampNumber,
+  callVendorApi,
+  atlassianSite,
+  type JsonRequestErrors,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- atlassian ----------
@@ -92,14 +105,29 @@ function storageToText(value: string): string {
       text += c;
     }
   }
-  return text.split(/\s+/).filter((s) => s !== "").join(" ");
+  return text
+    .split(/\s+/)
+    .filter((s) => s !== "")
+    .join(" ");
 }
 
-export async function atlassianExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function atlassianExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const creds = atlassianCreds(config, secrets);
   const auth = atlassianAuth(creds);
   if (tool === "api") {
-    return callVendorApi(creds.site, { kind: "basic", user: creds.email, pass: creds.token }, args, VENDOR_API_MAX_CHARS, []);
+    return callVendorApi(
+      creds.site,
+      { kind: "basic", user: creds.email, pass: creds.token },
+      args,
+      VENDOR_API_MAX_CHARS,
+      [],
+    );
   }
   switch (tool) {
     case "jira_search": {
@@ -220,4 +248,3 @@ export async function atlassianExecute(config: JsonObject, tool: string, args: J
       throw new Error(`atlassian integration has no tool ${tool}`);
   }
 }
-

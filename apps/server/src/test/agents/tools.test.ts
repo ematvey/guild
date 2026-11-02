@@ -173,9 +173,7 @@ dbDescribe("agent conversation tools", () => {
     expect(userPage.structuredOutput!.threads.every((t) => !t.archived && !t.deleted)).toBe(true);
     const second = await call({ limit: 2, cursor: userPage.structuredOutput!.next_cursor });
     expect(second.isError).toBeUndefined();
-    expect(second.structuredOutput!.threads[0]!.thread_id).not.toBe(
-      userPage.structuredOutput!.threads[0]!.thread_id,
-    );
+    expect(second.structuredOutput!.threads[0]!.thread_id).not.toBe(userPage.structuredOutput!.threads[0]!.thread_id);
 
     // The type filter is separate from the flags.
     const children = await call({ type: "subagent" });
@@ -217,7 +215,9 @@ dbDescribe("agent conversation tools", () => {
 
     const own = await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: ownThread.id });
     expect(own?.thread_title).toBe(ownThread.title);
-    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: otherThread.id })).toBeNull();
+    expect(
+      await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: otherThread.id }),
+    ).toBeNull();
   });
 
   it("search and read never reach another user's threads with a shared agent", async () => {
@@ -240,7 +240,11 @@ dbDescribe("agent conversation tools", () => {
     ]);
     expect(await searchAgentConversations(env!.db, agent.id, owner.id, "harbour")).toEqual([]);
     expect(await searchAgentConversations(env!.db, agent.id, peerId, "harbour")).toHaveLength(1);
-    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: peerThread.id })).toBeNull();
-    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, peerId, { threadId: peerThread.id })).not.toBeNull();
+    expect(
+      await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: peerThread.id }),
+    ).toBeNull();
+    expect(
+      await readAgentConversation({ pool: env!.db, store }, agent.id, peerId, { threadId: peerThread.id }),
+    ).not.toBeNull();
   });
 });

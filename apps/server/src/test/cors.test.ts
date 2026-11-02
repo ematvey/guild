@@ -3,13 +3,22 @@ import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "./support/postgres.js";
 let database: DisposableDatabase;
-beforeAll(async () => { database = await createDisposableDatabase(); });
-afterAll(async () => { await dropDisposableDatabase(database.name); });
+beforeAll(async () => {
+  database = await createDisposableDatabase();
+});
+afterAll(async () => {
+  await dropDisposableDatabase(database.name);
+});
 
 // The CORS layer port: preflights answered
 // 204 with ACAO only for the allow-listed webview origins.
 function cfg() {
-  return loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s", GUILD_DATABASE_URL: database.url, GUILD_LOG_LEVEL: "silent" });
+  return loadConfig({
+    GUILD_MASTER_KEY_HEX: "00".repeat(32),
+    GUILD_JWT_SECRET: "s",
+    GUILD_DATABASE_URL: database.url,
+    GUILD_LOG_LEVEL: "silent",
+  });
 }
 
 describe("cors", () => {
@@ -46,7 +55,11 @@ describe("cors", () => {
 
   it("rides ACAO on real responses for allowed origins only", async () => {
     const app = await buildApp(cfg());
-    const ok = await app.inject({ method: "GET", url: "/api/v1/health", headers: { origin: "http://tauri.localhost" } });
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/v1/health",
+      headers: { origin: "http://tauri.localhost" },
+    });
     expect(ok.headers["access-control-allow-origin"]).toBe("http://tauri.localhost");
     const no = await app.inject({ method: "GET", url: "/api/v1/health", headers: { origin: "https://evil.example" } });
     expect(no.headers["access-control-allow-origin"]).toBeUndefined();

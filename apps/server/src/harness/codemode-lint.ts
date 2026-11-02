@@ -23,7 +23,7 @@ const RULES: readonly { pattern: RegExp; message: string }[] = [
   {
     pattern: /tools\.(searchTools|ALL_TOOLS|describeTool|describeNamespace|store|load|text|image|exit)\b/,
     message:
-      "searchTools, ALL_TOOLS, describeTool, describeNamespace, store, load, text, image and exit are sandbox GLOBALS — call them bare (`await searchTools(\"query\")`), never as tools.searchTools. Only the conversation's real tools live on `tools`.",
+      'searchTools, ALL_TOOLS, describeTool, describeNamespace, store, load, text, image and exit are sandbox GLOBALS — call them bare (`await searchTools("query")`), never as tools.searchTools. Only the conversation\'s real tools live on `tools`.',
   },
   {
     pattern: /\btools\.[A-Za-z_$][\w$]*\s*\(\s*["']/,

@@ -292,7 +292,8 @@ export class ChatBridge {
         // moment a notification is worth sending.
         if (this.turnEndedHook !== null) {
           await this.turnEndedHook(state.chatId, state.failure !== null).catch((error: unknown) =>
-            this.deps.log.warn({ err: error, chatId: state.chatId }, "turn-end hook failed"));
+            this.deps.log.warn({ err: error, chatId: state.chatId }, "turn-end hook failed"),
+          );
         }
         for (const input of event.inputs) {
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(input)));

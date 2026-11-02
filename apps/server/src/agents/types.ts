@@ -14,23 +14,11 @@ export type AgentRole = "owner" | "user";
 export const GRANT_ROLE = "user" satisfies AgentRole;
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 
-export type AgentRunStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "silent"
-  | "skipped"
-  | "cancelled";
+export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "silent" | "skipped" | "cancelled";
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 export type AgentRoutineKind = "cron" | "once";
 export type AgentRoutineContext = "isolated";
-export type AgentRoutineOccurrenceStatus =
-  | "pending"
-  | "claimed"
-  | "done"
-  | "failed"
-  | "skipped";
+export type AgentRoutineOccurrenceStatus = "pending" | "claimed" | "done" | "failed" | "skipped";
 
 /** Built-in agent tools. Integration/MCP tool names are added by the runtime
  *  on top of this union. */
@@ -252,4 +240,3 @@ export const DEFAULT_AGENT_TOOLS: AgentToolName[] = [
 export interface AgentActivityEntry extends AgentRun {
   agent_name: string;
 }
-

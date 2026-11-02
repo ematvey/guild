@@ -1,4 +1,15 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, SCRAPE_EXCERPT_CHARS, MAP_LINK_LIMIT, secretOrNull, requestJson, excerpt, clampNumber, truncateWithMarker, firecrawlBaseUrl } from "../shared.js";
+import {
+  FETCH_TIMEOUT_MS,
+  MAX_BODY_CHARS,
+  SCRAPE_EXCERPT_CHARS,
+  MAP_LINK_LIMIT,
+  secretOrNull,
+  requestJson,
+  excerpt,
+  clampNumber,
+  truncateWithMarker,
+  firecrawlBaseUrl,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 import { assertPublicFetchTarget } from "../fetch-target.js";
 
@@ -24,7 +35,13 @@ async function firecrawlPost(base: string, path: string, body: JsonObject, key: 
   return parsed;
 }
 
-export async function firecrawlExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function firecrawlExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const base = firecrawlBaseUrl(config);
   const key = secretOrNull(secrets, "api_key");
   switch (tool) {
@@ -37,11 +54,17 @@ export async function firecrawlExecute(config: JsonObject, tool: string, args: J
       const data = (resp["data"] ?? {}) as JsonObject;
       const metadata = (data["metadata"] ?? {}) as JsonObject;
       const markdown = typeof data["markdown"] === "string" ? data["markdown"] : "";
-      const metaUrl = typeof metadata["sourceURL"] === "string" ? metadata["sourceURL"] : typeof metadata["url"] === "string" ? metadata["url"] : url;
+      const metaUrl =
+        typeof metadata["sourceURL"] === "string"
+          ? metadata["sourceURL"]
+          : typeof metadata["url"] === "string"
+            ? metadata["url"]
+            : url;
       const statusCode = typeof metadata["statusCode"] === "number" ? metadata["statusCode"] : 200;
       const [content, truncated] = truncateWithMarker(markdown, maxChars);
       const meta: JsonObject = { card: "web", kind: "fetch", url: metaUrl, status_code: statusCode, truncated };
-      const title = typeof metadata["title"] === "string" && metadata["title"].trim() !== "" ? metadata["title"].trim() : null;
+      const title =
+        typeof metadata["title"] === "string" && metadata["title"].trim() !== "" ? metadata["title"].trim() : null;
       if (title !== null) meta["title"] = title;
       return { content, meta };
     }
@@ -87,11 +110,12 @@ export async function firecrawlExecute(config: JsonObject, tool: string, args: J
       const links = Array.isArray(resp["links"]) ? resp["links"] : [];
       let out = "";
       for (const link of links.slice(0, MAP_LINK_LIMIT)) {
-        const l = typeof link === "string"
-          ? link
-          : typeof link === "object" && link !== null
-            ? String((link as JsonObject)["url"] ?? "")
-            : "";
+        const l =
+          typeof link === "string"
+            ? link
+            : typeof link === "object" && link !== null
+              ? String((link as JsonObject)["url"] ?? "")
+              : "";
         if (l !== "") out += `${l}\n`;
       }
       if (out === "") out = "No links found.";
@@ -101,4 +125,3 @@ export async function firecrawlExecute(config: JsonObject, tool: string, args: J
       throw new Error(`firecrawl integration has no tool ${tool}`);
   }
 }
-

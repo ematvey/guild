@@ -95,7 +95,11 @@ describe("container spec", () => {
 
   it("drops proxy settings in none mode", () => {
     const none = loadRunnerConfig({ ...env, GUILD_SANDBOX_NETWORK_MODE: "none" }, { project: "compose" });
-    const spec = containerSpec(none, `ws:${ORG}:r`, `workspaces/${ORG}/r`) as { Env: string[]; NetworkDisabled: boolean; HostConfig: Record<string, unknown> };
+    const spec = containerSpec(none, `ws:${ORG}:r`, `workspaces/${ORG}/r`) as {
+      Env: string[];
+      NetworkDisabled: boolean;
+      HostConfig: Record<string, unknown>;
+    };
     expect(spec.NetworkDisabled).toBe(true);
     expect(spec.HostConfig["NetworkMode"]).toBe("none");
     expect(spec.Env.some((e) => /proxy/i.test(e))).toBe(false);
@@ -136,8 +140,12 @@ describe("container spec", () => {
 
   it("refuses to start without a token or with a proxy named by hostname", () => {
     expect(() => loadRunnerConfig({}, { project: null })).toThrow(/TOKEN/);
-    expect(() => loadRunnerConfig({ ...env, GUILD_SANDBOX_PROXY_URL: "http://egress:3128" }, { project: null })).toThrow(/IP address/);
-    expect(() => loadRunnerConfig({ GUILD_SANDBOX_RUNNER_TOKEN: "x".repeat(32) }, { project: null })).toThrow(/PROXY_URL/);
+    expect(() =>
+      loadRunnerConfig({ ...env, GUILD_SANDBOX_PROXY_URL: "http://egress:3128" }, { project: null }),
+    ).toThrow(/IP address/);
+    expect(() => loadRunnerConfig({ GUILD_SANDBOX_RUNNER_TOKEN: "x".repeat(32) }, { project: null })).toThrow(
+      /PROXY_URL/,
+    );
   });
 });
 
@@ -175,9 +183,24 @@ describe("always-on agent sandboxes", () => {
   it("reap skips agent sandboxes but still stops idle chats", async () => {
     const calls: string[] = [];
     const containers = [
-      { Id: "1", Names: ["/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa"], State: "running", Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` } },
-      { Id: "2", Names: ["/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb"], State: "stopped", Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` } },
-      { Id: "3", Names: ["/guild-sbx-compose-cccccccccccccccccccc"], State: "running", Labels: { "guild.sandbox.subpath": `chats/${ORG}/42` } },
+      {
+        Id: "1",
+        Names: ["/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa"],
+        State: "running",
+        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` },
+      },
+      {
+        Id: "2",
+        Names: ["/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb"],
+        State: "stopped",
+        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` },
+      },
+      {
+        Id: "3",
+        Names: ["/guild-sbx-compose-cccccccccccccccccccc"],
+        State: "running",
+        Labels: { "guild.sandbox.subpath": `chats/${ORG}/42` },
+      },
     ];
     const docker = {
       request: async (method: string, path: string) => {
@@ -200,7 +223,12 @@ describe("always-on agent sandboxes", () => {
       request: async (method: string, path: string) => {
         calls.push(`${method} ${path}`);
         if (path === `/containers/${name}/json`) {
-          return { Id: "1", Name: name, State: { Running: true, Status: "running" }, Config: { Labels: { "guild.sandbox.project": "compose" } } };
+          return {
+            Id: "1",
+            Name: name,
+            State: { Running: true, Status: "running" },
+            Config: { Labels: { "guild.sandbox.project": "compose" } },
+          };
         }
         if (path === `/containers/${name}/exec`) return { Id: "exec-1" };
         if (path === "/exec/exec-1/json") return { Running: false, ExitCode: 1 };

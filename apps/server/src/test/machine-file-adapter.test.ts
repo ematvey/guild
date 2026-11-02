@@ -36,7 +36,12 @@ function engine(dir: string, opts: { legacy?: boolean } = {}): { dispatch: Dispa
         case "fs.stat_v1":
           try {
             const st = statSync(file);
-            return reply({ exists: true, kind: st.isDirectory() ? "directory" : "file", size: st.size, mtime_ms: st.mtimeMs });
+            return reply({
+              exists: true,
+              kind: st.isDirectory() ? "directory" : "file",
+              size: st.size,
+              mtime_ms: st.mtimeMs,
+            });
           } catch {
             return reply({ exists: false });
           }
@@ -121,7 +126,10 @@ describe("machine file adapter", () => {
       if (!line.ok || line.value === undefined) break;
       seen.push(line.value);
     }
-    expect(seen).toEqual([{ text: "a\r", terminated: true }, { text: "b", terminated: true }]);
+    expect(seen).toEqual([
+      { text: "a\r", terminated: true },
+      { text: "b", terminated: true },
+    ]);
   });
 
   it("an engine without the raw ops fails as not_supported instead of reading lossily", async () => {

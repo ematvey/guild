@@ -35,8 +35,7 @@ function catalogOwner(r: Record<string, unknown>): SkillOwner | null {
   return null;
 }
 
-const INSTALLED_AT_TEXT =
-  utcText("installed_at") + " AS installed_at";
+const INSTALLED_AT_TEXT = `${utcText("installed_at")} AS installed_at`;
 
 export class SkillStore {
   constructor(readonly pool: PlatformPool) {}
@@ -57,10 +56,11 @@ export class SkillStore {
 
   /** Removes the install row; 404 when the user does not have the slug. */
   async uninstall(orgId: string, userId: string, slug: string): Promise<void> {
-    const res = await this.pool.query(
-      "DELETE FROM skill_installs WHERE org_id = $1 AND user_id = $2 AND slug = $3",
-      [orgId, userId, slug],
-    );
+    const res = await this.pool.query("DELETE FROM skill_installs WHERE org_id = $1 AND user_id = $2 AND slug = $3", [
+      orgId,
+      userId,
+      slug,
+    ]);
     if (res.rowCount === 0) throw ApiError.notFound("skill is not installed");
   }
 
@@ -128,7 +128,7 @@ export class SkillStore {
   async pinCounts(orgId: string, slug: string): Promise<Array<{ version: string; count: number }>> {
     const res = await this.pool.query<{ pinned_version: string; n: string }>(
       "SELECT COALESCE(pinned_version, 'latest') AS pinned_version, count(*)::text AS n FROM skill_installs " +
-      "WHERE org_id = $1 AND slug = $2 GROUP BY 1 ORDER BY count(*) DESC, 1",
+        "WHERE org_id = $1 AND slug = $2 GROUP BY 1 ORDER BY count(*) DESC, 1",
       [orgId, slug],
     );
     return res.rows.map((r) => ({ version: r.pinned_version, count: Number(r.n) }));
@@ -189,9 +189,7 @@ export class SkillStore {
         [orgId, ownerUserId],
       );
       const row = res.rows[0];
-      return row === undefined
-        ? null
-        : { kind: "user", id: ownerUserId, label: row.label, avatar_url: row.avatar_url };
+      return row === undefined ? null : { kind: "user", id: ownerUserId, label: row.label, avatar_url: row.avatar_url };
     }
     if (ownerTeamId !== null) {
       const res = await this.pool.query<{ label: string }>(
@@ -199,9 +197,7 @@ export class SkillStore {
         [orgId, ownerTeamId],
       );
       const label = res.rows[0]?.label;
-      return label === undefined
-        ? null
-        : { kind: "team", id: ownerTeamId, label, avatar_url: null };
+      return label === undefined ? null : { kind: "team", id: ownerTeamId, label, avatar_url: null };
     }
     return null;
   }

@@ -18,8 +18,7 @@ import { pushSubject } from "../push/vapid.js";
 const b64url = (buf: Buffer): string =>
   buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-const fromB64url = (value: string): Buffer =>
-  Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const fromB64url = (value: string): Buffer => Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
 /** A browser's subscription: a P-256 key pair plus the 16-byte auth secret. */
 function browserKeys(): { privateKey: crypto.KeyObject; publicRaw: Buffer; auth: Buffer } {
@@ -47,9 +46,21 @@ function makeTls(): { key: Buffer; cert: Buffer } | undefined {
     execFileSync(
       "openssl",
       [
-        "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-        "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"),
-        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "1",
+        "-keyout",
+        join(dir, "key.pem"),
+        "-out",
+        join(dir, "cert.pem"),
+        "-subj",
+        "/CN=127.0.0.1",
+        "-addext",
+        "subjectAltName=IP:127.0.0.1",
       ],
       { stdio: "ignore" },
     );
@@ -128,10 +139,7 @@ function decrypt(captured: Captured, keys: ReturnType<typeof browserKeys>): stri
 
   const decipher = crypto.createDecipheriv("aes-128-gcm", cek, nonce);
   decipher.setAuthTag(ciphertext.subarray(ciphertext.length - 16));
-  const plain = Buffer.concat([
-    decipher.update(ciphertext.subarray(0, ciphertext.length - 16)),
-    decipher.final(),
-  ]);
+  const plain = Buffer.concat([decipher.update(ciphertext.subarray(0, ciphertext.length - 16)), decipher.final()]);
   // The last record ends with the padding delimiter 0x02.
   const end = plain.length - 1;
   expect(plain[end]).toBe(0x02);

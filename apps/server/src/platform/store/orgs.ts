@@ -50,7 +50,5 @@ export class OrgStore {
  *  the telemetry switch): every member socket of the org repaints it. The
  *  one place that knows the `guild_workspace_identity` payload shape. */
 export async function notifyOrgIdentity(pool: PlatformPool, orgId: string): Promise<void> {
-  await pool.query("SELECT pg_notify('guild_workspace_identity', $1)", [
-    JSON.stringify({ org_id: orgId }),
-  ]);
+  await pool.query("SELECT pg_notify('guild_workspace_identity', $1)", [JSON.stringify({ org_id: orgId })]);
 }

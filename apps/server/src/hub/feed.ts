@@ -60,9 +60,7 @@ export interface FeedDeps extends WorkspaceReads, ThreadStateReads, ContextUsage
   readonly notify: Pick<NotifyHub, "subscribe">;
   readonly hub: LiveHub;
   readonly pool: PlatformPool;
-  readonly chats: WorkspaceReads["chats"] &
-    ThreadStateReads["chats"] &
-    Pick<ChatStore, "identityOf" | "lastEventSeq">;
+  readonly chats: WorkspaceReads["chats"] & ThreadStateReads["chats"] & Pick<ChatStore, "identityOf" | "lastEventSeq">;
   readonly conversations: Pick<ConversationMapStore, "chatsOf">;
   readonly threads: ThreadStateReads["threads"] & Pick<ThreadStore, "lastEventType" | "listEventsSince">;
   readonly events: Pick<EventStore, "get">;
@@ -73,7 +71,15 @@ export interface FeedDeps extends WorkspaceReads, ThreadStateReads, ContextUsage
 /** One workspace list; a push re-reads only the parts its change can move. */
 export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models" | "member";
 
-const ALL_PARTS: readonly WorkspacePart[] = ["identity", "chats", "archived", "projects", "machines", "models", "member"];
+const ALL_PARTS: readonly WorkspacePart[] = [
+  "identity",
+  "chats",
+  "archived",
+  "projects",
+  "machines",
+  "models",
+  "member",
+];
 
 /** One chat whose view awaits a republish: the ticks of its first and
  *  newest write, and whether the republish must send even an unchanged
@@ -382,9 +388,7 @@ export class FeedForwarder implements GenerationStreamSink {
    *  `sync` named it, and those that never sent one (the engine's turn
    *  stream). */
   private viewSinks(userId: string, chatId: string): SocketSink[] {
-    return this.ctx.hub
-      .memberSinksOfUser(userId)
-      .filter((sink) => sink.view === undefined || sink.view === chatId);
+    return this.ctx.hub.memberSinksOfUser(userId).filter((sink) => sink.view === undefined || sink.view === chatId);
   }
 
   /** One capture → broadcast if the seq-zeroed content differs from the
@@ -622,7 +626,8 @@ export class FeedForwarder implements GenerationStreamSink {
       // bootstrap; the rest are additive frames.
       if (chats !== null) sendChatList(sink, chats);
       if (info !== null) sendChanged(sink, "workspace_identity", { type: "workspace_identity", ...info });
-      if (archived !== null) sendChanged(sink, "archived_thread_list", { type: "archived_thread_list", chats: archived });
+      if (archived !== null)
+        sendChanged(sink, "archived_thread_list", { type: "archived_thread_list", chats: archived });
       if (projects !== null) {
         sendChanged(sink, "project_list", {
           type: "project_list",

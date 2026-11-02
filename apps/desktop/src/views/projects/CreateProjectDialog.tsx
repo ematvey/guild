@@ -6,13 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { HardDrive, Monitor, X as XIcon } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { Button } from "@guild/ui/components/button";
 import { Spinner } from "@guild/ui/components/spinner";
 import { toast } from "sonner";
@@ -23,10 +17,7 @@ import type { MachineInfo } from "../../lib/api/machines";
 import { PathSpecifier } from "./PathSpecifier";
 import { RemotePathSpecifier } from "./RemotePathSpecifier";
 
-type View =
-  | { kind: "sources" }
-  | { kind: "browse"; distro: string }
-  | { kind: "machine"; machine: MachineInfo };
+type View = { kind: "sources" } | { kind: "browse"; distro: string } | { kind: "machine"; machine: MachineInfo };
 
 export function CreateProjectDialog({
   open,
@@ -67,8 +58,8 @@ export function CreateProjectDialog({
     void wslPrettyName(distro)
       .then((pretty) => {
         if (!pretty) return;
-        setDistros((cur) =>
-          cur?.map((d) => (d.name === distro && !d.pretty_name ? { ...d, pretty_name: pretty } : d)) ?? cur,
+        setDistros(
+          (cur) => cur?.map((d) => (d.name === distro && !d.pretty_name ? { ...d, pretty_name: pretty } : d)) ?? cur,
         );
       })
       .catch(() => {});
@@ -98,9 +89,7 @@ export function CreateProjectDialog({
         ? (folder: string) => folder.replace(/\\+$/, "").toLowerCase()
         : (folder: string) => folder;
     return (folder: string): Project | null =>
-      (projects ?? []).find(
-        (p) => p.machine_id === machineId && pathKey(p.folder) === pathKey(folder),
-      ) ?? null;
+      (projects ?? []).find((p) => p.machine_id === machineId && pathKey(p.folder) === pathKey(folder)) ?? null;
   };
 
   /** Choosing a folder commits immediately: an existing project opens, a
@@ -134,9 +123,7 @@ export function CreateProjectDialog({
       <DialogContent className="!flex max-h-[calc(100dvh-3rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add project</DialogTitle>
-          <DialogDescription>
-            Pick a folder — a project is created for it, or an existing one opens.
-          </DialogDescription>
+          <DialogDescription>Pick a folder — a project is created for it, or an existing one opens.</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
           {view.kind === "machine" ? (
@@ -158,7 +145,9 @@ export function CreateProjectDialog({
               <RemotePathSpecifier
                 machineId={view.machine.machine_id}
                 existingFor={existingForMachine(view.machine.machine_id)}
-                onConfirm={(f) => void commitFolder(f, view.kind === "machine" ? view.machine.machine_id : localMachineId)}
+                onConfirm={(f) =>
+                  void commitFolder(f, view.kind === "machine" ? view.machine.machine_id : localMachineId)
+                }
               />
             </div>
           ) : view.kind === "browse" ? (
@@ -185,9 +174,7 @@ export function CreateProjectDialog({
             </div>
           ) : (
             <div>
-              <p className="mb-1.5 text-sm font-medium text-muted-foreground">
-                Add a folder on {localLabel}
-              </p>
+              <p className="mb-1.5 text-sm font-medium text-muted-foreground">Add a folder on {localLabel}</p>
               <div className="space-y-1.5">
                 {hasEngine && (
                   <button
@@ -231,8 +218,7 @@ export function CreateProjectDialog({
                   <div className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left text-muted-foreground">
                     <Spinner className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1 text-sm">
-                      Looking for WSL distros… (a cold WSL install can take a
-                      while to answer the first time)
+                      Looking for WSL distros… (a cold WSL install can take a while to answer the first time)
                     </span>
                   </div>
                 )}
@@ -271,7 +257,6 @@ export function CreateProjectDialog({
               </div>
             </div>
           )}
-
         </div>
       </DialogContent>
     </Dialog>

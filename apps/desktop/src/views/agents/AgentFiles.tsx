@@ -28,20 +28,9 @@ import {
   type AgentFileContent,
   type AgentFileEntry,
 } from "./agents-api";
-import {
-  fileBreadcrumbs,
-  joinPath,
-  parentPath,
-  previewKindOf,
-  type AgentsRoute,
-} from "./agents-route";
+import { fileBreadcrumbs, joinPath, parentPath, previewKindOf, type AgentsRoute } from "./agents-route";
 import { formatBytes } from "../../lib/format";
-import {
-  ErrorState,
-  InlineLoading,
-  Mono,
-  Section,
-} from "./agent-ui";
+import { ErrorState, InlineLoading, Mono, Section } from "./agent-ui";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 export function parseCsv(text: string): string[][] {
@@ -163,8 +152,7 @@ export function AgentFiles({
   const shownPreview = cachedPreview !== undefined ? cachedPreview : preview;
   const shownPreviewError =
     cachedPreview !== undefined || (cachedView !== undefined && inlinePreview) ? null : previewError;
-  const shownPreviewLoading =
-    cachedPreview !== undefined ? false : previewLoading;
+  const shownPreviewLoading = cachedPreview !== undefined ? false : previewLoading;
   const blobUrl = useBlobUrl(agentId, path, path !== "" && !shownIsDirectory && inlinePreview);
   const breadcrumbs = useMemo(() => fileBreadcrumbs(path), [path]);
   const normalize = (rows: AgentFileEntry[], dir: string): AgentFileEntry[] =>
@@ -328,22 +316,23 @@ export function AgentFiles({
 
   const download = () => {
     const url = `${agentFileDownloadUrl(agentId, path)}`;
-    void agentFileResponse(url).then((res) => res.blob()).then((blob) => {
-      const a = document.createElement("a");
-      const href = URL.createObjectURL(blob);
-      a.href = href;
-      a.download = path.split("/").pop() ?? "download";
-      a.click();
-      URL.revokeObjectURL(href);
-    });
+    void agentFileResponse(url)
+      .then((res) => res.blob())
+      .then((blob) => {
+        const a = document.createElement("a");
+        const href = URL.createObjectURL(blob);
+        a.href = href;
+        a.download = path.split("/").pop() ?? "download";
+        a.click();
+        URL.revokeObjectURL(href);
+      });
   };
 
   const editViaAgent = async () => {
     setEditBusy(true);
     try {
       const threads = await listAgentThreads(agentId);
-      const thread = threads.find((t) => t.is_default) ?? threads[0]
-        ?? (await createAgentThread(agentId, "Files"));
+      const thread = threads.find((t) => t.is_default) ?? threads[0] ?? (await createAgentThread(agentId, "Files"));
       await sendAgentTurn(agentId, {
         thread_id: thread.id,
         message: `Please edit the workspace file \`${path}\`. Read it first, then make the change I describe in the next message.`,
@@ -390,11 +379,7 @@ export function AgentFiles({
         <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
           {error !== null && (
             <div className="p-3">
-              <ErrorState
-                title="Could not read the workspace"
-                message={error}
-                onRetry={refresh}
-              />
+              <ErrorState title="Could not read the workspace" message={error} onRetry={refresh} />
             </div>
           )}
           {error === null && shownEntries === null && (
@@ -492,15 +477,13 @@ export function AgentFiles({
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3" data-scrollable>
               {shownPreviewError !== null && (
-                <ErrorState
-                  title="Could not preview this file"
-                  message={shownPreviewError}
-                  onRetry={refresh}
-                />
+                <ErrorState title="Could not preview this file" message={shownPreviewError} onRetry={refresh} />
               )}
               {shownPreviewError === null && shownPreviewLoading && <InlineLoading label="Loading preview" />}
-              {shownPreviewError === null && !shownPreviewLoading && inlinePreview && (
-                blobUrl === null ? (
+              {shownPreviewError === null &&
+                !shownPreviewLoading &&
+                inlinePreview &&
+                (blobUrl === null ? (
                   <InlineLoading label="Loading preview" />
                 ) : previewKind === "image" ? (
                   <img
@@ -514,8 +497,7 @@ export function AgentFiles({
                     title={path.split("/").pop() ?? "PDF preview"}
                     className="h-[70vh] w-full rounded-lg border border-border bg-background"
                   />
-                )
-              )}
+                ))}
               {shownPreviewError === null && !shownPreviewLoading && !inlinePreview && shownPreview !== null && (
                 <FilePreview content={shownPreview} path={path} />
               )}
@@ -601,4 +583,3 @@ function FilePreview({ content, path }: { content: AgentFileContent; path: strin
     </Section>
   );
 }
-

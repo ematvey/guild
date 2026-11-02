@@ -51,9 +51,7 @@ export function buildFileTree(paths: string[]): FileTreeNode[] {
     });
   }
   const sortNode = (n: FileTreeNode): void => {
-    n.children.sort((a, b) =>
-      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
-    );
+    n.children.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1));
     n.children.forEach(sortNode);
   };
   sortNode(root);

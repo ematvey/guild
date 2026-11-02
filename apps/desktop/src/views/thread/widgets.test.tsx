@@ -63,7 +63,9 @@ describe("AttachmentFileChip", () => {
 describe("AttachmentImageThumb", () => {
   it("renders the filename and the fallback icon before the preview loads", () => {
     const html = renderToStaticMarkup(
-      <AttachmentImageThumb att={att({ filename: "shot.png", content_type: "image/png", modality: "image", id: "pending-1" })} />,
+      <AttachmentImageThumb
+        att={att({ filename: "shot.png", content_type: "image/png", modality: "image", id: "pending-1" })}
+      />,
     );
     expect(html).toContain('title="shot.png"');
   });

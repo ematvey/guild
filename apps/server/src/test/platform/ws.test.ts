@@ -183,10 +183,7 @@ describe("ws machine lifecycle", () => {
 
     // Same physical machine re-pairs under a new local id.
     const t2 = await ticket(l.token);
-    const fresh = new ScriptedClient(
-      base,
-      machineQuery(t2, "re-new", "&machine_name=NEW&machine_fingerprint=FP-9"),
-    );
+    const fresh = new ScriptedClient(base, machineQuery(t2, "re-new", "&machine_name=NEW&machine_fingerprint=FP-9"));
     await fresh.open();
     await fresh.until((f) => f.kind === "text" && f.data.includes("thread_list"));
     // The still-live old registration is displaced.

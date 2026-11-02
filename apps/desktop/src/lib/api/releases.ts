@@ -46,4 +46,3 @@ export async function downloadRelease(id: string): Promise<void> {
   a.click();
   a.remove();
 }
-

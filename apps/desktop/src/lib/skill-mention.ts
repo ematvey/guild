@@ -35,11 +35,7 @@ export function detectMention(text: string, caret: number): MentionSpan | null {
 }
 
 /** Replaces the open mention token with the picked skill and a trailing space. */
-export function applyMention(
-  text: string,
-  caret: number,
-  name: string,
-): { text: string; caret: number } {
+export function applyMention(text: string, caret: number, name: string): { text: string; caret: number } {
   const span = detectMention(text, caret);
   if (!span) return { text, caret };
   const insertion = `/${name} `;

@@ -21,8 +21,7 @@ export const time = (iso: string | null): string =>
         minute: "2-digit",
       });
 
-export const totalTokens = (row: { tokens_in: number; tokens_out: number }): number =>
-  row.tokens_in + row.tokens_out;
+export const totalTokens = (row: { tokens_in: number; tokens_out: number }): number => row.tokens_in + row.tokens_out;
 
 export function toneOf(status: string): "success" | "danger" | "info" | "warning" | "neutral" {
   if (status === "succeeded" || status === "ok") return "success";

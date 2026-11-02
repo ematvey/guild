@@ -34,10 +34,7 @@ export interface WorkspaceReads {
 }
 
 /** The caller's active chats, newest activity first. */
-export async function threadListSnapshot(
-  ctx: Pick<WorkspaceReads, "hub" | "chats">,
-  user: Caller,
-): Promise<Chat[]> {
+export async function threadListSnapshot(ctx: Pick<WorkspaceReads, "hub" | "chats">, user: Caller): Promise<Chat[]> {
   const rows = await ctx.chats.listChats(user.org_id, user.id);
   return rows.map((chat) => chatWire(ctx.hub, chat));
 }
@@ -70,10 +67,7 @@ export async function workspaceIdentitySnapshot(
   ctx: Pick<WorkspaceReads, "orgs" | "orgKv" | "config">,
   orgId: string,
 ): Promise<{ name: string; logo_url?: string; telemetry: boolean; web_bundle?: string }> {
-  const [org, telemetry] = await Promise.all([
-    ctx.orgs.get(orgId),
-    ctx.orgKv.telemetryEnabled(orgId),
-  ]);
+  const [org, telemetry] = await Promise.all([ctx.orgs.get(orgId), ctx.orgKv.telemetryEnabled(orgId)]);
   const bundle = servedWebBundle(ctx.config);
   return {
     name: org.name,
@@ -85,7 +79,10 @@ export async function workspaceIdentitySnapshot(
 
 /** The org's enabled chat models with their display names and context
  *  windows. */
-export async function modelListSnapshot(ctx: Pick<WorkspaceReads, "gatewayStore">, orgId: string): Promise<ModelOption[]> {
+export async function modelListSnapshot(
+  ctx: Pick<WorkspaceReads, "gatewayStore">,
+  orgId: string,
+): Promise<ModelOption[]> {
   const rows = await ctx.gatewayStore.listModels(orgId);
   return rows.map((row) => ({
     id: row.model,

@@ -7,12 +7,7 @@ import { readFileSync } from "node:fs";
 import { PLUGINS } from "./index.js";
 import { traitSpec } from "./traits.js";
 import type { JsonObject, ToolOutcome } from "./shared.js";
-import type {
-  IntegrationField,
-  IntegrationManifest,
-  IntegrationPlugin,
-  IntegrationToolDecl,
-} from "./types.js";
+import type { IntegrationField, IntegrationManifest, IntegrationPlugin, IntegrationToolDecl } from "./types.js";
 
 export type { IntegrationField, IntegrationManifest, IntegrationPlugin, IntegrationToolDecl };
 export type IntegrationTraits = Record<string, string>;

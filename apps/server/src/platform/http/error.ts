@@ -73,7 +73,7 @@ export async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest): P
 /** A JSON object body: the request must say `Content-Type:
  *  application/json` (415 otherwise) and carry an object (400 otherwise). */
 export function requireJsonBody(req: FastifyRequest): Record<string, unknown> {
-  const contentType = req.headers["content-type"]?.split(";")[0]!.trim().toLowerCase();
+  const contentType = req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     throw ApiError.unsupportedMediaType("expected Content-Type: application/json");
   }

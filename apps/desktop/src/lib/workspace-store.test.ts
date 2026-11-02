@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyWorkspaceIdentity,
-  clearWorkspaceIdentity,
-  runningWebBundle,
-  webBundleOutdated,
-} from "./workspace-store";
+import { applyWorkspaceIdentity, clearWorkspaceIdentity, runningWebBundle, webBundleOutdated } from "./workspace-store";
 import { applyModelList, clearModelList, modelsSnapshot, seedModelList, subscribeModels } from "./models-store";
 
 const page = (src: string | null) => ({

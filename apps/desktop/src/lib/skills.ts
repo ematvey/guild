@@ -7,7 +7,6 @@
 
 import { parentOf, type BridgeFs } from "./fs-bridge";
 
-
 /** UTF-8 byte length: the index and instruction budgets count bytes. */
 export function byteLength(s: string): number {
   return new TextEncoder().encode(s).length;
@@ -64,10 +63,7 @@ export interface OrgSkillsApi {
  * is real); browser sessions carry the source marker instead (expansion
  * fetches the body). Uninstalled org skills never appear.
  */
-export async function installedOrgSkills(
-  api: OrgSkillsApi | undefined,
-  home: string | null,
-): Promise<SkillEntry[]> {
+export async function installedOrgSkills(api: OrgSkillsApi | undefined, home: string | null): Promise<SkillEntry[]> {
   const installs = api ? await api.installs() : null;
   if (installs === null) return [];
   const out: SkillEntry[] = [];
@@ -88,10 +84,7 @@ export async function installedOrgSkills(
  *  `description` reads single-line plain/quoted values and YAML block
  *  scalars (`>`, `|-`, `>+`, … — indented lines fold with spaces for `>`
  *  and keep newlines for `|`); `name` stays single-line. */
-export function parseFrontmatter(
-  body: string,
-  fallbackName: string,
-): { name: string; description: string } {
+export function parseFrontmatter(body: string, fallbackName: string): { name: string; description: string } {
   let name = fallbackName;
   let description = "";
   if (body.startsWith("---")) {
@@ -134,11 +127,7 @@ export function parseFrontmatter(
 }
 
 /** Scans `<dir>/skills/<name>/SKILL.md` and `<dir>/skills/<file>.md`, name-sorted. */
-async function scanDir(
-  fs: BridgeFs,
-  projectDir: string | undefined,
-  root: string,
-): Promise<SkillEntry[]> {
+async function scanDir(fs: BridgeFs, projectDir: string | undefined, root: string): Promise<SkillEntry[]> {
   const skillsDir = `${root}/skills`;
   const entries = await fs.listDir(projectDir, skillsDir);
   const out: SkillEntry[] = [];
@@ -148,8 +137,7 @@ async function scanDir(
     const path = entry.kind === "dir" ? `${skillsDir}/${entry.name}/SKILL.md` : `${skillsDir}/${entry.name}`;
     const body = await fs.readText(projectDir, path);
     if (body === null) continue;
-    const fallback =
-      entry.kind === "dir" ? entry.name : entry.name.replace(/\.md$/, "");
+    const fallback = entry.kind === "dir" ? entry.name : entry.name.replace(/\.md$/, "");
     const { name, description } = parseFrontmatter(body, fallback);
     out.push({ name, description, path });
   }
@@ -172,10 +160,7 @@ export function merge(out: SkillEntry[], e: SkillEntry): void {
  * nearest ancestor holding `.git`; without a marker only the cwd itself
  * (skills.rs `repo_roots`, lowest precedence first).
  */
-async function repoRoots(
-  fs: BridgeFs,
-  projectDir: string,
-): Promise<string[]> {
+async function repoRoots(fs: BridgeFs, projectDir: string): Promise<string[]> {
   const levels: string[] = [];
   let atGit = false;
   let cur: string | null = projectDir;
@@ -253,8 +238,7 @@ const INDEX_BUDGET = 8_000;
  */
 export function promptIndex(skills: SkillEntry[]): string {
   if (skills.length === 0) return "";
-  const header =
-    "\n# Available skills\nWhen a task matches a skill, read its SKILL.md with read_file and follow it.\n";
+  const header = "\n# Available skills\nWhen a task matches a skill, read its SKILL.md with read_file and follow it.\n";
   const clipDesc = (e: SkillEntry, clip: number): string => {
     if (clip === Number.MAX_SAFE_INTEGER) return e.description;
     const cut = e.description.slice(0, clip);
@@ -324,9 +308,7 @@ export async function mentionExpansions(
 }
 
 /** The context block appended to the prompt for `/name` mentions. */
-export function mentionBlock(
-  mentions: Array<{ skill: SkillEntry; body: string }>,
-): string | null {
+export function mentionBlock(mentions: Array<{ skill: SkillEntry; body: string }>): string | null {
   if (mentions.length === 0) return null;
   let s = "\n\n---\nInvoked skills (follow their instructions):\n";
   for (const { skill, body } of mentions) {
@@ -406,5 +388,5 @@ export async function setSkillDisabled(
   const disabled = isRecord(v.skillsDisabled) ? v.skillsDisabled : {};
   disabled[skillPath] = enabled;
   v.skillsDisabled = disabled;
-  return fs.writeText(undefined, `${configDir}/settings.json`, JSON.stringify(v, null, 2) + "\n");
+  return fs.writeText(undefined, `${configDir}/settings.json`, `${JSON.stringify(v, null, 2)}\n`);
 }

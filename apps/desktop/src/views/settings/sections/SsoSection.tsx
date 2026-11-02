@@ -66,7 +66,12 @@ export default function SsoSection() {
   };
 
   if (cfg === null) {
-    if (cfgRes.error) return <p role="alert" className="text-sm text-destructive">{cfgRes.error}</p>;
+    if (cfgRes.error)
+      return (
+        <p role="alert" className="text-sm text-destructive">
+          {cfgRes.error}
+        </p>
+      );
     return (
       <div className="space-y-3">
         <SkeletonForm />
@@ -194,23 +199,13 @@ function SsoForm({
         back={onCancel ? { label: "Back to SSO", onClick: onCancel } : undefined}
       />
       <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-        <Field
-          label="Issuer URL"
-          hint={"Discovery runs at <issuer>/.well-known/openid-configuration."}
-        >
-          <Input
-            placeholder="https://accounts.google.com"
-            value={issuer}
-            onChange={(e) => setIssuer(e.target.value)}
-          />
+        <Field label="Issuer URL" hint={"Discovery runs at <issuer>/.well-known/openid-configuration."}>
+          <Input placeholder="https://accounts.google.com" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
         </Field>
         <Field label="Client ID">
           <Input value={clientId} onChange={(e) => setClientId(e.target.value)} />
         </Field>
-        <Field
-          label="Client secret"
-          hint={keepSecret ? "Leave blank to keep the current one." : undefined}
-        >
+        <Field label="Client secret" hint={keepSecret ? "Leave blank to keep the current one." : undefined}>
           <Input
             type="password"
             placeholder={keepSecret ? (secretMasked ?? "••••••••") : "client secret"}
@@ -221,10 +216,7 @@ function SsoForm({
 
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
-          <Button
-            disabled={busy || !issuer || !clientId || (!keepSecret && !clientSecret)}
-            onClick={save}
-          >
+          <Button disabled={busy || !issuer || !clientId || (!keepSecret && !clientSecret)} onClick={save}>
             {busy ? "Saving…" : "Save"}
           </Button>
           {onCancel && (
@@ -256,8 +248,8 @@ function SsoRemoveDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Remove SSO configuration?</AlertDialogTitle>
           <AlertDialogDescription>
-            The sign-in page drops the “Continue with SSO” button; users fall back to
-            password sign-in. This cannot be undone.
+            The sign-in page drops the “Continue with SSO” button; users fall back to password sign-in. This cannot be
+            undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -58,7 +58,10 @@ async function resolveDatasource(
   reference: string,
 ): Promise<{ uid: string; name: string; type: string }> {
   const tried: string[] = [];
-  for (const path of [`/api/datasources/uid/${encodeURIComponent(reference)}`, `/api/datasources/name/${encodeURIComponent(reference)}`]) {
+  for (const path of [
+    `/api/datasources/uid/${encodeURIComponent(reference)}`,
+    `/api/datasources/name/${encodeURIComponent(reference)}`,
+  ]) {
     try {
       const body = await grafanaJson(config, secrets, path);
       const uid = body["uid"];
@@ -122,9 +125,10 @@ export async function grafanaExecute(
     case "query_metrics": {
       const query = args["query"];
       if (typeof query !== "string" || query.trim() === "") throw new Error("query_metrics requires query");
-      const reference = typeof args["datasource"] === "string" && args["datasource"].trim() !== ""
-        ? (args["datasource"] as string).trim()
-        : defaultDatasource(config, "prometheus");
+      const reference =
+        typeof args["datasource"] === "string" && args["datasource"].trim() !== ""
+          ? (args["datasource"] as string).trim()
+          : defaultDatasource(config, "prometheus");
       const ds = await resolveDatasource(config, secrets, reference);
       if (ds.type !== "prometheus") {
         throw new Error(`datasource "${ds.name}" is ${ds.type}, not prometheus`);
@@ -150,9 +154,10 @@ export async function grafanaExecute(
     case "query_logs": {
       const query = args["query"];
       if (typeof query !== "string" || query.trim() === "") throw new Error("query_logs requires query");
-      const reference = typeof args["datasource"] === "string" && args["datasource"].trim() !== ""
-        ? (args["datasource"] as string).trim()
-        : defaultDatasource(config, "loki");
+      const reference =
+        typeof args["datasource"] === "string" && args["datasource"].trim() !== ""
+          ? (args["datasource"] as string).trim()
+          : defaultDatasource(config, "loki");
       const ds = await resolveDatasource(config, secrets, reference);
       if (ds.type !== "loki") throw new Error(`datasource "${ds.name}" is ${ds.type}, not loki`);
       const limit = clampNumber(args, "limit", 100, 500);
@@ -191,7 +196,8 @@ export async function grafanaExecute(
       const body = await grafanaJson(config, secrets, "/api/datasources");
       const list = Array.isArray(body) ? (body as JsonObject[]) : [];
       const rows = list.filter((d) => type === null || d["type"] === type);
-      if (rows.length === 0) return { content: "No datasources.", meta: { card: "grafana", kind: "datasources", count: 0 } };
+      if (rows.length === 0)
+        return { content: "No datasources.", meta: { card: "grafana", kind: "datasources", count: 0 } };
       const content = rows
         .map((d) => `${String(d["name"])} | ${String(d["type"])} | uid=${String(d["uid"])}`)
         .join("\n");
@@ -200,15 +206,15 @@ export async function grafanaExecute(
     case "list_dashboards": {
       const limit = clampNumber(args, "limit", 20, 100);
       const query = typeof args["query"] === "string" ? (args["query"] as string) : "";
-      const path =
-        `/api/search?type=dash-db&limit=${limit}` +
-        (query === "" ? "" : `&query=${encodeURIComponent(query)}`);
+      const path = `/api/search?type=dash-db&limit=${limit}${query === "" ? "" : `&query=${encodeURIComponent(query)}`}`;
       const body = await grafanaJson(config, secrets, path);
       const list = Array.isArray(body) ? (body as JsonObject[]) : [];
-      if (list.length === 0) return { content: "No dashboards.", meta: { card: "grafana", kind: "dashboards", count: 0 } };
+      if (list.length === 0)
+        return { content: "No dashboards.", meta: { card: "grafana", kind: "dashboards", count: 0 } };
       const content = list
         .map((d) => {
-          const folder = typeof d["folderTitle"] === "string" && d["folderTitle"] !== "" ? ` [${d["folderTitle"]}]` : "";
+          const folder =
+            typeof d["folderTitle"] === "string" && d["folderTitle"] !== "" ? ` [${d["folderTitle"]}]` : "";
           return `${String(d["title"])}${folder} uid=${String(d["uid"])}`;
         })
         .join("\n");
@@ -232,7 +238,8 @@ export async function grafanaExecute(
     case "list_alerts": {
       const body = await grafanaJson(config, secrets, "/api/alertmanager/grafana/api/v2/alerts");
       const list = Array.isArray(body) ? (body as JsonObject[]) : [];
-      if (list.length === 0) return { content: "No active alerts.", meta: { card: "grafana", kind: "alerts", count: 0 } };
+      if (list.length === 0)
+        return { content: "No active alerts.", meta: { card: "grafana", kind: "alerts", count: 0 } };
       const content = list
         .map((a) => {
           const labels = (a["labels"] ?? {}) as JsonObject;

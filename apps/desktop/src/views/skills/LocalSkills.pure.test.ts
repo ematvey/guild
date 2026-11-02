@@ -111,7 +111,10 @@ describe("panelTabs (the HAS_ENGINE fixture)", () => {
 describe("uninstallSkill (server-first, local cleanup second)", () => {
   type Rpc = BridgeRpc;
   const okFetch = () =>
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
 
   it("removes the pin first, then the local folder (org installs live in the home scope)", async () => {
     okFetch();

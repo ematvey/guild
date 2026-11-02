@@ -16,7 +16,6 @@ import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 
-
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
 
@@ -45,7 +44,8 @@ function escapeAttr(value: string): string {
 /** Renders the request's system prompt body: the persona (org override wins
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
-  const persona = orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
+  const persona =
+    orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
   const codingTools = CODING_TOOL_NAMES.map((name) => `\`${name}\``).join(", ");
   return `${persona} Coding tools — ${codingTools} — are called directly. Integration and MCP tools run on the Guild server through the codemode tool: write JavaScript that calls \`tools.<name>\`, and \`tools.thread_history\`/\`tools.thread_search\` as nested calls. Inspect and change files with the coding tools before answering anything that could be about files.`;
 }
@@ -55,11 +55,11 @@ export function buildSystemPrompt(orgPrompt: string | null | undefined): string 
  *  `tools`, and weaker models generalize `tools.<name>` onto them. */
 export const CODEMODE_NOTES_SECTION_TEXT = [
   "Codemode rules:",
-  "- `searchTools`, `ALL_TOOLS`, `describeTool`, `describeNamespace`, `store`, `load`, `text`, `image`, `console`, and `exit` are sandbox globals. Call them bare (`await searchTools(\"query\")`), NEVER as `tools.searchTools` — only the conversation's real tools live on `tools`.",
+  '- `searchTools`, `ALL_TOOLS`, `describeTool`, `describeNamespace`, `store`, `load`, `text`, `image`, `console`, and `exit` are sandbox globals. Call them bare (`await searchTools("query")`), NEVER as `tools.searchTools` — only the conversation\'s real tools live on `tools`.',
   "- Coding tools are called directly. Integration, MCP and thread-history tools are script-only: reach them through `codemode` scripts, never as direct calls.",
   "- The `code` parameter is the raw script body: pure JavaScript only, never wrapped in a code fence or quotes, and no prose or explanations inside it.",
-  "- Tool arguments are always ONE object per the tool's declaration: `await tools.bash({ command: \"pwd\" })`, never a bare string or number.",
-  "- There is NO sleep, timer, or delay mechanism in the sandbox — never busy-wait on a clock. Pace calls with sequential awaits and split long work across several codemode calls; a script that would run past ~60s should raise the timeout via the first line `// @options: {\"timeout_ms\": 300000}` or be split.",
+  '- Tool arguments are always ONE object per the tool\'s declaration: `await tools.bash({ command: "pwd" })`, never a bare string or number.',
+  '- There is NO sleep, timer, or delay mechanism in the sandbox — never busy-wait on a clock. Pace calls with sequential awaits and split long work across several codemode calls; a script that would run past ~60s should raise the timeout via the first line `// @options: {"timeout_ms": 300000}` or be split.',
   "- `store(key, value)` persists only if the script ENDS successfully: a script that throws or times out keeps its tool-call effects but loses its store writes. Re-verify with `load()` instead of assuming.",
   "- No Node and no network: require, process, Buffer, fetch, timers do not exist. All I/O goes through nested tool calls.",
 ].join("\n");

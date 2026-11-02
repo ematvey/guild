@@ -12,10 +12,7 @@ const Ctx = createContext<{ theme: Theme; setTheme: (t: Theme) => void }>({
 /// Applies the resolved theme by toggling `dark` on <html>; tokens live in
 /// theme.css. Default is dark (the product is dark-first).
 export function resolvedDark(theme: Theme): boolean {
-  return (
-    theme === "dark" ||
-    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
-  );
+  return theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 }
 
 export function applyTheme(theme: Theme) {

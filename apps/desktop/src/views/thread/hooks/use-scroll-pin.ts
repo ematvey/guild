@@ -22,10 +22,8 @@ export function useScrollPin(input: {
   /** The reader scrolled near the top of the loaded window. */
   onNearTop: () => void;
 }) {
-  const {
-    pane, stick, setAtBottom, scrollRestoreRef, earlierAnchor, displayedChatId, blocks,
-    repinKeys, onNearTop,
-  } = input;
+  const { pane, stick, setAtBottom, scrollRestoreRef, earlierAnchor, displayedChatId, blocks, repinKeys, onNearTop } =
+    input;
   // The composer floats over the chat content; the scroll pane needs its
   // live height as bottom padding — a fixed guess breaks as soon as the
   // composer stack grows (queued chips, attachments, a taller textarea).
@@ -78,7 +76,9 @@ export function useScrollPin(input: {
     earlierAnchor.current = null;
     el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
     anchorGuard.current = true;
-    requestAnimationFrame(() => { anchorGuard.current = false; });
+    requestAnimationFrame(() => {
+      anchorGuard.current = false;
+    });
   }, [blocks]);
 
   // State-only height changes have no block change to trigger the observer.

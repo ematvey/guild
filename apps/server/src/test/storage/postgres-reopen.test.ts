@@ -1,7 +1,15 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import type { ConversationId, DocumentId, EntryId, Seq, SubmissionId, Storage, TaskId } from "@earendil-works/pi-durable";
+import type {
+  ConversationId,
+  DocumentId,
+  EntryId,
+  Seq,
+  SubmissionId,
+  Storage,
+  TaskId,
+} from "@earendil-works/pi-durable";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { PgPoolDatabase, PostgresDurableStorage } from "../../storage/postgres/index.js";
@@ -217,7 +225,14 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
         {
           type: "document.change",
           id: rewindableId,
-          content: { kind: "delta", version: 1, ops: [["p", ["items"], 1, 0, ["b"]], ["s", ["count"], 1]] },
+          content: {
+            kind: "delta",
+            version: 1,
+            ops: [
+              ["p", ["items"], 1, 0, ["b"]],
+              ["s", ["count"], 1],
+            ],
+          },
         },
       ],
       context,
@@ -301,9 +316,9 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     expect(childPage).toEqual(before.forkVisibility!.page);
     const marker = await reopened.findLatestHeadMarker(ROOT_CONVERSATION_ID, undefined, context);
     expect(marker).toEqual(before.forkVisibility!.marker);
-    expect(
-      await reopened.entry(before.forkChildId, [...before.entries.keys()][0]!, context),
-    ).toEqual(before.forkVisibility!.visibleChildEntry);
+    expect(await reopened.entry(before.forkChildId, [...before.entries.keys()][0]!, context)).toEqual(
+      before.forkVisibility!.visibleChildEntry,
+    );
 
     for (const [id, expected] of before.tasks) {
       expect(await reopened.task(id, context)).toEqual(expected);
@@ -320,16 +335,18 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       requestId: "req-1",
       status: "queued",
     });
-    expect(await reopened.submissionByRequest(ROOT_CONVERSATION_ID, "req-2", context)).toMatchObject({ status: "done" });
+    expect(await reopened.submissionByRequest(ROOT_CONVERSATION_ID, "req-2", context)).toMatchObject({
+      status: "done",
+    });
 
     for (const [id, points] of before.documents) {
       expect((await reopened.document(id as DocumentId, "current", context))?.value).toEqual(points.get("current"));
       expect(
         (await reopened.document(id as DocumentId, points.get("beforeCreationSeq") as Seq, context))?.value,
       ).toEqual(points.get("beforeCreation"));
-      expect(
-        (await reopened.document(id as DocumentId, points.get("afterDeltaSeq") as Seq, context))?.value,
-      ).toEqual(points.get("afterDelta"));
+      expect((await reopened.document(id as DocumentId, points.get("afterDeltaSeq") as Seq, context))?.value).toEqual(
+        points.get("afterDelta"),
+      );
     }
     expect(
       await reopened.findDocument(

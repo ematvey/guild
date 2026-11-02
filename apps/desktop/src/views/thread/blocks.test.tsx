@@ -2,7 +2,15 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import Markdown from "react-markdown";
-import { CompactionCard, HoverStamp, ReasoningFrame, ThreadProgress, ThreadSkeleton, ThreadTitle, prettyStamp } from "./blocks";
+import {
+  CompactionCard,
+  HoverStamp,
+  ReasoningFrame,
+  ThreadProgress,
+  ThreadSkeleton,
+  ThreadTitle,
+  prettyStamp,
+} from "./blocks";
 import { CHAT_MD_PLUGINS, mdComponents } from "../markdown";
 
 describe("ReasoningFrame", () => {
@@ -21,9 +29,7 @@ describe("ReasoningFrame", () => {
 
 describe("CompactionCard", () => {
   it("names the event on the collapsed header", () => {
-    const html = renderToStaticMarkup(
-      <CompactionCard c={{ summary: "earlier work", keepLast: 6 }} />,
-    );
+    const html = renderToStaticMarkup(<CompactionCard c={{ summary: "earlier work", keepLast: 6 }} />);
     expect(html).toContain("Context compacted");
   });
 });

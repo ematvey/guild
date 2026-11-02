@@ -39,13 +39,19 @@ export function PageHeader({
         <div className={bar ? "min-w-0 flex-1" : "min-w-0"}>
           <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           {description !== undefined && description !== "" && (
-            <p className={bar ? "mt-0.5 truncate text-sm text-muted-foreground" : "mt-1 max-w-2xl text-sm text-muted-foreground"}>
+            <p
+              className={
+                bar ? "mt-0.5 truncate text-sm text-muted-foreground" : "mt-1 max-w-2xl text-sm text-muted-foreground"
+              }
+            >
               {description}
             </p>
           )}
         </div>
         {actions !== undefined && (
-          <div className={bar ? "flex flex-wrap items-center gap-2" : "flex shrink-0 items-center gap-2"}>{actions}</div>
+          <div className={bar ? "flex flex-wrap items-center gap-2" : "flex shrink-0 items-center gap-2"}>
+            {actions}
+          </div>
         )}
       </div>
       {tabs !== undefined && <div className="flex flex-wrap items-center gap-3">{tabs}</div>}

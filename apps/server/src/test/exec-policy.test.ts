@@ -4,7 +4,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ExecPolicy, evaluateCommand, evaluateExecute, execPolicy, resetExecPolicyCache } from "../execpolicy/matcher.js";
+import {
+  ExecPolicy,
+  evaluateCommand,
+  evaluateExecute,
+  execPolicy,
+  resetExecPolicyCache,
+} from "../execpolicy/matcher.js";
 import { parseRulesFile } from "../execpolicy/rule-parser.js";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
@@ -33,7 +39,15 @@ describe("exec policy matcher (Rust exec_policy_gate.rs port)", () => {
     ]) {
       expect(exec(command), command).toEqual({ kind: "prompt" });
     }
-    for (const command of ["date -u", "date +%s", "date -u +%Y", "hostname", "git diff --stat", "git log --oneline", "git show HEAD"]) {
+    for (const command of [
+      "date -u",
+      "date +%s",
+      "date -u +%Y",
+      "hostname",
+      "git diff --stat",
+      "git log --oneline",
+      "git show HEAD",
+    ]) {
       expect(exec(command), command).toEqual({ kind: "allow" });
     }
   });

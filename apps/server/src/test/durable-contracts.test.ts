@@ -24,7 +24,7 @@ import { createApprovalGate } from "../harness/approvals.js";
 import { SkillRuntime } from "../harness/skills.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
-import { UserMcpRuntime } from "../harness/user-mcp.js";
+import type { UserMcpRuntime } from "../harness/user-mcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ChatStore } from "../platform/store/chats.js";
 import { OrgKvStore } from "../platform/store/org-kv.js";
@@ -78,13 +78,22 @@ function bridge(chatId: string, conversation: Conversation, store = threads) {
 describe("durable integration contracts", () => {
   it("creates distinct chats without exhausting the shared connection pool", async () => {
     const pool = new pg.Pool({ connectionString: stack.env.config.databaseUrl, max: 2, connectionTimeoutMillis: 1500 });
-    const h = await Harness.open(await PostgresDurableStorage.open(new SharedPoolDatabase(pool)), { registry: createRegistry(), models: createModels() }, context);
+    const h = await Harness.open(
+      await PostgresDurableStorage.open(new SharedPoolDatabase(pool)),
+      { registry: createRegistry(), models: createModels() },
+      context,
+    );
     try {
       const directory = new ConversationDirectory(new ConversationMapStore(pool));
       const ids = await Promise.all(Array.from({ length: 4 }, () => chat()));
-      const conversations = await Promise.all(ids.map((id) => directory.ensure(id, async () =>
-        (await h.createConversation({ ownership: { kind: "ownerless" } }, context)).id,
-      )));
+      const conversations = await Promise.all(
+        ids.map((id) =>
+          directory.ensure(
+            id,
+            async () => (await h.createConversation({ ownership: { kind: "ownerless" } }, context)).id,
+          ),
+        ),
+      );
       expect(new Set(conversations).size).toBe(4);
     } finally {
       await h.close(context);
@@ -95,9 +104,7 @@ describe("durable integration contracts", () => {
   it("coalesces first-touch creation for concurrent callers", async () => {
     const id = await chat();
     const runtime = stack.env.app.platform.runtime;
-    const conversations = await Promise.all(
-      Array.from({ length: 8 }, () => runtime.conversationForChat(id)),
-    );
+    const conversations = await Promise.all(Array.from({ length: 8 }, () => runtime.conversationForChat(id)));
     expect(new Set(conversations.map((c) => c.id)).size).toBe(1);
     expect(
       (await stack.env.db.query("SELECT conversation_id FROM chat_conversations WHERE chat_id=$1", [id])).rows,
@@ -558,77 +565,71 @@ describe("durable integration contracts", () => {
     15_000,
   );
 
-  it(
-    "blocks a command tool when the conversation has no approval mapping",
-    async () => {
-      let executions = 0;
-      const registry = createRegistry();
-      const gate = createApprovalGate({
-        pool: stack.env.db,
-        threads,
-        chats: new ChatStore(stack.env.db),
-        orgKv: new OrgKvStore(stack.env.db),
-        log,
-        execPolicy: {} as never,
-        approvalTimeoutMs: 60_000,
-        selfBaseUrl: "",
-        internalKey: null,
-        allowShellTools: true,
-        // The mapping is missing, so no chat policy can be read. Failing open
-        // here would skip the exec policy, the shell allowlist and the card.
-        chatOfConversation: async () => null,
-        executorKind: async () => "machine",
-        currentModel: async () => null,
-      });
-      registry.install(
-        defineExtension({
-          name: "unmapped-gate",
-          hooks: [gate],
-          tools: [
-            defineTool({
-              name: "bash",
-              description: "bash",
-              parameters: Type.Object({}),
-              execute: async () => {
-                executions++;
-                return { output: [{ type: "text", text: "ran" }] };
-              },
-            }),
-          ],
-        }),
+  it("blocks a command tool when the conversation has no approval mapping", async () => {
+    let executions = 0;
+    const registry = createRegistry();
+    const gate = createApprovalGate({
+      pool: stack.env.db,
+      threads,
+      chats: new ChatStore(stack.env.db),
+      orgKv: new OrgKvStore(stack.env.db),
+      log,
+      execPolicy: {} as never,
+      approvalTimeoutMs: 60_000,
+      selfBaseUrl: "",
+      internalKey: null,
+      allowShellTools: true,
+      // The mapping is missing, so no chat policy can be read. Failing open
+      // here would skip the exec policy, the shell allowlist and the card.
+      chatOfConversation: async () => null,
+      executorKind: async () => "machine",
+      currentModel: async () => null,
+    });
+    registry.install(
+      defineExtension({
+        name: "unmapped-gate",
+        hooks: [gate],
+        tools: [
+          defineTool({
+            name: "bash",
+            description: "bash",
+            parameters: Type.Object({}),
+            execute: async () => {
+              executions++;
+              return { output: [{ type: "text", text: "ran" }] };
+            },
+          }),
+        ],
+      }),
+    );
+    const faux = fauxProvider();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("bash", {}, { id: "unmapped-call" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("could not run"),
+    ]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const h = await open(registry, models);
+    const c = await h.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" } },
+      },
+      context,
+    );
+    try {
+      const submission = await c.submit({ type: "input", content: "run it" }, context);
+      expect((await (await h.submission(submission.id, context))!.wait(context)).status).toBe("done");
+      expect(executions).toBe(0);
+      const rows = await stack.env.db.query<{ record: string }>(
+        "SELECT record FROM entries WHERE conversation_id = $1 ORDER BY id",
+        [Number(c.id)],
       );
-      const faux = fauxProvider();
-      faux.setResponses([
-        fauxAssistantMessage(fauxToolCall("bash", {}, { id: "unmapped-call" }), { stopReason: "toolUse" }),
-        fauxAssistantMessage("could not run"),
-      ]);
-      const models = createModels();
-      models.setProvider(faux.provider);
-      const h = await open(registry, models);
-      const c = await h.createConversation(
-        {
-          ownership: { kind: "ownerless" },
-          agent: { model: { provider: "faux", modelId: "faux-1" } },
-        },
-        context,
-      );
-      try {
-        const submission = await c.submit({ type: "input", content: "run it" }, context);
-        expect((await (await h.submission(submission.id, context))!.wait(context)).status).toBe("done");
-        expect(executions).toBe(0);
-        const rows = await stack.env.db.query<{ record: string }>(
-          "SELECT record FROM entries WHERE conversation_id = $1 ORDER BY id",
-          [Number(c.id)],
-        );
-        expect(rows.rows.map((r) => r.record).join("\n")).toContain(
-          "denied: this conversation has no approval mapping",
-        );
-      } finally {
-        await h.close(context);
-      }
-    },
-    15_000,
-  );
+      expect(rows.rows.map((r) => r.record).join("\n")).toContain("denied: this conversation has no approval mapping");
+    } finally {
+      await h.close(context);
+    }
+  }, 15_000);
 
   it("does not replay a skill publication interrupted after its external effect", async () => {
     const push = new SkillRuntime({} as never).tools().find((t) => t.name === "push_skill")!;

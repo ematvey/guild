@@ -101,7 +101,13 @@ export function registerRegistryRoutes(
     }
 
     await publishBundleBytes(
-      gateway, auth, objects, user, kind, slug, version,
+      gateway,
+      auth,
+      objects,
+      user,
+      kind,
+      slug,
+      version,
       typeof manifest.description === "string" ? manifest.description : "",
       manifest,
       body,
@@ -253,10 +259,7 @@ async function installMcpPlugin(
   void parsed;
   // A missing auth block becomes the default manifest (org_secret / email / no secrets).
   const authIn = (manifest.auth ?? null) as Record<string, unknown> | null;
-  const auth =
-    authIn === null
-      ? { kind: "org_secret", secret_names: [], identity_key: "email" }
-      : authIn;
+  const auth = authIn === null ? { kind: "org_secret", secret_names: [], identity_key: "email" } : authIn;
   const config = {
     mcp: manifest.mcp ?? null,
     auth,
@@ -275,4 +278,3 @@ async function installMcpPlugin(
   sendJson(reply, { integration: integrationRow });
   return reply;
 }
-

@@ -34,7 +34,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       ...r,
       price_per_mtok_in_usd: r["price_per_mtok_in_usd"] as number,
       price_per_mtok_out_usd: r["price_per_mtok_out_usd"] as number,
-      quota_monthly_usd: r["quota_monthly_usd"] === null ? null : r["quota_monthly_usd"] as number,
+      quota_monthly_usd: r["quota_monthly_usd"] === null ? null : (r["quota_monthly_usd"] as number),
     }));
     return JSON.stringify({ routes: rendered });
   });

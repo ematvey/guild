@@ -355,10 +355,10 @@ export class ChatStore {
    *  authorized the access themselves (agent turn routes resolve the agent
    *  grant before using the thread's chat journal). */
   async getChatInOrg(orgId: string, chatId: string): Promise<ChatRow> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2`,
-      [orgId, chatId],
-    );
+    const res = await this.pool.query<Record<string, unknown>>(`${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2`, [
+      orgId,
+      chatId,
+    ]);
     const row = res.rows[0];
     if (!row) throw ApiError.notFound("no such chat");
     return rowToChat(row);
@@ -421,11 +421,7 @@ export class ChatStore {
    *  goes with it and its parent stays. Deleting again answers the same row
    *  and keeps the first deletion time. `descendants` names the subtree's
    *  other chats so the caller can stop their live turns. */
-  async deleteChat(
-    orgId: string,
-    chatId: string,
-    caller: UserRow,
-  ): Promise<{ chat: ChatRow; descendants: string[] }> {
+  async deleteChat(orgId: string, chatId: string, caller: UserRow): Promise<{ chat: ChatRow; descendants: string[] }> {
     const { row, descendants, users } = await withTransaction(this.pool, async (client) => {
       const res = await client.query<Record<string, unknown>>(
         `UPDATE chats SET deleted_at = COALESCE(deleted_at, now())
@@ -489,7 +485,12 @@ export class ChatStore {
    *  project-alignment path calls this. The registry row is locked inside
    *  the write tx so a stale cached machine can never be reinstated over an
    *  adopted binding. */
-  async setMachine(orgId: string, chatId: string, machineId: string | null, machineLabel: string | null): Promise<ChatRow> {
+  async setMachine(
+    orgId: string,
+    chatId: string,
+    machineId: string | null,
+    machineLabel: string | null,
+  ): Promise<ChatRow> {
     return withTransaction(this.pool, async (client) => {
       if (machineId !== null) {
         const known = await client.query(
@@ -548,7 +549,9 @@ export class ChatStore {
     orgId: string,
     projectId: string,
     userId: string,
-  ): Promise<{ id: string; name: string; folder: string; machine_id: string; machine_label: string | null } | undefined> {
+  ): Promise<
+    { id: string; name: string; folder: string; machine_id: string; machine_label: string | null } | undefined
+  > {
     const res = await this.pool.query<{
       id: string;
       name: string;
@@ -565,7 +568,10 @@ export class ChatStore {
   }
 
   /** The chat's project (id, name, machine label) — org-scoped plain read. */
-  async projectOf(orgId: string, chatId: string): Promise<{ id: string; name: string; label: string | null } | undefined> {
+  async projectOf(
+    orgId: string,
+    chatId: string,
+  ): Promise<{ id: string; name: string; label: string | null } | undefined> {
     const res = await this.pool.query<{ id: string; name: string; label: string | null }>(
       `SELECT pr.id, pr.name, m.label
        FROM chats c
@@ -579,7 +585,12 @@ export class ChatStore {
 
   /** Sets (or clears, with null) the caller's own chat's approval-mode
    *  override — the composer's per-chat policy (chats.approval). */
-  async setApproval(orgId: string, caller: UserRow, chatId: string, policy: Record<string, unknown> | null): Promise<void> {
+  async setApproval(
+    orgId: string,
+    caller: UserRow,
+    chatId: string,
+    policy: Record<string, unknown> | null,
+  ): Promise<void> {
     const res = await this.pool.query(
       "UPDATE chats SET approval = $4::jsonb WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL",
       [orgId, chatId, caller.id, policy === null ? null : jsonbText(policy)],
@@ -687,12 +698,7 @@ export class ChatStore {
   /** Fills an empty chat title with a generated name and mirrors it onto
    *  the thread. A locked or already-named thread is left alone; the first
    *  writer wins, so two queued runs cannot race a title in. */
-  async setGeneratedTitle(
-    orgId: string,
-    chatId: string,
-    threadId: string,
-    title: string,
-  ): Promise<void> {
+  async setGeneratedTitle(orgId: string, chatId: string, threadId: string, title: string): Promise<void> {
     const clean = title.trim();
     if (clean === "") return;
     const ownerId = await withTransaction(this.pool, async (client) => {
@@ -781,9 +787,12 @@ export class ChatStore {
   /** Where a machine-bound chat's tools run: the machine, its label, the
    *  org, and the project folder; null when the chat is gone or has no
    *  machine. */
-  async machineBinding(
-    chatId: string,
-  ): Promise<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null } | null> {
+  async machineBinding(chatId: string): Promise<{
+    machine_id: string;
+    machine_label: string | null;
+    org_id: string;
+    project_folder: string | null;
+  } | null> {
     const res = await this.pool.query<{
       machine_id: string | null;
       machine_label: string | null;
@@ -857,7 +866,6 @@ export class ChatStore {
     );
     return res.rows[0]?.id ?? null;
   }
-
 }
 
 function rowToList(r: Record<string, unknown>): ChatListRow {

@@ -24,10 +24,13 @@ describe("orgSkillsApi.skillBody pins the version", () => {
       removeItem: (k: string) => void store.delete(k),
     });
     const urls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
-      urls.push(String(input));
-      return new Response(JSON.stringify({ version: "v2", skill_md: "BODY", files: [] }), { status: 200 });
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        urls.push(String(input));
+        return new Response(JSON.stringify({ version: "v2", skill_md: "BODY", files: [] }), { status: 200 });
+      }),
+    );
     setToken("tok");
     return { api: orgSkillsApi(), urls };
   }

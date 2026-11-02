@@ -82,9 +82,7 @@ function terminalAssistantEvent(
 /** The terminal assistant text of a turn: the last assistant message with no
  *  tool call, its text blocks joined and trimmed. Only that message is the
  *  run's answer; earlier assistant rows are narration around tool calls. */
-export function terminalAssistantText(
-  events: readonly { type: string; payload: Record<string, unknown> }[],
-): string {
+export function terminalAssistantText(events: readonly { type: string; payload: Record<string, unknown> }[]): string {
   const terminal = terminalAssistantEvent(events);
   return terminal === null ? "" : textOf(terminal.payload).trim();
 }
@@ -153,19 +151,9 @@ export class AgentRunLifecycle {
         return sum + Number(usage?.tokens_in ?? 0) + Number(usage?.tokens_out ?? 0);
       }, 0);
       const sentMessage = await this.sentMessage(run, since);
-      const status =
-        info.error !== null
-          ? "failed"
-          : finalText !== "" || sentMessage
-            ? "succeeded"
-            : "silent";
+      const status = info.error !== null ? "failed" : finalText !== "" || sentMessage ? "succeeded" : "silent";
       const summary =
-        info.summary ??
-        (finalText !== ""
-          ? clip(finalText, MAX_SUMMARY_CHARS)
-          : sentMessage
-            ? "Sent a message"
-            : null);
+        info.summary ?? (finalText !== "" ? clip(finalText, MAX_SUMMARY_CHARS) : sentMessage ? "Sent a message" : null);
       const updated = await this.deps.pool.query<{ id: string }>(
         `UPDATE agent_runs
          SET status = $2, summary = $3, tokens = $4, finished_at = now(),

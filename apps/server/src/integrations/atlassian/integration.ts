@@ -129,7 +129,10 @@ const plugin: IntegrationPlugin = {
     const token = secret(secrets, "token");
     const basic = Buffer.from(`${email}:${token}`).toString("base64");
     await probe(
-      fetch(`${site}/rest/api/3/myself`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Basic ${basic}` } })),
+      fetch(
+        `${site}/rest/api/3/myself`,
+        fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Basic ${basic}` } }),
+      ),
       "atlassian",
     );
   },

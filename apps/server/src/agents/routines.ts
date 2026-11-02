@@ -8,12 +8,7 @@ import { Cron } from "croner";
 import { ApiError } from "../platform/errors.js";
 import type { PlatformPool } from "../platform/db.js";
 import { pgTimestampToRfc3339, utcText, uuidv7 } from "../platform/time.js";
-import type {
-  AgentRoutine,
-  AgentRoutineKind,
-  AgentRoutineOccurrence,
-  AgentRoutineOccurrenceStatus,
-} from "./types.js";
+import type { AgentRoutine, AgentRoutineKind, AgentRoutineOccurrence, AgentRoutineOccurrenceStatus } from "./types.js";
 
 export const DEFAULT_ROUTINE_TIMEZONE = "UTC";
 export const MIN_INTERVAL_MS = 60_000;
@@ -103,7 +98,10 @@ export function isValidTimeZone(timezone: string): boolean {
 }
 
 function parseIntervalMinutes(raw: string): number | null {
-  const text = raw.trim().toLowerCase().replace(/^every\s+/, "");
+  const text = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^every\s+/, "");
   const match = /^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/.exec(text);
   if (match === null) return null;
   const amount = Number(match[1]);
@@ -276,13 +274,8 @@ export async function updateRoutine(
   const name = patch.name === undefined ? existing.name : cleanName(patch.name);
   const prompt = patch.prompt === undefined ? existing.prompt : cleanPrompt(patch.prompt);
   const schedule =
-    kind === "cron"
-      ? normalizeRoutineSchedule(patch.schedule ?? existing.schedule ?? "", timezone)
-      : null;
-  const runAt =
-    kind === "once"
-      ? parseRunAt(patch.run_at ?? existing.run_at ?? "").toISOString()
-      : null;
+    kind === "cron" ? normalizeRoutineSchedule(patch.schedule ?? existing.schedule ?? "", timezone) : null;
+  const runAt = kind === "once" ? parseRunAt(patch.run_at ?? existing.run_at ?? "").toISOString() : null;
   const timingChanged =
     patch.kind !== undefined ||
     patch.schedule !== undefined ||
@@ -306,10 +299,7 @@ export async function updateRoutine(
   const row = res.rows[0];
   if (row === undefined) throw ApiError.notFound("no such routine");
   if (!enabled || (kind === "once" && patch.run_at !== undefined)) {
-    await pool.query(
-      `DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`,
-      [routineId],
-    );
+    await pool.query(`DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`, [routineId]);
   }
   return toRoutine(row);
 }

@@ -25,7 +25,6 @@ export interface PreparedTurn {
   instructions?: string;
 }
 
-
 /** UTF-8-safe truncation to `max` bytes (cut at a character boundary). */
 function truncateBytes(s: string, max: number): string {
   if (byteLength(s) <= max) return s;
@@ -46,10 +45,7 @@ export interface DocEntry {
 }
 
 /** The global instructions: override beats plain, first non-empty wins. */
-export async function loadGlobalAgentsMd(
-  fs: BridgeFs,
-  configDir: string,
-): Promise<DocEntry | null> {
+export async function loadGlobalAgentsMd(fs: BridgeFs, configDir: string): Promise<DocEntry | null> {
   for (const name of [AGENTS_OVERRIDE_FILENAME, AGENTS_MD_FILENAME]) {
     const path = `${configDir}/${name}`;
     const text = await fs.readText(undefined, path);
@@ -59,10 +55,7 @@ export async function loadGlobalAgentsMd(
 }
 
 /** The nearest ancestor (inclusive) holding `.git`; else the start itself. */
-async function projectRoot(
-  fs: BridgeFs,
-  projectDir: string,
-): Promise<string> {
+async function projectRoot(fs: BridgeFs, projectDir: string): Promise<string> {
   let cur: string | null = projectDir;
   while (cur) {
     if (await fs.exists(projectDir, `${cur}/.git`)) return cur;
@@ -158,8 +151,7 @@ export async function assembleTurnContext(
   const index = promptIndex(enabled);
   const mentions = await mentionExpansions(fs, projectDir, prompt, enabled, orgApi);
   const expanded = mentionBlock(mentions);
-  const finalPrompt =
-    expanded === null ? prompt : `${prompt}${expanded}`;
+  const finalPrompt = expanded === null ? prompt : `${prompt}${expanded}`;
   // The project chain in pi's context syntax: one tagged block per file,
   // path included, so the model can tell a root file from a subdirectory
   // one. The server wraps the blocks in its `<project_context>` section.
@@ -171,7 +163,10 @@ export async function assembleTurnContext(
     docs.length === 0
       ? undefined
       : docs
-          .map((d) => `<project_instructions path="${d.path.replaceAll('"', "&quot;")}">\n${d.contents.trim()}\n</project_instructions>`)
+          .map(
+            (d) =>
+              `<project_instructions path="${d.path.replaceAll('"', "&quot;")}">\n${d.contents.trim()}\n</project_instructions>`,
+          )
           .join("\n\n");
   return { prompt: finalPrompt, index, instructions };
 }

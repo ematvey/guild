@@ -9,11 +9,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import pg from "pg";
-import {
-  S3Client,
-  CreateBucketCommand,
-  HeadBucketCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
 
 const PROJECT = "guild-agents-vfs";
 const PORT = "18093";
@@ -22,9 +18,7 @@ const META_DATABASE = "guild_meta";
 const BUCKET = "guild-agents-vfs";
 const HOST_DIR = "/mnt/guild-agents-vfs";
 
-const configPath = resolve(
-  process.argv[2] ?? fileURLToPath(new URL("../deploy/compose/config.env", import.meta.url)),
-);
+const configPath = resolve(process.argv[2] ?? fileURLToPath(new URL("../deploy/compose/config.env", import.meta.url)));
 const config = Object.fromEntries(
   readFileSync(configPath, "utf8")
     .split("\n")
@@ -123,6 +117,4 @@ console.log(`  Postgres ${DATABASE}, JuiceFS metadata ${META_DATABASE}`);
 console.log(`  S3 ${BUCKET}, host volume dir ${HOST_DIR}`);
 console.log("");
 console.log("Bring the stack up with:");
-console.log(
-  `  GUILD_CONFIG_ENV=${configPath} docker compose -p ${PROJECT} -f deploy/compose/docker-compose.yml up -d`,
-);
+console.log(`  GUILD_CONFIG_ENV=${configPath} docker compose -p ${PROJECT} -f deploy/compose/docker-compose.yml up -d`);

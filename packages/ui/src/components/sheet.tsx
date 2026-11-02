@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 import * as SheetPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
@@ -51,10 +51,7 @@ function SheetTitle({ className, ...props }: React.ComponentProps<typeof SheetPr
   return <SheetPrimitive.Title className={cn("font-semibold text-foreground", className)} {...props} />;
 }
 
-function SheetDescription({
-  className,
-  ...props
-}: React.ComponentProps<typeof SheetPrimitive.Description>) {
+function SheetDescription({ className, ...props }: React.ComponentProps<typeof SheetPrimitive.Description>) {
   return <SheetPrimitive.Description className={cn("text-sm text-muted-foreground", className)} {...props} />;
 }
 

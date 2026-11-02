@@ -18,13 +18,7 @@ import {
   Timer,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import {
   AGENTS_ACTIVITY,
   RUN_STATUS_LABEL,
@@ -48,15 +42,7 @@ import {
 } from "./agents-api";
 import type { AgentRun } from "./agents-api";
 import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
-import {
-  AgentGlyph,
-  ErrorState,
-  InlineLoading,
-  LoadingRows,
-  PageBody,
-  TabBar,
-  ToneBadge,
-} from "./agent-ui";
+import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { count } from "../../lib/format";
 import { useDebounced } from "../../lib/use-debounced";
@@ -340,11 +326,7 @@ export function ActivityPage({
           />
         )}
         {error === null && filters.tab === "chats" && (
-          <ChatsTable
-            rows={chats}
-            admin={admin}
-            onOpen={(id) => onNavigate({ view: "chat", chatId: id })}
-          />
+          <ChatsTable rows={chats} admin={admin} onOpen={(id) => onNavigate({ view: "chat", chatId: id })} />
         )}
       </div>
     </>
@@ -354,12 +336,7 @@ export function ActivityPage({
     return (
       <div>
         <div className="mb-3">
-          <TabBar
-            label="Activity views"
-            tabs={ACTIVITY_TABS}
-            value={filters.tab}
-            onChange={(tab) => set({ tab })}
-          />
+          <TabBar label="Activity views" tabs={ACTIVITY_TABS} value={filters.tab} onChange={(tab) => set({ tab })} />
         </div>
         {body}
       </div>
@@ -368,16 +345,12 @@ export function ActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader variant="bar"
+      <PageHeader
+        variant="bar"
         title="Activity"
         description="Agent runs, the LLM calls and tool calls inside them, and the chats they belong to."
         tabs={
-          <TabBar
-            label="Activity views"
-            tabs={ACTIVITY_TABS}
-            value={filters.tab}
-            onChange={(tab) => set({ tab })}
-          />
+          <TabBar label="Activity views" tabs={ACTIVITY_TABS} value={filters.tab} onChange={(tab) => set({ tab })} />
         }
       />
       <PageBody className="max-w-[76rem]">{body}</PageBody>
@@ -388,22 +361,40 @@ export function ActivityPage({
 function SummaryCards({ summary, admin }: { summary: ActivitySummary | null; admin: boolean }) {
   const totals = summary?.totals;
   const cards = [
-    { label: "Traces", value: totals === undefined ? null : compact(totals.traces), icon: <Activity className="size-3.5" /> },
-    { label: "Model calls", value: totals === undefined ? null : compact(totals.calls), icon: <MessageSquare className="size-3.5" /> },
+    {
+      label: "Traces",
+      value: totals === undefined ? null : compact(totals.traces),
+      icon: <Activity className="size-3.5" />,
+    },
+    {
+      label: "Model calls",
+      value: totals === undefined ? null : compact(totals.calls),
+      icon: <MessageSquare className="size-3.5" />,
+    },
     {
       label: "Tokens",
       value: totals === undefined ? null : compact(totals.tokens_in + totals.tokens_out),
       icon: <Coins className="size-3.5" />,
     },
     ...(admin
-      ? [{ label: "Cost", value: totals === undefined ? null : money(totals.cost_usd), icon: <Coins className="size-3.5" /> }]
+      ? [
+          {
+            label: "Cost",
+            value: totals === undefined ? null : money(totals.cost_usd),
+            icon: <Coins className="size-3.5" />,
+          },
+        ]
       : []),
     {
       label: "Errors",
       value: totals === undefined ? null : compact(totals.errors + totals.failed_traces),
       icon: <AlertTriangle className="size-3.5" />,
     },
-    { label: "p95 latency", value: totals === undefined ? null : ms(totals.p95_ms), icon: <Timer className="size-3.5" /> },
+    {
+      label: "p95 latency",
+      value: totals === undefined ? null : ms(totals.p95_ms),
+      icon: <Timer className="size-3.5" />,
+    },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -469,9 +460,7 @@ function TracesTable({
               <span className="lg:hidden">
                 <ToneBadge tone={toneOf(row.status)}>{statusLabel(row.status)}</ToneBadge>
               </span>
-              {row.error_count > 0 && (
-                <ToneBadge tone="danger">{count(row.error_count, "error")}</ToneBadge>
-              )}
+              {row.error_count > 0 && <ToneBadge tone="danger">{count(row.error_count, "error")}</ToneBadge>}
             </span>
             <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span>{time(row.started_at)}</span>
@@ -511,9 +500,7 @@ function TracesTable({
             <ToneBadge tone={toneOf(row.status)}>{statusLabel(row.status)}</ToneBadge>
           </span>
           <span className="hidden text-right text-xs tabular-nums lg:block">{row.call_count}</span>
-          <span className="hidden text-right text-xs tabular-nums lg:block">
-            {compact(totalTokens(row))}
-          </span>
+          <span className="hidden text-right text-xs tabular-nums lg:block">{compact(totalTokens(row))}</span>
           <span className="hidden text-right text-xs tabular-nums lg:block">{ms(row.duration_ms)}</span>
           <ChevronRight className="size-4 text-muted-foreground" />
         </button>
@@ -562,7 +549,9 @@ function CallsTable({
         >
           <span className="min-w-0 lg:hidden">
             <span className="flex items-center gap-1.5">
-              <span className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`} />
+              <span
+                className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`}
+              />
               <span className="truncate font-mono text-xs">{span.model || span.name}</span>
               <ToneBadge tone={span.caller === "judge" ? "info" : "neutral"}>{span.caller || "model"}</ToneBadge>
             </span>
@@ -570,10 +559,16 @@ function CallsTable({
               <span>{time(span.start_time)}</span>
               <span>·</span>
               <span className="truncate">
-                {span.run_id !== null ? `run ${span.run_id.slice(0, 8)}` : span.chat_id !== null ? `chat ${span.chat_id.slice(0, 8)}` : "—"}
+                {span.run_id !== null
+                  ? `run ${span.run_id.slice(0, 8)}`
+                  : span.chat_id !== null
+                    ? `chat ${span.chat_id.slice(0, 8)}`
+                    : "—"}
               </span>
               <span>·</span>
-              <span className="tabular-nums">{compact(span.tokens_in)}→{compact(span.tokens_out)} tok</span>
+              <span className="tabular-nums">
+                {compact(span.tokens_in)}→{compact(span.tokens_out)} tok
+              </span>
               <span>·</span>
               <span className="tabular-nums">{ms(span.duration_ms)}</span>
               {admin && (
@@ -588,9 +583,15 @@ function CallsTable({
           <span className="hidden truncate font-mono text-xs lg:block">{span.model || span.name}</span>
           <span className="hidden min-w-0 lg:block">
             <span className="flex items-center gap-1.5">
-              <span className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`} />
+              <span
+                className={`size-1.5 shrink-0 rounded-full ${span.status === "error" ? "bg-destructive" : "bg-emerald-500"}`}
+              />
               <span className="truncate text-xs text-muted-foreground">
-                {span.run_id !== null ? `run ${span.run_id.slice(0, 8)}` : span.chat_id !== null ? `chat ${span.chat_id.slice(0, 8)}` : "—"}
+                {span.run_id !== null
+                  ? `run ${span.run_id.slice(0, 8)}`
+                  : span.chat_id !== null
+                    ? `chat ${span.chat_id.slice(0, 8)}`
+                    : "—"}
               </span>
             </span>
           </span>
@@ -601,9 +602,7 @@ function CallsTable({
             {compact(span.tokens_in)}→{compact(span.tokens_out)}
           </span>
           <span className="hidden text-right text-xs tabular-nums lg:block">{ms(span.duration_ms)}</span>
-          <span className="hidden text-right text-xs tabular-nums lg:block">
-            {admin ? money(span.cost_usd) : "—"}
-          </span>
+          <span className="hidden text-right text-xs tabular-nums lg:block">{admin ? money(span.cost_usd) : "—"}</span>
           <ChevronRight className="size-4 text-muted-foreground" />
         </button>
       ))}
@@ -717,7 +716,8 @@ export function ChatActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader variant="bar"
+      <PageHeader
+        variant="bar"
         title="Chat"
         description={chatId}
         actions={
@@ -786,6 +786,5 @@ export function ChatActivityPage({
 }
 
 export { RunDetailPage } from "./TraceDetail";
-
 
 export { agentsRoutePath };

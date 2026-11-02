@@ -29,22 +29,25 @@ export function useSidebarWidth() {
     window.addEventListener("guild:sidebar-width-changed", resync);
     return () => window.removeEventListener("guild:sidebar-width-changed", resync);
   }, []);
-  const startDrag = useCallback((e: ReactMouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = width;
-    setResizing(true);
-    trackDrag(
-      (x) => setWidth(clampSidebarWidth(startW + x - startX)),
-      () => {
-        setResizing(false);
-        setWidth((w) => {
-          saveSidebarWidth(w);
-          return w;
-        });
-      },
-    );
-  }, [width]);
+  const startDrag = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = width;
+      setResizing(true);
+      trackDrag(
+        (x) => setWidth(clampSidebarWidth(startW + x - startX)),
+        () => {
+          setResizing(false);
+          setWidth((w) => {
+            saveSidebarWidth(w);
+            return w;
+          });
+        },
+      );
+    },
+    [width],
+  );
   return { width, resizing, startDrag };
 }
 
@@ -61,24 +64,27 @@ export function useChatColumnWidth(pane: RefObject<HTMLDivElement | null>) {
     window.addEventListener("guild:chat-width-changed", resync);
     return () => window.removeEventListener("guild:chat-width-changed", resync);
   }, []);
-  const startChatDrag = useCallback((e: ReactMouseEvent, side: "left" | "right") => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = chatWidth;
-    const paneW = pane.current?.clientWidth ?? window.innerWidth;
-    const dir = side === "right" ? 1 : -1;
-    setChatResizing(true);
-    trackDrag(
-      (x) => setChatWidth(clampChatWidth(Math.min(startW + (x - startX) * 2 * dir, paneW))),
-      () => {
-        setChatResizing(false);
-        setChatWidth((w) => {
-          saveChatWidth(w);
-          return w;
-        });
-      },
-    );
-  }, [chatWidth, pane]);
+  const startChatDrag = useCallback(
+    (e: ReactMouseEvent, side: "left" | "right") => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = chatWidth;
+      const paneW = pane.current?.clientWidth ?? window.innerWidth;
+      const dir = side === "right" ? 1 : -1;
+      setChatResizing(true);
+      trackDrag(
+        (x) => setChatWidth(clampChatWidth(Math.min(startW + (x - startX) * 2 * dir, paneW))),
+        () => {
+          setChatResizing(false);
+          setChatWidth((w) => {
+            saveChatWidth(w);
+            return w;
+          });
+        },
+      );
+    },
+    [chatWidth, pane],
+  );
   const resetChatWidth = useCallback(() => {
     setChatWidth(CHAT_DEFAULT_W);
     saveChatWidth(CHAT_DEFAULT_W);

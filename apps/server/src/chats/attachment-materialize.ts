@@ -6,11 +6,7 @@
 import path from "node:path";
 import type { Context } from "@earendil-works/chord";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import {
-  attachmentObjectKey,
-  safeFilename,
-  type AttachmentRow,
-} from "../platform/store/attachments.js";
+import { attachmentObjectKey, safeFilename, type AttachmentRow } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 
 export const ATTACHMENTS_ROOT = "/tmp/attachments";

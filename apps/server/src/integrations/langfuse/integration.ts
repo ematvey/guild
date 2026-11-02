@@ -16,7 +16,7 @@ const plugin: IntegrationPlugin = {
     description:
       "Adds LLM observability to chats. List recent traces, read one trace in " +
       "full, and fetch a prompt by name and version.\n\n" +
-      "Use it to answer \"why did the agent do that\" questions: the trace carries " +
+      'Use it to answer "why did the agent do that" questions: the trace carries ' +
       "the model calls, the token counts, and the tool spans of a run.",
     docs_url: "https://langfuse.com/docs",
     categories: ["observability"],
@@ -94,7 +94,10 @@ const plugin: IntegrationPlugin = {
     const secret_key = secret(secrets, "secret_key");
     const basic = Buffer.from(`${public_key}:${secret_key}`).toString("base64");
     await probe(
-      fetch(`${base}/api/public/projects`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Basic ${basic}` } })),
+      fetch(
+        `${base}/api/public/projects`,
+        fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Basic ${basic}` } }),
+      ),
       "langfuse",
     );
   },

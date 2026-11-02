@@ -17,7 +17,12 @@ import { AgentTreeStore } from "./store/subtree.js";
 import { AgentThreadStore } from "./store/threads.js";
 
 export { AgentGrants } from "./store/access.js";
-export { DEFAULT_AGENT_RESOURCES, type AgentListOptions, type CreateAgentInput, type UpdateAgentInput } from "./store/catalog.js";
+export {
+  DEFAULT_AGENT_RESOURCES,
+  type AgentListOptions,
+  type CreateAgentInput,
+  type UpdateAgentInput,
+} from "./store/catalog.js";
 export { refuseDeletingAgent, AgentLifecycleStore } from "./store/lifecycle.js";
 export { AgentNoticeStore, type CreateNoticeInput } from "./store/notices.js";
 export {

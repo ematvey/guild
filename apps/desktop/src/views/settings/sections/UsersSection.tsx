@@ -6,13 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { entityDetailCodec } from "../section-nav";
 import { quantizeIso, useCachedGet } from "../use-cached-api";
-import {
-  createUser,
-  deleteUser,
-  SETTINGS_PATHS,
-  updateUser,
-  userUsageSeriesPath,
-} from "../../../lib/api/settings";
+import { createUser, deleteUser, SETTINGS_PATHS, updateUser, userUsageSeriesPath } from "../../../lib/api/settings";
 import { Area, AreaChart } from "recharts";
 import { Ellipsis, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -145,10 +139,14 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
         header: "Spend · 30d",
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-2 tabular-nums text-muted-foreground">
-            {seriesRes.data === null && !seriesRes.error ? <Skeleton className="h-3 w-24" /> : seriesRes.error ? <span title={seriesRes.error}>Unavailable</span> : <SpendSparkline points={spend[row.original.email]?.points ?? []} />}
-            {spend[row.original.email] && (
-              <span>${spend[row.original.email].total.toFixed(4)}</span>
+            {seriesRes.data === null && !seriesRes.error ? (
+              <Skeleton className="h-3 w-24" />
+            ) : seriesRes.error ? (
+              <span title={seriesRes.error}>Unavailable</span>
+            ) : (
+              <SpendSparkline points={spend[row.original.email]?.points ?? []} />
             )}
+            {spend[row.original.email] && <span>${spend[row.original.email].total.toFixed(4)}</span>}
           </div>
         ),
       },
@@ -169,9 +167,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem onClick={() => onDetailChange(row.original.id)}>
-                  Open
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onDetailChange(row.original.id)}>Open</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -182,18 +178,23 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
   );
 
   const view = entityDetailCodec.parse(detail);
-  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) =>
-    onDetailChange(entityDetailCodec.format(next));
+  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) => onDetailChange(entityDetailCodec.format(next));
 
   if (view.kind !== "list") {
     // Deep-linked user page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-user form.
     if (view.kind === "row" && users === null) {
-      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+      if (error)
+        return (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        );
       return <SkeletonForm />;
     }
-    const user = view.kind === "new" ? null : users?.find((u) => u.id === view.id) ?? null;
-    if (view.kind === "row" && !user) return <EmptyState title="User not found" hint="It may have been deleted." icon={Users} />;
+    const user = view.kind === "new" ? null : (users?.find((u) => u.id === view.id) ?? null);
+    if (view.kind === "row" && !user)
+      return <EmptyState title="User not found" hint="It may have been deleted." icon={Users} />;
     return (
       <UserDetail
         user={user}
@@ -400,9 +401,7 @@ function UserDetail({
         <FactCard label="Role">
           <RoleBadge role={user!.role} />
         </FactCard>
-        <FactCard label="Sign-in">
-          {user!.identity_type === "password" ? "password" : user!.identity_type}
-        </FactCard>
+        <FactCard label="Sign-in">{user!.identity_type === "password" ? "password" : user!.identity_type}</FactCard>
       </FactGrid>
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>

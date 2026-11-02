@@ -26,7 +26,9 @@ class FakeWebSocket {
   constructor(readonly url: string) {
     FakeWebSocket.all.push(this);
   }
-  send(data: string) { this.sent.push(data); }
+  send(data: string) {
+    this.sent.push(data);
+  }
   close() {
     if (this.readyState === 3) return;
     this.readyState = 3;
@@ -49,8 +51,14 @@ function echo(seq: number, content: string, id = `e${seq}`): ThreadEventRow {
 
 function threadState(seq: number, events: ThreadEventRow[], generating: boolean) {
   return {
-    type: "thread_state", chat_id: CHAT, seq, events, text: "", thinking: "",
-    generating, has_more_events: false,
+    type: "thread_state",
+    chat_id: CHAT,
+    seq,
+    events,
+    text: "",
+    thinking: "",
+    generating,
+    has_more_events: false,
   };
 }
 
@@ -85,14 +93,21 @@ describe("member socket → thread store (integration)", () => {
     const storage = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => { storage.set(key, value); },
-      removeItem: (key: string) => { storage.delete(key); },
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => (
-      String(url).includes("/ws/ticket")
-        ? { ok: true, status: 200, json: async () => ({ ticket: "t" }) }
-        : { ok: false, status: 404, json: async () => ({}) }
-    )));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("/ws/ticket")
+          ? { ok: true, status: 200, json: async () => ({ ticket: "t" }) }
+          : { ok: false, status: 404, json: async () => ({}) },
+      ),
+    );
   });
   afterEach(() => {
     resetChatStores();
@@ -103,7 +118,9 @@ describe("member socket → thread store (integration)", () => {
   it("a pending send holds busy until its own state, and a reconnect resyncs without a skeleton", async () => {
     const { result, unmount } = renderHook(() => useHarness());
     expect(result.current.thread.view.loading).toBe(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     const first = FakeWebSocket.all[0]!;
     act(() => first.open());
     expect(JSON.parse(first.sent[0]!)).toEqual({ type: "sync", chat_id: CHAT });
@@ -115,8 +132,17 @@ describe("member socket → thread store (integration)", () => {
         type: "chat_tree",
         chat_id: CHAT,
         tree: {
-          chat_id: CHAT, type: "user", title: "Hi", agent_id: null, agent_name: null, status: null,
-          depth: 0, parent: null, origin: null, archived: false, deleted: false,
+          chat_id: CHAT,
+          type: "user",
+          title: "Hi",
+          agent_id: null,
+          agent_name: null,
+          status: null,
+          depth: 0,
+          parent: null,
+          origin: null,
+          archived: false,
+          deleted: false,
         },
       });
       first.deliver(threadState(1, [echo(1, "hi")], false));
@@ -129,7 +155,9 @@ describe("member socket → thread store (integration)", () => {
 
     // The composer sends: the optimistic block and the pending send.
     act(() => {
-      result.current.thread.store.mutate((r) => r.optimisticSend({ chatId: CHAT, text: "go", key: "cmd-1", sentAt: 1 }));
+      result.current.thread.store.mutate((r) =>
+        r.optimisticSend({ chatId: CHAT, text: "go", key: "cmd-1", sentAt: 1 }),
+      );
       result.current.thread.setSendPending(CHAT, "optimistic_send", "cmd-1");
     });
     expect(result.current.busy).toBe(true);
@@ -161,7 +189,9 @@ describe("member socket → thread store (integration)", () => {
     // The link drops mid-turn; the reconnect's sync re-derives the view and
     // the screen keeps its content (no skeleton) while it runs.
     act(() => first.close());
-    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
     const second = FakeWebSocket.all[1]!;
     expect(FakeWebSocket.all).toHaveLength(2);
     act(() => {
@@ -182,24 +212,47 @@ describe("member socket → thread store (integration)", () => {
 
   it("declares chat_row, applies one changed row in place, and stores pushed context usage", async () => {
     const { result, unmount } = renderHook(() => useHarness());
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     const socket = FakeWebSocket.all[0]!;
     expect(socket.url).toContain("features=chat_row");
     act(() => socket.open());
     const row = (id: string, title: string, unread: boolean) => ({
-      id, org_id: "o", user_id: "u", title, created_at: "2026-11-01T00:00:00Z",
-      generating: false, unread, working: false, blocked: false,
-      last_activity_at: "2026-11-01T00:00:00Z", machine_online: false,
-      type: "user", archived: false, deleted: false,
+      id,
+      org_id: "o",
+      user_id: "u",
+      title,
+      created_at: "2026-11-01T00:00:00Z",
+      generating: false,
+      unread,
+      working: false,
+      blocked: false,
+      last_activity_at: "2026-11-01T00:00:00Z",
+      machine_online: false,
+      type: "user",
+      archived: false,
+      deleted: false,
     });
-    act(() => socket.deliver({ type: "thread_list", chats: [row("chat-2", "Two", false), row("chat-3", "Three", false)] }));
+    act(() =>
+      socket.deliver({ type: "thread_list", chats: [row("chat-2", "Two", false), row("chat-3", "Three", false)] }),
+    );
     act(() => socket.deliver({ type: "chat_row", chat: row("chat-3", "Renamed", true) }));
-    expect(result.current.data.chats?.map((c) => [c.id, c.title])).toEqual([["chat-2", "Two"], ["chat-3", "Renamed"]]);
+    expect(result.current.data.chats?.map((c) => [c.id, c.title])).toEqual([
+      ["chat-2", "Two"],
+      ["chat-3", "Renamed"],
+    ]);
     expect(result.current.data.chatStatus["chat-3"]).toMatchObject({ unread: true, generating: false });
 
-    act(() => socket.deliver({
-      type: "context_usage", chat_id: CHAT, tokens: 1200, usage_model: "m", usage_model_alias: "Model",
-    }));
+    act(() =>
+      socket.deliver({
+        type: "context_usage",
+        chat_id: CHAT,
+        tokens: 1200,
+        usage_model: "m",
+        usage_model_alias: "Model",
+      }),
+    );
     expect(contextUsageOf(CHAT)).toEqual({ tokens: 1200, usage_model: "m", usage_model_alias: "Model" });
     unmount();
   });

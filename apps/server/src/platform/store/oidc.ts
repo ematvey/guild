@@ -61,9 +61,7 @@ export class OidcStore {
   /** Guild is effectively single-org (bootstrap creates one); the public
    *  status endpoint and login flow use it to resolve the login target. */
   async firstOrgId(): Promise<string | null> {
-    const res = await this.pool.query<{ id: string }>(
-      "SELECT id FROM orgs ORDER BY created_at LIMIT 1",
-    );
+    const res = await this.pool.query<{ id: string }>("SELECT id FROM orgs ORDER BY created_at LIMIT 1");
     return res.rows[0]?.id ?? null;
   }
 }

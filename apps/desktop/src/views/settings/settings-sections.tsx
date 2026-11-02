@@ -54,29 +54,31 @@ export interface SectionDef {
 
 /// The section catalog: the sidebar rail's Settings tab nav plus the inline
 /// main-pane rendering.
-export const SETTINGS_SECTIONS: SectionDef[] = ([
-  { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
-  { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
-  { id: "notifications", label: "Notifications", icon: <Bell className="size-4" />, group: "user" },
-  { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
-  { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
-  { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
-  { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace" },
-  { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace" },
-  { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace" },
-  { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace" },
-  { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace" },
-  { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
-  {
-    id: "integrations",
-    label: "Integrations",
-    icon: <Plug className="size-4" />,
-    group: "workspace",
-  },
-  { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
-  { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
-  { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
-] satisfies Omit<SectionDef, "admin">[]).map((s) => ({ ...s, admin: isAdminSection(s.id) }));
+export const SETTINGS_SECTIONS: SectionDef[] = (
+  [
+    { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
+    { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
+    { id: "notifications", label: "Notifications", icon: <Bell className="size-4" />, group: "user" },
+    { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
+    { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
+    { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
+    { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace" },
+    { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace" },
+    { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace" },
+    { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace" },
+    { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace" },
+    { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
+    {
+      id: "integrations",
+      label: "Integrations",
+      icon: <Plug className="size-4" />,
+      group: "workspace",
+    },
+    { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
+    { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
+    { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
+  ] satisfies Omit<SectionDef, "admin">[]
+).map((s) => ({ ...s, admin: isAdminSection(s.id) }));
 
 /// Section content for embedding outside the overlay: the sidebar rail's
 /// Settings tab renders this pane in the main column. An unknown id, or an
@@ -180,12 +182,7 @@ function SectionBody({
       return <GatewaySection />;
     case "usage":
       return (
-        <UsageSection
-          detail={detail}
-          onDetailChange={onDetailChange}
-          usage={usage}
-          onUsageChange={onUsageChange}
-        />
+        <UsageSection detail={detail} onDetailChange={onDetailChange} usage={usage} onUsageChange={onUsageChange} />
       );
     case "assistant":
       return <AssistantSection />;
@@ -211,10 +208,7 @@ function SectionBody({
 function AccountSection({ email, role }: { email: string; role: string }) {
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Account"
-        description="Your sign-in and role in this workspace."
-      />
+      <PageHeader title="Account" description="Your sign-in and role in this workspace." />
       <FactGrid>
         <FactCard label="Email">
           <p className="break-all text-sm">{email}</p>
@@ -241,10 +235,7 @@ function AppearanceSection() {
   ];
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Appearance"
-        description="Light, dark, or follow the OS; applies to this device."
-      />
+      <PageHeader title="Appearance" description="Light, dark, or follow the OS; applies to this device." />
       <div className="max-w-xl space-y-3">
         {options.map((o) => (
           <button
@@ -269,4 +260,3 @@ function AppearanceSection() {
     </div>
   );
 }
-

@@ -21,12 +21,7 @@ import { sseDataStreams } from "./sse.js";
 function usesCompletionTokens(model: string): boolean {
   const name = model.split("/").pop() ?? model;
   const lower = name.toLowerCase();
-  return (
-    lower.startsWith("o1") ||
-    lower.startsWith("o3") ||
-    lower.startsWith("o4") ||
-    lower.startsWith("gpt-5")
-  );
+  return lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4") || lower.startsWith("gpt-5");
 }
 
 /** Builds the upstream request body from the internal messages. */
@@ -42,8 +37,7 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
   for (const m of req.messages) {
     if (m.role === "tool") {
       const mv: Record<string, unknown> = { role: "tool", content: m.content };
-      if (m.tool_call_id !== undefined && m.tool_call_id !== null)
-      mv["tool_call_id"] = m.tool_call_id;
+      if (m.tool_call_id !== undefined && m.tool_call_id !== null) mv["tool_call_id"] = m.tool_call_id;
       messages.push(mv);
       for (const uri of m.images ?? []) {
         pendingToolMedia.push({ type: "image_url", image_url: { url: uri } });
@@ -71,15 +65,11 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
         type: "function",
         function: {
           name: c.name,
-          arguments:
-            typeof c.arguments === "string"
-              ? c.arguments
-              : JSON.stringify(c.arguments ?? null),
+          arguments: typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments ?? null),
         },
       }));
     }
-    if (m.tool_call_id !== undefined && m.tool_call_id !== null)
-      mv["tool_call_id"] = m.tool_call_id;
+    if (m.tool_call_id !== undefined && m.tool_call_id !== null) mv["tool_call_id"] = m.tool_call_id;
     // dsh rule: reasoning is resent on EVERY reasoning-carrying turn, never
     // dropped from context (design §B.1).
     if (m.reasoning !== null && m.reasoning !== "") {
@@ -142,9 +132,7 @@ export function parseOpenAiFrame(data: string): OpenAiFrame {
   const tokensOut = numberField(usage?.["completion_tokens"]);
   const details = usage?.["completion_tokens_details"] as Record<string, unknown> | undefined;
   const reasoningTokens = numberField(details?.["reasoning_tokens"]);
-  const choice = ((v["choices"] as unknown[] | undefined) ?? [])[0] as
-    | Record<string, unknown>
-    | undefined;
+  const choice = ((v["choices"] as unknown[] | undefined) ?? [])[0] as Record<string, unknown> | undefined;
   const delta = (choice?.["delta"] as Record<string, unknown> | undefined) ?? {};
   const chunks: ProviderChunk[] = [];
   // vLLM emits `reasoning`; most OpenAI-compatible backends emit
@@ -207,9 +195,7 @@ export const openAiProvider: ModelProvider = {
       // provider that accepts the connection and then stalls must never pin
       // the caller.
       throw ProviderError.stream(
-        (error as { name?: string }).name === "TimeoutError"
-          ? "provider did not respond within 60s"
-          : errorText(error),
+        (error as { name?: string }).name === "TimeoutError" ? "provider did not respond within 60s" : errorText(error),
       );
     }
     if (!res.ok) {

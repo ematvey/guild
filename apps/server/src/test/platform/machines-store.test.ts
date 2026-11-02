@@ -42,7 +42,17 @@ async function insertUser(email: string, org = orgId): Promise<string> {
 
 describe("MachineStore.upsertConnected", () => {
   it("inserts a fresh row and refreshes metadata on reconnect (NULL never erases)", async () => {
-    const first = await store.upsertConnected(orgId, userId, "s-machine", "Desk", "FP-1", "Linux", "6.1", "0.5.34", "10.0.0.1");
+    const first = await store.upsertConnected(
+      orgId,
+      userId,
+      "s-machine",
+      "Desk",
+      "FP-1",
+      "Linux",
+      "6.1",
+      "0.5.34",
+      "10.0.0.1",
+    );
     expect(first.row.machine_id).toBe("s-machine");
     expect(first.adopted_from).toBeNull();
 
@@ -58,13 +68,17 @@ describe("MachineStore.upsertConnected", () => {
 
   it("refuses a same-org machine id claimed by another user", async () => {
     const other = await insertUser("m5-store-other@example.test");
-    await expect(store.upsertConnected(orgId, other, "s-machine", null, null, null, null, null, null)).rejects.toMatchObject({
+    await expect(
+      store.upsertConnected(orgId, other, "s-machine", null, null, null, null, null, null),
+    ).rejects.toMatchObject({
       status: 403,
     });
   });
 
   it("leaves a foreign-org machine id untouched and does not register the connect", async () => {
-    const org2 = (await env.db.query<{ id: string }>("INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'org2') RETURNING id")).rows[0]!.id;
+    const org2 = (
+      await env.db.query<{ id: string }>("INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'org2') RETURNING id")
+    ).rows[0]!.id;
     const otherOrgUser = await insertUser("m5-store-org2@example.test", org2);
     const result = await store.upsertConnected(org2, otherOrgUser, "s-machine", null, null, null, null, null, null);
     expect(result.row.org_id).toBe(orgId); // the untouched foreign row
@@ -91,28 +105,56 @@ describe("MachineStore.upsertConnected", () => {
       )
     ).rows[0]!.id;
 
-    const outcome = await store.upsertConnected(orgId, userId, "adopt-new", "New", "FP-ADOPT", "Linux", null, null, "10.9.9.9");
+    const outcome = await store.upsertConnected(
+      orgId,
+      userId,
+      "adopt-new",
+      "New",
+      "FP-ADOPT",
+      "Linux",
+      null,
+      null,
+      "10.9.9.9",
+    );
     expect(outcome.adopted_from).toBe("adopt-old");
     expect(outcome.row.machine_id).toBe("adopt-new");
     expect(outcome.row.re_paired_at).not.toBeNull();
     // The old id is re-keyed away…
     expect((await env.db.query("SELECT * FROM machines WHERE machine_id = 'adopt-old'")).rows.length).toBe(0);
     // …and the durable execution bindings moved with it.
-    expect((await env.db.query("SELECT machine_id FROM chats WHERE id = $1", [chat])).rows[0]!.machine_id).toBe("adopt-new");
-    expect((await env.db.query("SELECT machine_id FROM projects WHERE name = 'proj'")).rows[0]!.machine_id).toBe("adopt-new");
+    expect((await env.db.query("SELECT machine_id FROM chats WHERE id = $1", [chat])).rows[0]!.machine_id).toBe(
+      "adopt-new",
+    );
+    expect((await env.db.query("SELECT machine_id FROM projects WHERE name = 'proj'")).rows[0]!.machine_id).toBe(
+      "adopt-new",
+    );
 
     // Another member's fingerprint is never adopted.
     const other = await insertUser("m5-store-fp@example.test");
-    const noAdopt = await store.upsertConnected(orgId, other, "other-machine", null, "FP-ADOPT", null, null, null, null);
+    const noAdopt = await store.upsertConnected(
+      orgId,
+      other,
+      "other-machine",
+      null,
+      "FP-ADOPT",
+      null,
+      null,
+      null,
+      null,
+    );
     expect(noAdopt.adopted_from).toBeNull();
   });
 
   it("lastSeen refreshes; listForUser and bindable scope to the user/org", async () => {
     await store.upsertConnected(orgId, userId, "ls-machine", "LS", null, null, null, null, null);
-    const before = (await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")).rows[0]!.last_seen_at;
+    const before = (
+      await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")
+    ).rows[0]!.last_seen_at;
     await new Promise((r) => setTimeout(r, 30));
     await store.lastSeen("ls-machine");
-    const after = (await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")).rows[0]!.last_seen_at;
+    const after = (
+      await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")
+    ).rows[0]!.last_seen_at;
     expect(after.getTime()).toBeGreaterThan(before.getTime());
 
     const list = await store.listForUser(orgId, userId);
@@ -141,9 +183,7 @@ describe("MachineStore.deauthorize", () => {
   });
 
   it("drops the row, unbinds chats and returns the session to revoke", async () => {
-    await store.upsertConnected(
-      orgId, userId, "da-free", "Free", null, null, null, null, null, "session-hash-1",
-    );
+    await store.upsertConnected(orgId, userId, "da-free", "Free", null, null, null, null, null, "session-hash-1");
     const chat = (
       await env.db.query<{ id: string }>(
         `INSERT INTO chats (id, org_id, user_id, title, machine_id, machine_label)

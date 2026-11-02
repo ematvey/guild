@@ -157,9 +157,9 @@ describe("child result delivery", () => {
   }
 
   function userTexts(body: Record<string, unknown>): string[] {
-    return (((body["messages"] as { role: string; content: unknown }[] | undefined) ?? [])
+    return ((body["messages"] as { role: string; content: unknown }[] | undefined) ?? [])
       .filter((message) => message.role === "user")
-      .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content))));
+      .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
   }
 
   it("delivers two finished children as one parent turn and one message", async () => {
@@ -182,23 +182,21 @@ describe("child result delivery", () => {
         "SELECT consumed_by_run_id FROM thread_events WHERE chat_id = $1 AND type = 'child_result' ORDER BY seq",
         [parent.chatId],
       );
-      return (
-        rows.rows.length === 2 &&
-        rows.rows.every((row) => row.consumed_by_run_id === parent.runId)
-      );
+      return rows.rows.length === 2 && rows.rows.every((row) => row.consumed_by_run_id === parent.runId);
     });
     await until(async () => {
-      const rows = await stack.env.db.query<{ status: string }>(
-        "SELECT status FROM agent_runs WHERE id = $1",
-        [parent.runId],
-      );
+      const rows = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [
+        parent.runId,
+      ]);
       return rows.rows[0]?.status !== "running" && rows.rows[0]?.status !== "queued";
     });
 
     const carrying = stack.mock.requests.filter((request) => {
       const texts = userTexts(request.body);
-      return texts.some((text) => text.includes("child one result")) &&
-        texts.some((text) => text.includes("child two result"));
+      return (
+        texts.some((text) => text.includes("child one result")) &&
+        texts.some((text) => text.includes("child two result"))
+      );
     });
     expect(carrying).toHaveLength(1);
     expect(
@@ -217,10 +215,7 @@ describe("child result delivery", () => {
       [parent.chatId],
     );
     expect(delivered.rows).toHaveLength(2);
-    expect(delivered.rows.map((row) => row.payload.final_text)).toEqual([
-      "child one result",
-      "child two result",
-    ]);
+    expect(delivered.rows.map((row) => row.payload.final_text)).toEqual(["child one result", "child two result"]);
     expect(delivered.rows.every((row) => typeof row.payload.thread_id === "string")).toBe(true);
     expect(delivered.rows.map((row) => row.payload.chat_id)).toEqual([first.chatId, second.chatId]);
     // The child thread's agent name labels the row; both children share it.
@@ -233,7 +228,10 @@ describe("child result delivery", () => {
       childAgents.rows[0]!.name,
       childAgents.rows[0]!.name,
     ]);
-    expect(delivered.rows.map((row) => row.payload.title)).toEqual(["Child child one result", "Child child two result"]);
+    expect(delivered.rows.map((row) => row.payload.title)).toEqual([
+      "Child child one result",
+      "Child child two result",
+    ]);
     // The row rebuilt from the result alone carries the run's start.
     const starts = await stack.env.db.query<{ started_at: string }>(
       `SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
@@ -284,10 +282,9 @@ describe("child result delivery", () => {
       );
     });
     await until(async () => {
-      const rows = await stack.env.db.query<{ status: string }>(
-        "SELECT status FROM agent_runs WHERE id = $1",
-        [parent.runId],
-      );
+      const rows = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [
+        parent.runId,
+      ]);
       return rows.rows[0]?.status !== "running" && rows.rows[0]?.status !== "queued";
     });
     const cancelled = stack.mock.requests.filter((request) =>
@@ -326,10 +323,9 @@ describe("child result delivery", () => {
       reason: null,
       final_text: "too late",
     });
-    const rows = await stack.env.db.query(
-      "SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
-      [parent.chatId],
-    );
+    const rows = await stack.env.db.query("SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_result'", [
+      parent.chatId,
+    ]);
     expect(rows.rows).toHaveLength(0);
   }, 30_000);
 });
