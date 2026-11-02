@@ -42,6 +42,26 @@ pub fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Refuses a UNC browse path other than a WSL 9P share
+/// (`\\wsl.localhost\<distro>\…`). Opening any other UNC path makes
+/// Windows connect to that host over SMB and send the user's NTLM
+/// credentials. Either separator counts: `//host/share` is UNC too.
+/// Non-UNC paths pass.
+pub fn check_unc_browse(path: &str) -> Result<(), String> {
+    let unified = path.replace('/', "\\");
+    if !unified.starts_with("\\\\") {
+        return Ok(());
+    }
+    const WSL_PREFIX: &str = "\\\\wsl.localhost\\";
+    let rest = unified.strip_prefix(WSL_PREFIX).ok_or_else(|| {
+        format!("only \\\\wsl.localhost\\<distro>\\ paths may be browsed: {path}")
+    })?;
+    if rest.split('\\').next().unwrap_or("").is_empty() {
+        return Err(format!("missing WSL distro in path: {path}"));
+    }
+    Ok(())
+}
+
 /// The user skill scope root: `~/.agents` lives under it. `GUILD_SKILLS_ROOT`
 /// overrides it for tests. `skills.sync_v1` writes here and the
 /// remote-context skill scan reads here, so both see one root.
@@ -385,6 +405,18 @@ pub fn write_text_with(allow: &Allowlist, raw_path: &str, body: &str) -> anyhow:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unc_browse_allows_only_wsl_shares() {
+        use super::check_unc_browse;
+        assert!(check_unc_browse("/home/me").is_ok());
+        assert!(check_unc_browse("C:\\Users\\me").is_ok());
+        assert!(check_unc_browse("\\\\wsl.localhost\\Ubuntu\\home").is_ok());
+        assert!(check_unc_browse("//wsl.localhost/Ubuntu/home").is_ok());
+        assert!(check_unc_browse("\\\\attacker\\share").is_err());
+        assert!(check_unc_browse("//attacker/share").is_err());
+        assert!(check_unc_browse("\\\\wsl.localhost\\").is_err());
+    }
+
     use super::*;
 
     fn touch(dir: &Path, rel: &str, body: &str) -> PathBuf {

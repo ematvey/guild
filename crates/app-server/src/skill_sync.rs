@@ -15,16 +15,17 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::Path;
 
-/// Authenticated bundle download for the sync: the machine fetches the
-/// server's bundle URL with its own stored credentials — the same bearer
-/// path the artifact prefetcher and install_skill use. The URL rides the
-/// sync payload (short-TTL signed form) or falls back to the machine's
-/// own registry endpoint, built by the link's dispatch arm.
+/// Bundle download for the sync. The URL rides the sync payload
+/// (short-TTL signed form) or falls back to the machine's own registry
+/// endpoint, built by the link's dispatch arm. The machine's bearer goes
+/// only to the server it is linked to: a URL on any other origin is a
+/// signed URL and is fetched without credentials.
 pub async fn fetch_bundle(cloud: &CloudClient, url: &str) -> Result<Vec<u8>, String> {
-    let resp = cloud
-        .http_pub()
-        .get(url)
-        .bearer_auth(&cloud.token)
+    let mut request = cloud.http_pub().get(url);
+    if same_origin(url, &cloud.base_url) {
+        request = request.bearer_auth(&cloud.token);
+    }
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("bundle download failed: {e}"))?;
@@ -36,6 +37,14 @@ pub async fn fetch_bundle(cloud: &CloudClient, url: &str) -> Result<Vec<u8>, Str
         .await
         .map_err(|e| format!("bundle download failed: {e}"))?;
     Ok(bytes.to_vec())
+}
+
+/// Whether two absolute URLs share scheme, host and port.
+fn same_origin(url: &str, base: &str) -> bool {
+    match (reqwest::Url::parse(url), reqwest::Url::parse(base)) {
+        (Ok(a), Ok(b)) => a.origin() == b.origin(),
+        _ => false,
+    }
 }
 
 /// Converges `<root>/.agents/skills` to the payload's install list and
@@ -167,6 +176,20 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_bearer_goes_only_to_the_linked_origin() {
+        use super::same_origin;
+        assert!(same_origin("http://hub:8080/api/v1/x", "http://hub:8080"));
+        assert!(same_origin("https://hub/a", "https://hub/"));
+        assert!(!same_origin(
+            "https://bucket.s3.example/a?sig=1",
+            "https://hub"
+        ));
+        assert!(!same_origin("http://hub/a", "https://hub"));
+        assert!(!same_origin("http://hub:9000/a", "http://hub:8080"));
+        assert!(!same_origin("/relative", "http://hub"));
+    }
+
     use super::*;
     use guild_core::registry::pack_skill;
     use std::sync::{Arc, Mutex};

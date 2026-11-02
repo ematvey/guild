@@ -624,20 +624,8 @@ pub mod commands {
         }
         // UNC branch: only the WSL 9P shares are legitimate browse roots;
         // any other UNC (e.g. \\host\share) is an NTLM-leak vector.
-        const WSL_PREFIX: &str = r"\\wsl.localhost\";
-        if path.starts_with(r"\\") {
-            if !path.starts_with(WSL_PREFIX) {
-                return Err(format!(
-                    "only \\\\wsl.localhost\\<distro>\\ paths may be browsed: {path}"
-                ));
-            }
-            let distro = path[WSL_PREFIX.len()..]
-                .split(['\\', '/'])
-                .next()
-                .unwrap_or("");
-            if distro.is_empty() {
-                return Err(format!("missing WSL distro in path: {path}"));
-            }
+        guild_app_server::fs_bridge::check_unc_browse(path)?;
+        if path.starts_with(r"\\") || path.starts_with("//") {
             return Ok(());
         }
         // Drive-relative forms ("C:foo") and plain relatives are absolute-

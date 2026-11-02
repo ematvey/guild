@@ -480,7 +480,7 @@ async fn machine_request_result(
 ) -> Result<serde_json::Value, String> {
     match op {
         "capabilities" => Ok(
-            serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1", "skills.sync_v1"]}),
+            serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1", "skills.sync_v1", "fs_home", "fs_list"]}),
         ),
         "context.prepare_v1" => {
             let project = payload["project_dir"]
@@ -500,7 +500,7 @@ async fn machine_request_result(
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "fs_home" => Ok(serde_json::json!({
-            "home": std::env::var("HOME").unwrap_or_default()
+            "home": crate::fs_bridge::home_dir().to_string_lossy()
         })),
         "fs_list" => {
             let path = payload["path"]
@@ -508,6 +508,7 @@ async fn machine_request_result(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or("missing path")?;
+            crate::fs_bridge::check_unc_browse(path)?;
             if !Path::new(path).is_absolute() {
                 return Err("path must be absolute".into());
             }
@@ -1643,7 +1644,9 @@ mod tests {
             serde_json::json!([
                 "context.prepare_v1",
                 "artifact.prefetch_v1",
-                "skills.sync_v1"
+                "skills.sync_v1",
+                "fs_home",
+                "fs_list"
             ])
         );
         assert!(
