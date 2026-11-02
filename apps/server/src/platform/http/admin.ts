@@ -625,10 +625,9 @@ async function saveIntegration(
         await mcpTestConnection(readMcpUrl(config) ?? "", secrets, orgId);
       }
     }
-    for (const [k, v] of submitted) {
-      await gateway.integrationSecrets.upsert(orgId, name, k, v, master);
-    }
-    await gateway.integrations.upsert(orgId, name, config, enabled);
+    await gateway.integrations.saveWithSecrets(
+      gateway.integrationSecrets, orgId, name, config, enabled, submitted, master,
+    );
     return;
   }
   const connector = integrationByName(name);
@@ -692,10 +691,9 @@ async function saveIntegration(
   } catch (error) {
     throw ApiError.badRequest((error as Error).message);
   }
-  for (const [k, v] of submitted) {
-    await gateway.integrationSecrets.upsert(orgId, name, k, v, master);
-  }
-  await gateway.integrations.upsert(orgId, name, config, enabled);
+  await gateway.integrations.saveWithSecrets(
+    gateway.integrationSecrets, orgId, name, config, enabled, submitted, master,
+  );
 }
 
 /** One declared/served tool with its stored per-tool curation, as the admin

@@ -5,7 +5,7 @@
 import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339 } from "../time.js";
-import { withTransaction, type PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
 /** IntegrationRow declaration order (serde). */
@@ -41,8 +41,14 @@ export class IntegrationStore {
    *  curation map (`config.tools`) is preserved from the existing row —
    *  the PUT tools endpoint is its only writer. Returns the row's stable
    *  id. */
-  async upsert(orgId: string, name: string, config: unknown, enabled: boolean): Promise<string> {
-    const res = await this.pool.query(
+  async upsert(
+    orgId: string,
+    name: string,
+    config: unknown,
+    enabled: boolean,
+    db: PlatformPool | PoolClient = this.pool,
+  ): Promise<string> {
+    const res = await db.query(
       "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, $2, $3, $4) " +
       "ON CONFLICT (org_id, name) " +
       "DO UPDATE SET config = jsonb_set($3, '{tools}', " +
@@ -52,6 +58,25 @@ export class IntegrationStore {
       [orgId, name, jsonbText(config), enabled],
     );
     return res.rows[0]!.id as string;
+  }
+
+  /** Saves an integration's settings and its submitted secrets in one
+   *  transaction: a failure part-way leaves neither. */
+  async saveWithSecrets(
+    secrets: IntegrationSecretStore,
+    orgId: string,
+    name: string,
+    config: unknown,
+    enabled: boolean,
+    submitted: Iterable<[string, string]>,
+    masterKey: Buffer,
+  ): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      for (const [secretName, plaintext] of submitted) {
+        await secrets.upsert(orgId, name, secretName, plaintext, masterKey, client);
+      }
+      await this.upsert(orgId, name, config, enabled, client);
+    });
   }
 
   /** Sets one tool's per-tool curation (`enabled`, `approval`) under a row
@@ -146,9 +171,16 @@ export class IntegrationSecretStore {
   constructor(readonly pool: PlatformPool) {}
 
   /** Idempotent upsert: replaces the encrypted value and the preview. */
-  async upsert(orgId: string, integration: string, name: string, plaintext: string, masterKey: Buffer): Promise<void> {
+  async upsert(
+    orgId: string,
+    integration: string,
+    name: string,
+    plaintext: string,
+    masterKey: Buffer,
+    db: PlatformPool | PoolClient = this.pool,
+  ): Promise<void> {
     const encrypted = encryptSecret(masterKey, plaintext);
-    await this.pool.query(
+    await db.query(
       "INSERT INTO integration_secrets (org_id, integration, name, secret_enc, masked) " +
       "VALUES ($1, $2, $3, $4, $5) " +
       "ON CONFLICT (org_id, integration, name) " +
