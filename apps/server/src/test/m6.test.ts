@@ -9,14 +9,14 @@ import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createM6TestEnv, packBundle, type M6TestEnv } from "./platform/m6-harness.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./platform/object-store-stack.js";
 import { hashPassword } from "../platform/crypto.js";
 import { versionGt, toRfc3339Offset } from "../platform/http/releases.js";
 
 const PASSWORD = "hunter226";
 
 interface Env {
-  env: M6TestEnv;
+  env: ObjectStoreStack;
   adminToken: string;
   memberToken: string;
   adminId: string;
@@ -27,7 +27,7 @@ interface Env {
 let e: Env;
 
 beforeAll(async () => {
-  const env = await createM6TestEnv();
+  const env = await createObjectStoreStack("error", {}, "m6");
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();
@@ -837,7 +837,7 @@ describe("M6 web serving", () => {
       writeFileSync(path.join(dir, "index.html"), "<html>index</html>");
       writeFileSync(path.join(assets, "index-CLneK5BO.js"), "console.log('bundle')");
       writeFileSync(path.join(dir, "manifest.webmanifest"), "{}");
-      const env = await createM6TestEnv("error", { GUILD_WEB_DIST: dir });
+      const env = await createObjectStoreStack("error", { GUILD_WEB_DIST: dir }, "m6");
       try {
         const root = await env.app.inject({ method: "GET", url: "/" });
         expect(root.statusCode).toBe(200);
@@ -904,7 +904,7 @@ describe("M6 faro ingest", () => {
     });
     await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
     const addr = collector.address() as { port: number };
-    const env = await createM6TestEnv("error", { GUILD_FARO_URL: `http://127.0.0.1:${addr.port}/collect` });
+    const env = await createObjectStoreStack("error", { GUILD_FARO_URL: `http://127.0.0.1:${addr.port}/collect` }, "m6");
     try {
       const payload = JSON.stringify({ type: "measurement", meta: { browser: "test" } });
       const res = await env.app.inject({

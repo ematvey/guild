@@ -22,6 +22,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { guildProviderId } from "../harness/models.js";
 import { UserEntry } from "@earendil-works/pi-durable";
 import { captureThreadState } from "../chats/thread-state.js";
+import { waitFor } from "./support/wait.js";
 
 let stack: M2Stack;
 let port: number;
@@ -50,14 +51,6 @@ const auth = (token: string): Record<string, string> => ({
 });
 
 /** Waits until `probe` returns true (bridge/compaction writes are async). */
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 10000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 describe("chats CRUD wire", () => {
   it("creates + lists + archives chats in the Rust wire shape", async () => {

@@ -15,6 +15,7 @@ import { startMcpFixtureServer } from "./fixtures/mcp-server.mjs";
 import { setupM2Stack, TEST_PASSWORD, type M2Stack } from "./platform/m2-harness.js";
 import { UserMcpStore } from "../platform/store/userMcp.js";
 import { encryptSecret, masterKeyBytes } from "../platform/crypto.js";
+import { waitFor } from "./support/wait.js";
 
 const TEST_TIMEOUT = 120_000;
 
@@ -101,7 +102,6 @@ afterAll(async () => {
   await new Promise<void>((resolve) => fixture.close(() => resolve()));
 }, 30_000);
 
-
 const auth = (token = memberToken): Record<string, string> => ({
   authorization: `Bearer ${token}`,
   "content-type": "application/json",
@@ -110,15 +110,6 @@ const auth = (token = memberToken): Record<string, string> => ({
 const authNoBody = (token = memberToken): Record<string, string> => ({
   authorization: `Bearer ${token}`,
 });
-
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 function scriptFor(...responses: { body: string }[]): void {
   stack.mock.setResponses(responses);

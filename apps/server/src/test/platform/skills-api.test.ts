@@ -3,14 +3,14 @@
 // activity feed — plus the member download lift for kind=skill (§1.3).
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createM6TestEnv, type M6TestEnv } from "./m6-harness.js";
+import { createObjectStoreStack, type ObjectStoreStack } from "./object-store-stack.js";
 import { hashPassword } from "../../platform/crypto.js";
 import { packBundle } from "../../platform/bundle.js";
 
 const PASSWORD = "hunter226";
 
 interface Env {
-  env: M6TestEnv;
+  env: ObjectStoreStack;
   adminToken: string;
   memberToken: string;
   member2Token: string;
@@ -23,7 +23,7 @@ interface Env {
 let e: Env;
 
 beforeAll(async () => {
-  const env = await createM6TestEnv();
+  const env = await createObjectStoreStack("error", {}, "skills_api");
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();

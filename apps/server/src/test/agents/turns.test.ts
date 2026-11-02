@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
 import { agentWorkspaceSubpath } from "../../agents/workspace.js";
+import { waitFor } from "../support/wait.js";
 
 let stack: M2Stack;
 let port: number;
@@ -38,15 +39,6 @@ const auth = (): Record<string, string> => ({
   authorization: `Bearer ${stack.memberToken}`,
   "content-type": "application/json",
 });
-
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 15_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 describe("agent turns", () => {
   it("creates a running run, derives the title and completes it", async () => {

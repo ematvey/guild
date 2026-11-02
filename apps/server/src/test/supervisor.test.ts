@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { armDurableFault } from "../storage/postgres/pg.js";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { waitFor } from "./support/wait.js";
 
 let stack: M2Stack;
 let port: number;
@@ -32,15 +33,6 @@ const auth = (token: string): Record<string, string> => ({
   authorization: `Bearer ${token}`,
   "content-type": "application/json",
 });
-
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 const sseDelta = (content: string): string =>
   `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;

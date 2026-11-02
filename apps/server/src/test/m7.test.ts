@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { InjectPayload } from "light-my-request";
-import { createM7TestEnv, packBundle, type M7TestEnv } from "./platform/m7-harness.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./platform/object-store-stack.js";
 
 const PASSWORD = "hunter227";
 const CAPTURE = JSON.parse(
@@ -20,7 +20,7 @@ const CAPTURE = JSON.parse(
 ) as Record<string, { status: number; body: string }>;
 
 interface Env {
-  env: M7TestEnv;
+  env: ObjectStoreStack;
   adminToken: string;
   memberToken: string;
   orgId: string;
@@ -32,7 +32,7 @@ let connectorHits: string[] = [];
 let mcpServer: Server;
 
 beforeAll(async () => {
-  const env = await createM7TestEnv();
+  const env = await createObjectStoreStack("error", {}, "m7");
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();

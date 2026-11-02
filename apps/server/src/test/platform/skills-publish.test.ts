@@ -5,7 +5,7 @@
 // leave the catalog.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createM6TestEnv, packBundle, type M6TestEnv } from "./m6-harness.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./object-store-stack.js";
 import { hashPassword } from "../../platform/crypto.js";
 import { RegistryStore } from "../../platform/store/registry.js";
 import { TeamStore } from "../../platform/store/teams.js";
@@ -13,7 +13,7 @@ import { TeamStore } from "../../platform/store/teams.js";
 const PASSWORD = "hunter226";
 
 interface Env {
-  env: M6TestEnv;
+  env: ObjectStoreStack;
   adminToken: string;
   memberToken: string;
   member2Token: string;
@@ -30,7 +30,7 @@ let store: RegistryStore;
 let teams: TeamStore;
 
 beforeAll(async () => {
-  const env = await createM6TestEnv();
+  const env = await createObjectStoreStack("error", {}, "skills_publish");
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();

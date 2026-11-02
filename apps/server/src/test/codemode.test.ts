@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { GuildRuntime } from "../harness/runtime.js";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { waitFor } from "./support/wait.js";
 
 const TEST_TIMEOUT = 120_000;
 
@@ -81,15 +82,6 @@ const auth = (token = memberToken): Record<string, string> => ({
   authorization: `Bearer ${token}`,
   "content-type": "application/json",
 });
-
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 function scriptFor(...responses: { body: string }[]): void {
   stack.mock.setResponses(responses);

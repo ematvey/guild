@@ -17,6 +17,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { PostgresDurableStorage } from "../storage/postgres/index.js";
 import { PgPoolDatabase } from "../storage/postgres/pg.js";
 import { masterKeyBytes, encryptSecret } from "../platform/crypto.js";
+import { waitFor } from "./support/wait.js";
 
 let stack: M2Stack;
 let port: number;
@@ -42,15 +43,6 @@ const auth = (token: string): Record<string, string> => ({
   authorization: `Bearer ${token}`,
   "content-type": "application/json",
 });
-
-async function waitFor(probe: () => Promise<boolean>, timeoutMs = 45_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("waitFor timed out");
-}
 
 const sseDelta = (content: string): string =>
   `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;

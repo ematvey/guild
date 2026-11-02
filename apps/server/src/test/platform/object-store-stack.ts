@@ -1,6 +1,6 @@
-// M6 long-tail test harness: disposable Postgres database (verbatim Rust
-// migrations applied in order, namespaced `guild_m6_test_*`) + a disposable
-// rustfs bucket, mirroring the M1 harness with M6 names.
+// A disposable stack with object storage: a fresh Postgres database with
+// every migration applied (`guild_<prefix>_test_*`), a fresh rustfs bucket,
+// and the app built against both.
 
 import { dropTestDatabase } from "../../storage/postgres/test-support.js";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -36,7 +36,7 @@ function randomSuffix(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export interface M6TestEnv {
+export interface ObjectStoreStack {
   databaseName: string;
   databaseUrl: string;
   bucketName: string;
@@ -47,10 +47,14 @@ export interface M6TestEnv {
   cleanup(): Promise<void>;
 }
 
-export async function createM6TestEnv(logLevel = "error", extraEnv: Record<string, string> = {}): Promise<M6TestEnv> {
+export async function createObjectStoreStack(
+  logLevel = "error",
+  extraEnv: Record<string, string> = {},
+  prefix = "stack",
+): Promise<ObjectStoreStack> {
   const suffix = randomSuffix();
-  const databaseName = `guild_m6_test_${suffix}`;
-  const bucketName = `guild-m6-test-${suffix}`;
+  const databaseName = `guild_${prefix.replaceAll("-", "_")}_test_${suffix}`;
+  const bucketName = `guild-${prefix.replaceAll("_", "-")}-test-${suffix}`;
 
   const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
   await adminPool.query(`CREATE DATABASE "${databaseName}"`);
@@ -82,7 +86,7 @@ export async function createM6TestEnv(logLevel = "error", extraEnv: Record<strin
     GUILD_S3_ACCESS_KEY_ID: TEST_S3_ACCESS_KEY_ID,
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     GUILD_MASTER_KEY_HEX: "22".repeat(32),
-    GUILD_JWT_SECRET: "m6-test-jwt-secret",
+    GUILD_JWT_SECRET: `${prefix}-test-jwt-secret`,
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_API_URL: "http://localhost:18080",
@@ -123,7 +127,7 @@ export async function createM6TestEnv(logLevel = "error", extraEnv: Record<strin
  *  client's pack() produces: manifest.json at the root, then arbitrary
  *  files. Packed via tar's sync file API into a temp dir. */
 export async function packBundle(files: Record<string, Buffer | string>): Promise<Buffer> {
-  const dir = mkdtempSync(path.join(tmpdir(), "m6-pack-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "bundle-pack-"));
   try {
     for (const [name, content] of Object.entries(files)) {
       const filePath = path.join(dir, name);
