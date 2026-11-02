@@ -6,10 +6,19 @@
 
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { uuidv7 } from "../platform/time.js";
 import { refuseDeletingAgent, type AgentRunStore, type AgentStore, type AgentTreeStore } from "./store.js";
 import type { Agent } from "./types.js";
-import { agentThreadForChat } from "./workspace.js";
+import {
+  agentThreadForChat,
+  chatThreadKind,
+  chatThreadNode,
+  insertUserThread,
+  moveChatThread,
+  spawnedByRow,
+  threadContextRow,
+  titleSourceRow,
+} from "./store/bindings.js";
+import { firstUserMessage } from "./store/events.js";
 
 /** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
 export class ThreadAgentLocked extends Error {
@@ -70,7 +79,7 @@ export class ThreadBinding {
     if (existing !== null) return this.bound(existing);
     const personal = await this.store.ensurePersonalAgentFor(orgId, userId);
     if (personal === null) return null;
-    const id = await this.insertUserThread(personal.id, userId, chatId, title);
+    const id = await insertUserThread(this.pool, { agentId: personal.id, userId, chatId, title });
     if (id === null) {
       // A concurrent turn adopted it first.
       const again = await agentThreadForChat(this.pool, chatId);
@@ -91,15 +100,11 @@ export class ThreadBinding {
     if (existing !== null) {
       if (existing.agent_id !== agent.id) {
         if (!(await this.switchAllowed(chatId))) throw new ThreadAgentLocked();
-        await this.pool.query(
-          `UPDATE agent_threads SET agent_id = $2, last_activity_at = now()
-           WHERE chat_id = $1`,
-          [chatId, agent.id],
-        );
+        await moveChatThread(this.pool, chatId, agent.id);
       }
       return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
     }
-    const id = await this.insertUserThread(agent.id, userId, chatId, title);
+    const id = await insertUserThread(this.pool, { agentId: agent.id, userId, chatId, title });
     if (id === null) {
       const again = await agentThreadForChat(this.pool, chatId);
       if (again === null) throw new Error("agent binding lost its thread");
@@ -117,40 +122,21 @@ export class ThreadBinding {
   /** A thread keeps the agent that owns it when it is that agent's Main
    *  thread or a run transcript. Ordinary threads move with the picker. */
   async switchAllowed(chatId: string): Promise<boolean> {
-    const res = await this.pool.query<{ type: string; is_default: boolean }>(
-      "SELECT type, is_default FROM agent_threads WHERE chat_id = $1",
-      [chatId],
-    );
-    const row = res.rows[0];
-    return row === undefined || (row.type === "user" && !row.is_default);
+    const row = await chatThreadKind(this.pool, chatId);
+    return row === null || (row.type === "user" && !row.is_default);
   }
 
   /** Closes the chat's agent-thread subtree (archive): in-flight runs stop
    *  and deliveries to and from the subtree stop. */
   async closeSubtree(chatId: string): Promise<void> {
-    const res = await this.pool.query<{ id: string }>("SELECT id FROM agent_threads WHERE chat_id = $1", [chatId]);
-    if (res.rows[0] !== undefined) await this.store.tree.closeSubtree(res.rows[0].id);
+    const thread = await chatThreadNode(this.pool, chatId);
+    if (thread !== null) await this.store.tree.closeSubtree(thread.id);
   }
 
   /** The thread's own context; null for a plain thread. */
   async threadContext(chatId: string): Promise<ThreadContext | null> {
-    const res = await this.pool.query<{
-      type: string;
-      origin_thread_id: string | null;
-      origin_title: string | null;
-      routine_name: string | null;
-    }>(
-      `SELECT t.type, t.origin_thread_id,
-              (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
-              (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
-               WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
-               ORDER BY rn.created_at DESC LIMIT 1) AS routine_name
-       FROM agent_threads t
-       WHERE t.chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined) return null;
+    const row = await threadContextRow(this.pool, chatId);
+    if (row === null) return null;
     const origin =
       row.origin_thread_id === null ? null : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
     if (row.type !== "routine" && origin === null) return null;
@@ -159,21 +145,8 @@ export class ThreadBinding {
 
   /** The tree context of a spawned child thread; undefined for a root. */
   async spawnedBy(chatId: string): Promise<SpawnedBy | undefined> {
-    const res = await this.pool.query<{
-      thread_id: string;
-      parent_thread_id: string | null;
-      depth: number;
-      parent_name: string | null;
-    }>(
-      `SELECT t.id AS thread_id, t.parent_thread_id, t.depth, pa.name AS parent_name
-       FROM agent_threads t
-       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
-       LEFT JOIN agents pa ON pa.id = pt.agent_id
-       WHERE t.chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined || row.parent_thread_id === null) return undefined;
+    const row = await spawnedByRow(this.pool, chatId);
+    if (row === null || row.parent_thread_id === null) return undefined;
     const children = await this.store.tree.childCount(row.thread_id);
     return {
       parent_name: row.parent_name ?? "another agent",
@@ -217,31 +190,12 @@ export class ThreadBinding {
    *  (title_locked), non-chat threads, threads that already carry a title,
    *  and threads with no text or no model. */
   async titleSource(chatId: string, threadId: string): Promise<TitleSource | null> {
-    const res = await this.pool.query<{
-      org_id: string;
-      title: string | null;
-      title_locked: boolean;
-      type: string;
-      is_default: boolean;
-      model: string | null;
-    }>(
-      `SELECT c.org_id, t.title, t.title_locked, t.type, t.is_default, a.model
-       FROM agent_threads t
-       JOIN chats c ON c.id = t.chat_id
-       JOIN agents a ON a.id = t.agent_id
-       WHERE t.id = $1 AND t.chat_id = $2`,
-      [threadId, chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined) return null;
+    const row = await titleSourceRow(this.pool, chatId, threadId);
+    if (row === null) return null;
     if (row.type !== "user" || row.is_default || row.title_locked) return null;
     if ((row.title ?? "").trim() !== "") return null;
-    const first = await this.pool.query<{ content: string | null }>(
-      `SELECT payload->>'content' AS content FROM thread_events
-       WHERE chat_id = $1 AND type = 'user_message' ORDER BY seq ASC LIMIT 1`,
-      [chatId],
-    );
-    const text = (first.rows[0]?.content ?? "").trim();
+    const first = await firstUserMessage(this.pool, chatId);
+    const text = (first ?? "").trim();
     if (text === "" || row.model === null) return null;
     return { orgId: row.org_id, model: row.model, firstMessage: text };
   }
@@ -250,22 +204,5 @@ export class ThreadBinding {
     const agent = await this.store.fetchAgent(ref.agent_id);
     refuseDeletingAgent(agent);
     return { agent_id: agent.id, thread_id: ref.thread_id, model: agent.model };
-  }
-
-  /** Inserts the chat's user thread; null when another one won the race. */
-  private async insertUserThread(
-    agentId: string,
-    userId: string,
-    chatId: string,
-    title: string,
-  ): Promise<string | null> {
-    const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
-       VALUES ($1, $2, $3, $4, $5, false, 'user')
-       ON CONFLICT (chat_id) DO NOTHING
-       RETURNING id`,
-      [uuidv7(), agentId, userId, chatId, title],
-    );
-    return inserted.rows[0]?.id ?? null;
   }
 }

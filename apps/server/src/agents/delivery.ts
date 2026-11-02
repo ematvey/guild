@@ -8,9 +8,18 @@ import type { PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
 import { modalityOf } from "../platform/domain/mime.js";
-import { pgTimestampToRfc3339, utcText } from "../platform/time.js";
-import type { AgentStore } from "./store.js";
+import { pgTimestampToRfc3339 } from "../platform/time.js";
 import { terminalAssistantText } from "./lifecycle.js";
+import type { AgentStore } from "./store.js";
+import {
+  childThread,
+  eventAttachments,
+  type ParentThread,
+  parentThreadById,
+  rootThreadForChat,
+  runState,
+} from "./store/delivery.js";
+import { assistantEventsSince } from "./store/events.js";
 
 export interface ChildRunFinished {
   /** The child thread whose run ended. */
@@ -39,17 +48,6 @@ export interface ChildDeliveryDeps {
   log: Logger;
 }
 
-interface ParentThread {
-  id: string;
-  chat_id: string;
-  agent_id: string;
-  user_id: string;
-  depth: number;
-  org_id: string;
-  model: string;
-  parent_closed_at: Date | null;
-}
-
 function formatChildResults(rows: readonly ChildResultRecord[]): string {
   return rows
     .map((row) => {
@@ -76,14 +74,7 @@ function formatChildResults(rows: readonly ChildResultRecord[]): string {
  *  event. A stopped run usually has none: the parent gets no partial
  *  narration. */
 export async function assistantTextForRun(pool: PlatformPool, chatId: string, since: string): Promise<string> {
-  const res = await pool.query<{ type: string; payload: Record<string, unknown> }>(
-    `SELECT type, payload FROM thread_events
-     WHERE chat_id = $1 AND type = 'assistant_message'
-       AND created_at >= $2::timestamptz
-     ORDER BY seq DESC`,
-    [chatId, since],
-  );
-  return terminalAssistantText(res.rows);
+  return terminalAssistantText(await assistantEventsSince(pool, chatId, since));
 }
 
 export class ChildResultDelivery {
@@ -91,48 +82,23 @@ export class ChildResultDelivery {
 
   async deliver(input: ChildRunFinished): Promise<void> {
     const { pool, threads } = this.deps;
-    const child = await pool.query<{
-      parent_thread_id: string | null;
-      closed_at: Date | null;
-      chat_id: string;
-      agent_name: string;
-      title: string;
-    }>(
-      `SELECT t.parent_thread_id, t.closed_at, t.chat_id, t.title, a.name AS agent_name
-       FROM agent_threads t JOIN agents a ON a.id = t.agent_id WHERE t.id = $1`,
-      [input.child_thread_id],
-    );
-    const childRow = child.rows[0];
-    if (childRow === undefined || childRow.parent_thread_id === null) return;
+    const childRow = await childThread(pool, input.child_thread_id);
+    if (childRow === null || childRow.parent_thread_id === null) return;
     // A closed child, or a closed parent subtree, stops deliveries.
     if (childRow.closed_at !== null) return;
 
-    const parent = await pool.query<ParentThread>(
-      `SELECT t.id, t.chat_id, t.agent_id, t.user_id, t.depth,
-              t.closed_at AS parent_closed_at, c.org_id, a.model
-       FROM agent_threads t
-       JOIN chats c ON c.id = t.chat_id
-       JOIN agents a ON a.id = t.agent_id
-       WHERE t.id = $1`,
-      [childRow.parent_thread_id],
-    );
-    const parentRow = parent.rows[0];
-    if (parentRow === undefined || parentRow.parent_closed_at !== null) return;
+    const parentRow = await parentThreadById(pool, childRow.parent_thread_id);
+    if (parentRow === null || parentRow.parent_closed_at !== null) return;
 
     // The store outranks the worker: a run the parent cancelled can still
     // finish somewhere it could not be interrupted, and its completion must
     // not reach the parent as a success. A user stop of the child keeps its
     // own reason and still delivers.
-    const run = await pool.query<{ status: string; started_at: string | null }>(
-      `SELECT status,
-              ${utcText("started_at")} AS started_at
-       FROM agent_runs WHERE id = $1`,
-      [input.run_id],
-    );
-    const cancelled = run.rows[0]?.status === "cancelled";
+    const run = await runState(pool, input.run_id);
+    const cancelled = run?.status === "cancelled";
     const status = cancelled ? "cancelled" : input.status;
     const reason = cancelled && input.status !== "cancelled" ? "parent" : input.reason;
-    const startedAt = run.rows[0]?.started_at ?? null;
+    const startedAt = run?.started_at ?? null;
 
     const attachments = await this.attachmentsOf(input.attachment_event_id ?? null);
     await threads.appendChildResult(parentRow.chat_id, {
@@ -155,17 +121,8 @@ export class ChildResultDelivery {
   /** Drains the unconsumed results of one parent chat into a turn. A sweep
    *  calls this for a chat whose earlier delivery did not land. */
   async deliverPending(chatId: string): Promise<boolean> {
-    const parent = await this.deps.pool.query<ParentThread>(
-      `SELECT t.id, t.chat_id, t.agent_id, t.user_id, t.depth,
-              t.closed_at AS parent_closed_at, c.org_id, a.model
-       FROM agent_threads t
-       JOIN chats c ON c.id = t.chat_id
-       JOIN agents a ON a.id = t.agent_id
-       WHERE t.chat_id = $1 AND t.parent_thread_id IS NULL`,
-      [chatId],
-    );
-    const parentRow = parent.rows[0];
-    if (parentRow === undefined || parentRow.parent_closed_at !== null) return false;
+    const parentRow = await rootThreadForChat(this.deps.pool, chatId);
+    if (parentRow === null || parentRow.parent_closed_at !== null) return false;
     return this.wake(parentRow);
   }
 
@@ -220,17 +177,8 @@ export class ChildResultDelivery {
 
   private async attachmentsOf(eventId: string | null): Promise<MessageAttachment[]> {
     if (eventId === null) return [];
-    const res = await this.deps.pool.query<{
-      id: string;
-      filename: string;
-      content_type: string;
-      size_bytes: number;
-    }>(
-      `SELECT id, filename, content_type, size_bytes FROM attachments
-       WHERE event_id = $1 ORDER BY created_at ASC, id ASC`,
-      [eventId],
-    );
-    return res.rows.map((row) => ({
+    const rows = await eventAttachments(this.deps.pool, eventId);
+    return rows.map((row) => ({
       id: row.id,
       filename: row.filename,
       content_type: row.content_type,

@@ -10,7 +10,6 @@ import type { ChatStore } from "../../platform/store/chats.js";
 import type { UserRow } from "../../platform/store/identity.js";
 import type { Agent, AgentAccess, AgentStatus, AgentToolRef, AgentToolsMode, AgentVisibility } from "../types.js";
 import { DEFAULT_AGENT_TOOLS, GRANT_ROLE } from "../types.js";
-import { agentWorkspaceDir, seedAgentWorkspace } from "../workspace-config.js";
 import { visiblePredicate, type AgentGrants } from "./access.js";
 import { AGENT_COLUMNS, toAgent } from "./rows.js";
 
@@ -68,16 +67,16 @@ export class AgentCatalog {
     private readonly pool: PlatformPool,
     private readonly chats: Pick<ChatStore, "createChatOn">,
     private readonly agentGrants: AgentGrants,
-    /** The server-writable workspace root; absent: no config files seeded. */
-    private readonly workspaceRoot?: string,
+    /** Seeds a new agent's workspace config files; absent: none seeded. */
+    private readonly seedFiles?: (agent: { id: string; org_id: string }) => Promise<unknown>,
   ) {}
 
   /** Seeds the workspace config files for a new agent. Best-effort: a
    *  missing volume or a permission error must not fail the create. */
   private async seedWorkspace(agent: { id: string; org_id: string; name: string }): Promise<void> {
-    if (this.workspaceRoot === undefined) return;
+    if (this.seedFiles === undefined) return;
     try {
-      await seedAgentWorkspace(agentWorkspaceDir(this.workspaceRoot, agent.org_id, agent.id));
+      await this.seedFiles(agent);
     } catch {
       // The next turn seeds it again through the runtime path.
     }

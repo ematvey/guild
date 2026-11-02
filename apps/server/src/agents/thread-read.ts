@@ -2,6 +2,7 @@
 // read tool: at most 200 events and 20k characters per call.
 
 import type { PlatformPool } from "../platform/db.js";
+import { transcriptEvents } from "./store/events.js";
 
 export const MAX_READ_EVENTS = 200;
 export const MAX_READ_CHARS = 20_000;
@@ -43,32 +44,15 @@ export async function readThreadTranscript(
     toSeq?: number;
   },
 ): Promise<ThreadReadResult> {
-  const params: unknown[] = [args.chatId];
-  let where = "e.chat_id = $1";
-  if (args.fromSeq !== undefined) {
-    params.push(args.fromSeq);
-    where += ` AND e.seq >= $${params.length}`;
-  }
-  if (args.toSeq !== undefined) {
-    params.push(args.toSeq);
-    where += ` AND e.seq <= $${params.length}`;
-  }
   const ascending = args.fromSeq !== undefined || args.toSeq !== undefined;
-  const res = await pool.query<{
-    seq: string;
-    type: string;
-    payload: Record<string, unknown>;
-    created_at: Date;
-  }>(
-    `SELECT e.seq, e.type, e.payload, e.created_at
-     FROM thread_events e
-     WHERE ${where}
-     ORDER BY e.seq ${ascending ? "ASC" : "DESC"}
-     LIMIT ${MAX_READ_EVENTS + 1}`,
-    params,
-  );
-  const truncated = res.rows.length > MAX_READ_EVENTS;
-  let rows = truncated ? res.rows.slice(0, MAX_READ_EVENTS) : res.rows;
+  const found = await transcriptEvents(pool, {
+    chatId: args.chatId,
+    ...(args.fromSeq === undefined ? {} : { fromSeq: args.fromSeq }),
+    ...(args.toSeq === undefined ? {} : { toSeq: args.toSeq }),
+    limit: MAX_READ_EVENTS + 1,
+  });
+  const truncated = found.length > MAX_READ_EVENTS;
+  let rows = truncated ? found.slice(0, MAX_READ_EVENTS) : found;
   if (!ascending) rows = [...rows].reverse();
   let used = 0;
   const events: ThreadReadResult["events"] = [];

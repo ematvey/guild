@@ -12,19 +12,20 @@ import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import { assistantTextForRun, type ChildResultDelivery, type ChildRunFinished } from "./delivery.js";
-import { notifySubagentTree } from "./tree.js";
-import { utcText } from "../platform/time.js";
+import { chatThreadNode } from "./store/bindings.js";
+import { turnEventsSince } from "./store/events.js";
+import {
+  cancelOpenRuns,
+  type OpenChatRun,
+  openedThreadSince,
+  openRunForChat,
+  runTraceRow,
+  settleRun,
+} from "./store/run-finish.js";
+import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
-
-interface RunningRun {
-  id: string;
-  agent_id: string;
-  thread_id: string;
-  chat_id: string;
-  started_at: string;
-}
 
 interface TurnEvent {
   seq: number;
@@ -125,20 +126,8 @@ export class AgentRunLifecycle {
     if (run === null) return;
     try {
       const since = run.started_at;
-      const events = await this.deps.pool.query<{
-        seq: string;
-        type: string;
-        payload: Record<string, unknown>;
-        created_at: Date;
-      }>(
-        `SELECT e.seq, e.type, e.payload, e.created_at
-         FROM thread_events e
-         WHERE e.chat_id = $1 AND e.created_at >= $2::timestamptz
-         ORDER BY e.seq ASC
-         LIMIT 400`,
-        [run.chat_id, since],
-      );
-      const turnEvents: TurnEvent[] = events.rows.map((row) => ({
+      const events = await turnEventsSince(this.deps.pool, run.chat_id, since);
+      const turnEvents: TurnEvent[] = events.map((row) => ({
         seq: Number(row.seq),
         type: row.type,
         payload: row.payload,
@@ -154,22 +143,14 @@ export class AgentRunLifecycle {
       const status = info.error !== null ? "failed" : finalText !== "" || sentMessage ? "succeeded" : "silent";
       const summary =
         info.summary ?? (finalText !== "" ? clip(finalText, MAX_SUMMARY_CHARS) : sentMessage ? "Sent a message" : null);
-      const updated = await this.deps.pool.query<{ id: string }>(
-        `UPDATE agent_runs
-         SET status = $2, summary = $3, tokens = $4, finished_at = now(),
-             error_code = $5, error_message = $6
-         WHERE id = $1 AND status IN ('queued', 'running')
-         RETURNING id`,
-        [
-          run.id,
-          status,
-          summary === null || summary === "" ? null : summary,
-          tokens,
-          info.error === null ? null : "run_error",
-          info.error,
-        ],
-      );
-      if (updated.rowCount === 0) return;
+      const settled = await settleRun(this.deps.pool, run.id, {
+        status,
+        summary: summary === null || summary === "" ? null : summary,
+        tokens,
+        error_code: info.error === null ? null : "run_error",
+        error_message: info.error,
+      });
+      if (!settled) return;
       await notifySubagentTree(this.deps.pool, run.thread_id);
       if (status === "succeeded" && this.deps.title !== undefined) {
         void this.deps.title(run.chat_id, run.thread_id).catch((error: unknown) => {
@@ -205,21 +186,9 @@ export class AgentRunLifecycle {
   /** Writes the terminal run row to ClickHouse (agent_traces). */
   private mirrorFinishedRun(runId: string): void {
     if (this.deps.trace === undefined) return;
-    void this.deps.pool
-      .query<Record<string, unknown>>(
-        `SELECT r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
-                r.trigger, r.status, r.summary, r.error_message, r.tokens,
-                r.started_at, r.finished_at, r.created_at,
-                a.org_id, a.name AS agent_name, t.chat_id
-         FROM agent_runs r
-         JOIN agents a ON a.id = r.agent_id
-         LEFT JOIN agent_threads t ON t.id = r.thread_id
-         WHERE r.id = $1`,
-        [runId],
-      )
-      .then((res) => {
-        const row = res.rows[0];
-        if (row === undefined) return;
+    void runTraceRow(this.deps.pool, runId)
+      .then((row) => {
+        if (row === null) return;
         return this.deps.trace!.recordTrace({
           trace_id: String(row["id"]),
           org_id: String(row["org_id"]),
@@ -242,38 +211,17 @@ export class AgentRunLifecycle {
       .catch(() => {});
   }
 
-  private async runningRun(chatId: string): Promise<RunningRun | null> {
-    const res = await this.deps.pool.query<{
-      id: string;
-      agent_id: string;
-      thread_id: string;
-      chat_id: string;
-      started_at: string;
-    }>(
-      `SELECT r.id, r.agent_id, r.thread_id, t.chat_id,
-              ${utcText("COALESCE(r.started_at, r.created_at)")} AS started_at
-       FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
-       ORDER BY r.created_at ASC, r.id ASC
-       LIMIT 1`,
-      [chatId],
-    );
-    return res.rows[0] ?? null;
+  private async runningRun(chatId: string): Promise<OpenChatRun | null> {
+    return openRunForChat(this.deps.pool, chatId);
   }
 
   /** send_message opens a new thread; that row is the run's durable signal
    *  that it reached the user even when it wrote no assistant text. */
-  private async sentMessage(run: RunningRun, since: string): Promise<boolean> {
-    const res = await this.deps.pool.query(
-      `SELECT 1 FROM agent_threads
-       WHERE agent_id = $1 AND id <> $2 AND created_at >= $3::timestamptz
-       LIMIT 1`,
-      [run.agent_id, run.thread_id, since],
-    );
-    return (res.rowCount ?? 0) > 0;
+  private async sentMessage(run: OpenChatRun, since: string): Promise<boolean> {
+    return openedThreadSince(this.deps.pool, run.agent_id, run.thread_id, since);
   }
 
-  private async indexTurn(run: RunningRun, events: TurnEvent[]): Promise<void> {
+  private async indexTurn(run: OpenChatRun, events: TurnEvent[]): Promise<void> {
     const parts: string[] = [];
     let seqFrom: number | null = null;
     let seqTo: number | null = null;
@@ -307,23 +255,12 @@ export class AgentRunLifecycle {
    *  and running runs are marked cancelled, then the parent wakes with
    *  cancelled/user. A root chat's runs are left to the run-end path. */
   async cancelChildOnStop(chatId: string): Promise<void> {
-    const thread = await this.deps.pool.query<{ id: string; parent_thread_id: string | null }>(
-      "SELECT id, parent_thread_id FROM agent_threads WHERE chat_id = $1",
-      [chatId],
-    );
-    const row = thread.rows[0];
-    if (row === undefined || row.parent_thread_id === null) return;
-    const runs = await this.deps.pool.query<{ id: string; started_at: string }>(
-      `UPDATE agent_runs
-       SET status = 'cancelled', finished_at = now()
-       WHERE thread_id = $1 AND status IN ('queued', 'running')
-       RETURNING id,
-         ${utcText("COALESCE(started_at, created_at)")} AS started_at`,
-      [row.id],
-    );
-    if (runs.rows.length === 0) return;
+    const row = await chatThreadNode(this.deps.pool, chatId);
+    if (row === null || row.parent_thread_id === null) return;
+    const runs = await cancelOpenRuns(this.deps.pool, row.id);
+    if (runs.length === 0) return;
     await notifySubagentTree(this.deps.pool, row.id);
-    for (const run of runs.rows) {
+    for (const run of runs) {
       this.mirrorFinishedRun(run.id);
       const finalText = await assistantTextForRun(this.deps.pool, chatId, run.started_at).catch(() => "");
       await this.deps.delivery
