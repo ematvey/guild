@@ -82,7 +82,7 @@ export function AgentPage({
   filePath?: string;
   filters?: ActivityFilters;
   viewer: Viewer;
-  onNavigate: (route: AgentsRoute) => void;
+  onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
   // The agent row is live: the pushed agent list carries every agent this
@@ -264,8 +264,8 @@ export function AgentPage({
               role={viewer.role}
               agentId={agent.id}
               filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
-              onFiltersChange={(next) =>
-                onNavigate({ view: "agent", agentId, tab: "activity", filters: next })
+              onFiltersChange={(next, options) =>
+                onNavigate({ view: "agent", agentId, tab: "activity", filters: next }, options)
               }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
