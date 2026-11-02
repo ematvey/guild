@@ -13,7 +13,14 @@ const idle = { generating: false, unread: false };
 describe("ChatListItem", () => {
   it("marks the open chat and offers rename and archive", () => {
     const html = renderToStaticMarkup(
-      <ChatListItem title="Deploy notes" active status={idle} onClick={() => {}} onRename={() => {}} onArchive={() => {}} />,
+      <ChatListItem
+        title="Deploy notes"
+        active
+        status={idle}
+        onClick={() => {}}
+        onRename={() => {}}
+        onArchive={() => {}}
+      />,
     );
     expect(html).toContain("Deploy notes");
     expect(html).toContain("bg-sidebar-accent");
@@ -35,9 +42,7 @@ describe("ChatListItem", () => {
   });
 
   it("keeps a fixed row height and a title line box when the title is empty", () => {
-    const html = renderToStaticMarkup(
-      <ChatListItem title="" active={false} status={idle} onClick={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<ChatListItem title="" active={false} status={idle} onClick={() => {}} />);
     expect(html).toContain("h-8");
     expect(html).toContain("data-title-placeholder");
   });
@@ -123,9 +128,7 @@ describe("panels", () => {
   });
 
   it("hides admin-only settings sections from a member", () => {
-    const html = renderToStaticMarkup(
-      <SettingsPanel role="member" activeSection={null} onSelectSection={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<SettingsPanel role="member" activeSection={null} onSelectSection={() => {}} />);
     expect(html).toContain("User");
     expect(html).not.toContain("Workspace");
   });

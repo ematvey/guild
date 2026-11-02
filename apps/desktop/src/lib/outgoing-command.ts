@@ -39,20 +39,40 @@ export type OutgoingCommand = {
   error?: string;
 };
 
-export function captureCommand(input: Omit<OutgoingCommand, "attachments" | "uploaded" | "running" | "accepted" | "sentAt"> & {
-  attachments: readonly DraftAttachment[];
-}): OutgoingCommand {
-  return { ...input, attachments: input.attachments.map(a => ({ ...a })), uploaded: new Map(),
-    running: false, accepted: false, sentAt: Date.now() };
+export function captureCommand(
+  input: Omit<OutgoingCommand, "attachments" | "uploaded" | "running" | "accepted" | "sentAt"> & {
+    attachments: readonly DraftAttachment[];
+  },
+): OutgoingCommand {
+  return {
+    ...input,
+    attachments: input.attachments.map((a) => ({ ...a })),
+    uploaded: new Map(),
+    running: false,
+    accepted: false,
+    sentAt: Date.now(),
+  };
 }
 
-export function matchesCommandDraft(command: OutgoingCommand, text: string, files: readonly DraftAttachment[]): boolean {
-  return command.text === text.trim() && command.attachments.length === files.length
-    && command.attachments.every((a, i) => a.id === files[i]?.id);
+export function matchesCommandDraft(
+  command: OutgoingCommand,
+  text: string,
+  files: readonly DraftAttachment[],
+): boolean {
+  return (
+    command.text === text.trim() &&
+    command.attachments.length === files.length &&
+    command.attachments.every((a, i) => a.id === files[i]?.id)
+  );
 }
 
 /** Unknown ownership is remote: never read a same-named local folder by accident. */
-export function prepareOnSendingMachine(isDesktop: boolean, hasProject: boolean, projectMachine: string | undefined, senderMachine: string): boolean {
+export function prepareOnSendingMachine(
+  isDesktop: boolean,
+  hasProject: boolean,
+  projectMachine: string | undefined,
+  senderMachine: string,
+): boolean {
   return isDesktop && (!hasProject || projectMachine === senderMachine);
 }
 
@@ -88,7 +108,7 @@ export async function submitCommand(command: OutgoingCommand, io: SubmissionIO):
       // the raw local-id meta would reach the server as an invalid UUID.
       const meta = attachment.file
         ? await io.upload(command.chatId, attachment)
-        : attachment.uploadedAs ?? attachment;
+        : (attachment.uploadedAs ?? attachment);
       attachment.uploadedAs = meta;
       command.uploaded.set(attachment.id, meta);
       await io.checkpoint?.(command);
@@ -97,13 +117,20 @@ export async function submitCommand(command: OutgoingCommand, io: SubmissionIO):
     if (!command.prepared) {
       let prep: Awaited<ReturnType<SubmissionIO["prepare"]>> = null;
       if (command.prepareLocally) {
-        try { prep = await io.prepare(command.text, command.projectFolder); } catch { /* optional local context */ }
+        try {
+          prep = await io.prepare(command.text, command.projectFolder);
+        } catch {
+          /* optional local context */
+        }
       }
       command.prepared = {
-        model: command.model, prompt: prep?.prompt ?? command.text,
-        attachmentIds: command.attachments.map(a => command.uploaded.get(a.id)!.id),
-        projectId: command.projectId, sendMode: command.sendMode,
-        skillsIndex: prep?.index || undefined, instructions: prep?.instructions || undefined,
+        model: command.model,
+        prompt: prep?.prompt ?? command.text,
+        attachmentIds: command.attachments.map((a) => command.uploaded.get(a.id)!.id),
+        projectId: command.projectId,
+        sendMode: command.sendMode,
+        skillsIndex: prep?.index || undefined,
+        instructions: prep?.instructions || undefined,
       };
     }
     await io.checkpoint?.(command);
@@ -120,7 +147,11 @@ export async function submitCommand(command: OutgoingCommand, io: SubmissionIO):
 }
 
 /** Recovery is conditional on the origin draft still being empty. */
-export function recoveryDraft(command: OutgoingCommand, text: string, files: readonly DraftAttachment[]): { text: string; files: DraftAttachment[]; restored: boolean } {
+export function recoveryDraft(
+  command: OutgoingCommand,
+  text: string,
+  files: readonly DraftAttachment[],
+): { text: string; files: DraftAttachment[]; restored: boolean } {
   if (text || files.length) return { text, files: [...files], restored: false };
   return { text: command.text, files: [...command.attachments], restored: true };
 }
@@ -129,20 +160,35 @@ const storagePrefix = (scope: string) => `guild:outgoing:${encodeURIComponent(sc
 export function rememberCommand(storage: Pick<Storage, "setItem">, scope: string, command: OutgoingCommand): void {
   if (!command.prepared || !command.chatId) return;
   try {
-    storage.setItem(storagePrefix(scope) + command.id, JSON.stringify({ ...command,
-      attachments: command.attachments.map(({ file: _file, previewUrl: _preview, ...meta }) => meta),
-      uploaded: [...command.uploaded].map(([id, metadata]) => {
-        const { file: _file, previewUrl: _preview, ...meta } = metadata as DraftAttachment;
-        return [id, meta];
+    storage.setItem(
+      storagePrefix(scope) + command.id,
+      JSON.stringify({
+        ...command,
+        attachments: command.attachments.map(({ file: _file, previewUrl: _preview, ...meta }) => meta),
+        uploaded: [...command.uploaded].map(([id, metadata]) => {
+          const { file: _file, previewUrl: _preview, ...meta } = metadata as DraftAttachment;
+          return [id, meta];
+        }),
+        running: false,
+        accepted: false,
+        error: "Delivery needs confirmation — retry this send",
       }),
-      running: false, accepted: false, error: "Delivery needs confirmation — retry this send",
-    }));
-  } catch { /* storage unavailable: the live command still retains its identity */ }
+    );
+  } catch {
+    /* storage unavailable: the live command still retains its identity */
+  }
 }
 export function forgetCommand(storage: Pick<Storage, "removeItem">, scope: string, id: string): void {
-  try { storage.removeItem(storagePrefix(scope) + id); } catch { /* storage unavailable */ }
+  try {
+    storage.removeItem(storagePrefix(scope) + id);
+  } catch {
+    /* storage unavailable */
+  }
 }
-export function restoreCommands(storage: Pick<Storage, "getItem" | "key" | "length">, scope: string): Map<string, OutgoingCommand> {
+export function restoreCommands(
+  storage: Pick<Storage, "getItem" | "key" | "length">,
+  scope: string,
+): Map<string, OutgoingCommand> {
   const commands = new Map<string, OutgoingCommand>();
   try {
     for (let i = 0; i < storage.length; i++) {
@@ -150,9 +196,17 @@ export function restoreCommands(storage: Pick<Storage, "getItem" | "key" | "leng
       if (!key?.startsWith(storagePrefix(scope))) continue;
       try {
         const row = JSON.parse(storage.getItem(key) ?? "null");
-        if (!row || typeof row.id !== "string" || typeof row.chatId !== "string" || typeof row.text !== "string"
-          || typeof row.prepared?.prompt !== "string" || !Array.isArray(row.prepared?.attachmentIds)
-          || !Array.isArray(row.attachments) || !Array.isArray(row.uploaded)) continue;
+        if (
+          !row ||
+          typeof row.id !== "string" ||
+          typeof row.chatId !== "string" ||
+          typeof row.text !== "string" ||
+          typeof row.prepared?.prompt !== "string" ||
+          !Array.isArray(row.prepared?.attachmentIds) ||
+          !Array.isArray(row.attachments) ||
+          !Array.isArray(row.uploaded)
+        )
+          continue;
         const uploaded = new Map<string, MessageAttachmentMeta>(row.uploaded);
         // Heal records written before the stamp existed: an uploaded
         // attachment's server metadata travels on the entry itself, so an
@@ -166,25 +220,37 @@ export function restoreCommands(storage: Pick<Storage, "getItem" | "key" | "leng
         // acceptance cleanup keep working); the server ID lives in the
         // upload map and the prepared payload.
         commands.set(row.id, { ...row, uploaded, running: false, accepted: false });
-      } catch { /* ignore malformed records individually */ }
+      } catch {
+        /* ignore malformed records individually */
+      }
     }
-  } catch { /* storage unavailable */ }
+  } catch {
+    /* storage unavailable */
+  }
   return commands;
 }
 
 export function clearCommands(storage: Pick<Storage, "removeItem" | "key" | "length">, scope: string): void {
   try {
     const keys: string[] = [];
-    for (let i = 0; i < storage.length; i++) { const key = storage.key(i); if (key?.startsWith(storagePrefix(scope))) keys.push(key); }
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(storagePrefix(scope))) keys.push(key);
+    }
     for (const key of keys) storage.removeItem(key);
-  } catch { /* storage unavailable */ }
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /** Detach by origin identity even if navigation occurred while saving files. */
-export function detachCommandDraft(command: OutgoingCommand, drafts: {
-  read: (chatId: string | null) => { text: string; files: readonly DraftAttachment[] };
-  clear: (chatId: string | null) => void;
-}): void {
+export function detachCommandDraft(
+  command: OutgoingCommand,
+  drafts: {
+    read: (chatId: string | null) => { text: string; files: readonly DraftAttachment[] };
+    clear: (chatId: string | null) => void;
+  },
+): void {
   const target = command.chatId ?? command.originChatId;
   const draft = drafts.read(target);
   if (matchesCommandDraft(command, draft.text, draft.files)) drafts.clear(target);

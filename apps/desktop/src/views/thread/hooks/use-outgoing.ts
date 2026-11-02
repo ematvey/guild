@@ -2,7 +2,15 @@
 // failed sends, and the queued-chip actions.
 import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { createChat, sendChatNoStream, steerQueued, stopChat, uploadAttachment, withdrawQueued, compactChat } from "../../../lib/api/chats";
+import {
+  createChat,
+  sendChatNoStream,
+  steerQueued,
+  stopChat,
+  uploadAttachment,
+  withdrawQueued,
+  compactChat,
+} from "../../../lib/api/chats";
 import { machineId } from "../../../lib/machine-rpc";
 import { prepareTurn } from "../../../lib/api/skills";
 import { setChatApproval, type ChatApprovalMode } from "../../../lib/api/approvals";
@@ -27,7 +35,6 @@ import type { ThreadStoreHandle } from "./use-thread-store";
 import type { RoutePatch } from "../route";
 import { HAS_ENGINE } from "../../../lib/session";
 import { withTimeout } from "../../../lib/timeout";
-
 
 export interface OutgoingDeps {
   /** The composer's draft, attachments and stored queue (useComposer). */
@@ -55,11 +62,36 @@ export interface OutgoingDeps {
 }
 
 export function useOutgoing(deps: OutgoingDeps) {
-  const { composer, thread, chatId, model, busy, outgoingScope, target, justCreatedApprovalRef, justCreatedChatRef, pushRoute } = deps;
   const {
-    filesReady, promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
-    draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
-    deliveringRef, restoredCommandRef, refreshOutgoing,
+    composer,
+    thread,
+    chatId,
+    model,
+    busy,
+    outgoingScope,
+    target,
+    justCreatedApprovalRef,
+    justCreatedChatRef,
+    pushRoute,
+  } = deps;
+  const {
+    filesReady,
+    promptRef,
+    setPrompt,
+    pendingRef,
+    setPending,
+    autoGrow,
+    outgoingRef,
+    pendingDraftsRef,
+    draftStorage,
+    fileStore,
+    storageFailure,
+    persistCommand,
+    persistFiles,
+    mountedRef,
+    deliveringRef,
+    restoredCommandRef,
+    refreshOutgoing,
   } = composer;
   const { store, setSendPending, openChatIdRef, loadSeq, stopping, setStopping } = thread;
   const { compacting } = thread.view;
@@ -82,16 +114,24 @@ export function useOutgoing(deps: OutgoingDeps) {
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
+        if (active) {
+          promptRef.current = "";
+          setPrompt("");
+          setPending([]);
+          requestAnimationFrame(autoGrow);
+        }
       }
       restoredCommandRef.current.delete(target);
     }
     for (const a of command.attachments) {
-      if (a.previewUrl && ![...pendingDraftsRef.current.values()].some(files => files.some(f => f.previewUrl === a.previewUrl))) {
+      if (
+        a.previewUrl &&
+        ![...pendingDraftsRef.current.values()].some((files) => files.some((f) => f.previewUrl === a.previewUrl))
+      ) {
         URL.revokeObjectURL(a.previewUrl);
       }
     }
-    refreshOutgoing(n => n + 1);
+    refreshOutgoing((n) => n + 1);
   };
 
   const recoverOutgoing = (command: OutgoingCommand) => {
@@ -113,20 +153,30 @@ export function useOutgoing(deps: OutgoingDeps) {
         requestAnimationFrame(autoGrow);
       }
     }
-    refreshOutgoing(n => n + 1);
+    refreshOutgoing((n) => n + 1);
   };
 
   const deliverOutgoing = async (command: OutgoingCommand) => {
     if (!mountedRef.current) return;
     if (command.running || command.accepted || deliveringRef.current.has(command.id)) return;
     deliveringRef.current.add(command.id);
-    try { await persistCommand(command); } catch { deliveringRef.current.delete(command.id); return; }
-    if (!mountedRef.current) { deliveringRef.current.delete(command.id); return; }
+    try {
+      await persistCommand(command);
+    } catch {
+      deliveringRef.current.delete(command.id);
+      return;
+    }
+    if (!mountedRef.current) {
+      deliveringRef.current.delete(command.id);
+      return;
+    }
     const target = command.chatId ?? command.originChatId;
     detachCommandDraft(command, {
-      read: target => ({ text: openChatIdRef.current === target ? promptRef.current : readDraft(draftStorage, target),
-        files: pendingDraftsRef.current.get(target) ?? [] }),
-      clear: target => {
+      read: (target) => ({
+        text: openChatIdRef.current === target ? promptRef.current : readDraft(draftStorage, target),
+        files: pendingDraftsRef.current.get(target) ?? [],
+      }),
+      clear: (target) => {
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
@@ -134,10 +184,18 @@ export function useOutgoing(deps: OutgoingDeps) {
         // input blocked) until the create responds and the route moves —
         // clearing here would flash an emptied new-chat screen. The
         // created() handover below empties the composer at navigation.
-        if (target !== null && openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
+        if (target !== null && openChatIdRef.current === target) {
+          promptRef.current = "";
+          setPrompt("");
+          setPending([]);
+          requestAnimationFrame(autoGrow);
+        }
       },
     });
-    if (command.accepted) { deliveringRef.current.delete(command.id); return; }
+    if (command.accepted) {
+      deliveringRef.current.delete(command.id);
+      return;
+    }
     const mySeq = loadSeq.current;
     // A first send moves the route only once the server holds the send: the
     // scratch composer stays frozen (text visible, spinner) through create,
@@ -161,9 +219,19 @@ export function useOutgoing(deps: OutgoingDeps) {
       requestAnimationFrame(autoGrow);
       // Seed the created chat's view with the sent message so the route
       // push lands straight on the thread — no skeleton in between.
-      store.mutate((r) => r.optimisticSend({ chatId: cid, text: command.text,
-        key: command.id, sentAt: command.sentAt,
-        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
+      store.mutate((r) =>
+        r.optimisticSend({
+          chatId: cid,
+          text: command.text,
+          key: command.id,
+          sentAt: command.sentAt,
+          attachments: command.attachments.map((a) => ({
+            ...a,
+            file: undefined,
+            id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}`,
+          })),
+        }),
+      );
       store.seed(cid);
       justCreatedChatRef.current = cid;
       // The turn is live server-side; until the chat's state echoing this
@@ -178,10 +246,20 @@ export function useOutgoing(deps: OutgoingDeps) {
       setPendingSubmitId(command.id);
     } else if (openChatIdRef.current === target) {
       setSendPending(target, "optimistic_send", command.id);
-      store.mutate((r) => r.optimisticSend({ chatId: target, text: command.text,
-        key: command.id, sentAt: command.sentAt,
-        ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
-        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }));
+      store.mutate((r) =>
+        r.optimisticSend({
+          chatId: target,
+          text: command.text,
+          key: command.id,
+          sentAt: command.sentAt,
+          ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
+          attachments: command.attachments.map((a) => ({
+            ...a,
+            file: undefined,
+            id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}`,
+          })),
+        }),
+      );
     }
     try {
       await submitCommand(command, {
@@ -218,8 +296,18 @@ export function useOutgoing(deps: OutgoingDeps) {
         submit: async (cid, id, body) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
           rememberCommand(localStorage, outgoingScope, command);
-          await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
-            id, body.sendMode, body.skillsIndex, body.instructions, pickedAgentRef.current?.id);
+          await sendChatNoStream(
+            cid,
+            body.model,
+            body.prompt,
+            body.attachmentIds,
+            body.projectId,
+            id,
+            body.sendMode,
+            body.skillsIndex,
+            body.instructions,
+            pickedAgentRef.current?.id,
+          );
         },
       });
       openCreated(true);
@@ -234,9 +322,10 @@ export function useOutgoing(deps: OutgoingDeps) {
     } finally {
       deliveringRef.current.delete(command.id);
       if (mountedRef.current) {
-        setPendingSubmitId(cur => cur === command.id ? null : cur);
-        if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setSendPending(null, "command_error");
-        refreshOutgoing(n => n + 1);
+        setPendingSubmitId((cur) => (cur === command.id ? null : cur));
+        if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId))
+          setSendPending(null, "command_error");
+        refreshOutgoing((n) => n + 1);
       }
     }
   };
@@ -246,8 +335,14 @@ export function useOutgoing(deps: OutgoingDeps) {
     const text = promptRef.current.trim();
     if ((!text && pendingRef.current.length === 0) || !model) return;
     if (text.toLowerCase() === "/compact") {
-      if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
-      if (compacting) { toast.info("Compaction is already running"); return; }
+      if (!chatId) {
+        toast.error("Compact needs an existing chat — send a message first");
+        return;
+      }
+      if (compacting) {
+        toast.info("Compaction is already running");
+        return;
+      }
       promptRef.current = "";
       setPrompt("");
       requestAnimationFrame(autoGrow);
@@ -270,20 +365,38 @@ export function useOutgoing(deps: OutgoingDeps) {
       }
       return;
     }
-    const retry = [...outgoingRef.current.values()].find(c => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current));
-    if (retry) { await deliverOutgoing(retry); return; }
+    const retry = [...outgoingRef.current.values()].find(
+      (c) => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current),
+    );
+    if (retry) {
+      await deliverOutgoing(retry);
+      return;
+    }
     if (mode === "normal" && busy) return;
-    if ([...outgoingRef.current.values()].some(c => deliveringRef.current.has(c.id) && !c.running && (c.chatId ?? c.originChatId) === chatId)) return;
-    if (!chatId && [...outgoingRef.current.values()].some(c => c.running && c.originChatId === null)) return;
-    const selected = currentProject ? projectsStore.get()?.find(p => p.id === currentProject.id) : undefined;
-    const executor = selected?.machine_id ?? (currentProject ? openRow?.machine_id ?? undefined : undefined);
+    if (
+      [...outgoingRef.current.values()].some(
+        (c) => deliveringRef.current.has(c.id) && !c.running && (c.chatId ?? c.originChatId) === chatId,
+      )
+    )
+      return;
+    if (!chatId && [...outgoingRef.current.values()].some((c) => c.running && c.originChatId === null)) return;
+    const selected = currentProject ? projectsStore.get()?.find((p) => p.id === currentProject.id) : undefined;
+    const executor = selected?.machine_id ?? (currentProject ? (openRow?.machine_id ?? undefined) : undefined);
     const command = captureCommand({
-      id: crypto.randomUUID(), originChatId: chatId, chatId, text,
+      id: crypto.randomUUID(),
+      originChatId: chatId,
+      chatId,
+      text,
       model,
       createProjectId: pickedProjectRef.current?.id ?? null,
       projectId: outgoingProjectId(pickedProjectRef.current),
       projectFolder: currentProject?.folder ?? selected?.folder,
-      prepareLocally: prepareOnSendingMachine(HAS_ENGINE, !!currentProject, executor ?? undefined, HAS_ENGINE ? machineId() : ""),
+      prepareLocally: prepareOnSendingMachine(
+        HAS_ENGINE,
+        !!currentProject,
+        executor ?? undefined,
+        HAS_ENGINE ? machineId() : "",
+      ),
       sendMode: busy ? (mode === "steer" ? "steer" : "queue") : undefined,
       attachments: pendingRef.current,
     });
@@ -292,37 +405,43 @@ export function useOutgoing(deps: OutgoingDeps) {
     await deliverOutgoing(command);
   };
 
-  const steerChip = useCallback(async (block: RenderBlock) => {
-    if (!chatId || !block.eventId) return;
-    setSteeringMessage(block.eventId);
-    try {
-      const outcome = await steerQueued(chatId, block.eventId);
-      if (outcome === "pending") toast.info("Message is still being queued. Try again in a moment.");
-      else if (outcome === "placed") toast.info("Message was just delivered to the agent");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSteeringMessage(null);
-    }
-  }, [chatId]);
+  const steerChip = useCallback(
+    async (block: RenderBlock) => {
+      if (!chatId || !block.eventId) return;
+      setSteeringMessage(block.eventId);
+      try {
+        const outcome = await steerQueued(chatId, block.eventId);
+        if (outcome === "pending") toast.info("Message is still being queued. Try again in a moment.");
+        else if (outcome === "placed") toast.info("Message was just delivered to the agent");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      } finally {
+        setSteeringMessage(null);
+      }
+    },
+    [chatId],
+  );
 
   /** Trash on a queued chip: withdraws the not-yet-placed send server-side.
    *  The chip drops on success; 409 means the input was just placed — the
    *  delivery flow converts it to a transcript bubble (refresh incoming). */
-  const withdrawChip = useCallback(async (block: RenderBlock) => {
-    const cid = chatId;
-    if (!cid || !block.eventId) return;
-    try {
-      const ok = await withdrawQueued(cid, block.eventId);
-      if (!ok) {
-        toast.info("Message was just delivered to the agent");
-        return;
+  const withdrawChip = useCallback(
+    async (block: RenderBlock) => {
+      const cid = chatId;
+      if (!cid || !block.eventId) return;
+      try {
+        const ok = await withdrawQueued(cid, block.eventId);
+        if (!ok) {
+          toast.info("Message was just delivered to the agent");
+          return;
+        }
+        store.mutate((r) => r.dropQueued(cid, block.eventId!));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
       }
-      store.mutate((r) => r.dropQueued(cid, block.eventId!));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    }
-  }, [chatId]);
+    },
+    [chatId],
+  );
 
   /** Stops the chat's in-flight turn. 409 (nothing generating) resolves
    *  silently — the turn already ended between the render and the click. */

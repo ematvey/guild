@@ -6,7 +6,7 @@ import type { Project } from "../../lib/api/projects";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,
-  sidebarGrouping,
+  type sidebarGrouping,
   type PickedProject,
 } from "../projects/projects";
 import { ChatListItem, ProjectHeader } from "./rows";
@@ -84,11 +84,7 @@ export const WorkPanel = memo(function WorkPanel({
           open={open}
           onToggle={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
           onRename={(name) => onRenameProject?.(p.id, name)}
-          onArchive={
-            archived
-              ? () => onUnarchiveProject?.(p.id)
-              : () => onArchiveProject?.(p.id)
-          }
+          onArchive={archived ? () => onUnarchiveProject?.(p.id) : () => onArchiveProject?.(p.id)}
           archiveLabel={archived ? "Unarchive" : undefined}
           onNewChat={
             !archived && onNewChatInProject
@@ -99,26 +95,30 @@ export const WorkPanel = memo(function WorkPanel({
         {open && (
           <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
             {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
-            {!loadingChats && chats.slice(0, limit).map((c) => (
-              <ChatListItem
-                key={c.id}
-                title={c.title ?? ""}
-                active={c.id === chatId}
-                status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
-                onClick={() => onOpenChat(c.id)}
-                onRename={(title) => onRenameChat?.(c.id, title)}
-                onArchive={() => onArchiveChat?.(c.id)}
-              />
-            ))}
+            {!loadingChats &&
+              chats.slice(0, limit).map((c) => (
+                <ChatListItem
+                  key={c.id}
+                  title={c.title ?? ""}
+                  active={c.id === chatId}
+                  status={{
+                    generating: !!c.generating,
+                    working: !!c.working,
+                    unread: !!c.unread,
+                    blocked: !!c.blocked,
+                  }}
+                  onClick={() => onOpenChat(c.id)}
+                  onRename={(title) => onRenameChat?.(c.id, title)}
+                  onArchive={() => onArchiveChat?.(c.id)}
+                />
+              ))}
             {!loadingChats && chats.length === 0 && (
               <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
             )}
             {chats.length > limit && (
               <button
                 type="button"
-                onClick={() =>
-                  setLimits((l) => ({ ...l, [p.id]: limit + PROJECT_PAGE_STEP }))
-                }
+                onClick={() => setLimits((l) => ({ ...l, [p.id]: limit + PROJECT_PAGE_STEP }))}
                 className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
               >
                 <ChevronDown className="size-3.5" />
@@ -171,17 +171,9 @@ export const WorkPanel = memo(function WorkPanel({
               className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
             >
               <span>Archived</span>
-              {archivedOpen ? (
-                <ChevronUp className="size-4" />
-              ) : (
-                <ChevronDown className="size-4" />
-              )}
+              {archivedOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </button>
-            {archivedOpen && (
-              <div className="space-y-0.5">
-                {archivedProjects.map((p) => renderProject(p, true))}
-              </div>
-            )}
+            {archivedOpen && <div className="space-y-0.5">{archivedProjects.map((p) => renderProject(p, true))}</div>}
           </div>
         )}
       </div>

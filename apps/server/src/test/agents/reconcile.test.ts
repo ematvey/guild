@@ -190,10 +190,9 @@ dbDescribe("stale run reconciliation", () => {
       final_text: "the answer",
       attachments: [],
     });
-    await env!.db.query(
-      "UPDATE thread_events SET created_at = now() - interval '5 minutes' WHERE chat_id = $1",
-      [fx.parentChatId],
-    );
+    await env!.db.query("UPDATE thread_events SET created_at = now() - interval '5 minutes' WHERE chat_id = $1", [
+      fx.parentChatId,
+    ]);
     redelivered.length = 0;
     await failStaleRuns(deps());
     expect(redelivered).toContain(fx.parentChatId);
@@ -217,12 +216,12 @@ dbDescribe("stale run reconciliation", () => {
     expect(redelivered).not.toContain(fx.parentChatId);
   });
 
-  it("beginChatRun adopts the open run instead of opening a second", async () => {    const runtime = (env!.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
+  it("beginChatRun adopts the open run instead of opening a second", async () => {
+    const runtime = (env!.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     const fx = await fixture({ ageMs: null });
-    const child = await env!.db.query<{ agent_id: string }>(
-      "SELECT agent_id FROM agent_threads WHERE id = $1",
-      [fx.childThreadId],
-    );
+    const child = await env!.db.query<{ agent_id: string }>("SELECT agent_id FROM agent_threads WHERE id = $1", [
+      fx.childThreadId,
+    ]);
     const id = await runtime.beginChatRun(child.rows[0]!.agent_id, fx.childThreadId, userId);
     expect(id).toBe(fx.runId);
     const open = await env!.db.query<{ count: string }>(

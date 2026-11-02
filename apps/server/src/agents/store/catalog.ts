@@ -232,7 +232,11 @@ export class AgentCatalog {
 
   /** Loads the agent and enforces can_use (read/chat) or can_manage
    *  (configuration, lifecycle). */
-  async requireAccess(user: UserRow, agentId: string, mode: "use" | "manage"): Promise<{ agent: Agent; access: AgentAccess }> {
+  async requireAccess(
+    user: UserRow,
+    agentId: string,
+    mode: "use" | "manage",
+  ): Promise<{ agent: Agent; access: AgentAccess }> {
     const agent = await this.get(user, agentId);
     const access = await this.access(user, agent);
     if (mode === "manage" ? !access.can_manage : !access.can_use) {
@@ -335,9 +339,10 @@ export class AgentCatalog {
   /** Loads an agent without a caller check; routes and the runtime call this
    *  only after authorization. */
   async fetchAgent(agentId: string): Promise<Agent> {
-    const res = await this.pool.query<Record<string, unknown>>(`SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.id = $1`, [
-      agentId,
-    ]);
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.id = $1`,
+      [agentId],
+    );
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such agent");
     return toAgent(row);

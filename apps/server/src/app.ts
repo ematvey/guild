@@ -98,7 +98,10 @@ export async function buildApp(config: Config) {
 
   // Unmatched routes answer the not-found envelope.
   app.setNotFoundHandler(async (_req, reply) => {
-    void reply.status(404).type("application/json").send(JSON.stringify(ApiError.notFound("no such route").envelope()));
+    void reply
+      .status(404)
+      .type("application/json")
+      .send(JSON.stringify(ApiError.notFound("no such route").envelope()));
     return reply;
   });
 

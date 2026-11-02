@@ -5,9 +5,7 @@ import { HAS_SHELL } from "./session";
 /// and cross-origin downloads have no handler), a new browser tab otherwise.
 export function openExternal(url: string): void {
   if (HAS_SHELL) {
-    void import("@tauri-apps/plugin-opener")
-      .then((m) => m.openUrl(url))
-      .catch(() => {});
+    void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(url)).catch(() => {});
   } else {
     window.open(url, "_blank", "noopener,noreferrer");
   }

@@ -31,7 +31,11 @@ function envFor(t: SandboxTarget, cwd = "/workspace"): SandboxExecutionEnv {
   return env;
 }
 
-async function sh(env: SandboxExecutionEnv, command: string, timeout = 120_000): Promise<{ code: number; out: string }> {
+async function sh(
+  env: SandboxExecutionEnv,
+  command: string,
+  timeout = 120_000,
+): Promise<{ code: number; out: string }> {
   let out = "";
   const result = await env.exec(command, { timeout, onOutput: (text) => (out += text) }, ctx);
   if (!result.ok) throw result.error;
@@ -82,7 +86,10 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
     });
 
     it("has a read-only root filesystem and a writable workspace", async () => {
-      const { out } = await sh(env, "touch /etc/x 2>&1; touch /usr/local/x 2>&1; touch /workspace/ok && echo WROTE; touch /tmp/t && echo TMP");
+      const { out } = await sh(
+        env,
+        "touch /etc/x 2>&1; touch /usr/local/x 2>&1; touch /workspace/ok && echo WROTE; touch /tmp/t && echo TMP",
+      );
       expect(out).toMatch(/Read-only file system|Permission denied/);
       expect(out).toContain("WROTE");
       expect(out).toContain("TMP");
@@ -93,13 +100,19 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
 
   describe("network", () => {
     it("has no direct route out", async () => {
-      const { code, out } = await sh(env, "curl -sS --noproxy '*' --max-time 10 https://registry.npmjs.org/ -o /dev/null 2>&1");
+      const { code, out } = await sh(
+        env,
+        "curl -sS --noproxy '*' --max-time 10 https://registry.npmjs.org/ -o /dev/null 2>&1",
+      );
       expect(code).not.toBe(0);
       expect(out).toMatch(/resolve|connect|unreachable/i);
     });
 
     it("reaches allowlisted registries through the proxy only", async () => {
-      const allowed = await sh(env, "curl -s --max-time 30 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad");
+      const allowed = await sh(
+        env,
+        "curl -s --max-time 30 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad",
+      );
       expect(allowed.out).toBe("200");
       const denied = await sh(env, "curl -s --max-time 30 -o /dev/null -w '%{http_code}' https://example.com/; echo");
       expect(denied.out.trim()).toMatch(/^(403|000)$/);
@@ -116,12 +129,20 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
 
   describe("package installs", () => {
     it("installs npm and pip packages, globally and locally", async () => {
-      const npm = await sh(env, "mkdir -p proj && cd proj && npm init -y >/dev/null && npm install --silent left-pad@1.3.0 && node -e \"console.log(require('left-pad')('x', 3))\"", 300_000);
+      const npm = await sh(
+        env,
+        "mkdir -p proj && cd proj && npm init -y >/dev/null && npm install --silent left-pad@1.3.0 && node -e \"console.log(require('left-pad')('x', 3))\"",
+        300_000,
+      );
       expect(npm.code, npm.out).toBe(0);
       expect(npm.out).toContain("  x");
       const global = await sh(env, "npm install -g --silent cowsay@1.6.0 && cowsay hi | head -2", 300_000);
       expect(global.code, global.out).toBe(0);
-      const pip = await sh(env, "pip install --user --quiet six==1.16.0 && python3 -c 'import six; print(six.__version__)'", 300_000);
+      const pip = await sh(
+        env,
+        "pip install --user --quiet six==1.16.0 && python3 -c 'import six; print(six.__version__)'",
+        300_000,
+      );
       expect(pip.code, pip.out).toBe(0);
       expect(pip.out).toContain("1.16.0");
     }, 600_000);
@@ -131,7 +152,10 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       env.disconnect();
       await runner.remove(main.key);
       const fresh = envFor(main);
-      const { code, out } = await sh(fresh, "cat keep.txt; command -v cowsay; python3 -c 'import six; print(six.__version__)'; ls proj/node_modules");
+      const { code, out } = await sh(
+        fresh,
+        "cat keep.txt; command -v cowsay; python3 -c 'import six; print(six.__version__)'; ls proj/node_modules",
+      );
       expect(code, out).toBe(0);
       expect(out).toContain("persisted");
       expect(out).toContain("/workspace/.sandbox-home/.npm-global/bin/cowsay");
@@ -155,7 +179,14 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
     });
 
     it("rejects subpaths and keys outside the contract", async () => {
-      for (const subpath of ["../etc", `workspaces/${ORG}/../../x`, "/etc", `workspaces/${ORG}/a/b`, `other/${ORG}/x`, `workspaces/${ORG}/..`]) {
+      for (const subpath of [
+        "../etc",
+        `workspaces/${ORG}/../../x`,
+        "/etc",
+        `workspaces/${ORG}/a/b`,
+        `other/${ORG}/x`,
+        `workspaces/${ORG}/..`,
+      ]) {
         expect((await post({ key: "ws:x:y", subpath })).status, subpath).toBe(400);
       }
       expect((await post({ key: "bad key!", subpath: `workspaces/${ORG}/x` })).status).toBe(400);

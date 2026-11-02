@@ -58,7 +58,12 @@ export function JsonView({
         <p className="text-2xs text-muted-foreground">
           {value.length.toLocaleString()} characters. The JSON tree is off for large payloads.
         </p>
-        <pre className={cn("overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-3 font-mono text-2xs leading-5", maxHeight)}>
+        <pre
+          className={cn(
+            "overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-3 font-mono text-2xs leading-5",
+            maxHeight,
+          )}
+        >
           {value.slice(0, MAX_RENDER_CHARS)}
         </pre>
       </div>
@@ -94,15 +99,7 @@ export function JsonView({
         </div>
       )}
       <div className={cn("overflow-auto p-3 font-mono text-2xs leading-5 text-foreground", maxHeight)}>
-        <JsonNode
-          value={parsed}
-          depth={0}
-          name={null}
-          arrayIndex={false}
-          isLast
-          mode={mode}
-          revision={revision}
-        />
+        <JsonNode value={parsed} depth={0} name={null} arrayIndex={false} isLast mode={mode} revision={revision} />
       </div>
     </div>
   );

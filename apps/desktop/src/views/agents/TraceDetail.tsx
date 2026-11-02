@@ -3,25 +3,14 @@
 // overview, input, output and attributes, with readable JSON.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  ChevronRight,
-  MessageSquare,
-  RefreshCw,
-} from "lucide-react";
+import { ArrowLeft, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
 import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
-import {
-  getRun,
-  getTrace,
-  type AgentRun,
-  type SpanRow,
-  type TraceRow,
-} from "./agents-api";
+import { getRun, getTrace, type AgentRun, type SpanRow, type TraceRow } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
 import { runFinishes, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
@@ -86,9 +75,7 @@ export function RunDetailPage({
         setChildren(value.children);
         setSelected((current) => {
           if (current !== null && value.spans.some((span) => span.span_id === current.span_id)) return current;
-          const ordered = [...value.spans].sort(
-            (a, b) => Date.parse(a.start_time) - Date.parse(b.start_time),
-          );
+          const ordered = [...value.spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
           return ordered.find((span) => span.span_type === "llm") ?? ordered[0] ?? null;
         });
       })
@@ -139,8 +126,10 @@ export function RunDetailPage({
     const spanEnds = ordered.map((span) =>
       span.end_time === null ? Date.parse(span.start_time) + span.duration_ms : Date.parse(span.end_time),
     );
-    const traceStart = trace?.started_at === null || trace?.started_at === undefined ? NaN : Date.parse(trace.started_at);
-    const traceEnd = trace?.finished_at === null || trace?.finished_at === undefined ? NaN : Date.parse(trace.finished_at);
+    const traceStart =
+      trace?.started_at === null || trace?.started_at === undefined ? NaN : Date.parse(trace.started_at);
+    const traceEnd =
+      trace?.finished_at === null || trace?.finished_at === undefined ? NaN : Date.parse(trace.finished_at);
     const starts = Number.isFinite(traceStart) ? [...spanStarts, traceStart] : spanStarts;
     const ends = Number.isFinite(traceEnd) ? [...spanEnds, traceEnd] : spanEnds;
     if (starts.length === 0) return null;
@@ -227,7 +216,9 @@ export function RunDetailPage({
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2" data-scrollable>
                 {view === "timeline" &&
                   (bounds === null ? (
-                    <p className="py-6 text-center text-sm text-muted-foreground">No spans were recorded for this trace.</p>
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      No spans were recorded for this trace.
+                    </p>
                   ) : (
                     <TimelineView spans={ordered} bounds={bounds} selected={selected} onSelect={setSelected} />
                   ))}
@@ -239,79 +230,84 @@ export function RunDetailPage({
             </div>
 
             {trace !== null && (
-            <aside className="w-full space-y-4 xl:min-h-0 xl:w-[36%] xl:min-w-[24rem] xl:max-w-[40rem] xl:shrink-0 xl:overflow-y-auto" data-scrollable>
-              <SpanDetail span={selected} admin={admin} />
-              <div className="border-t border-border pt-3">
-                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
-                <dl className="mt-2 space-y-1.5 text-2xs">
-                  <Meta label="Trace id" value={trace.trace_id} mono />
-                  <Meta label="Agent" value={trace.agent_name || "—"} />
-                  {trace.session_id !== null ? (
-                    <div>
-                      <dt className="text-muted-foreground">Chat</dt>
-                      <dd>
-                        <button
-                          type="button"
-                          onClick={() => onNavigate({ view: "chat", chatId: trace.session_id! })}
-                          className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
-                        >
-                          {trace.session_id}
-                        </button>
-                      </dd>
+              <aside
+                className="w-full space-y-4 xl:min-h-0 xl:w-[36%] xl:min-w-[24rem] xl:max-w-[40rem] xl:shrink-0 xl:overflow-y-auto"
+                data-scrollable
+              >
+                <SpanDetail span={selected} admin={admin} />
+                <div className="border-t border-border pt-3">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
+                  <dl className="mt-2 space-y-1.5 text-2xs">
+                    <Meta label="Trace id" value={trace.trace_id} mono />
+                    <Meta label="Agent" value={trace.agent_name || "—"} />
+                    {trace.session_id !== null ? (
+                      <div>
+                        <dt className="text-muted-foreground">Chat</dt>
+                        <dd>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ view: "chat", chatId: trace.session_id! })}
+                            className="break-all font-mono underline decoration-border underline-offset-2 hover:decoration-foreground"
+                          >
+                            {trace.session_id}
+                          </button>
+                        </dd>
+                      </div>
+                    ) : (
+                      <Meta label="Session" value="—" />
+                    )}
+                    {trace.parent_trace_id !== null && <Meta label="Parent trace" value={trace.parent_trace_id} mono />}
+                    <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
+                  </dl>
+                </div>
+
+                {trace.summary.trim() !== "" && (
+                  <details className="border-t border-border pt-3">
+                    <summary className="cursor-pointer select-none text-2xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                      Summary
+                    </summary>
+                    <div className={cn("mt-2 text-sm text-foreground", MD_CLASS, MD_TABLE_CLASS)}>
+                      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                        {trace.summary}
+                      </Markdown>
                     </div>
-                  ) : (
-                    <Meta label="Session" value="—" />
-                  )}
-                  {trace.parent_trace_id !== null && <Meta label="Parent trace" value={trace.parent_trace_id} mono />}
-                  <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
-                </dl>
-              </div>
+                  </details>
+                )}
 
-              {trace.summary.trim() !== "" && (
-                <details className="border-t border-border pt-3">
-                  <summary className="cursor-pointer select-none text-2xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground">
-                    Summary
-                  </summary>
-                  <div className={cn("mt-2 text-sm text-foreground", MD_CLASS, MD_TABLE_CLASS)}>
-                    <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                      {trace.summary}
-                    </Markdown>
-                  </div>
-                </details>
-              )}
+                {trace.error !== "" && (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-2xs text-destructive">
+                    {trace.error}
+                  </p>
+                )}
 
-              {trace.error !== "" && (
-                <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-2xs text-destructive">
-                  {trace.error}
-                </p>
-              )}
-
-              {children.length > 0 && (
-                <section className="border-t border-border pt-3">
-                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Delegated traces</p>
-                  <ul className="mt-2 divide-y divide-border/60">
-                    {children.map((child) => (
-                      <li key={child.trace_id}>
-                        <button
-                          type="button"
-                          onClick={() => onNavigate({ view: "run", runId: child.trace_id })}
-                          className="flex w-full items-start gap-2 py-2 text-left text-xs transition-colors hover:bg-accent/40"
-                        >
-                          <ToneBadge tone={toneOf(child.status)}>{statusLabel(child.status)}</ToneBadge>
-                          <span className="min-w-0 flex-1">
-                            <span className="font-medium">{child.agent_name || "Delegated agent"}</span>
-                            {child.summary !== "" && (
-                              <span className="mt-0.5 block truncate text-muted-foreground">{child.summary}</span>
-                            )}
-                          </span>
-                          <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </aside>
+                {children.length > 0 && (
+                  <section className="border-t border-border pt-3">
+                    <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Delegated traces
+                    </p>
+                    <ul className="mt-2 divide-y divide-border/60">
+                      {children.map((child) => (
+                        <li key={child.trace_id}>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ view: "run", runId: child.trace_id })}
+                            className="flex w-full items-start gap-2 py-2 text-left text-xs transition-colors hover:bg-accent/40"
+                          >
+                            <ToneBadge tone={toneOf(child.status)}>{statusLabel(child.status)}</ToneBadge>
+                            <span className="min-w-0 flex-1">
+                              <span className="font-medium">{child.agent_name || "Delegated agent"}</span>
+                              {child.summary !== "" && (
+                                <span className="mt-0.5 block truncate text-muted-foreground">{child.summary}</span>
+                              )}
+                            </span>
+                            <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </aside>
             )}
           </div>
         )}

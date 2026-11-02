@@ -1,10 +1,25 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, secretOrNull, configString, fetchJson, clampNumber, truncateWithMarker, superproxyBaseUrl } from "../shared.js";
+import {
+  FETCH_TIMEOUT_MS,
+  MAX_BODY_CHARS,
+  secretOrNull,
+  configString,
+  fetchJson,
+  clampNumber,
+  truncateWithMarker,
+  superproxyBaseUrl,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 import { assertPublicFetchTarget } from "../fetch-target.js";
 
 // ---------- superproxy ----------
 
-export async function superproxyExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function superproxyExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   if (tool !== "web_fetch") throw new Error(`superproxy integration has no tool ${tool}`);
   const target = args["url"];
   if (typeof target !== "string") throw new Error("web_fetch requires url");
@@ -29,4 +44,3 @@ export async function superproxyExecute(config: JsonObject, tool: string, args: 
   if (title !== null) meta["title"] = title;
   return { content, meta };
 }
-

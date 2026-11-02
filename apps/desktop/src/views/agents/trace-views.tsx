@@ -2,22 +2,12 @@
 // plus the span helpers they share with the span pane.
 
 import { useMemo, useState } from "react";
-import {
-  ArrowRight,
-  Bot,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Wrench,
-} from "lucide-react";
+import { ArrowRight, Bot, ChevronDown, ChevronRight, FileText, Wrench } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@guild/ui/lib/utils";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
-import {
-  type AgentRunStep,
-  type SpanRow,
-} from "./agents-api";
+import type { AgentRunStep, SpanRow } from "./agents-api";
 import { compact, ms, spanPreview, time, totalTokens } from "./activity-format";
 import { ToneBadge } from "./agent-ui";
 
@@ -168,9 +158,7 @@ export function SpanList({
             )}
           </span>
           <span className="shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-            {span.tokens_in + span.tokens_out > 0 && (
-              <span className="block">{compact(totalTokens(span))} tok</span>
-            )}
+            {span.tokens_in + span.tokens_out > 0 && <span className="block">{compact(totalTokens(span))} tok</span>}
             <span className="block">{ms(span.duration_ms)}</span>
           </span>
         </button>
@@ -247,9 +235,7 @@ export function TranscriptView({
               }}
               className={cn(
                 "cursor-pointer border-l-2 px-3 py-2 transition-colors focus:outline-none",
-                selectedRow
-                  ? "border-l-primary bg-primary/10"
-                  : "border-l-violet-400/60 hover:bg-accent/40",
+                selectedRow ? "border-l-primary bg-primary/10" : "border-l-violet-400/60 hover:bg-accent/40",
               )}
             >
               <div className="flex flex-wrap items-center gap-1.5 text-2xs text-violet-300">
@@ -291,9 +277,7 @@ export function TranscriptView({
               }}
               className={cn(
                 "cursor-pointer border-l-2 px-3 py-2 transition-colors focus:outline-none",
-                selectedRow
-                  ? "border-l-primary bg-primary/10"
-                  : "border-l-emerald-400/60 hover:bg-accent/40",
+                selectedRow ? "border-l-primary bg-primary/10" : "border-l-emerald-400/60 hover:bg-accent/40",
               )}
             >
               <div className="flex flex-wrap items-center gap-1.5 text-2xs text-emerald-300">

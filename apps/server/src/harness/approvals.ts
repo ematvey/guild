@@ -61,7 +61,6 @@ const INTERNAL_JUDGE_SESSION_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-ses
  *  tools flow, state-changing tools ask. */
 export const SERVER_DEFAULT_POLICY = { default: "ask", overrides: { read_file: "allow" } };
 
-
 export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
 import { AGENT_TOOL_NAMES } from "./agent-tools.js";
@@ -449,9 +448,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       // for every tool. A command-bearing tool is refused instead; non-command
       // tools keep the batch contract below (pre-approved file operations).
       if (chatId === null) {
-        return isCommandTool
-          ? { block: "denied: this conversation has no approval mapping" }
-          : undefined;
+        return isCommandTool ? { block: "denied: this conversation has no approval mapping" } : undefined;
       }
       const executor = await deps.executorKind(Number(runtime.conversationId));
       const toolExecutor = isAgentTool ? "server" : executor;

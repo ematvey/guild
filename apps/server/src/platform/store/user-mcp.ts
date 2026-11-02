@@ -43,10 +43,12 @@ export class UserMcpStore {
 
   async list(orgId: string, userId: string): Promise<UserMcpRow[]> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
-      + utcText("created_at") + " AS created_at, "
-      + utcText("updated_at") + " AS updated_at " +
-      "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 ORDER BY created_at",
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, " +
+        utcText("created_at") +
+        " AS created_at, " +
+        utcText("updated_at") +
+        " AS updated_at " +
+        "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 ORDER BY created_at",
       [orgId, userId],
     );
     return res.rows.map((r: Record<string, unknown>) => rowOf(r));
@@ -55,10 +57,12 @@ export class UserMcpStore {
   /** Enabled rows only, in name order — the runtime's per-turn input. */
   async listEnabled(orgId: string, userId: string): Promise<UserMcpRow[]> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
-      + utcText("created_at") + " AS created_at, "
-      + utcText("updated_at") + " AS updated_at " +
-      "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND enabled ORDER BY name",
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, " +
+        utcText("created_at") +
+        " AS created_at, " +
+        utcText("updated_at") +
+        " AS updated_at " +
+        "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND enabled ORDER BY name",
       [orgId, userId],
     );
     return res.rows.map((r: Record<string, unknown>) => rowOf(r));
@@ -66,10 +70,12 @@ export class UserMcpStore {
 
   async get(orgId: string, userId: string, id: string): Promise<UserMcpRow | null> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
-      + utcText("created_at") + " AS created_at, "
-      + utcText("updated_at") + " AS updated_at " +
-      "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND id = $3",
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, " +
+        utcText("created_at") +
+        " AS created_at, " +
+        utcText("updated_at") +
+        " AS updated_at " +
+        "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND id = $3",
       [orgId, userId, id],
     );
     return res.rows[0] === undefined ? null : rowOf(res.rows[0]);
@@ -86,7 +92,7 @@ export class UserMcpStore {
   ): Promise<UserMcpRow> {
     const res = await this.pool.query(
       "INSERT INTO user_mcp_servers (id, org_id, user_id, name, url, headers_enc, enabled) " +
-      "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
       [randomUUID(), orgId, userId, name, url, encodeHeaders(headers, masterKey), enabled],
     );
     const created = await this.get(orgId, userId, res.rows[0]!.id as string);
@@ -115,17 +121,18 @@ export class UserMcpStore {
     const enabled = patch.enabled ?? existing.enabled;
     await this.pool.query(
       "UPDATE user_mcp_servers SET name = $4, url = $5, headers_enc = $6, enabled = $7, updated_at = now() " +
-      "WHERE org_id = $1 AND user_id = $2 AND id = $3",
+        "WHERE org_id = $1 AND user_id = $2 AND id = $3",
       [orgId, userId, id, name, url, headersEnc, enabled],
     );
     return this.get(orgId, userId, id);
   }
 
   async delete(orgId: string, userId: string, id: string): Promise<boolean> {
-    const res = await this.pool.query(
-      "DELETE FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND id = $3",
-      [orgId, userId, id],
-    );
+    const res = await this.pool.query("DELETE FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND id = $3", [
+      orgId,
+      userId,
+      id,
+    ]);
     return (res.rowCount ?? 0) > 0;
   }
 

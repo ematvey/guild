@@ -123,12 +123,7 @@ export function registerAdminPromptRoutes(app: FastifyInstance, ctx: IdentityCtx
 }
 
 /** Sets an org prompt. An empty string resets to the built-in default. */
-async function setOrgPrompt(
-  ctx: IdentityCtx,
-  orgId: string,
-  key: string,
-  req: FastifyRequest,
-): Promise<void> {
+async function setOrgPrompt(ctx: IdentityCtx, orgId: string, key: string, req: FastifyRequest): Promise<void> {
   const record = optionalJsonBody(req);
   const prompt = record["prompt"];
   if (typeof prompt !== "string") throw ApiError.badRequest('missing "prompt" string');
@@ -254,4 +249,3 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     return reply;
   });
 }
-

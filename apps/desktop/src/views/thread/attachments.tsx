@@ -14,7 +14,6 @@ export function modalityOf(contentType: string): string {
   return "document";
 }
 
-
 /** Icon for a non-image attachment by modality/type. */
 function AttachmentFileIcon({ att }: { att: MessageAttachmentMeta }) {
   if (att.modality === "video" || att.content_type.startsWith("video/"))
@@ -26,9 +25,7 @@ function AttachmentFileIcon({ att }: { att: MessageAttachmentMeta }) {
 
 /** Authed blob fetch → object URL for a stored attachment (thumbnails and
  * downloads). `null` while loading; renders the file icon meanwhile. */
-function useAttachmentPreview(
-  att: MessageAttachmentMeta & { previewUrl?: string },
-): string | null {
+function useAttachmentPreview(att: MessageAttachmentMeta & { previewUrl?: string }): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let dead = false;
@@ -128,8 +125,7 @@ export function AttachmentFileChip({
       )}
     </>
   );
-  const cls =
-    "flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1";
+  const cls = "flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1";
   if (onRemove) {
     return <span className={cls}>{body}</span>;
   }
@@ -139,14 +135,15 @@ export function AttachmentFileChip({
       title="Download"
       className={`${cls} hover:bg-accent`}
       onClick={() => {
-        if (!att.id.startsWith("pending-")) void attachmentBlobUrl(att.id).then((u) => {
-          if (!u) return;
-          const a = document.createElement("a");
-          a.href = u;
-          a.download = att.filename;
-          a.click();
-          URL.revokeObjectURL(u);
-        });
+        if (!att.id.startsWith("pending-"))
+          void attachmentBlobUrl(att.id).then((u) => {
+            if (!u) return;
+            const a = document.createElement("a");
+            a.href = u;
+            a.download = att.filename;
+            a.click();
+            URL.revokeObjectURL(u);
+          });
       }}
     >
       {body}

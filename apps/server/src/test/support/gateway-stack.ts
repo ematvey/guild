@@ -8,7 +8,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import pg from "pg";
+import type pg from "pg";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
 import {
@@ -19,11 +19,9 @@ import {
   TEST_S3_URL,
 } from "./platform-env.js";
 
-const TEST_CLICKHOUSE_URL =
-  process.env.GUILD_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
+const TEST_CLICKHOUSE_URL = process.env.GUILD_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
 const TEST_CLICKHOUSE_USER = process.env.GUILD_TEST_CLICKHOUSE_USER ?? "ch_user";
-const TEST_CLICKHOUSE_PASSWORD =
-  process.env.GUILD_TEST_CLICKHOUSE_PASSWORD ?? "ch_test_pass";
+const TEST_CLICKHOUSE_PASSWORD = process.env.GUILD_TEST_CLICKHOUSE_PASSWORD ?? "ch_test_pass";
 
 export interface GatewayTestEnv {
   databaseName: string;
@@ -174,9 +172,7 @@ export interface MockUpstreamResponse {
 /** A scripted provider upstream: each POST to any path is answered with the
  *  next response (SSE bodies passed verbatim); request bodies are recorded.
  *  GETs (stray loopback probes) get a 404. */
-export async function startMockUpstream(
-  responses: MockUpstreamResponse[],
-): Promise<MockUpstream> {
+export async function startMockUpstream(responses: MockUpstreamResponse[]): Promise<MockUpstream> {
   const requests: MockUpstreamRequest[] = [];
   let call = 0;
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -259,7 +255,10 @@ export interface GatewayStack {
   mock: MockUpstream;
   /** Registers the mock upstream as the org's provider + a route for
    *  `model`. */
-  routeModel(model: string, opts?: { protocol?: string; quotaMonthlyUsd?: number | null; priceIn?: number; priceOut?: number }): Promise<void>;
+  routeModel(
+    model: string,
+    opts?: { protocol?: string; quotaMonthlyUsd?: number | null; priceIn?: number; priceOut?: number },
+  ): Promise<void>;
   /** Inserts a usage event directly into the disposable ClickHouse. */
   seedUsage(opts: {
     model: string;

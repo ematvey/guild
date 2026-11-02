@@ -12,10 +12,7 @@ export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | 
  * effect sees the new chatId while the prompt still holds the previous
  * chat's text — writing then clobbers the destination draft before its
  * restore reads it. */
-export function canPersistDraft(
-  restoredFor: string | null | undefined,
-  chatId: string | null,
-): boolean {
+export function canPersistDraft(restoredFor: string | null | undefined, chatId: string | null): boolean {
   return restoredFor !== undefined && restoredFor === chatId;
 }
 
@@ -79,7 +76,7 @@ export function completeDraftInventory(
   openChatId: string | null,
 ): Set<string> | null {
   if (active === null || archived === null) return null;
-  return new Set([...active.map(c => c.id), ...archived.map(c => c.id), ...(openChatId ? [openChatId] : [])]);
+  return new Set([...active.map((c) => c.id), ...archived.map((c) => c.id), ...(openChatId ? [openChatId] : [])]);
 }
 
 /** Namespace every composer key to the authenticated API/account. Unowned
@@ -88,14 +85,19 @@ export function scopedDraftStorage(storage: DraftStorage, scope: string): DraftS
   const prefix = `guild:composer:${encodeURIComponent(scope)}:`;
   const keys = () => {
     const result: string[] = [];
-    for (let i = 0; i < storage.length; i++) { const key = storage.key(i); if (key?.startsWith(prefix)) result.push(key.slice(prefix.length)); }
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(prefix)) result.push(key.slice(prefix.length));
+    }
     return result;
   };
   return {
-    getItem: key => storage.getItem(prefix + key),
+    getItem: (key) => storage.getItem(prefix + key),
     setItem: (key, value) => storage.setItem(prefix + key, value),
-    removeItem: key => storage.removeItem(prefix + key),
-    key: index => keys()[index] ?? null,
-    get length() { return keys().length; },
+    removeItem: (key) => storage.removeItem(prefix + key),
+    key: (index) => keys()[index] ?? null,
+    get length() {
+      return keys().length;
+    },
   };
 }

@@ -26,7 +26,10 @@ export function followPushedName(current: string, shownBefore: string | null, pu
 
 export default function GeneralSection() {
   const identity = useWorkspaceIdentity();
-  const org = identity === null ? null : { name: identity.name, logo_url: identity.logo_url ?? null, telemetry: identity.telemetry };
+  const org =
+    identity === null
+      ? null
+      : { name: identity.name, logo_url: identity.logo_url ?? null, telemetry: identity.telemetry };
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [logoTick, setLogoTick] = useState(0); // busts the img cache on change
@@ -60,25 +63,22 @@ export default function GeneralSection() {
     }
   };
 
-  const uploadLogo = useCallback(
-    async (file: File) => {
-      if (!file.type.startsWith("image/") || file.size > 2 * 1024 * 1024) {
-        toast.error("Pick an image up to 2 MB (png, jpeg, webp, gif, svg)");
-        return;
-      }
-      setBusy(true);
-      try {
-        await uploadOrgLogo(file);
-        setLogoTick((t) => t + 1);
-        toast.success("Logo updated");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : String(e));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [],
-  );
+  const uploadLogo = useCallback(async (file: File) => {
+    if (!file.type.startsWith("image/") || file.size > 2 * 1024 * 1024) {
+      toast.error("Pick an image up to 2 MB (png, jpeg, webp, gif, svg)");
+      return;
+    }
+    setBusy(true);
+    try {
+      await uploadOrgLogo(file);
+      setLogoTick((t) => t + 1);
+      toast.success("Logo updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const toggleTelemetry = async () => {
     if (org === null) return;
@@ -108,10 +108,7 @@ export default function GeneralSection() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="General"
-        description="The workspace's name and logo, shown across the app."
-      />
+      <PageHeader title="General" description="The workspace's name and logo, shown across the app." />
       <div className="flex items-center gap-5" aria-busy={!org}>
         <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
           {!org ? (
@@ -139,12 +136,7 @@ export default function GeneralSection() {
             }}
           />
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || !org}
-              onClick={() => fileRef.current?.click()}
-            >
+            <Button size="sm" variant="outline" disabled={busy || !org} onClick={() => fileRef.current?.click()}>
               <ImagePlus className="size-4" />
               {!org ? <Skeleton className="h-3 w-20" /> : org.logo_url ? "Replace logo" : "Upload logo"}
             </Button>
@@ -163,15 +155,25 @@ export default function GeneralSection() {
           Workspace name
         </label>
         <div className="flex gap-2">
-          {!org ? <div role="status" aria-label="Loading workspace name" className="flex h-9 flex-1 items-center rounded-md border border-border px-3"><Skeleton className="h-3 w-36" /></div> : <Input
-            disabled={!org}
-            id="workspace-name"
-            value={name}
-            autoComplete="off"
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && name.trim() !== org?.name && void saveName()}
-            placeholder="e.g. your-org"
-          />}
+          {!org ? (
+            <div
+              role="status"
+              aria-label="Loading workspace name"
+              className="flex h-9 flex-1 items-center rounded-md border border-border px-3"
+            >
+              <Skeleton className="h-3 w-36" />
+            </div>
+          ) : (
+            <Input
+              disabled={!org}
+              id="workspace-name"
+              value={name}
+              autoComplete="off"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && name.trim() !== org?.name && void saveName()}
+              placeholder="e.g. your-org"
+            />
+          )}
           <Button disabled={busy || !org || !name.trim() || name.trim() === org?.name} onClick={() => void saveName()}>
             Save
           </Button>

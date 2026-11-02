@@ -13,11 +13,7 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { getOrThrow } from "@earendil-works/pi-durable/env";
-import {
-  attachmentObjectKey,
-  type AttachmentRow,
-  type AttachmentStore,
-} from "../platform/store/attachments.js";
+import { attachmentObjectKey, type AttachmentRow, type AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 
 /** Default destination folder, relative to the environment's working directory. */
@@ -37,7 +33,11 @@ function describe(rows: readonly AttachmentRow[]): string {
 }
 
 /** The row the call names, or the text that explains why none was chosen. */
-function pick(rows: readonly AttachmentRow[], id: string | undefined, filename: string | undefined): AttachmentRow | string {
+function pick(
+  rows: readonly AttachmentRow[],
+  id: string | undefined,
+  filename: string | undefined,
+): AttachmentRow | string {
   if (id !== undefined) {
     const byId = rows.find((row) => row.id === id);
     return byId ?? `no attachment with id ${id} in this chat`;
@@ -73,7 +73,9 @@ export function createDownloadAttachmentTool(deps: DownloadAttachmentDeps): Tool
       "neither to list this chat's attachments.",
     parameters: Type.Object({
       attachment_id: Type.Optional(Type.String({ description: "Attachment id from the list" })),
-      filename: Type.Optional(Type.String({ description: "Filename of the attachment (exact, or a unique part of it)" })),
+      filename: Type.Optional(
+        Type.String({ description: "Filename of the attachment (exact, or a unique part of it)" }),
+      ),
       path: Type.Optional(
         Type.String({
           description: `Destination path relative to the working folder. Default: ${DEFAULT_DIR}/<filename>`,

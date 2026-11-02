@@ -68,7 +68,7 @@ export function workRunLabel(
   const secs = (() => {
     if (!start) return null;
     const to = active ? nowMs : end ? Date.parse(end) : null;
-    if (to === null || isNaN(to)) return null;
+    if (to === null || Number.isNaN(to)) return null;
     // Floor, not round: a 0.5s run must read as sub-second (hidden), never
     // round up to a fictional "1 seconds".
     return Math.max(0, Math.floor((to - Date.parse(start)) / 1000));
@@ -82,7 +82,13 @@ export function workRunLabel(
   return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-export const WorkedForBlock = memo(function WorkedForBlock({ run, active, stopping, turnStart, children }: {
+export const WorkedForBlock = memo(function WorkedForBlock({
+  run,
+  active,
+  stopping,
+  turnStart,
+  children,
+}: {
   run: RenderBlock[];
   active: boolean;
   stopping: boolean;

@@ -14,12 +14,7 @@ import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { Plus, X } from "lucide-react";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { HAS_ENGINE } from "../lib/session";
-import {
-  serverList,
-  serverSignOut,
-  serverSwitch,
-  type ServerList,
-} from "../lib/api/servers";
+import { serverList, serverSignOut, serverSwitch, type ServerList } from "../lib/api/servers";
 
 /** The origin's display label: scheme stripped, so two servers of one org
  * stay distinguishable without a wall of protocol. */
@@ -30,9 +25,7 @@ function shortOrigin(base: string): string {
 /** The daemon's live sessions plus the active pointer (desktop only; a
  * failure resolves to an empty list, the UI still renders). */
 function useServerList(): ServerList | null {
-  const [list, setList] = useState<ServerList | null>(
-    HAS_ENGINE ? null : { active: null, workspaces: [] },
-  );
+  const [list, setList] = useState<ServerList | null>(HAS_ENGINE ? null : { active: null, workspaces: [] });
   useEffect(() => {
     if (!HAS_ENGINE) return;
     let cancelled = false;
@@ -110,11 +103,7 @@ export function ServerMenuItems({
               if (isActive) return; // switching to the current one is a no-op
               void switchTo(w.base_url);
             }}
-            title={
-              w.has_token
-                ? w.base_url
-                : `Sign in again to ${w.base_url}`
-            }
+            title={w.has_token ? w.base_url : `Sign in again to ${w.base_url}`}
             className={isActive ? "bg-accent/40" : undefined}
           >
             {w.logo_url ? (
@@ -165,12 +154,8 @@ export function ServerRailButton({
 }) {
   const list = useServerList();
   if (!HAS_ENGINE) return null;
-  const activeRow = (list?.workspaces ?? []).find(
-    (w) => w.base_url === (list?.active ?? null),
-  );
-  const label = activeRow
-    ? activeRow.name || shortOrigin(activeRow.base_url)
-    : "Guild";
+  const activeRow = (list?.workspaces ?? []).find((w) => w.base_url === (list?.active ?? null));
+  const label = activeRow ? activeRow.name || shortOrigin(activeRow.base_url) : "Guild";
   return (
     <DropdownMenu>
       <DesktopTooltip label="Switch server" side="right">
@@ -179,7 +164,9 @@ export function ServerRailButton({
             className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
             aria-label="Switch server"
           >
-            {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
+            {list === null ? (
+              <Skeleton className="size-6 shrink-0" />
+            ) : activeRow?.logo_url ? (
               <img
                 src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
                 alt=""
@@ -194,13 +181,8 @@ export function ServerRailButton({
         </DropdownMenuTrigger>
       </DesktopTooltip>
       <DropdownMenuContent side="bottom" align="start" className="w-60">
-        <ServerMenuItems
-          list={list}
-          onAddWorkspace={onAddWorkspace}
-          onReload={onReload}
-        />
+        <ServerMenuItems list={list} onAddWorkspace={onAddWorkspace} onReload={onReload} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
-

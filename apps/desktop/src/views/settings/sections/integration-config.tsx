@@ -175,9 +175,7 @@ function readPolicy(config: Record<string, unknown> | null): ToolPolicy {
   for (const role of ROLES) {
     const list = raw?.[role];
     if (Array.isArray(list)) {
-      const classes = list.filter((c): c is ToolClass =>
-        (TOOL_CLASSES as readonly string[]).includes(c as string),
-      );
+      const classes = list.filter((c): c is ToolClass => (TOOL_CLASSES as readonly string[]).includes(c as string));
       if (classes.length > 0) out[role] = classes;
     }
   }
@@ -254,16 +252,9 @@ function initialState(
   return {
     enabled: initialEnabled,
     draft: Object.fromEntries(
-      fields.map((f) => [
-        f.name,
-        initialConfig[f.name] ??
-          f.default ??
-          (f.kind === "boolean" ? false : ""),
-      ]),
+      fields.map((f) => [f.name, initialConfig[f.name] ?? f.default ?? (f.kind === "boolean" ? false : "")]),
     ),
-    mcpUrl: isMcp
-      ? String((initialConfig.mcp as Record<string, unknown>).url ?? "")
-      : "",
+    mcpUrl: isMcp ? String((initialConfig.mcp as Record<string, unknown>).url ?? "") : "",
     advancedText: isMcp ? JSON.stringify(advanced, null, 2) : "",
     policy: readPolicy(initialConfig),
   };
@@ -284,8 +275,7 @@ export function ConfiguredIntegration({
   const name = item.title;
   const initialConfig = item.config;
   const fields = item.settings?.fields ?? [];
-  const isMcp =
-    typeof item.config?.mcp === "object" && item.config.mcp !== null;
+  const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
   const [initial] = useState(() => initialState(fields, initialConfig, item.enabled, isMcp));
   const [state, setState] = useState(initial);
 
@@ -399,9 +389,7 @@ export function ConfiguredIntegration({
     setError(null);
     try {
       const cfg = buildConfig();
-      const secretsPayload = Object.fromEntries(
-        Object.entries(secretDraft).filter(([, v]) => v !== ""),
-      );
+      const secretsPayload = Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== ""));
       await updateIntegration(id, {
         config: cfg,
         enabled,
@@ -411,12 +399,7 @@ export function ConfiguredIntegration({
       setSecretDraft({});
       onChanged();
     } catch (e) {
-      fail(
-        e instanceof SyntaxError
-          ? new Error(`advanced config is not valid JSON: ${e.message}`)
-          : e,
-        "Save failed",
-      );
+      fail(e instanceof SyntaxError ? new Error(`advanced config is not valid JSON: ${e.message}`) : e, "Save failed");
     } finally {
       setBusy(false);
     }
@@ -438,7 +421,11 @@ export function ConfiguredIntegration({
     <div className="space-y-5">
       <PageHeader
         title={item.title}
-        description={enabled ? "Enabled — tools join the chat loop." : "Disabled; the configuration is kept, no tools are contributed."}
+        description={
+          enabled
+            ? "Enabled — tools join the chat loop."
+            : "Disabled; the configuration is kept, no tools are contributed."
+        }
         back={{ label: "Integrations", onClick: onBack }}
         actions={
           <>
@@ -450,11 +437,7 @@ export function ConfiguredIntegration({
                 Reset
               </Button>
             )}
-            <Button
-              variant="outline"
-              className="text-destructive"
-              onClick={() => setConfirmDelete(true)}
-            >
+            <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="size-3.5" /> Remove
             </Button>
           </>
@@ -485,11 +468,7 @@ export function ConfiguredIntegration({
       </div>
 
       {settingFields.map((f) => (
-        <Field
-          key={f.name}
-          label={`${fieldLabel(f)}${f.required ? " *" : ""}`}
-          hint={f.help ?? undefined}
-        >
+        <Field key={f.name} label={`${fieldLabel(f)}${f.required ? " *" : ""}`} hint={f.help ?? undefined}>
           {f.kind === "boolean" ? (
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -514,8 +493,7 @@ export function ConfiguredIntegration({
               className="max-w-md"
               spellCheck={false}
               placeholder={
-                f.placeholder ??
-                (f.default !== undefined && f.default !== null ? String(f.default) : undefined)
+                f.placeholder ?? (f.default !== undefined && f.default !== null ? String(f.default) : undefined)
               }
               value={String(draft[f.name] ?? "")}
               onChange={(e) => patch({ draft: { ...draft, [f.name]: e.target.value } })}
@@ -546,11 +524,7 @@ export function ConfiguredIntegration({
                 className="max-w-md font-mono text-xs"
                 type={sf.widget.kind === "text" ? "text" : "password"}
                 spellCheck={false}
-                placeholder={
-                  stored
-                    ? stored.masked || "••••••••"
-                    : (sf.widget.placeholder ?? "required")
-                }
+                placeholder={stored ? stored.masked || "••••••••" : (sf.widget.placeholder ?? "required")}
                 value={value}
                 onChange={(e) => setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))}
               />
@@ -571,10 +545,7 @@ export function ConfiguredIntegration({
               onChange={(e) => patch({ mcpUrl: e.target.value })}
             />
           </Field>
-          <Field
-            label="Tool policy"
-            hint="Classes each role may call; unchecked roles get the manifest defaults."
-          >
+          <Field label="Tool policy" hint="Classes each role may call; unchecked roles get the manifest defaults.">
             <div className="grid grid-cols-2 gap-3">
               {ROLES.map((role) => (
                 <div key={role} className="rounded-lg border border-border px-3 py-2.5">
@@ -612,7 +583,9 @@ export function ConfiguredIntegration({
       {Object.keys(item.traits).length > 0 && (
         <p className="text-xs text-muted-foreground">
           This integration provides the{" "}
-          {Object.keys(item.traits).map((t) => TRAIT_LABELS[t] ?? t).join(" and ")}{" "}
+          {Object.keys(item.traits)
+            .map((t) => TRAIT_LABELS[t] ?? t)
+            .join(" and ")}{" "}
           {Object.keys(item.traits).length === 1 ? "tool" : "tools"} under the shared name
           {Object.keys(item.traits).length === 1 ? "" : "s"}{" "}
           {Object.keys(item.traits)
@@ -629,8 +602,7 @@ export function ConfiguredIntegration({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The configuration and stored secrets are deleted; tools disappear from chats.
-              This cannot be undone.
+              The configuration and stored secrets are deleted; tools disappear from chats. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -745,9 +717,7 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
                     </Badge>
                   )}
                 </div>
-                {t.description && (
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.description}</p>
-                )}
+                {t.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.description}</p>}
               </div>
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <input
@@ -763,9 +733,7 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
                 className="h-8 shrink-0 rounded-md border border-border bg-card px-2 text-xs"
                 disabled={busyTool === t.name}
                 value={t.approval}
-                onChange={(e) =>
-                  update(t, { approval: e.target.value as CuratedTool["approval"] })
-                }
+                onChange={(e) => update(t, { approval: e.target.value as CuratedTool["approval"] })}
               >
                 <option value="default">Follow user policy</option>
                 <option value="always_ask">Always ask</option>

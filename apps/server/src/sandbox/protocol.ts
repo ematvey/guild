@@ -14,9 +14,7 @@ import { sanitizeText } from "../platform/domain/text.js";
 export { sanitizeText };
 
 /** Client → agent. */
-export type SandboxClientFrame =
-  | { t: "call"; id: number; m: string; a: unknown[] }
-  | { t: "cancel"; id: number };
+export type SandboxClientFrame = { t: "call"; id: number; m: string; a: unknown[] } | { t: "cancel"; id: number };
 
 /** Agent → client. */
 export type SandboxAgentFrame =
@@ -83,7 +81,8 @@ export function encodeValue(value: unknown): unknown {
   if (value === undefined) return { $u: 1 };
   if (typeof value === "string") return value;
   if (value === null || typeof value !== "object") return value;
-  if (value instanceof Uint8Array) return { $b64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64") };
+  if (value instanceof Uint8Array)
+    return { $b64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64") };
   if (value instanceof FileError) {
     return { $fe: value.code, message: value.message, path: value.path };
   }
@@ -107,7 +106,11 @@ export function decodeValue(value: unknown): unknown {
   if ("$u" in obj) return undefined;
   if (typeof obj["$b64"] === "string") return new Uint8Array(Buffer.from(obj["$b64"], "base64"));
   if (typeof obj["$fe"] === "string") {
-    return new FileError(obj["$fe"] as FileError["code"], String(obj["message"] ?? ""), obj["path"] as string | undefined);
+    return new FileError(
+      obj["$fe"] as FileError["code"],
+      String(obj["message"] ?? ""),
+      obj["path"] as string | undefined,
+    );
   }
   if (typeof obj["$ee"] === "string") {
     const error = new ExecutionError(obj["$ee"] as ExecutionError["code"], String(obj["message"] ?? ""));

@@ -109,8 +109,6 @@ export function renderFileBlock(name: string, text: string, budget: number): str
   if (body.length <= limit) return `${open}\n${body}\n</agent_workspace_file>`;
   const cut = body.slice(0, limit);
   return (
-    `${open}\n${cut}\n\n` +
-    `(truncated at ${limit} characters — read the file for the rest)\n</agent_workspace_file>`
+    `${open}\n${cut}\n\n` + `(truncated at ${limit} characters — read the file for the rest)\n</agent_workspace_file>`
   );
 }
-

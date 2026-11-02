@@ -48,7 +48,10 @@ export async function machineFsRequest(
   op: "fs_list" | "fs_home",
   payload: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const v = await request<{ result: unknown }>("POST", `/api/v1/machines/${encodeURIComponent(machineId)}/fs`, { op, payload });
+  const v = await request<{ result: unknown }>("POST", `/api/v1/machines/${encodeURIComponent(machineId)}/fs`, {
+    op,
+    payload,
+  });
   return v.result;
 }
 
@@ -81,4 +84,3 @@ export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken>
 export function pairingCode(serverUrl: string, secret: string): string {
   return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
 }
-

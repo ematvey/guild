@@ -66,10 +66,7 @@ export function createSseDecoder(): SseDecoder {
 /** Wraps a response body into an async iterator of decoded SSE data
  *  payloads; a stalled read (120s idle) or a broken stream fails with a
  *  stream error. */
-export async function* sseDataStreams(
-  res: Response,
-  providerLabel: string,
-): AsyncIterable<string | ProviderError> {
+export async function* sseDataStreams(res: Response, providerLabel: string): AsyncIterable<string | ProviderError> {
   const body = res.body;
   if (body === null) {
     yield ProviderError.stream(`${providerLabel} stream ended without a body`);

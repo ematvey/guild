@@ -49,9 +49,7 @@ export function registerMachineRoutes(app: FastifyInstance, chats: ChatsCtx, ctx
     const user = await requireUser(ctx, req);
     const machineId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
-    const owned = (await chats.machines.listForUser(user.org_id, user.id)).some(
-      (m) => m.machine_id === machineId,
-    );
+    const owned = (await chats.machines.listForUser(user.org_id, user.id)).some((m) => m.machine_id === machineId);
     if (!owned) throw ApiError.notFound("no such machine");
     const op = typeof body["op"] === "string" ? body["op"] : "";
     const payload = body["payload"] ?? null;

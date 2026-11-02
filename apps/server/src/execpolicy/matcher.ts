@@ -4,14 +4,17 @@
 // fall through to the chat's approval flow. Rules are static assets — the
 // decision is a pure function of (rules, command).
 
-import { parseRulesFile, type DecisionKind, type PatternToken, type PrefixRuleSpec, type RuleMatchExample } from "./rule-parser.js";
+import {
+  parseRulesFile,
+  type DecisionKind,
+  type PatternToken,
+  type PrefixRuleSpec,
+  type RuleMatchExample,
+} from "./rule-parser.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-export type ExecPolicyDecision =
-  | { kind: "allow" }
-  | { kind: "deny"; reason: string }
-  | { kind: "prompt" };
+export type ExecPolicyDecision = { kind: "allow" } | { kind: "deny"; reason: string } | { kind: "prompt" };
 
 // Decision ordering: allow < prompt < deny.
 const DECISION_RANK: Record<DecisionKind, number> = { allow: 0, prompt: 1, deny: 2 };
@@ -60,7 +63,10 @@ export class ExecPolicy {
   /** `Policy::check_multiple`: every segment is matched; unmatched segments
    *  fall back to the heuristics decision (Prompt); the aggregate decision
    *  is the strictest match (max by Decision ordering). */
-  checkMultiple(commands: string[][], heuristicsDecision: DecisionKind = "prompt"): { decision: DecisionKind; matched: { first: string; decision: DecisionKind; justification: string | null }[] } {
+  checkMultiple(
+    commands: string[][],
+    heuristicsDecision: DecisionKind = "prompt",
+  ): { decision: DecisionKind; matched: { first: string; decision: DecisionKind; justification: string | null }[] } {
     const matched: { first: string; decision: DecisionKind; justification: string | null }[] = [];
     for (const cmd of commands) {
       const rules = cmd.length > 0 ? (this.rulesByProgram.get(cmd[0]!) ?? []) : [];
@@ -312,7 +318,9 @@ export function evaluateCommand(policy: ExecPolicy, command: string): ExecPolicy
  *. */
 export function evaluateExecute(policy: ExecPolicy, args: unknown): ExecPolicyDecision {
   const command =
-    typeof args === "object" && args !== null && "command" in args ? (args as { command?: unknown }).command : undefined;
+    typeof args === "object" && args !== null && "command" in args
+      ? (args as { command?: unknown }).command
+      : undefined;
   if (typeof command !== "string") return { kind: "prompt" };
   return evaluateCommand(policy, command);
 }

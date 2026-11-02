@@ -1,5 +1,18 @@
 import { createHash, createSign } from "node:crypto";
-import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, requestJson, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "../shared.js";
+import {
+  CALL_TIMEOUT_MS,
+  MAX_BODY_CHARS,
+  API_MAX_CHARS,
+  secret,
+  configString,
+  urlencode,
+  requestJson,
+  fetchJson,
+  clampNumber,
+  callVendorApi,
+  googleApiBase,
+  googleTokenUrl,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- google_workspace ----------
@@ -63,7 +76,14 @@ async function googleAccessToken(config: JsonObject, secrets: [string, string][]
   const b64url = (input: string): string => Buffer.from(input, "utf8").toString("base64url");
   const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claims = b64url(
-    JSON.stringify({ iss: clientEmail, sub, scope: GOOGLE_SCOPES, aud: tokenUrl, iat: now, exp: now + GOOGLE_JWT_TTL_SECS }),
+    JSON.stringify({
+      iss: clientEmail,
+      sub,
+      scope: GOOGLE_SCOPES,
+      aud: tokenUrl,
+      iat: now,
+      exp: now + GOOGLE_JWT_TTL_SECS,
+    }),
   );
   let assertion: string;
   try {
@@ -102,7 +122,11 @@ async function googleAccessToken(config: JsonObject, secrets: [string, string][]
   return token;
 }
 
-export async function googleAccessTokenFor(config: JsonObject, secrets: [string, string][], actingAs: string | null): Promise<string> {
+export async function googleAccessTokenFor(
+  config: JsonObject,
+  secrets: [string, string][],
+  actingAs: string | null,
+): Promise<string> {
   return googleAccessToken(config, secrets, googleActingIdentity(actingAs, googleAdminEmail(config, secrets)));
 }
 
@@ -142,9 +166,10 @@ function stripHtmlTags(html: string): string {
 function extractBody(payload: JsonObject): string | null {
   const mime = typeof payload["mimeType"] === "string" ? payload["mimeType"] : "";
   const body = payload["body"];
-  const data = body !== null && typeof body === "object" && typeof (body as JsonObject)["data"] === "string"
-    ? (body as JsonObject)["data"] as string
-    : null;
+  const data =
+    body !== null && typeof body === "object" && typeof (body as JsonObject)["data"] === "string"
+      ? ((body as JsonObject)["data"] as string)
+      : null;
   if (data !== null) {
     const bytes = decodeBodyPartBytes(data);
     const text = bytes !== null && isUtf8(bytes) ? bytes.toString("utf8") : null;
@@ -182,9 +207,10 @@ function attachmentParts(payload: JsonObject): [string, string, string][] {
   const out: [string, string, string][] = [];
   const walk = (part: JsonObject): void => {
     const body = part["body"];
-    const id = body !== null && typeof body === "object" && typeof (body as JsonObject)["attachmentId"] === "string"
-      ? (body as JsonObject)["attachmentId"] as string
-      : null;
+    const id =
+      body !== null && typeof body === "object" && typeof (body as JsonObject)["attachmentId"] === "string"
+        ? ((body as JsonObject)["attachmentId"] as string)
+        : null;
     // Body parts of the message text carry an empty attachment id; a part
     // with a real id is an attachment.
     if (id !== null && id !== "") {
@@ -224,7 +250,11 @@ async function gmailSearch(config: JsonObject, args: JsonObject, token: string):
 async function gmailGetMessage(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
   const id = args["message_id"];
   if (typeof id !== "string") throw new Error("gmail_get_message requires message_id");
-  const body = await googleGetJson(`${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(id)}`, token, "gmail");
+  const body = await googleGetJson(
+    `${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(id)}`,
+    token,
+    "gmail",
+  );
   const payload = (body["payload"] ?? {}) as JsonObject;
   let out = "";
   for (const header of ["Subject", "From", "Date"]) {
@@ -233,7 +263,10 @@ async function gmailGetMessage(config: JsonObject, args: JsonObject, token: stri
   }
   out += "\n";
   const text = extractBody(payload);
-  out += text !== null ? truncateBody(text) : `(no text body — snippet: ${typeof body["snippet"] === "string" ? body["snippet"] : "none"})`;
+  out +=
+    text !== null
+      ? truncateBody(text)
+      : `(no text body — snippet: ${typeof body["snippet"] === "string" ? body["snippet"] : "none"})`;
   const parts = attachmentParts(payload);
   if (parts.length > 0) {
     out += "\nAttachments:\n";
@@ -251,12 +284,14 @@ async function gmailGetAttachment(config: JsonObject, args: JsonObject, token: s
   if (typeof attachmentId !== "string") throw new Error("gmail_get_attachment requires attachment_id");
   // The attachment endpoint returns only size + base64url data; the part
   // metadata (filename, mime) comes from the message itself.
-  const message = await googleGetJson(`${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(messageId)}`, token, "gmail");
+  const message = await googleGetJson(
+    `${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(messageId)}`,
+    token,
+    "gmail",
+  );
   const part = attachmentParts((message["payload"] ?? {}) as JsonObject).find(([, , id]) => id === attachmentId);
   const filename =
-    (typeof args["filename"] === "string" ? args["filename"] : null) ??
-    part?.[0] ??
-    `gmail_${attachmentId}.bin`;
+    (typeof args["filename"] === "string" ? args["filename"] : null) ?? part?.[0] ?? `gmail_${attachmentId}.bin`;
   const contentType = part?.[1] ?? "application/octet-stream";
   const body = await googleGetJson(
     `${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(messageId)}/attachments/${urlencode(attachmentId)}`,
@@ -289,7 +324,12 @@ async function calendarListEvents(config: JsonObject, args: JsonObject, token: s
   let out = `Calendar events: ${items.length}\n`;
   for (const e of items) {
     const start = (e["start"] ?? {}) as JsonObject;
-    const startText = typeof start["dateTime"] === "string" ? start["dateTime"] : typeof start["date"] === "string" ? start["date"] : "(no start)";
+    const startText =
+      typeof start["dateTime"] === "string"
+        ? start["dateTime"]
+        : typeof start["date"] === "string"
+          ? start["date"]
+          : "(no start)";
     out += `- ${startText} ${typeof e["summary"] === "string" ? e["summary"] : "(untitled)"}\n`;
   }
   return { content: out };
@@ -317,7 +357,12 @@ async function driveSearch(config: JsonObject, args: JsonObject, token: string):
   return { content: out };
 }
 
-async function directoryUsers(config: JsonObject, args: JsonObject, secrets: [string, string][], token: string): Promise<ToolOutcome> {
+async function directoryUsers(
+  config: JsonObject,
+  args: JsonObject,
+  secrets: [string, string][],
+  token: string,
+): Promise<ToolOutcome> {
   // Default domain: the admin_email's own domain (domain-wide delegation
   // is scoped to the service account's workspace).
   let admin = "";
@@ -328,9 +373,10 @@ async function directoryUsers(config: JsonObject, args: JsonObject, secrets: [st
   }
   const defaultDomain = admin.split("@").pop() ?? "";
   const domain = typeof args["domain"] === "string" ? args["domain"] : defaultDomain;
-  const url = domain === ""
-    ? `${googleApiBase(config)}/admin/directory/v1/users?customer=my_customer&maxResults=${clampNumber(args, "max_results", 20, 50)}`
-    : `${googleApiBase(config)}/admin/directory/v1/users?domain=${urlencode(domain)}&maxResults=${clampNumber(args, "max_results", 20, 50)}`;
+  const url =
+    domain === ""
+      ? `${googleApiBase(config)}/admin/directory/v1/users?customer=my_customer&maxResults=${clampNumber(args, "max_results", 20, 50)}`
+      : `${googleApiBase(config)}/admin/directory/v1/users?domain=${urlencode(domain)}&maxResults=${clampNumber(args, "max_results", 20, 50)}`;
   const body = await googleGetJson(url, token, "directory");
   const users = Array.isArray(body["users"]) ? (body["users"] as JsonObject[]) : [];
   if (users.length === 0) {
@@ -344,7 +390,13 @@ async function directoryUsers(config: JsonObject, args: JsonObject, secrets: [st
   return { content: out };
 }
 
-export async function googleWorkspaceExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], actingAs: string | null): Promise<ToolOutcome> {
+export async function googleWorkspaceExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  actingAs: string | null,
+): Promise<ToolOutcome> {
   // Dispatch first: an unknown tool fails without touching the network.
   // Per-call identity: acting_as is the DWD `sub`; the default subject is
   // admin_email.
@@ -381,4 +433,3 @@ export async function googleWorkspaceExecute(config: JsonObject, tool: string, a
       throw new Error(`google_workspace integration has no tool ${tool}`);
   }
 }
-

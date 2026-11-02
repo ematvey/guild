@@ -10,8 +10,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // The turn flow waits on async bridge/compaction writes: generous timeouts.
 const TEST_TIMEOUT = 30_000;
 
-const sseDelta = (content: string): string =>
-  `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+const sseDelta = (content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
@@ -33,7 +32,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
@@ -111,7 +112,9 @@ describe("chats CRUD wire", () => {
       url: "/api/v1/chats",
       headers: auth(stack.memberToken),
     });
-    expect((JSON.parse(activeList.body) as { chats: { id: string }[] }).chats.some((c) => c.id === chat.id)).toBe(false);
+    expect((JSON.parse(activeList.body) as { chats: { id: string }[] }).chats.some((c) => c.id === chat.id)).toBe(
+      false,
+    );
   });
 
   it("deletes a chat out of every list, independently of archiving", async () => {
@@ -158,12 +161,14 @@ describe("chats CRUD wire", () => {
     const app = stack.env.app.inject;
     const created = async (title: string) =>
       JSON.parse(
-        (await app({
-          method: "POST",
-          url: "/api/v1/chats",
-          headers: auth(stack.memberToken),
-          payload: { title },
-        })).body,
+        (
+          await app({
+            method: "POST",
+            url: "/api/v1/chats",
+            headers: auth(stack.memberToken),
+            payload: { title },
+          })
+        ).body,
       ) as { id: string };
     // B is created after A — creation order alone would keep B on top.
     const a = await created("older chat, live turn");
@@ -214,7 +219,8 @@ describe("chats CRUD wire", () => {
       method: "GET",
       url: `/api/v1/chats/${chat.id}/thread`,
       headers: auth(stack.memberToken),
-    });    const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+    });
+    const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
     expect(events.some((e) => e.event.type === "approval_decision")).toBe(true);
   });
 
@@ -260,7 +266,14 @@ describe("chats CRUD wire", () => {
     );
     await platform.threads.appendEvent(
       chat.id,
-      { type: "assistant_message", turn: 1, step: 1, blocks: [{ type: "text", text: "turn reply" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
+      {
+        type: "assistant_message",
+        turn: 1,
+        step: 1,
+        blocks: [{ type: "text", text: "turn reply" }],
+        usage: { tokens_in: 1, tokens_out: 1 },
+        model: "test-model",
+      },
       "00000000-0000-7000-8000-000000000001", // uuid v7-shaped, sorts low
     );
     const listRow = async () => {
@@ -283,10 +296,14 @@ describe("chats CRUD wire", () => {
     // The v4 user event out-sorts the v7 marker id — seq ordering must say read.
     expect((await listRow()).unread).toBe(false);
     // A newer turn re-marks the chat unread.
-    await platform.threads.appendEvent(
-      chat.id,
-      { type: "assistant_message", turn: 2, step: 2, blocks: [{ type: "text", text: "second turn" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
-    );
+    await platform.threads.appendEvent(chat.id, {
+      type: "assistant_message",
+      turn: 2,
+      step: 2,
+      blocks: [{ type: "text", text: "second turn" }],
+      usage: { tokens_in: 1, tokens_out: 1 },
+      model: "test-model",
+    });
     expect((await listRow()).unread).toBe(true);
   });
 });
@@ -358,112 +375,118 @@ describe("gateway/chat turn flow", () => {
     TEST_TIMEOUT,
   );
 
-  it("runs a turn end-to-end: ack, thread events, metered usage, settled command", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-      payload: { title: "turn chat" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
+  it(
+    "runs a turn end-to-end: ack, thread events, metered usage, settled command",
+    async () => {
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+        payload: { title: "turn chat" },
+      });
+      const chat = JSON.parse(created.body) as { id: string };
 
-    const res = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers: auth(stack.memberToken),
-      payload: {
-        chat_id: chat.id,
-        model: "GLM-Test-Model",
-        messages: [{ role: "user", content: "say hello" }],
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    const ack = JSON.parse(res.body) as Record<string, unknown>;
-    // Sorted-key ack (json!-style).
-    expect(Object.keys(ack)).toEqual([
-      "accepted",
-      "generation_id",
-      "invocation_id",
-      "queued",
-      "status",
-      "user_message_id",
-    ]);
-    expect(ack.accepted).toBe(true);
-    // A fast run can begin or finish before its acknowledgement is read.
-    expect(["submitted", "running", "completed"]).toContain(ack.status);
-    expect(ack.invocation_id).toMatch(/^sub:\d+$/);
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers: auth(stack.memberToken),
+        payload: {
+          chat_id: chat.id,
+          model: "GLM-Test-Model",
+          messages: [{ role: "user", content: "say hello" }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const ack = JSON.parse(res.body) as Record<string, unknown>;
+      // Sorted-key ack (json!-style).
+      expect(Object.keys(ack)).toEqual([
+        "accepted",
+        "generation_id",
+        "invocation_id",
+        "queued",
+        "status",
+        "user_message_id",
+      ]);
+      expect(ack.accepted).toBe(true);
+      // A fast run can begin or finish before its acknowledgement is read.
+      expect(["submitted", "running", "completed"]).toContain(ack.status);
+      expect(ack.invocation_id).toMatch(/^sub:\d+$/);
 
-    // The thread log carries the user event + the assistant event with
-    // usage + cost (persisted by the bridge from the durable run).
-    await waitFor(async () => {
+      // The thread log carries the user event + the assistant event with
+      // usage + cost (persisted by the bridge from the durable run).
+      await waitFor(async () => {
+        const thread = await stack.env.app.inject({
+          method: "GET",
+          url: `/api/v1/chats/${chat.id}/thread`,
+          headers: auth(stack.memberToken),
+        });
+        const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+        return events.some((e) => e.event.type === "assistant_message");
+      });
       const thread = await stack.env.app.inject({
         method: "GET",
         url: `/api/v1/chats/${chat.id}/thread`,
         headers: auth(stack.memberToken),
       });
-      const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
-      return events.some((e) => e.event.type === "assistant_message");
-    });
-    const thread = await stack.env.app.inject({
-      method: "GET",
-      url: `/api/v1/chats/${chat.id}/thread`,
-      headers: auth(stack.memberToken),
-    });
-    const rows = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
-    const user = rows.find((r) => r.event.type === "user_message");
-    const assistant = rows.find((r) => r.event.type === "assistant_message");
-    expect((user!.event as { content: string }).content).toBe("say hello");
-    const blocks = (assistant!.event as { blocks: { type: string; text?: string }[] }).blocks;
-    expect(blocks.some((b) => b.type === "text" && b.text === "hello")).toBe(true);
-    const usage = (assistant!.event as { usage: { tokens_in: number; tokens_out: number; cost_usd: number } }).usage;
-    expect(usage.tokens_in).toBe(3);
-    expect(usage.tokens_out).toBe(2);
-    // 3 in × 2 $/Mtok + 2 out × 4 $/Mtok = 0.000014 (route prices).
-    expect(usage.cost_usd).toBeCloseTo(0.000014, 9);
+      const rows = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
+      const user = rows.find((r) => r.event.type === "user_message");
+      const assistant = rows.find((r) => r.event.type === "assistant_message");
+      expect((user!.event as { content: string }).content).toBe("say hello");
+      const blocks = (assistant!.event as { blocks: { type: string; text?: string }[] }).blocks;
+      expect(blocks.some((b) => b.type === "text" && b.text === "hello")).toBe(true);
+      const usage = (assistant!.event as { usage: { tokens_in: number; tokens_out: number; cost_usd: number } }).usage;
+      expect(usage.tokens_in).toBe(3);
+      expect(usage.tokens_out).toBe(2);
+      // 3 in × 2 $/Mtok + 2 out × 4 $/Mtok = 0.000014 (route prices).
+      expect(usage.cost_usd).toBeCloseTo(0.000014, 9);
 
-    // The durable run was metered through the gateway with the internal key
-    // (the harness's /openai/v1 call carries x-guild-org-id).
-    await stack.drain();
-    const usageRows = await stack.usageRows();
-    expect(usageRows.some((r) => r.model === "GLM-Test-Model")).toBe(true);
+      // The durable run was metered through the gateway with the internal key
+      // (the harness's /openai/v1 call carries x-guild-org-id).
+      await stack.drain();
+      const usageRows = await stack.usageRows();
+      expect(usageRows.some((r) => r.model === "GLM-Test-Model")).toBe(true);
 
-    // The turn command settled answered with the durable submission id.
-    const db = stack.env.db;
-    const commands = await db.query<{ status: string; invocation_id: string }>(
-      "SELECT status, invocation_id FROM turn_commands WHERE chat_id = $1",
-      [chat.id],
-    );
-    expect(commands.rows).toHaveLength(1);
-    expect(commands.rows[0]!.status).toBe("completed");
-    expect(commands.rows[0]!.invocation_id).toMatch(/^sub:/);
+      // The turn command settled answered with the durable submission id.
+      const db = stack.env.db;
+      const commands = await db.query<{ status: string; invocation_id: string }>(
+        "SELECT status, invocation_id FROM turn_commands WHERE chat_id = $1",
+        [chat.id],
+      );
+      expect(commands.rows).toHaveLength(1);
+      expect(commands.rows[0]!.status).toBe("completed");
+      expect(commands.rows[0]!.invocation_id).toMatch(/^sub:/);
 
-    // generating settled back to false.
-    const chatAfter = await db.query<{ generating: boolean }>("SELECT generating FROM chats WHERE id = $1", [chat.id]);
-    expect(chatAfter.rows[0]!.generating).toBe(false);
+      // generating settled back to false.
+      const chatAfter = await db.query<{ generating: boolean }>("SELECT generating FROM chats WHERE id = $1", [
+        chat.id,
+      ]);
+      expect(chatAfter.rows[0]!.generating).toBe(false);
 
-    // Idempotent resend: the same user_message_id returns the same ack and
-    // adds no turn.
-    const again = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers: auth(stack.memberToken),
-      payload: {
-        chat_id: chat.id,
-        model: "GLM-Test-Model",
-        messages: [{ role: "user", content: "say hello" }],
-        user_message_id: ack.user_message_id,
-      },
-    });
-    const againAck = JSON.parse(again.body) as Record<string, unknown>;
-    // Same command identity; the status may have advanced past the first
-    // ack (the turn completes asynchronously).
-    expect(againAck["accepted"]).toBe(true);
-    expect(againAck["user_message_id"]).toBe(ack.user_message_id);
-    expect(againAck["invocation_id"]).toBe(ack.invocation_id);
-    expect(againAck["generation_id"]).toBe(ack.generation_id);
-    const commandsAfter = await db.query("SELECT count(*) n FROM turn_commands WHERE chat_id = $1", [chat.id]);
-    expect(Number(commandsAfter.rows[0]!.n)).toBe(1);
-  }, TEST_TIMEOUT);
+      // Idempotent resend: the same user_message_id returns the same ack and
+      // adds no turn.
+      const again = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers: auth(stack.memberToken),
+        payload: {
+          chat_id: chat.id,
+          model: "GLM-Test-Model",
+          messages: [{ role: "user", content: "say hello" }],
+          user_message_id: ack.user_message_id,
+        },
+      });
+      const againAck = JSON.parse(again.body) as Record<string, unknown>;
+      // Same command identity; the status may have advanced past the first
+      // ack (the turn completes asynchronously).
+      expect(againAck["accepted"]).toBe(true);
+      expect(againAck["user_message_id"]).toBe(ack.user_message_id);
+      expect(againAck["invocation_id"]).toBe(ack.invocation_id);
+      expect(againAck["generation_id"]).toBe(ack.generation_id);
+      const commandsAfter = await db.query("SELECT count(*) n FROM turn_commands WHERE chat_id = $1", [chat.id]);
+      expect(Number(commandsAfter.rows[0]!.n)).toBe(1);
+    },
+    TEST_TIMEOUT,
+  );
 
   it("a turn naming a model the org no longer has runs on the default route", async () => {
     const created = await stack.env.app.inject({
@@ -508,59 +531,60 @@ describe("gateway/chat turn flow", () => {
     expect(assistant!.event.model).toBe("GLM-Test-Model");
   });
 
-  it("the /api/v1/threads surface: path-carried chat, thread read under the renamed prefix", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-      payload: { title: "threads surface chat" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
+  it(
+    "the /api/v1/threads surface: path-carried chat, thread read under the renamed prefix",
+    async () => {
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+        payload: { title: "threads surface chat" },
+      });
+      const chat = JSON.parse(created.body) as { id: string };
 
-    stack.mock.setResponses([
-      {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          sseDelta("via threads path") +
-          sseDone(),
-      },
-    ]);
-    // The path carries the chat; no chat_id in the body.
-    const res = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/threads/${chat.id}/turns`,
-      headers: auth(stack.memberToken),
-      payload: {
-        model: "GLM-Test-Model",
-        messages: [{ role: "user", content: "threads path turn" }],
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    const ack = JSON.parse(res.body) as Record<string, unknown>;
-    expect(ack.accepted).toBe(true);
+      stack.mock.setResponses([
+        {
+          body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("via threads path")}${sseDone()}`,
+        },
+      ]);
+      // The path carries the chat; no chat_id in the body.
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chat.id}/turns`,
+        headers: auth(stack.memberToken),
+        payload: {
+          model: "GLM-Test-Model",
+          messages: [{ role: "user", content: "threads path turn" }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const ack = JSON.parse(res.body) as Record<string, unknown>;
+      expect(ack.accepted).toBe(true);
 
-    await waitFor(async () => {
-      const thread = await stack.env.app.inject({
+      await waitFor(async () => {
+        const thread = await stack.env.app.inject({
+          method: "GET",
+          url: `/api/v1/threads/${chat.id}`,
+          headers: auth(stack.memberToken),
+        });
+        const rows = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+        return rows.some((e) => e.event.type === "assistant_message");
+      });
+
+      // And the legacy alias still answers with the same handler.
+      const legacyRead = await stack.env.app.inject({
         method: "GET",
-        url: `/api/v1/threads/${chat.id}`,
+        url: `/api/v1/chats/${chat.id}/thread`,
         headers: auth(stack.memberToken),
       });
-      const rows = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
-      return rows.some((e) => e.event.type === "assistant_message");
-    });
-
-    // And the legacy alias still answers with the same handler.
-    const legacyRead = await stack.env.app.inject({
-      method: "GET",
-      url: `/api/v1/chats/${chat.id}/thread`,
-      headers: auth(stack.memberToken),
-    });
-    expect(legacyRead.statusCode).toBe(200);
-    const legacyRows = (JSON.parse(legacyRead.body) as { events: { event: Record<string, unknown> }[] }).events;
-    const assistant = legacyRows.find((r) => r.event.type === "assistant_message");
-    const blocks = (assistant!.event as { blocks: { type: string; text?: string }[] }).blocks;
-    expect(blocks.some((b) => b.type === "text" && b.text === "via threads path")).toBe(true);
-  }, TEST_TIMEOUT);
+      expect(legacyRead.statusCode).toBe(200);
+      const legacyRows = (JSON.parse(legacyRead.body) as { events: { event: Record<string, unknown> }[] }).events;
+      const assistant = legacyRows.find((r) => r.event.type === "assistant_message");
+      const blocks = (assistant!.event as { blocks: { type: string; text?: string }[] }).blocks;
+      expect(blocks.some((b) => b.type === "text" && b.text === "via threads path")).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
 
   it("rejects malformed submissions with a 400 envelope", async () => {
     for (const payload of [
@@ -580,221 +604,302 @@ describe("gateway/chat turn flow", () => {
     }
   });
 
-  it("a queued send's echo delivers even when the run closes within one watch batch", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-      payload: { title: "queue delivery chat" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
-    // First response slow (the chat is generating when the queued send
-    // arrives), second response fast (the queued turn's placement→done
-    // window closes inside one watch batch — the regression case).
-    stack.mock.setResponses([
-      {
-        chunks: [
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
-          sseDelta("slow "),
-          sseDelta("turn "),
-          sseDelta("one "),
-          sseDelta("two "),
-          sseDelta("three"),
-          sseDone(),
-        ],
-        chunkDelayMs: 300,
-      },
-      {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          sseDelta("fast queued answer") +
-          sseDone(),
-      },
-    ]);
-    const first = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers: auth(stack.memberToken),
-      payload: { chat_id: chat.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "slow one" }] },
-    });
-    expect(first.statusCode).toBe(200);
-    await waitFor(async () => stack.mock.requests.length >= 1);
-    const queued = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers: auth(stack.memberToken),
-      payload: {
+  it(
+    "a queued send's echo delivers even when the run closes within one watch batch",
+    async () => {
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+        payload: { title: "queue delivery chat" },
+      });
+      const chat = JSON.parse(created.body) as { id: string };
+      // First response slow (the chat is generating when the queued send
+      // arrives), second response fast (the queued turn's placement→done
+      // window closes inside one watch batch — the regression case).
+      stack.mock.setResponses([
+        {
+          chunks: [
+            'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
+            sseDelta("slow "),
+            sseDelta("turn "),
+            sseDelta("one "),
+            sseDelta("two "),
+            sseDelta("three"),
+            sseDone(),
+          ],
+          chunkDelayMs: 300,
+        },
+        {
+          body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("fast queued answer")}${sseDone()}`,
+        },
+      ]);
+      const first = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers: auth(stack.memberToken),
+        payload: { chat_id: chat.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "slow one" }] },
+      });
+      expect(first.statusCode).toBe(200);
+      await waitFor(async () => stack.mock.requests.length >= 1);
+      const queued = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers: auth(stack.memberToken),
+        payload: {
+          chat_id: chat.id,
+          model: "GLM-Test-Model",
+          send_mode: "queue",
+          messages: [{ role: "user", content: "queued one" }],
+        },
+      });
+      expect(queued.statusCode).toBe(200);
+      const ack = JSON.parse(queued.body) as { user_message_id: string };
+      // Both turns settle; the queued echo's `queued` flag must clear — the
+      // bridge saw only the terminal submission status, and delivery must
+      // still happen (a stuck flagged row renders as a forever-queued chip).
+      await waitFor(async () => {
+        const cmd = await stack.env.db.query<{ status: string }>("SELECT status FROM turn_commands WHERE id = $1", [
+          ack.user_message_id,
+        ]);
+        return cmd.rows[0]?.status === "completed";
+      }, 15_000);
+      await waitFor(async () => {
+        const row = await stack.env.db.query<{ payload: Record<string, unknown> }>(
+          "SELECT payload FROM thread_events WHERE id = $1",
+          [ack.user_message_id],
+        );
+        return row.rows[0] !== undefined && row.rows[0]!.payload.queued !== true;
+      }, 15_000);
+      // Restore the default script for the remaining tests.
+      stack.mock.setResponses([
+        {
+          body:
+            'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+            'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n' +
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+            'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
+            "data: [DONE]\n\n",
+        },
+      ]);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "stop answers stopped:true and compacts answer ok",
+    async () => {
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+        payload: { title: "stop chat" },
+      });
+      const chat = JSON.parse(created.body) as { id: string };
+      const stop = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/gateway/chat/${chat.id}/stop`,
+        headers: auth(stack.memberToken),
+        payload: {},
+      });
+      expect(stop.statusCode).toBe(200);
+      expect(JSON.parse(stop.body)).toEqual({ stopped: true });
+
+      const compact = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/gateway/chat/${chat.id}/compact`,
+        headers: auth(stack.memberToken),
+        payload: {},
+      });
+      expect(compact.statusCode).toBe(200);
+      const body = JSON.parse(compact.body) as { ok: boolean; task_id: number | null; seq: number };
+      expect(body).toMatchObject({ ok: true, task_id: null });
+      expect(body.seq).toBeGreaterThan(0);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "waits for a manual compaction's queued summary write to be placed",
+    async () => {
+      const headers = auth(stack.memberToken);
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/threads",
+        headers,
+        payload: { title: "queued compaction" },
+      });
+      const id = JSON.parse(created.body).id as string;
+      const runtime = stack.env.app.platform.runtime;
+      await runtime.refreshOrgModels(stack.orgId);
+      const conversation = await runtime.conversationForChat(id);
+      await conversation.configure(
+        { model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } },
+        BACKGROUND_CONTEXT,
+      );
+      await conversation.commit(async (tx) => {
+        for (let i = 0; i < 3; i++)
+          await tx.appendEntry(UserEntry, conversation.id, {
+            model: [{ role: "user", content: `${i}:${"old context ".repeat(5000)}`, timestamp: i }],
+          });
+      }, BACKGROUND_CONTEXT);
+      stack.mock.setResponses([
+        { chunks: [sseDelta("still generating"), sseDelta(" finished"), sseDone()], chunkDelayMs: 2000 },
+        { body: sseDelta("summarized old context") + sseDone() },
+      ]);
+      const previous = stack.mock.requests.length;
+      await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${id}/turns`,
+        headers,
+        payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hold the current run" }] },
+      });
+      await waitFor(async () => stack.mock.requests.length > previous);
+      const started = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${id}/compact`,
+        headers,
+        payload: {},
+      });
+      const taskId = JSON.parse(started.body).task_id as number;
+      await waitFor(async () => {
+        const rows = await stack.env.db.query<{ status: string }>(
+          `SELECT s.status FROM tasks t JOIN submissions s
+        ON s.id=(t.record::jsonb->'state'->'outcome'->'result'->>'submissionId')::bigint WHERE t.id=$1`,
+          [taskId],
+        );
+        return rows.rows[0]?.status === "queued";
+      });
+      const path = `/api/v1/threads/${id}/compactions/${taskId}`;
+      const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+      const compacting = async () => (await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting;
+      expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({
+        status: "running",
+      });
+      // The summary write waits for the running turn: the view still reads
+      // as compacting.
+      expect(await compacting()).toBe(true);
+      await waitFor(
+        async () =>
+          JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body).status === "completed",
+      );
+      expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({
+        status: "completed",
+        compacted: true,
+      });
+      expect(await compacting()).toBe(false);
+      await waitFor(async () =>
+        (await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}`, headers })).body.includes(
+          "summarized old context",
+        ),
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "reports a no-op compaction's terminal task outcome, scoped to its chat",
+    async () => {
+      const headers = auth(stack.memberToken);
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/threads",
+        headers,
+        payload: { title: "compact no-op" },
+      });
+      const id = JSON.parse(created.body).id as string;
+      const runtime = stack.env.app.platform.runtime;
+      await runtime.refreshOrgModels(stack.orgId);
+      const conversation = await runtime.conversationForChat(id);
+      await conversation.configure(
+        { model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } },
+        BACKGROUND_CONTEXT,
+      );
+      const started = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${id}/compact`,
+        headers,
+        payload: {},
+      });
+      expect(started.statusCode).toBe(200);
+      const taskId = JSON.parse(started.body).task_id as number;
+      expect(taskId).toBeGreaterThan(0);
+      const path = `/api/v1/threads/${id}/compactions/${taskId}`;
+      await waitFor(async () => {
+        const response = await stack.env.app.inject({ method: "GET", url: path, headers });
+        expect(response.statusCode).toBe(200);
+        return JSON.parse(response.body).status === "completed";
+      });
+      const done = await stack.env.app.inject({ method: "GET", url: path, headers });
+      expect(JSON.parse(done.body)).toEqual({ status: "completed", compacted: false });
+      // No summary was written, and the view's compacting flag is down.
+      const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+      expect((await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting).toBe(false);
+      const other = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/threads",
+        headers,
+        payload: { title: "other compaction" },
+      });
+      const otherId = JSON.parse(other.body).id;
+      expect(
+        (
+          await stack.env.app.inject({
+            method: "GET",
+            url: `/api/v1/threads/${otherId}/compactions/${taskId}`,
+            headers,
+          })
+        ).statusCode,
+      ).toBe(404);
+      expect((await stack.env.app.inject({ method: "GET", url: path })).statusCode).toBe(401);
+      expect(
+        (await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}/compactions/NaN`, headers }))
+          .statusCode,
+      ).toBe(400);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "a retry whose message holds U+0000 keeps its command id",
+    async () => {
+      const headers = auth(stack.memberToken);
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/chats",
+        headers,
+        payload: { title: "nul retry" },
+      });
+      const chat = JSON.parse(created.body) as { id: string };
+      const userMessageId = crypto.randomUUID();
+      const payload = {
         chat_id: chat.id,
         model: "GLM-Test-Model",
-        send_mode: "queue",
-        messages: [{ role: "user", content: "queued one" }],
-      },
-    });
-    expect(queued.statusCode).toBe(200);
-    const ack = JSON.parse(queued.body) as { user_message_id: string };
-    // Both turns settle; the queued echo's `queued` flag must clear — the
-    // bridge saw only the terminal submission status, and delivery must
-    // still happen (a stuck flagged row renders as a forever-queued chip).
-    await waitFor(async () => {
-      const cmd = await stack.env.db.query<{ status: string }>(
-        "SELECT status FROM turn_commands WHERE id = $1",
-        [ack.user_message_id],
-      );
-      return cmd.rows[0]?.status === "completed";
-    }, 15_000);
-    await waitFor(async () => {
-      const row = await stack.env.db.query<{ payload: Record<string, unknown> }>(
-        "SELECT payload FROM thread_events WHERE id = $1",
-        [ack.user_message_id],
-      );
-      return row.rows[0] !== undefined && row.rows[0]!.payload.queued !== true;
-    }, 15_000);
-    // Restore the default script for the remaining tests.
-    stack.mock.setResponses([
-      {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n' +
-          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
-          'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
-          "data: [DONE]\n\n",
-      },
-    ]);
-  }, TEST_TIMEOUT);
-
-  it("stop answers stopped:true and compacts answer ok", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-      payload: { title: "stop chat" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
-    const stop = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/gateway/chat/${chat.id}/stop`,
-      headers: auth(stack.memberToken),
-      payload: {},
-    });
-    expect(stop.statusCode).toBe(200);
-    expect(JSON.parse(stop.body)).toEqual({ stopped: true });
-
-    const compact = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/gateway/chat/${chat.id}/compact`,
-      headers: auth(stack.memberToken),
-      payload: {},
-    });
-    expect(compact.statusCode).toBe(200);
-    const body = JSON.parse(compact.body) as { ok: boolean; task_id: number | null; seq: number };
-    expect(body).toMatchObject({ ok: true, task_id: null });
-    expect(body.seq).toBeGreaterThan(0);
-  }, TEST_TIMEOUT);
-
-  it("waits for a manual compaction's queued summary write to be placed", async () => {
-    const headers = auth(stack.memberToken);
-    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "queued compaction" } });
-    const id = JSON.parse(created.body).id as string;
-    const runtime = stack.env.app.platform.runtime;
-    await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id);
-    await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
-    await conversation.commit(async tx => {
-      for (let i = 0; i < 3; i++) await tx.appendEntry(UserEntry, conversation.id, { model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }] });
-    }, BACKGROUND_CONTEXT);
-    stack.mock.setResponses([
-      { chunks: [sseDelta("still generating"), sseDelta(" finished"), sseDone()], chunkDelayMs: 2000 },
-      { body: sseDelta("summarized old context") + sseDone() },
-    ]);
-    const previous = stack.mock.requests.length;
-    await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/turns`, headers, payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hold the current run" }] } });
-    await waitFor(async () => stack.mock.requests.length > previous);
-    const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
-    const taskId = JSON.parse(started.body).task_id as number;
-    await waitFor(async () => {
-      const rows = await stack.env.db.query<{ status: string }>(`SELECT s.status FROM tasks t JOIN submissions s
-        ON s.id=(t.record::jsonb->'state'->'outcome'->'result'->>'submissionId')::bigint WHERE t.id=$1`, [taskId]);
-      return rows.rows[0]?.status === "queued";
-    });
-    const path = `/api/v1/threads/${id}/compactions/${taskId}`;
-    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
-    const compacting = async () => (await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting;
-    expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "running" });
-    // The summary write waits for the running turn: the view still reads
-    // as compacting.
-    expect(await compacting()).toBe(true);
-    await waitFor(async () => JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body).status === "completed");
-    expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "completed", compacted: true });
-    expect(await compacting()).toBe(false);
-    await waitFor(async () => (await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}`, headers })).body.includes("summarized old context"));
-  }, TEST_TIMEOUT);
-
-  it("reports a no-op compaction's terminal task outcome, scoped to its chat", async () => {
-    const headers = auth(stack.memberToken);
-    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "compact no-op" } });
-    const id = JSON.parse(created.body).id as string;
-    const runtime = stack.env.app.platform.runtime;
-    await runtime.refreshOrgModels(stack.orgId);
-    const conversation = await runtime.conversationForChat(id);
-    await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
-    const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
-    expect(started.statusCode).toBe(200);
-    const taskId = JSON.parse(started.body).task_id as number;
-    expect(taskId).toBeGreaterThan(0);
-    const path = `/api/v1/threads/${id}/compactions/${taskId}`;
-    await waitFor(async () => {
-      const response = await stack.env.app.inject({ method: "GET", url: path, headers });
-      expect(response.statusCode).toBe(200);
-      return JSON.parse(response.body).status === "completed";
-    });
-    const done = await stack.env.app.inject({ method: "GET", url: path, headers });
-    expect(JSON.parse(done.body)).toEqual({ status: "completed", compacted: false });
-    // No summary was written, and the view's compacting flag is down.
-    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
-    expect((await captureThreadState(platform, platform.pool, stack.orgId, id)).compacting).toBe(false);
-    const other = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "other compaction" } });
-    const otherId = JSON.parse(other.body).id;
-    expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${otherId}/compactions/${taskId}`, headers })).statusCode).toBe(404);
-    expect((await stack.env.app.inject({ method: "GET", url: path })).statusCode).toBe(401);
-    expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}/compactions/NaN`, headers })).statusCode).toBe(400);
-  }, TEST_TIMEOUT);
-
-  it("a retry whose message holds U+0000 keeps its command id", async () => {
-    const headers = auth(stack.memberToken);
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers,
-      payload: { title: "nul retry" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
-    const userMessageId = crypto.randomUUID();
-    const payload = {
-      chat_id: chat.id,
-      model: "GLM-Test-Model",
-      messages: [{ role: "user", content: "binary PK\u0000tail" }],
-      user_message_id: userMessageId,
-    };
-    const first = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers,
-      payload,
-    });
-    expect(first.statusCode).toBe(200);
-    // The store holds the sanitized request; a retry of the same raw command
-    // must match it instead of answering command_id_conflict.
-    const again = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers,
-      payload,
-    });
-    expect(again.statusCode).toBe(200);
-    const ack = JSON.parse(again.body) as { accepted: boolean; user_message_id: string };
-    expect(ack.accepted).toBe(true);
-    expect(ack.user_message_id).toBe(userMessageId);
-  }, TEST_TIMEOUT);
+        messages: [{ role: "user", content: "binary PK\u0000tail" }],
+        user_message_id: userMessageId,
+      };
+      const first = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers,
+        payload,
+      });
+      expect(first.statusCode).toBe(200);
+      // The store holds the sanitized request; a retry of the same raw command
+      // must match it instead of answering command_id_conflict.
+      const again = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/gateway/chat",
+        headers,
+        payload,
+      });
+      expect(again.statusCode).toBe(200);
+      const ack = JSON.parse(again.body) as { accepted: boolean; user_message_id: string };
+      expect(ack.accepted).toBe(true);
+      expect(ack.user_message_id).toBe(userMessageId);
+    },
+    TEST_TIMEOUT,
+  );
 });
 
 describe("chat access rule", () => {
@@ -810,7 +915,13 @@ describe("chat access rule", () => {
   };
   const chatRow = async (id: string) =>
     (
-      await stack.env.db.query<{ title: string | null; archived: boolean; deleted_at: Date | null; project_id: string | null; approval: unknown }>(
+      await stack.env.db.query<{
+        title: string | null;
+        archived: boolean;
+        deleted_at: Date | null;
+        project_id: string | null;
+        approval: unknown;
+      }>(
         "SELECT title, archived_at IS NOT NULL AS archived, deleted_at, project_id, approval FROM chats WHERE id = $1",
         [id],
       )
@@ -820,8 +931,16 @@ describe("chat access rule", () => {
     { method: "DELETE" as const, url: `/api/v1/threads/${chatId}` },
     { method: "POST" as const, url: `/api/v1/threads/${chatId}/project`, payload: { project_id: null } },
     { method: "POST" as const, url: `/api/v1/threads/${chatId}/approval`, payload: { default: "full_access" } },
-    { method: "POST" as const, url: `/api/v1/threads/${chatId}/events`, payload: { type: "system_message", content: "forged" } },
-    { method: "POST" as const, url: `/api/v1/threads/${chatId}/turns`, payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hi" }] } },
+    {
+      method: "POST" as const,
+      url: `/api/v1/threads/${chatId}/events`,
+      payload: { type: "system_message", content: "forged" },
+    },
+    {
+      method: "POST" as const,
+      url: `/api/v1/threads/${chatId}/turns`,
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hi" }] },
+    },
     { method: "POST" as const, url: `/api/v1/threads/${chatId}/approvals/call-1`, payload: { approved: true } },
     { method: "POST" as const, url: `/api/v1/threads/${chatId}/stop`, payload: {} },
   ];
@@ -831,7 +950,11 @@ describe("chat access rule", () => {
 
   it("an admin reads a member's chat but cannot write to it", async () => {
     const chatId = await memberChat();
-    for (const url of [`/api/v1/threads/${chatId}`, `/api/v1/threads/${chatId}/approval`, `/api/v1/threads/${chatId}/events`]) {
+    for (const url of [
+      `/api/v1/threads/${chatId}`,
+      `/api/v1/threads/${chatId}/approval`,
+      `/api/v1/threads/${chatId}/events`,
+    ]) {
       const read = await stack.env.app.inject({ method: "GET", url, headers: auth(stack.adminToken) });
       expect(read.statusCode, url).toBe(200);
     }
@@ -874,7 +997,11 @@ describe("chat access rule", () => {
 
   it("a deleted chat refuses writes; deleting again keeps the first deletion", async () => {
     const chatId = await memberChat("doomed");
-    const first = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/threads/${chatId}`, headers: headersFor({}, stack.memberToken) });
+    const first = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${chatId}`,
+      headers: headersFor({}, stack.memberToken),
+    });
     expect(first.statusCode).toBe(200);
     const stamped = (await chatRow(chatId)).deleted_at;
     expect(stamped).not.toBeNull();
@@ -893,13 +1020,21 @@ describe("chat access rule", () => {
     const commands = await stack.env.db.query("SELECT 1 FROM turn_commands WHERE chat_id = $1", [chatId]);
     expect(commands.rowCount).toBe(0);
 
-    const again = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/threads/${chatId}`, headers: headersFor({}, stack.memberToken) });
+    const again = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/threads/${chatId}`,
+      headers: headersFor({}, stack.memberToken),
+    });
     expect(again.statusCode).toBe(200);
     expect(JSON.parse(again.body)).toMatchObject({ id: chatId, deleted: true });
     expect((await chatRow(chatId)).deleted_at).toEqual(stamped);
 
     // The transcript stays readable by link.
-    const read = await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${chatId}`, headers: auth(stack.memberToken) });
+    const read = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/threads/${chatId}`,
+      headers: auth(stack.memberToken),
+    });
     expect(read.statusCode).toBe(200);
   });
 
@@ -926,7 +1061,10 @@ describe("chat access rule", () => {
       headers: auth(stack.memberToken),
       payload: {
         type: "assistant_message",
-        blocks: [{ type: "text", text: "hi", extra: true }, { type: "tool_call", id: "c1", name: "ls", arguments: "{}" }],
+        blocks: [
+          { type: "text", text: "hi", extra: true },
+          { type: "tool_call", id: "c1", name: "ls", arguments: "{}" },
+        ],
         usage: { tokens_in: 3 },
       },
     });

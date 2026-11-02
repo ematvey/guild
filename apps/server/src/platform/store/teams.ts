@@ -47,7 +47,9 @@ export class TeamStore {
     try {
       const res = await this.pool.query(
         "INSERT INTO teams (id, org_id, name) VALUES ($1, $2, $3) " +
-        "RETURNING id, org_id, name, " + utcText("created_at") + " AS created_at, 0::bigint AS member_count",
+          "RETURNING id, org_id, name, " +
+          utcText("created_at") +
+          " AS created_at, 0::bigint AS member_count",
         [uuidv7(), orgId, name],
       );
       return teamRow(res.rows[0]!);
@@ -62,10 +64,11 @@ export class TeamStore {
   async listTeams(orgId: string): Promise<TeamRow[]> {
     const res = await this.pool.query(
       "SELECT t.id, t.org_id, t.name, " +
-      utcText("t.created_at") + " AS created_at, " +
-      "COUNT(m.user_id)::bigint AS member_count " +
-      "FROM teams t LEFT JOIN team_members m ON m.team_id = t.id " +
-      "WHERE t.org_id = $1 GROUP BY t.id, t.org_id, t.name, t.created_at ORDER BY t.created_at",
+        utcText("t.created_at") +
+        " AS created_at, " +
+        "COUNT(m.user_id)::bigint AS member_count " +
+        "FROM teams t LEFT JOIN team_members m ON m.team_id = t.id " +
+        "WHERE t.org_id = $1 GROUP BY t.id, t.org_id, t.name, t.created_at ORDER BY t.created_at",
       [orgId],
     );
     return res.rows.map((r: Record<string, unknown>) => teamRow(r));
@@ -76,9 +79,10 @@ export class TeamStore {
     try {
       const res = await this.pool.query(
         "UPDATE teams SET name = $1 WHERE id = $2 AND org_id = $3 " +
-        "RETURNING id, org_id, name, " +
-        utcText("created_at") + " AS created_at, " +
-        "(SELECT COUNT(*) FROM team_members WHERE team_id = teams.id)::bigint AS member_count",
+          "RETURNING id, org_id, name, " +
+          utcText("created_at") +
+          " AS created_at, " +
+          "(SELECT COUNT(*) FROM team_members WHERE team_id = teams.id)::bigint AS member_count",
         [name, teamId, orgId],
       );
       return teamRow(res.rows[0]!);
@@ -100,8 +104,9 @@ export class TeamStore {
     if (!(await this.teamInOrg(orgId, teamId))) throw ApiError.notFound("no such team");
     const res = await this.pool.query(
       "SELECT u.id, u.email, u.role, u.identity_type, " +
-      utcText("u.created_at") + " AS created_at " +
-      "FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY u.created_at",
+        utcText("u.created_at") +
+        " AS created_at " +
+        "FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY u.created_at",
       [teamId],
     );
     return res.rows.map((r: Record<string, unknown>) => userRow(r));
@@ -111,10 +116,10 @@ export class TeamStore {
     if (!(await this.teamInOrg(orgId, teamId))) throw ApiError.notFound("no such team");
     const res = await this.pool.query("SELECT org_id FROM users WHERE id = $1", [userId]);
     if (res.rows[0]?.org_id !== orgId) throw ApiError.badRequest("user is not in this org");
-    await this.pool.query(
-      "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-      [teamId, userId],
-    );
+    await this.pool.query("INSERT INTO team_members (team_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [
+      teamId,
+      userId,
+    ]);
   }
 
   async removeMember(orgId: string, teamId: string, userId: string): Promise<void> {
@@ -126,7 +131,7 @@ export class TeamStore {
   async isMember(orgId: string, teamId: string, userId: string): Promise<boolean> {
     const res = await this.pool.query(
       "SELECT 1::int8 FROM team_members m JOIN teams t ON t.id = m.team_id " +
-      "WHERE t.org_id = $1 AND t.id = $2 AND m.user_id = $3",
+        "WHERE t.org_id = $1 AND t.id = $2 AND m.user_id = $3",
       [orgId, teamId, userId],
     );
     return res.rows.length > 0;
@@ -136,7 +141,7 @@ export class TeamStore {
   async listTeamsForUser(orgId: string, userId: string): Promise<Array<{ id: string; name: string }>> {
     const res = await this.pool.query(
       "SELECT t.id, t.name FROM team_members m JOIN teams t ON t.id = m.team_id " +
-      "WHERE t.org_id = $1 AND m.user_id = $2 ORDER BY t.name",
+        "WHERE t.org_id = $1 AND m.user_id = $2 ORDER BY t.name",
       [orgId, userId],
     );
     return res.rows.map((r: Record<string, unknown>) => ({ id: r.id as string, name: r.name as string }));

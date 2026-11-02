@@ -19,7 +19,16 @@ import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
 import { SidebarRail, type RailTab } from "../sidebar-rail";
 import { ThreadOverlays } from "./ThreadOverlays";
-import { agentDeleting, busyFrom, offlineMachine, pruneStopping, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
+import {
+  agentDeleting,
+  busyFrom,
+  offlineMachine,
+  pruneStopping,
+  tabPaneLayout,
+  threadAccess,
+  threadFacts,
+  workingForChat,
+} from "./status";
 import { CHAT_ROOT, SURFACE_BASE } from "./route";
 import { chatsStore, resetChatStores, useSidebarRows } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
@@ -67,7 +76,9 @@ type ThreadProps = {
  * other boundary above this subtree). */
 class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
-  static getDerivedStateFromError(error: Error) { return { error }; }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Chat view crashed:", error, info.componentStack);
   }
@@ -77,7 +88,9 @@ class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
         <p className="font-medium">The chat view crashed.</p>
         <p className="max-w-md text-sm text-muted-foreground">{String(this.state.error.message || this.state.error)}</p>
-        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>Reload</Button>
+        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+          Reload
+        </Button>
       </div>
     );
   }
@@ -111,15 +124,39 @@ function ThreadView(props: ThreadProps) {
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
   const {
-    view, loadingEarlier, earlierAnchor, childTree, stopping, setStopping, pendingSend,
-    pane, stick, atBottom, setAtBottom, openChatIdRef, scrollRestoreRef, loadEarlier, openForChat,
+    view,
+    loadingEarlier,
+    earlierAnchor,
+    childTree,
+    stopping,
+    setStopping,
+    pendingSend,
+    pane,
+    stick,
+    atBottom,
+    setAtBottom,
+    openChatIdRef,
+    scrollRestoreRef,
+    loadEarlier,
+    openForChat,
   } = thread;
   const { blocks, loading: threadLoading, displayedChatId, navigating, compacting, hasMore } = view;
   // What the screen shows: the old thread while a swap is pending, the cold
   // deep-link target while its skeleton is up, and the route chat otherwise.
   const viewChatId = displayedChatId ?? chatId;
   const composer = useComposer({ email, chatId, onSignOut, openChatIdRef });
-  const { signOut, outgoingRef, pendingDraftsRef, ta, setDragOver, dragOver, addFiles, restoreForChat, gcDraftKeys, draftStorage } = composer;
+  const {
+    signOut,
+    outgoingRef,
+    pendingDraftsRef,
+    ta,
+    setDragOver,
+    dragOver,
+    addFiles,
+    restoreForChat,
+    gcDraftKeys,
+    draftStorage,
+  } = composer;
   const models = useModelOptions();
   const agent = useAgentPick(viewChatId, childTree);
   const [model, setModel] = useState("");
@@ -153,7 +190,7 @@ function ThreadView(props: ThreadProps) {
   const openRow = viewChatId ? chats?.find((c) => c.id === viewChatId) : undefined;
   // The visible chat's subtree, from the per-chat map the socket fills. It
   // survives navigation, so returning to a chat renders its tree at once.
-  const subagentNodes = viewChatId ? subagentTrees[viewChatId] ?? [] : [];
+  const subagentNodes = viewChatId ? (subagentTrees[viewChatId] ?? []) : [];
   const openWorking = workingForChat(openStatus, viewChatId ? subagentTrees[viewChatId] : undefined);
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   // Ref mirror for effects that must read the pick without re-running on
@@ -164,9 +201,22 @@ function ThreadView(props: ThreadProps) {
   // a remote machine with presence to show.
   const localMachineId = HAS_ENGINE ? machineId() : undefined;
   const outgoing = useOutgoing({
-    composer, thread, chatId, model, busy, outgoingScope: `${apiUrl("")}\n${email}`,
-    target: { openRow, currentProject, pickedProjectRef, pickedAgentRef: agent.pickedAgentRef, approvalMode: approval.approvalMode },
-    justCreatedApprovalRef, justCreatedChatRef, pushRoute,
+    composer,
+    thread,
+    chatId,
+    model,
+    busy,
+    outgoingScope: `${apiUrl("")}\n${email}`,
+    target: {
+      openRow,
+      currentProject,
+      pickedProjectRef,
+      pickedAgentRef: agent.pickedAgentRef,
+      approvalMode: approval.approvalMode,
+    },
+    justCreatedApprovalRef,
+    justCreatedChatRef,
+    pushRoute,
   });
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef } = useMemberSocket({
@@ -199,7 +249,7 @@ function ThreadView(props: ThreadProps) {
   // offered and falls back to the first one when an admin removes it.
   useEffect(() => {
     if (models === null) return;
-    setModel((cur) => (models.some((m) => m.id === cur) ? cur : models[0]?.id ?? ""));
+    setModel((cur) => (models.some((m) => m.id === cur) ? cur : (models[0]?.id ?? "")));
   }, [models]);
 
   // First-run onboarding auto-show: a user the server flags as not yet
@@ -242,9 +292,15 @@ function ThreadView(props: ThreadProps) {
   useEffect(() => {
     if (chats === null) return;
     const signature =
-      chats.map((c) => c.id).sort().join(",") +
+      chats
+        .map((c) => c.id)
+        .sort()
+        .join(",") +
       "|" +
-      (archivedChats ?? []).map((c) => c.id).sort().join(",");
+      (archivedChats ?? [])
+        .map((c) => c.id)
+        .sort()
+        .join(",");
     if (draftGcSignature.current === signature) return;
     draftGcSignature.current = signature;
     gcDraftKeysRef.current(chats, archivedChats);
@@ -282,15 +338,18 @@ function ThreadView(props: ThreadProps) {
     if (cid !== null && chats?.some((c) => c.id === cid)) justCreatedChatRef.current = null;
   }, [chats]);
 
-  const openChat = useCallback((id: string) => {
-    // Navigation only: the chatId effect performs the actual load, so back/
-    // forward, deep links and sidebar picks all share one code path. The
-    // chat's project rides along so the sidebar's project filter stays in
-    // step with the URL.
-    const row = chatsStore.get()?.find((c) => c.id === id);
-    setOpen(false);
-    pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
-  }, [pushRoute]);
+  const openChat = useCallback(
+    (id: string) => {
+      // Navigation only: the chatId effect performs the actual load, so back/
+      // forward, deep links and sidebar picks all share one code path. The
+      // chat's project rides along so the sidebar's project filter stays in
+      // step with the URL.
+      const row = chatsStore.get()?.find((c) => c.id === id);
+      setOpen(false);
+      pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
+    },
+    [pushRoute],
+  );
 
   // A stable opener for the pinned child list: the chevron must not rebuild
   // the rows on every composer key.
@@ -352,11 +411,14 @@ function ThreadView(props: ThreadProps) {
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Navigates to the project's addressed scratch view — the pick effect
    * derives the composer's binding from the route. */
-  const newChatInProject = useCallback((project: PickedProject) => {
-    pushRoute({ chatId: null, projectId: project.id, overlay: null, skills: null, newChat: true });
-    setOpen(false);
-    ta.current?.focus();
-  }, [pushRoute, ta]);
+  const newChatInProject = useCallback(
+    (project: PickedProject) => {
+      pushRoute({ chatId: null, projectId: project.id, overlay: null, skills: null, newChat: true });
+      setOpen(false);
+      ta.current?.focus();
+    },
+    [pushRoute, ta],
+  );
   const openCreateProject = useCallback(() => setCreateProjectOpen(true), []);
   const leaveDeletedChat = useCallback(() => pushRoute(CHAT_ROOT), [pushRoute]);
 
@@ -380,7 +442,7 @@ function ThreadView(props: ThreadProps) {
   const facts = threadFacts({ chatId: viewChatId, chats, archivedChats, childTree });
   // The chat's agent as the pushed tree binds it and the pushed list
   // describes it: an agent being deleted leaves its threads read-only.
-  const deletingAgent = agentDeleting(viewChatId !== null ? childTree?.agent_id ?? null : null, agent.allAgents);
+  const deletingAgent = agentDeleting(viewChatId !== null ? (childTree?.agent_id ?? null) : null, agent.allAgents);
   const access = threadAccess({
     chatId: viewChatId,
     chats,
@@ -390,16 +452,20 @@ function ThreadView(props: ThreadProps) {
   });
   // A non-user thread's own title comes from its tree node: its chat row is
   // never in the sidebar, so the list has no title to show.
-  const activeTitle = facts.type === "user"
-    ? listedChat?.title ?? childTree?.title ?? (viewChatId === null ? "New chat" : "")
-    : childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread");
+  const activeTitle =
+    facts.type === "user"
+      ? (listedChat?.title ?? childTree?.title ?? (viewChatId === null ? "New chat" : ""))
+      : (childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread"));
   const chatArchived = facts.archived;
   // Another member's chat an admin reads: every write is the owner's.
   const foreignChat = facts.owned === false;
-  const renameOpenChat = useCallback(async (title: string) => {
-    if (!title || title === activeChat?.title || !viewChatId) return;
-    await renameChat(viewChatId, title);
-  }, [viewChatId, activeChat, renameChat]);
+  const renameOpenChat = useCallback(
+    async (title: string) => {
+      if (!title || title === activeChat?.title || !viewChatId) return;
+      await renameChat(viewChatId, title);
+    },
+    [viewChatId, activeChat, renameChat],
+  );
   // The header menu's archive: the open chat navigates back to the chats
   // list after archiving (an archived thread is a dead end for sending).
   const headerArchive = useCallback(async () => {
@@ -420,9 +486,17 @@ function ThreadView(props: ThreadProps) {
   }, [viewChatId, deleteChat, pushRoute]);
   const offlineMachineBanner = offlineMachine(chats, machines, viewChatId, localMachineId);
 
-  const loadEarlierNearTop = useCallback(() => { void loadEarlier(); }, [loadEarlier]);
+  const loadEarlierNearTop = useCallback(() => {
+    void loadEarlier();
+  }, [loadEarlier]);
   const scroll = useScrollPin({
-    pane, stick, setAtBottom, scrollRestoreRef, earlierAnchor, displayedChatId, blocks,
+    pane,
+    stick,
+    setAtBottom,
+    scrollRestoreRef,
+    earlierAnchor,
+    displayedChatId,
+    blocks,
     repinKeys: [subagentNodes, compacting, busy, hasMore, offlineMachineBanner?.label],
     onNearTop: loadEarlierNearTop,
   });
@@ -435,8 +509,10 @@ function ThreadView(props: ThreadProps) {
   // project-bound ones under Projects.
   const { grouping } = useSidebarRows();
   const unreadChats = grouping.visible.filter((c) => c.unread).length;
-  const unreadProjects = Object.values(grouping.chatsByProject)
-    .reduce((sum, rows) => sum + rows.filter((c) => c.unread).length, 0);
+  const unreadProjects = Object.values(grouping.chatsByProject).reduce(
+    (sum, rows) => sum + rows.filter((c) => c.unread).length,
+    0,
+  );
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
   // work, settings and the full-page surfaces. The rail entry is a
@@ -445,11 +521,7 @@ function ThreadView(props: ThreadProps) {
   // The skills and agents pages raise their own rail entry while their URL
   // is live.
   const railTab: RailTab =
-    route.skills !== null
-      ? "skills"
-      : route.agents !== null
-        ? agentsRailTab(route.agents)
-        : route.tab;
+    route.skills !== null ? "skills" : route.agents !== null ? agentsRailTab(route.agents) : route.tab;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
@@ -491,9 +563,7 @@ function ThreadView(props: ThreadProps) {
       agents: null,
       tab,
       newChat: false,
-      ...(tab === "settings"
-        ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null }
-        : {}),
+      ...(tab === "settings" ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null } : {}),
     });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
@@ -512,13 +582,16 @@ function ThreadView(props: ThreadProps) {
     if (tab === railTab) return;
     switchTab(tab);
   };
-  const openSettingsSection = useCallback((id: string) => {
-    // Navigation: the section pick owns its /settings/<section> address, so
-    // back/forward walks the sections and a reload restores the pick.
-    pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
-    // The section renders in the main column, behind the drawer.
-    if (isMobile) setOpen(false);
-  }, [pushRoute, isMobile]);
+  const openSettingsSection = useCallback(
+    (id: string) => {
+      // Navigation: the section pick owns its /settings/<section> address, so
+      // back/forward walks the sections and a reload restores the pick.
+      pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
+      // The section renders in the main column, behind the drawer.
+      if (isMobile) setOpen(false);
+    },
+    [pushRoute, isMobile],
+  );
 
   const sidebarCollapse = useCallback(() => setCollapsed(true), []);
   const sidebarClose = useCallback(() => setOpen(false), []);
@@ -567,11 +640,20 @@ function ThreadView(props: ThreadProps) {
   const routePage =
     route.agents !== null ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
-        <AgentsPage route={route.agents} viewer={{ email, displayName, role }} pushRoute={pushRoute} onOpenChat={openChat} />
+        <AgentsPage
+          route={route.agents}
+          viewer={{ email, displayName, role }}
+          pushRoute={pushRoute}
+          onOpenChat={openChat}
+        />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
       <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>
-        <SkillsPage route={route.skills} me={{ email, displayName: displayName ?? undefined, role }} pushRoute={pushRoute} />
+        <SkillsPage
+          route={route.skills}
+          me={{ email, displayName: displayName ?? undefined, role }}
+          pushRoute={pushRoute}
+        />
       </RoutePage>
     ) : route.tab === "settings" && settingsSection !== null ? (
       <RoutePage isMobile={isMobile} title="Settings" onOpenDrawer={openDrawer}>
@@ -625,7 +707,13 @@ function ThreadView(props: ThreadProps) {
                 {...railProps}
                 onTabChange={mobileSwitchTab}
                 onOpenHelp={() =>
-                  pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } })
+                  pushRoute({
+                    chatId: null,
+                    projectId: null,
+                    skills: null,
+                    newChat: false,
+                    overlay: { kind: "onboard" },
+                  })
                 }
                 isMobile
               />

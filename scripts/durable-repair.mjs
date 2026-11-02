@@ -11,19 +11,29 @@ if (!process.versions.bun) {
   if (result.error) console.error(result.error.message);
   process.exit(result.status ?? 1);
 }
-const pool = new pg.Pool({ connectionString: process.env.GUILD_DATABASE_URL ?? "postgres://guild:guild@127.0.0.1:5432/guild", max: 2 });
+const pool = new pg.Pool({
+  connectionString: process.env.GUILD_DATABASE_URL ?? "postgres://guild:guild@127.0.0.1:5432/guild",
+  max: 2,
+});
 try {
   const docs = await pool.query("SELECT id,kind FROM documents WHERE retired_at IS NULL");
   let bad = 0;
   for (const doc of docs.rows) {
-    const baseRows = await pool.query("SELECT seq,version,content FROM document_revisions WHERE document_id=$1 AND kind='base' ORDER BY seq DESC LIMIT 1", [doc.id]);
+    const baseRows = await pool.query(
+      "SELECT seq,version,content FROM document_revisions WHERE document_id=$1 AND kind='base' ORDER BY seq DESC LIMIT 1",
+      [doc.id],
+    );
     const base = baseRows.rows[0];
     if (!base) continue;
-    const tail = await pool.query("SELECT kind,version,content FROM document_revisions WHERE document_id=$1 AND seq>$2 ORDER BY seq", [doc.id, base.seq]);
+    const tail = await pool.query(
+      "SELECT kind,version,content FROM document_revisions WHERE document_id=$1 AND seq>$2 ORDER BY seq",
+      [doc.id, base.seq],
+    );
     try {
       let value = JSON.parse(base.content);
       for (const revision of tail.rows) {
-        if (revision.kind !== "delta" || revision.version !== base.version) throw new Error("version boundary without a base");
+        if (revision.kind !== "delta" || revision.version !== base.version)
+          throw new Error("version boundary without a base");
         value = apply(value, JSON.parse(revision.content));
       }
     } catch (error) {

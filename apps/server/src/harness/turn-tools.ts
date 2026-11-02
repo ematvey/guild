@@ -20,7 +20,13 @@ import type { AgentStore } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
 import type { ThreadBinding } from "../agents/thread-binding.js";
 import { agentThreadForChat } from "../agents/workspace.js";
-import { CONFIG_FILES, agentWorkspaceDir, readAgentConfig, seedAgentWorkspace, type AgentConfigFiles } from "../agents/workspace-config.js";
+import {
+  CONFIG_FILES,
+  agentWorkspaceDir,
+  readAgentConfig,
+  seedAgentWorkspace,
+  type AgentConfigFiles,
+} from "../agents/workspace-config.js";
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
@@ -121,7 +127,14 @@ export class TurnTools {
     await conversation.configure(
       {
         extensions: [...base.extensions, ...scoped, ...prepared.extensions, ...userPrepared.extensions],
-        tools: [...baseTools, ...machineTools, ...prepared.tools, ...userPrepared.tools, ...agentTools, ...workspaceTools],
+        tools: [
+          ...baseTools,
+          ...machineTools,
+          ...prepared.tools,
+          ...userPrepared.tools,
+          ...agentTools,
+          ...workspaceTools,
+        ],
         ...(agent === null
           ? {}
           : {

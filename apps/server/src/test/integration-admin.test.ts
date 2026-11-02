@@ -6,7 +6,7 @@
 // platform/fixtures/integration-admin-capture.json.
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -69,12 +69,14 @@ beforeAll(async () => {
     }
     if ((req.url ?? "").startsWith("/search")) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        results: [
-          { title: "First result", url: "https://example.com/a", content: "snippet a" },
-          { title: "Second result", url: "https://example.com/b", content: "snippet b" },
-        ],
-      }));
+      res.end(
+        JSON.stringify({
+          results: [
+            { title: "First result", url: "https://example.com/a", content: "snippet a" },
+            { title: "Second result", url: "https://example.com/b", content: "snippet b" },
+          ],
+        }),
+      );
       return;
     }
     if ((req.url ?? "").startsWith("/v1/fetch")) {
@@ -134,7 +136,11 @@ beforeAll(async () => {
             id: msg.id,
             result: {
               tools: [
-                { name: "echo", description: "Echo the input.", inputSchema: { type: "object", properties: { text: { type: "string" } } } },
+                {
+                  name: "echo",
+                  description: "Echo the input.",
+                  inputSchema: { type: "object", properties: { text: { type: "string" } } },
+                },
                 { name: "write_thing", description: "Write something.", inputSchema: { type: "object" } },
               ],
             },
@@ -223,13 +229,9 @@ async function installMcpPlugin(slug: string, url: string): Promise<void> {
     tools: { classes: { echo: "read", write_thing: "write" } },
   };
   const bundle = await packBundle({ "manifest.json": JSON.stringify(manifest) });
-  const pub = await call(
-    "POST",
-    "/api/v1/registry/integration?slug=" + slug + "&version=1.0.0",
-    e.adminToken,
-    bundle,
-    { "content-type": "application/octet-stream" },
-  );
+  const pub = await call("POST", `/api/v1/registry/integration?slug=${slug}&version=1.0.0`, e.adminToken, bundle, {
+    "content-type": "application/octet-stream",
+  });
   if (pub.statusCode !== 200) throw new Error(`registry publish failed: ${pub.body}`);
   const approve = await call("POST", `/api/v1/registry/integration/${slug}/review`, e.adminToken, {
     status: "approved",
@@ -282,7 +284,9 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
   it("lists the policy-filtered tool catalog with schemas and classes — a trait tool carries the Guild-provided name", async () => {
     const res = await call("GET", "/api/v1/integrations/searxng/tools", e.adminToken);
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { tools: { name: string; class: string; description: string; parameters: unknown }[] };
+    const body = JSON.parse(res.body) as {
+      tools: { name: string; class: string; description: string; parameters: unknown }[];
+    };
     expect(body.tools).toHaveLength(1);
     expect(body.tools[0]).toMatchObject({ name: "web_search", class: "read" });
     expect(body.tools[0].description).toContain("Search the public web");
@@ -299,9 +303,17 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
     await seedIntegration("github", { api_url: connectorBase() }, true, { token: "gh-token" });
     const admin = await call("GET", "/api/v1/integrations/github/tools", e.adminToken);
     const member = await call("GET", "/api/v1/integrations/github/tools", e.memberToken);
-    expect(JSON.parse(admin.body).tools.map((t: { name: string }) => t.name).sort()).toEqual([
-      "github_api", "github_create_issue", "github_get_file", "github_list_issues",
-      "github_list_pulls", "github_search_repositories",
+    expect(
+      JSON.parse(admin.body)
+        .tools.map((t: { name: string }) => t.name)
+        .sort(),
+    ).toEqual([
+      "github_api",
+      "github_create_issue",
+      "github_get_file",
+      "github_list_issues",
+      "github_list_pulls",
+      "github_search_repositories",
     ]);
     const memberNames = JSON.parse(member.body).tools.map((t: { name: string }) => t.name);
     expect(memberNames).not.toContain("github_api");
@@ -341,7 +353,10 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     // Row names are the connector slugs (org-unique): the live-backend test
     // re-points the searxng row at the fake server.
     await seedIntegration("searxng", { base_url: connectorBase() }, true);
-    const res = await call("POST", "/api/v1/integrations/searxng/tools/web_search", e.adminToken, { query: "guild", count: 1 });
+    const res = await call("POST", "/api/v1/integrations/searxng/tools/web_search", e.adminToken, {
+      query: "guild",
+      count: 1,
+    });
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as { ok: boolean; content: string; meta: Record<string, unknown> | null };
     expect(parsed.ok).toBe(true);
@@ -380,7 +395,10 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
       true,
       { bot_token: "xoxb" },
     );
-    const res = await call("POST", "/api/v1/integrations/slack/tools/post_message", e.adminToken, { channel: "C1", text: "hi" });
+    const res = await call("POST", "/api/v1/integrations/slack/tools/post_message", e.adminToken, {
+      channel: "C1",
+      text: "hi",
+    });
     expect(res.statusCode).toBe(403);
     expect(JSON.parse(res.body)).toEqual({
       error: { code: "forbidden", message: "this tool needs an approval and cannot be called from a script" },
@@ -394,7 +412,11 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     const adminRaw = await call("POST", "/api/v1/integrations/github/tools/api", e.adminToken, { path: "/x" });
     expect(adminRaw.statusCode).toBe(200);
     // Real dispatch: the fake backend answers GET /x with {"ok": true}.
-    const adminParsed = JSON.parse(adminRaw.body) as { ok: boolean; content: string; meta: Record<string, unknown> | null };
+    const adminParsed = JSON.parse(adminRaw.body) as {
+      ok: boolean;
+      content: string;
+      meta: Record<string, unknown> | null;
+    };
     expect(adminParsed.ok).toBe(true);
     expect(adminParsed.content).toBe('{"ok": true}');
     expect(adminParsed.meta).toMatchObject({ card: "api", status: 200 });
@@ -402,7 +424,9 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
 
   it("a member with a mapped email passes the impersonating-connector gate (acts as themselves)", async () => {
     await seedIntegration("google_workspace", {}, true, { service_account_json: "{}" });
-    const res = await call("POST", "/api/v1/integrations/google_workspace/tools/gmail_search", e.memberToken, { query: "x" });
+    const res = await call("POST", "/api/v1/integrations/google_workspace/tools/gmail_search", e.memberToken, {
+      query: "x",
+    });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).ok).toBe(false); // validation passed; the runtime boundary failed
   });
@@ -461,7 +485,10 @@ describe("admin integration save path", () => {
     expect(row.enabled).toBe(true);
     expect(row.config.base_url).toBe(connectorBase());
     const secretRow = (
-      await e.env.db.query("SELECT secret_enc, masked FROM integration_secrets WHERE org_id = $1 AND integration = 'superproxy'", [e.orgId])
+      await e.env.db.query(
+        "SELECT secret_enc, masked FROM integration_secrets WHERE org_id = $1 AND integration = 'superproxy'",
+        [e.orgId],
+      )
     ).rows[0]!;
     expect(secretRow.secret_enc).not.toContain("tok-1");
     expect(secretRow.masked).toBe("•".repeat(5));
@@ -482,7 +509,10 @@ describe("admin integration save path", () => {
     const row = (await e.env.db.query("SELECT enabled FROM integrations WHERE id = $1", [id])).rows[0]!;
     expect(row.enabled).toBe(false); // the enable did not persist
     const secret = (
-      await e.env.db.query("SELECT secret_enc FROM integration_secrets WHERE org_id = $1 AND integration = 'github' AND name = 'token'", [e.orgId])
+      await e.env.db.query(
+        "SELECT secret_enc FROM integration_secrets WHERE org_id = $1 AND integration = 'github' AND name = 'token'",
+        [e.orgId],
+      )
     ).rows[0]!;
     const { masterKeyBytes, decryptSecret } = await import("../platform/crypto.js");
     expect(decryptSecret(masterKeyBytes(e.env.config.masterKeyHex), secret.secret_enc)).toBe("old"); // the new value was not written
@@ -507,7 +537,9 @@ describe("admin integration save path", () => {
     const id = rows.items.find((r) => r.name === "slack")!.id;
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, { config: { base_url: 42 } });
     expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error.message).toBe("invalid integration config: slack config base_url must be a string");
+    expect(JSON.parse(res.body).error.message).toBe(
+      "invalid integration config: slack config base_url must be a string",
+    );
   });
 
   it("a settings save never touches the tools curation map (the PUT tools endpoint is its only writer)", async () => {
@@ -535,7 +567,8 @@ describe("admin integration save path", () => {
     const res = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as {
-      resolved: boolean; kind: string;
+      resolved: boolean;
+      kind: string;
       tools: { name: string; tool: string; class: string; enabled: boolean; approval: string }[];
     };
     expect(parsed.resolved).toBe(true);
@@ -561,7 +594,12 @@ describe("MCP plugin rows", () => {
     // Disabled (fresh install) → not resolved, no connection.
     const disabled = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(disabled.statusCode).toBe(200);
-    expect(JSON.parse(disabled.body)).toEqual({ resolved: false, kind: "mcp", reason: "integration disabled", tools: [] });
+    expect(JSON.parse(disabled.body)).toEqual({
+      resolved: false,
+      kind: "mcp",
+      reason: "integration disabled",
+      tools: [],
+    });
     // Enable: the save gate runs the full pool connect + tools/list
     // handshake with the would-be secrets before persisting.
     const enable = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
@@ -576,7 +614,11 @@ describe("MCP plugin rows", () => {
     // classes from the manifest.
     const listing = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(listing.statusCode).toBe(200);
-    const parsed = JSON.parse(listing.body) as { resolved: boolean; kind: string; tools: { name: string; tool: string; class: string; enabled: boolean; approval: string }[] };
+    const parsed = JSON.parse(listing.body) as {
+      resolved: boolean;
+      kind: string;
+      tools: { name: string; tool: string; class: string; enabled: boolean; approval: string }[];
+    };
     expect(parsed.resolved).toBe(true);
     expect(parsed.kind).toBe("mcp");
     expect(parsed.tools.find((t) => t.name === "echo")!.enabled).toBe(false);
@@ -585,7 +627,10 @@ describe("MCP plugin rows", () => {
     expect(uncurated.enabled).toBe(false);
     expect(uncurated.class).toBe("write"); // the manifest declares it; the listing is unfiltered
     // Curation turns a discovered tool on.
-    await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, { enabled: true, approval: "always_ask" });
+    await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, {
+      enabled: true,
+      approval: "always_ask",
+    });
     const curated = JSON.parse((await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken)).body) as {
       tools: { name: string; enabled: boolean; approval: string }[];
     };
@@ -630,7 +675,10 @@ describe("MCP plugin rows", () => {
       secrets: { api_key: "k" },
     });
     // Curate: echo on, write_thing (write class) admin-only by class.
-    await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, { enabled: true, approval: "default" });
+    await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, {
+      enabled: true,
+      approval: "default",
+    });
     const admin = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.adminToken);
     expect(admin.statusCode).toBe(200);
     const tools = JSON.parse(admin.body).tools as { name: string; class: string }[];
@@ -640,7 +688,9 @@ describe("MCP plugin rows", () => {
     const member = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.memberToken);
     expect(JSON.parse(member.body).tools.map((t: { name: string }) => t.name)).toEqual(["test-mcp-m7b_echo"]);
     const list = await call("GET", "/api/v1/integrations", e.memberToken);
-    const item = (JSON.parse(list.body).items as { slug: string; tool_count: number }[]).find((i) => i.slug === "test-mcp-m7b");
+    const item = (JSON.parse(list.body).items as { slug: string; tool_count: number }[]).find(
+      (i) => i.slug === "test-mcp-m7b",
+    );
     expect(item!.tool_count).toBe(1);
     // Execute: the runtime dispatches through the MCP peer with the
     // identity envelope; the fake server echoes the arguments.

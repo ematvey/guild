@@ -125,11 +125,7 @@ export function skillsPageState(route: SkillsRoute): {
     tab: route.view,
     selected: route.editor === null ? route.slug : null,
     editor:
-      route.editor === null
-        ? null
-        : route.editor === "new"
-          ? { mode: "create" }
-          : { mode: "edit", slug: route.editor },
+      route.editor === null ? null : route.editor === "new" ? { mode: "create" } : { mode: "edit", slug: route.editor },
     file: route.file ?? SKILL_ENTRY_FILE,
     catalog: route.catalog ?? DEFAULT_CATALOG_QUERY,
   };

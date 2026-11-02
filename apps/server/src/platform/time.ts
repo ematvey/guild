@@ -52,7 +52,7 @@ export function pgTimestampToRfc3339(text: string): string {
     const digits = m[2].replace(/0+$/, "");
     if (digits.length > 0) {
       const width = digits.length <= 3 ? 3 : 6;
-      fraction = "." + digits.padEnd(width, "0");
+      fraction = `.${digits.padEnd(width, "0")}`;
     }
   }
   return `${m[1]}${fraction}Z`;

@@ -25,15 +25,7 @@ const toneClass: Record<Tone, string> = {
   info: "border-sky-700/40 bg-sky-500/10 text-sky-500",
 };
 
-export function ToneBadge({
-  tone,
-  children,
-  title,
-}: {
-  tone: Tone;
-  children: ReactNode;
-  title?: string;
-}) {
+export function ToneBadge({ tone, children, title }: { tone: Tone; children: ReactNode; title?: string }) {
   return (
     <Badge variant="outline" className={toneClass[tone]} title={title}>
       {children}
@@ -43,13 +35,7 @@ export function ToneBadge({
 
 export function AgentStatusBadge({ status }: { status: AgentStatus }) {
   const tone: Tone =
-    status === "active"
-      ? "success"
-      : status === "archived"
-        ? "warning"
-        : status === "deleting"
-          ? "danger"
-          : "neutral";
+    status === "active" ? "success" : status === "archived" ? "warning" : status === "deleting" ? "danger" : "neutral";
   return <ToneBadge tone={tone}>{AGENT_STATUS_LABEL[status]}</ToneBadge>;
 }
 
@@ -67,11 +53,7 @@ export function RunStatusBadge({ status }: { status: RunStatus }) {
   return <ToneBadge tone={tone}>{RUN_STATUS_LABEL[status]}</ToneBadge>;
 }
 
-export function VisibilityBadge({
-  visibility,
-}: {
-  visibility: AgentVisibility;
-}) {
+export function VisibilityBadge({ visibility }: { visibility: AgentVisibility }) {
   return (
     <ToneBadge tone="neutral" title="Who can see and use this agent">
       {VISIBILITY_LABEL[visibility]}
@@ -89,13 +71,7 @@ export function nameInitials(label: string | null | undefined): string {
   return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
 }
 
-export function AgentGlyph({
-  name,
-  className = "",
-}: {
-  name: string;
-  className?: string;
-}) {
+export function AgentGlyph({ name, className = "" }: { name: string; className?: string }) {
   return (
     <span
       aria-hidden="true"
@@ -140,18 +116,10 @@ export function TabBar<T extends string>({
 }
 
 /** Page body wrapper: caps the content width and owns the scroll pane. */
-export function PageBody({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+export function PageBody({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
-      <div className={`mx-auto w-full max-w-[64rem] px-4 pb-16 pt-5 sm:px-6 ${className}`}>
-        {children}
-      </div>
+      <div className={`mx-auto w-full max-w-[64rem] px-4 pb-16 pt-5 sm:px-6 ${className}`}>{children}</div>
     </div>
   );
 }
@@ -174,9 +142,7 @@ export function ErrorState({
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{title}</p>
         {message !== undefined && message !== "" && (
-          <p className="mt-0.5 break-words text-sm text-muted-foreground">
-            {message}
-          </p>
+          <p className="mt-0.5 break-words text-sm text-muted-foreground">{message}</p>
         )}
       </div>
       {onRetry !== undefined && (
@@ -193,10 +159,7 @@ export function LoadingRows({ rows = 4 }: { rows?: number }) {
   return (
     <div role="status" aria-label="Loading" className="space-y-2">
       {Array.from({ length: rows }, (_, i) => (
-        <div
-          key={i}
-          className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3"
-        >
+        <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
           <Skeleton className="size-9 rounded-lg" />
           <div className="min-w-0 flex-1 space-y-2">
             <Skeleton className="h-3 w-40" />
@@ -235,9 +198,7 @@ export function Section({
       <div className="flex flex-wrap items-start gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-medium">{title}</h2>
-          {description !== undefined && (
-            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
-          )}
+          {description !== undefined && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
         </div>
         {action}
       </div>

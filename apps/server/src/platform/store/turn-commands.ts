@@ -126,7 +126,12 @@ export class TurnCommandStore {
       const row = rowRes.rows[0]!;
       // The stored row holds the sanitized form, so a retry compares against
       // that form. A NUL must not turn a valid retry into a conflict.
-      if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, jsonValue(request))) {
+      if (
+        row.org_id !== org ||
+        row.user_id !== user ||
+        row.chat_id !== chat ||
+        !deepEq(row.request, jsonValue(request))
+      ) {
         throw ApiError.conflict("command_id_conflict", "message ID was already used for a different command");
       }
       if (inserted.rowCount === 1) {

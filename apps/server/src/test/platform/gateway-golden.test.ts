@@ -8,23 +8,24 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setupGatewayStack, startMockUpstream, type GatewayStack } from "../support/gateway-stack.js";
 
-const gold = (name: string): string =>
-  readFileSync(new URL(`./fixtures/golden/${name}`, import.meta.url), "utf8");
+const gold = (name: string): string => readFileSync(new URL(`./fixtures/golden/${name}`, import.meta.url), "utf8");
 
 /** Masks the dynamic values that legitimately differ between the capture
  *  run and the replay run. */
 function mask(text: string): string {
-  return text
-    .replace(/chatcmpl-[0-9a-f-]{36}/g, "<CMPL>")
-    .replace(/msg_[0-9a-f-]{36}/g, "<MSG>")
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
-    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z/g, "<TS>")
-    .replace(/gk_[0-9a-f]{7}/g, "<PREFIX>")
-    .replace(/"created":\d+/g, '"created":"<CREATED>"')
-    // The mock upstream's base_url and the masked key length are
-    // environment details, not contract.
-    .replace(/https?:\/\/[^"]+/g, "<URL>")
-    .replace(/•+/g, "<MASKED>");
+  return (
+    text
+      .replace(/chatcmpl-[0-9a-f-]{36}/g, "<CMPL>")
+      .replace(/msg_[0-9a-f-]{36}/g, "<MSG>")
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z/g, "<TS>")
+      .replace(/gk_[0-9a-f]{7}/g, "<PREFIX>")
+      .replace(/"created":\d+/g, '"created":"<CREATED>"')
+      // The mock upstream's base_url and the masked key length are
+      // environment details, not contract.
+      .replace(/https?:\/\/[^"]+/g, "<URL>")
+      .replace(/•+/g, "<MASKED>")
+  );
 }
 
 // The captured upstream stream (OpenAI-protocol deltas with reasoning
@@ -154,11 +155,7 @@ describe("gateway golden replay (captured fixtures)", () => {
         (await inject("GET", "/api/v1/gateway/models", stack.memberToken)).body,
         gold("user_models.json"),
       ],
-      [
-        "user api keys",
-        (await inject("GET", "/api/v1/api-keys", stack.memberToken)).body,
-        gold("user_apikeys.json"),
-      ],
+      ["user api keys", (await inject("GET", "/api/v1/api-keys", stack.memberToken)).body, gold("user_apikeys.json")],
       [
         "admin api keys",
         (await inject("GET", "/api/v1/admin/api-keys", stack.adminToken)).body,
@@ -190,9 +187,7 @@ describe("gateway golden replay (captured fixtures)", () => {
       stream: true,
     });
     expect(openaiStream.statusCode).toBe(200);
-    expect(parseSse(mask(openaiStream.body)), "openai stream").toEqual(
-      parseSse(mask(gold("openai_stream.txt"))),
-    );
+    expect(parseSse(mask(openaiStream.body)), "openai stream").toEqual(parseSse(mask(gold("openai_stream.txt"))));
 
     // Anthropic surface over the same openai-protocol provider.
     const anthropicRes = await inject("POST", "/anthropic/v1/messages", adminKey, {

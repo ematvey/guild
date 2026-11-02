@@ -57,10 +57,7 @@ function swapped(state: NavigationState, chatId: string | null): NavigationDecis
 
 /** Applies one navigation event. The caller owns the side effects named in
  *  the decision: the reducer open and the state setters. */
-export function transitionNavigation(
-  state: NavigationState,
-  event: NavigationEvent,
-): NavigationDecision {
+export function transitionNavigation(state: NavigationState, event: NavigationEvent): NavigationDecision {
   switch (event.type) {
     case "open": {
       if (event.chatId === state.displayedChatId) {

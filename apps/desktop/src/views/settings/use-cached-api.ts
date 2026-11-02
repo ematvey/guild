@@ -78,9 +78,7 @@ export function useCachedGet<T>(path: string | null): {
   settled: boolean;
   reload: () => void;
 } {
-  const [data, setData] = useState<T | null>(() =>
-    path ? ((cache.get(path) as T | undefined) ?? null) : null,
-  );
+  const [data, setData] = useState<T | null>(() => (path ? ((cache.get(path) as T | undefined) ?? null) : null));
   const [error, setError] = useState<string | null>(null);
   const [settled, setSettled] = useState(false);
   // Monotonic request counter: a slow response for a previous path must not

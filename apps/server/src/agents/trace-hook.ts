@@ -3,7 +3,13 @@
 // hook never blocks a call and never changes its result; a failed trace
 // write is dropped like every other sink failure.
 
-import { hook, ToolTask, type ConversationId, type HookRegistration, type ToolHookCall } from "@earendil-works/pi-durable";
+import {
+  hook,
+  ToolTask,
+  type ConversationId,
+  type HookRegistration,
+  type ToolHookCall,
+} from "@earendil-works/pi-durable";
 import { uuidv7 } from "../platform/time.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AgentStore } from "./store.js";

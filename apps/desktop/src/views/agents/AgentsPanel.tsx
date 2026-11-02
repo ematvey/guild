@@ -69,12 +69,7 @@ export function AgentsPanel({
       );
     case "chat":
       return (
-        <ChatActivityPage
-          chatId={route.chatId}
-          role={viewer.role}
-          onNavigate={onNavigate}
-          onOpenChat={onOpenChat}
-        />
+        <ChatActivityPage chatId={route.chatId} role={viewer.role} onNavigate={onNavigate} onOpenChat={onOpenChat} />
       );
   }
 }

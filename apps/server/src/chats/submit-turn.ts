@@ -59,7 +59,9 @@ export async function submitTurn(
   }
 
   const commandId =
-    body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));
+    body["user_message_id"] === undefined || body["user_message_id"] === null
+      ? uuidv7()
+      : validateUuid(String(body["user_message_id"]));
   // The idempotency check runs before any binding: a duplicate delivery must
   // not move the chat to another agent, change the project binding or steer
   // another running command. The material is the request as sent (requested
@@ -85,8 +87,7 @@ export async function submitTurn(
     adopted === null ? (body["model"] as string) : adopted.model,
   );
 
-  const userMessage =
-    [...messages].reverse().find((m) => m?.role === "user")?.content ?? "";
+  const userMessage = [...messages].reverse().find((m) => m?.role === "user")?.content ?? "";
   const userMessageText = typeof userMessage === "string" ? userMessage : "";
   if (userMessageText === "" && userMessage !== "") {
     // Non-string content blocks: not part of the chat turn contract (the
@@ -160,17 +161,16 @@ export async function submitTurn(
   // window). A failed accept or submit recomputes the flag from durable
   // work, so it never clears a turn another request started meanwhile.
   const priorGenerating = await chats.chats.reserveGenerating(user.org_id, chatId);
-  const sendMode = body["send_mode"] === "steer" ? ("steer" as const) : body["send_mode"] === "queue" ? ("queue" as const) : undefined;
+  const sendMode =
+    body["send_mode"] === "steer" ? ("steer" as const) : body["send_mode"] === "queue" ? ("queue" as const) : undefined;
   let command;
   try {
-    command = await chats
-      .turnCommands
-      .accept(commandId, user.org_id, user.id, chatId, request, payload, {
-        content,
-        attachments: chips,
-        queued: priorGenerating,
-        mode: sendMode,
-      });
+    command = await chats.turnCommands.accept(commandId, user.org_id, user.id, chatId, request, payload, {
+      content,
+      attachments: chips,
+      queued: priorGenerating,
+      mode: sendMode,
+    });
     // The run row exists before the turn is admitted; the lifecycle closes it
     // from the transcript.
     if (adopted !== null && beginRun) {

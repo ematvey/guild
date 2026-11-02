@@ -15,8 +15,7 @@ import { applyPlatformMigrations } from "../../platform/migrations.js";
  * `CREATE DATABASE` / `DROP DATABASE` for throwaway `guild_durable_test_*`
  * databases.
  */
-export const DURABLE_TEST_ADMIN_URL =
-  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
+export const DURABLE_TEST_ADMIN_URL = process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
 
 /** The admin URL every stack harness creates its databases through. */
 export const TEST_ADMIN_URL = DURABLE_TEST_ADMIN_URL;

@@ -181,7 +181,7 @@ export async function resolveOidcUser(
   if (existing !== null && existing.identity_type === "oidc") {
     if (existing.display_name !== displayName || existing.avatar_url !== avatarUrl) {
       await ctx.identity.updateOidcProfile(existing.id, displayName, avatarUrl);
-              return { ...existing, display_name: displayName, avatar_url: avatarUrl };
+      return { ...existing, display_name: displayName, avatar_url: avatarUrl };
     }
     return existing;
   }
@@ -207,9 +207,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     // Blank secret = keep the stored one (the edit form's contract); an
     // empty string must not overwrite the encrypted secret.
     const clientSecret =
-      typeof body["client_secret"] === "string" && body["client_secret"] !== ""
-        ? body["client_secret"]
-        : null;
+      typeof body["client_secret"] === "string" && body["client_secret"] !== "" ? body["client_secret"] : null;
     await ctx.oidc.upsert(admin.org_id, issuer, clientId, clientSecret, ctx.masterKey());
     return reply.status(200).send({});
   });
@@ -277,7 +275,12 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     const discovery = await fetchDiscovery(row.issuer);
     const appOrigin = serverOrigin(ctx);
     const redirectUri = `${appOrigin}/api/v1/auth/oidc/callback`;
-    const state = signStateJwt(ctx, { org: orgId, app: appOrigin, exp: Math.floor(Date.now() / 1000) + STATE_TTL_SECONDS, nonce });
+    const state = signStateJwt(ctx, {
+      org: orgId,
+      app: appOrigin,
+      exp: Math.floor(Date.now() / 1000) + STATE_TTL_SECONDS,
+      nonce,
+    });
     const authUrl = new URL(discovery.authorization_endpoint);
     for (const [k, v] of [
       ["response_type", "code"],
@@ -382,4 +385,3 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
       .send();
   });
 }
-

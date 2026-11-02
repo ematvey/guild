@@ -140,7 +140,13 @@ dbDescribe("agent send_file and turn attachments", () => {
     });
     const event = await threads.appendEvent(
       thread.chat_id,
-      assistantMessageEvent(1, 1, [{ type: "text", text: "The build is ready." }], { tokens_in: 1, tokens_out: 1, cost_usd: 0 }, "GLM-Test"),
+      assistantMessageEvent(
+        1,
+        1,
+        [{ type: "text", text: "The build is ready." }],
+        { tokens_in: 1, tokens_out: 1, cost_usd: 0 },
+        "GLM-Test",
+      ),
     );
     await lifecycle.assistantEvent(thread.chat_id, event);
     const published = await env!.db.query<{ event_id: string | null }>(

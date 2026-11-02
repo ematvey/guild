@@ -4,20 +4,8 @@
 // decision. These run under `npm test` (vitest); see package.json.
 
 import { describe, expect, it } from "vitest";
-import {
-  filterByKind,
-  filterSkills,
-  skillsPageHeader,
-  skillRow,
-  skillsEmptyState,
-  sortSkills,
-} from "./SkillsPanel";
-import {
-  clampSkillsRoute,
-  SKILLS_CATALOG,
-  skillsPageState,
-  type SkillsRoute,
-} from "./skills-route";
+import { filterByKind, filterSkills, skillsPageHeader, skillRow, skillsEmptyState, sortSkills } from "./SkillsPanel";
+import { clampSkillsRoute, SKILLS_CATALOG, skillsPageState, type SkillsRoute } from "./skills-route";
 import { avatarChip } from "../../lib/format";
 import { versionRank } from "./version";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
@@ -148,27 +136,15 @@ describe("filterByKind (the filter select's client-side cut)", () => {
 
 describe("sortSkills (the sort select's ordering)", () => {
   it("most installed sorts by install count descending", () => {
-    expect(sortSkills(fixtures, "installs").map((s) => s.slug)).toEqual([
-      "code-review",
-      "deploy-runbook",
-      "triage",
-    ]);
+    expect(sortSkills(fixtures, "installs").map((s) => s.slug)).toEqual(["code-review", "deploy-runbook", "triage"]);
   });
 
   it("recently updated sorts by version rank descending (the catalog has no timestamps)", () => {
-    expect(sortSkills(fixtures, "updated").map((s) => s.slug)).toEqual([
-      "triage",
-      "code-review",
-      "deploy-runbook",
-    ]);
+    expect(sortSkills(fixtures, "updated").map((s) => s.slug)).toEqual(["triage", "code-review", "deploy-runbook"]);
   });
 
   it("A → Z sorts by slug ascending", () => {
-    expect(sortSkills(fixtures, "az").map((s) => s.slug)).toEqual([
-      "code-review",
-      "deploy-runbook",
-      "triage",
-    ]);
+    expect(sortSkills(fixtures, "az").map((s) => s.slug)).toEqual(["code-review", "deploy-runbook", "triage"]);
   });
 });
 
@@ -238,11 +214,7 @@ describe("skillsPageHeader (the full-page header contract)", () => {
 
   it("renders the Catalog/Activity tab bar, machine tab only in Tauri", () => {
     expect(skillsPageHeader(false).tabs.map(([value]) => value)).toEqual(["catalog", "activity"]);
-    expect(skillsPageHeader(true).tabs.map(([value]) => value)).toEqual([
-      "catalog",
-      "activity",
-      "machine",
-    ]);
+    expect(skillsPageHeader(true).tabs.map(([value]) => value)).toEqual(["catalog", "activity", "machine"]);
   });
 
   it("has no collapse button — a full page, not a sidebar panel", () => {

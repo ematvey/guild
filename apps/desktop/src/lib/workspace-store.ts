@@ -23,8 +23,9 @@ export function applyWorkspaceIdentity(next: WorkspaceIdentity): void {
 /** The identity of the bundle this page runs: the hash in its entry
  *  script's name (`/assets/index-<hash>.js`). null when the page was not
  *  loaded from a built bundle (the dev server). */
-export function runningWebBundle(doc: Pick<Document, "querySelector"> | undefined =
-  typeof document === "undefined" ? undefined : document): string | null {
+export function runningWebBundle(
+  doc: Pick<Document, "querySelector"> | undefined = typeof document === "undefined" ? undefined : document,
+): string | null {
   const src = doc?.querySelector('script[src*="/assets/index-"]')?.getAttribute("src");
   return src?.match(/index-([^"'/]+)\.js/)?.[1] ?? null;
 }

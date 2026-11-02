@@ -50,7 +50,9 @@ export function AboutSection() {
       if (!HAS_SHELL) setAppVersion(v);
     });
     if (HAS_SHELL) {
-      getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+      getVersion()
+        .then(setAppVersion)
+        .catch(() => setAppVersion(null));
     }
     void fetchJson(`${serverBase()}/api/v1/updates/latest.json`).then((m) => {
       setLatestRelease((m as { version?: string } | null)?.version ?? null);
@@ -58,24 +60,21 @@ export function AboutSection() {
   }, []);
 
   const base = serverBase();
-  const updateAvailable =
-    appVersion != null &&
-    latestRelease != null &&
-    latestRelease !== appVersion;
+  const updateAvailable = appVersion != null && latestRelease != null && latestRelease !== appVersion;
 
   return (
     <div className="space-y-4">
       <PageHeader title="About" />
       <FactGrid>
         <FactCard label="App version">
-          {appVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : appVersion ?? "Unavailable"}
+          {appVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : (appVersion ?? "Unavailable")}
           {updateAvailable && (
-            <span className="ml-2 text-sm text-muted-foreground">
-              (update available: {latestRelease})
-            </span>
+            <span className="ml-2 text-sm text-muted-foreground">(update available: {latestRelease})</span>
           )}
         </FactCard>
-        <FactCard label="Server version">{serverVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : serverVersion ?? "Unavailable"}</FactCard>
+        <FactCard label="Server version">
+          {serverVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : (serverVersion ?? "Unavailable")}
+        </FactCard>
         <FactCard label="Paired server">{base || "same origin (web)"}</FactCard>
         <FactCard label="Telemetry">
           {telemetry === null ? (
@@ -88,13 +87,14 @@ export function AboutSection() {
             </span>
           )}
         </FactCard>
-      <FactCard label="Newest published release">{latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : latestRelease ?? "none"}</FactCard>
+        <FactCard label="Newest published release">
+          {latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : (latestRelease ?? "none")}
+        </FactCard>
       </FactGrid>
       {HAS_SHELL && (
         <p className="text-sm text-muted-foreground">
-          The desktop app embeds its own UI build — after an update, fully quit
-          (tray → Quit) and relaunch. The web UI is served by the paired
-          server; a browser reload always picks up its current build.
+          The desktop app embeds its own UI build — after an update, fully quit (tray → Quit) and relaunch. The web UI
+          is served by the paired server; a browser reload always picks up its current build.
         </p>
       )}
       {HAS_SHELL && trace && (
@@ -111,11 +111,7 @@ export function AboutSection() {
               onClick={() => {
                 const on = !trace.enabled;
                 void invoke("set_daemon_trace", { on })
-                  .then(() =>
-                    invoke<{ enabled: boolean; path: string }>("daemon_trace_state").then(
-                      setTrace,
-                    ),
-                  )
+                  .then(() => invoke<{ enabled: boolean; path: string }>("daemon_trace_state").then(setTrace))
                   .catch(() => {});
               }}
             >

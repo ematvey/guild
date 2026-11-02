@@ -56,7 +56,6 @@ export function sseReply(reply: FastifyReply, frames: AsyncIterable<string>): vo
   }
 }
 
-
 /** A data-only SSE frame (OpenAI chunks). */
 export function sseDataFrame(data: string): string {
   return `data: ${data}\n\n`;

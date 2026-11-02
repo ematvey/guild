@@ -27,9 +27,7 @@ export function runningSubagentTree(nodes: readonly ChatSubagentNode[]): Running
   // for a top-level chat, but a child chat's own thread names the parent
   // chat's thread — which is not in this list. The root is the node whose
   // parent is absent from the subtree, not the one with a null parent.
-  const root = nodes.find(
-    (node) => node.parent_thread_id === null || !byThread.has(node.parent_thread_id),
-  );
+  const root = nodes.find((node) => node.parent_thread_id === null || !byThread.has(node.parent_thread_id));
   if (root === undefined) return null;
 
   const childrenOf = new Map<string, ChatSubagentNode[]>();
@@ -61,10 +59,7 @@ function label(node: ChatSubagentNode): string {
 /** How many nodes in the kept tree are still live. A finished parent kept for
  *  a running grandchild does not count itself. */
 export function countRunning(node: RunningSubagentNode): number {
-  return node.children.reduce(
-    (n, child) => n + (isRunningStatus(child.node.status) ? 1 : 0) + countRunning(child),
-    0,
-  );
+  return node.children.reduce((n, child) => n + (isRunningStatus(child.node.status) ? 1 : 0) + countRunning(child), 0);
 }
 
 /** One vertical guide column: a full line for an ancestor with following
@@ -97,11 +92,7 @@ function Row({
           <Guide key={i} draw={draw} />
         ))}
         <span className="relative w-4 shrink-0 self-stretch">
-          <span
-            className={`absolute left-1/2 top-0 border-l border-border/60 ${
-              isLast ? "h-1/2" : "inset-y-0"
-            }`}
-          />
+          <span className={`absolute left-1/2 top-0 border-l border-border/60 ${isLast ? "h-1/2" : "inset-y-0"}`} />
           <span className="absolute left-1/2 top-1/2 w-1/2 border-t border-border/60" />
         </span>
         <button
@@ -127,13 +118,7 @@ function Row({
 }
 
 /** The kept tree rows, starting at the running children. */
-export function SubagentTree({
-  tree,
-  onOpen,
-}: {
-  tree: RunningSubagentNode;
-  onOpen: (chatId: string) => void;
-}) {
+export function SubagentTree({ tree, onOpen }: { tree: RunningSubagentNode; onOpen: (chatId: string) => void }) {
   return (
     <div>
       {tree.children.map((child, i) => (

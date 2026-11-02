@@ -1,9 +1,6 @@
 /** Human byte size for UI rows. `binary` selects KiB/MiB units for values
  *  the server reports in binary units (release artifact sizes). */
-export function formatBytes(
-  bytes: number | null | undefined,
-  opts: { binary?: boolean } = {},
-): string {
+export function formatBytes(bytes: number | null | undefined, opts: { binary?: boolean } = {}): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
   const unit = opts.binary ? "iB" : "B";
   const step = 1024;
@@ -24,5 +21,4 @@ export function avatarChip(label: string): string {
 }
 
 /** `1 agent`, `3 agents` — the one plural rule in the client. */
-export const count = (n: number, one: string, many = `${one}s`): string =>
-  `${n} ${n === 1 ? one : many}`;
+export const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;

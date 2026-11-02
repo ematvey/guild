@@ -114,8 +114,8 @@ function resolveImport(specifier: string, fromFile: string): string {
   if (!specifier.startsWith(".")) return specifier;
   const target = path.resolve(path.dirname(fromFile), specifier);
   let rel = path.relative(SRC, target).split(path.sep).join("/");
-  if (rel.endsWith(".js")) rel = rel.slice(0, -3) + ".ts";
-  else if (!rel.endsWith(".ts")) rel = rel + ".ts"; // extensionless: file or dir index
+  if (rel.endsWith(".js")) rel = `${rel.slice(0, -3)}.ts`;
+  else if (!rel.endsWith(".ts")) rel = `${rel}.ts`; // extensionless: file or dir index
   return rel;
 }
 

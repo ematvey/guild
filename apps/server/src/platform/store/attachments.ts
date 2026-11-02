@@ -17,8 +17,7 @@ export interface AttachmentRow {
 
 // created_at is always selected as the to_char text alias (chrono-shaped
 // RFC 3339 formatting happens in SQL), never as the plain column.
-const ATTACHMENT_COLUMNS =
-  "id, org_id, chat_id, filename, content_type, size_bytes";
+const ATTACHMENT_COLUMNS = "id, org_id, chat_id, filename, content_type, size_bytes";
 
 interface AttachmentDbRow {
   id: string;

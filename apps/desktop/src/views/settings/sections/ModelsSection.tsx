@@ -62,14 +62,9 @@ const viewCodec: DetailCodec<View> = {
   },
 };
 
-export default function ModelsSection({
-  detail = null,
-  onDetailChange,
-}: SectionDetailProps) {
+export default function ModelsSection({ detail = null, onDetailChange }: SectionDetailProps) {
   const routesRes = useCachedGet<{ routes: RouteRow[] }>(SETTINGS_PATHS.gatewayRoutes);
-  const providersRes = useCachedGet<{ providers: ProviderRow[] }>(
-    SETTINGS_PATHS.gatewayProviders,
-  );
+  const providersRes = useCachedGet<{ providers: ProviderRow[] }>(SETTINGS_PATHS.gatewayProviders);
   const routes = routesRes.data?.routes ?? null;
   const providers = providersRes.data?.providers ?? null;
   const error = routesRes.error ?? providersRes.error;
@@ -110,9 +105,7 @@ export default function ModelsSection({
       {
         accessorKey: "base_url",
         header: "Base URL",
-        cell: ({ row }) => (
-          <span className="block truncate text-muted-foreground">{row.original.base_url}</span>
-        ),
+        cell: ({ row }) => <span className="block truncate text-muted-foreground">{row.original.base_url}</span>,
       },
     ],
     [],
@@ -147,8 +140,7 @@ export default function ModelsSection({
         header: "Pricing",
         cell: ({ row }) => (
           <span className="tabular-nums text-muted-foreground">
-            {fmtUsd(row.original.price_per_mtok_in_usd)} in ·{" "}
-            {fmtUsd(row.original.price_per_mtok_out_usd)} out
+            {fmtUsd(row.original.price_per_mtok_in_usd)} in · {fmtUsd(row.original.price_per_mtok_out_usd)} out
           </span>
         ),
       },
@@ -157,9 +149,7 @@ export default function ModelsSection({
         header: "Context",
         cell: ({ row }) => (
           <span className="tabular-nums text-muted-foreground">
-            {row.original.context_window != null
-              ? `${(row.original.context_window / 1000).toFixed(0)}k`
-              : "—"}
+            {row.original.context_window != null ? `${(row.original.context_window / 1000).toFixed(0)}k` : "—"}
           </span>
         ),
       },
@@ -235,10 +225,7 @@ export default function ModelsSection({
   return (
     <div className="space-y-8">
       <div>
-        <PageHeader
-          title="Models"
-          description="Providers and model routes — what chats can select."
-        />
+        <PageHeader title="Models" description="Providers and model routes — what chats can select." />
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
 
         {/* providers */}

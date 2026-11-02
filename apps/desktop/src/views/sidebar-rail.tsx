@@ -2,19 +2,8 @@
 // chats, projects (work) and skills. Help and Settings sit at the bottom,
 // above the account menu — all global across tabs and never scroll away.
 
-import {
-  Activity,
-  Bot,
-  CircleHelp,
-  FolderKanban,
-  MessageSquare,
-  Package,
-  Settings,
-} from "lucide-react";
-import {
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@guild/ui/components/dropdown-menu";
+import { Activity, Bot, CircleHelp, FolderKanban, MessageSquare, Package, Settings } from "lucide-react";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
 import { ServerRailButton } from "./server-menu";
@@ -33,7 +22,6 @@ const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "skills", label: "Skills", icon: Package },
   { id: "activity", label: "Activity", icon: Activity },
 ];
-
 
 function RailButton({
   label,
@@ -56,9 +44,7 @@ function RailButton({
         aria-current={active}
         onClick={onClick}
         className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
-          active
-            ? "bg-sidebar-accent text-sidebar-foreground"
-            : "text-muted-foreground hover:text-foreground"
+          active ? "bg-sidebar-accent text-sidebar-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
         <Icon className="size-6" />
@@ -119,10 +105,7 @@ export function SidebarRail({
       <div className="flex flex-col items-center gap-1">
         {/* First button: the active workspace (logo/initial); its dropdown
             carries the switcher rows. Renders nothing on the web. */}
-        <ServerRailButton
-          onAddWorkspace={onAddWorkspace}
-          onReload={() => window.location.reload()}
-        />
+        <ServerRailButton onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
         {tabs.map(({ id, label, icon: Icon }) => (
           <RailButton
             key={id}
@@ -135,12 +118,7 @@ export function SidebarRail({
         ))}
       </div>
       <div className="mt-auto flex flex-col items-center gap-1">
-        <RailButton
-          label="Help / Learn"
-          icon={CircleHelp}
-          active={false}
-          onClick={onOpenHelp}
-        />
+        <RailButton label="Help / Learn" icon={CircleHelp} active={false} onClick={onOpenHelp} />
         <RailButton
           label="Settings"
           icon={Settings}

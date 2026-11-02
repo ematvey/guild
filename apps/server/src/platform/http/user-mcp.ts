@@ -26,8 +26,15 @@ import type { JsonObject } from "../../integrations/shared.js";
  *  must not collide with them (the wire tool name is mcp<length>_<name>_<tool>, but
  *  the bare name stays reserved to avoid ambiguity). */
 const RESERVED_NAMES = new Set([
-  "read", "write", "edit", "bash", "codemode",
-  "read_skill", "search_skills", "push_skill", "tool_search",
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "codemode",
+  "read_skill",
+  "search_skills",
+  "push_skill",
+  "tool_search",
 ]);
 
 /** The server-name rule: identifier-safe slug, 1–64 chars. The chat runtime
@@ -66,19 +73,32 @@ export function validateHeaders(raw: unknown): Record<string, string> | undefine
 /** The live tool list of one stored server — the probe and the tools
  *  listing share this path (one code path, two routes). A connect or
  *  list failure is a result ({ok:false, error}), not a thrown error. */
-export async function probeServer(
-  server: { name: string; url: string; headers?: Record<string, string> },
-): Promise<{ ok: true; tools: { name: string; call_name: string; description: string }[] } | { ok: false; error: string }> {
+export async function probeServer(server: {
+  name: string;
+  url: string;
+  headers?: Record<string, string>;
+}): Promise<
+  { ok: true; tools: { name: string; call_name: string; description: string }[] } | { ok: false; error: string }
+> {
   try {
     const peer = await mcpConnect(server.url, server.headers ?? {}, AbortSignal.timeout(20_000));
     const tools = await peer.listTools();
-    return { ok: true, tools: tools.map((t) => ({ name: t.name, call_name: userMcpToolName(server.name, t.name), description: t.description })) };
+    return {
+      ok: true,
+      tools: tools.map((t) => ({
+        name: t.name,
+        call_name: userMcpToolName(server.name, t.name),
+        description: t.description,
+      })),
+    };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
 }
 
-async function connectionDraft(body: JsonObject): Promise<{ name: string; url: string; headers?: Record<string, string> }> {
+async function connectionDraft(
+  body: JsonObject,
+): Promise<{ name: string; url: string; headers?: Record<string, string> }> {
   const name = body["name"];
   if (typeof name !== "string") throw ApiError.badRequest("missing name");
   validateName(name);
@@ -177,7 +197,14 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");
-    sendJson(reply, await probeServer({ name: row.name, url: row.url, headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()) }));
+    sendJson(
+      reply,
+      await probeServer({
+        name: row.name,
+        url: row.url,
+        headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()),
+      }),
+    );
     return reply;
   });
 
@@ -187,7 +214,14 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");
-    sendJson(reply, await probeServer({ name: row.name, url: row.url, headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()) }));
+    sendJson(
+      reply,
+      await probeServer({
+        name: row.name,
+        url: row.url,
+        headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()),
+      }),
+    );
     return reply;
   });
 }
@@ -195,7 +229,15 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
 /** The masked API view of one row (header names + previews, no values). */
 function serverView(
   auth: IdentityCtx,
-  row: { id: string; name: string; url: string; enabled: boolean; headers_enc: Buffer | null; created_at: string; updated_at: string },
+  row: {
+    id: string;
+    name: string;
+    url: string;
+    enabled: boolean;
+    headers_enc: Buffer | null;
+    created_at: string;
+    updated_at: string;
+  },
 ): JsonObject {
   return {
     id: row.id,

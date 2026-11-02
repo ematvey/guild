@@ -51,7 +51,7 @@ dbDescribe("agent scheduler", () => {
 
   async function makeRoutine(name: string): Promise<AgentRoutine> {
     return createRoutine(env!.db, agent.id, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name,
       kind: "cron",
       schedule: "0 0 1 1 *",
@@ -60,7 +60,9 @@ dbDescribe("agent scheduler", () => {
     });
   }
 
-  async function occurrenceStatuses(routineId: string): Promise<{ status: string; attempts: number; scheduled_for: string }[]> {
+  async function occurrenceStatuses(
+    routineId: string,
+  ): Promise<{ status: string; attempts: number; scheduled_for: string }[]> {
     const res = await env!.db.query<{ status: string; attempts: number; scheduled_for: Date }>(
       `SELECT status, attempts, scheduled_for FROM agent_routine_occurrences
        WHERE routine_id = $1 ORDER BY scheduled_for ASC`,
@@ -111,17 +113,16 @@ dbDescribe("agent scheduler", () => {
   it("materializes missed occurrences and coalesces to the latest one", async () => {
     scheduler = makeScheduler();
     const routine = await createRoutine(env!.db, agent.id, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "Coalesce",
       kind: "cron",
       schedule: "* * * * *",
       timezone: "UTC",
       prompt: "Coalesced run.",
     });
-    await env!.db.query(
-      "UPDATE agent_routines SET next_run_at = now() - interval '3 minutes' WHERE id = $1",
-      [routine.id],
-    );
+    await env!.db.query("UPDATE agent_routines SET next_run_at = now() - interval '3 minutes' WHERE id = $1", [
+      routine.id,
+    ]);
     const now = new Date();
     await scheduler.materializeDue(now);
     const materialized = await occurrenceStatuses(routine.id);
@@ -145,7 +146,9 @@ dbDescribe("agent scheduler", () => {
       runs[0]!.thread_id,
     ]);
     expect(threads.rows[0]!.type).toBe("routine");
-    expect((await store.threads.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    expect(
+      (await store.threads.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id),
+    ).toBe(false);
     const first = await env!.db.query<{ type: string; content: string }>(
       "SELECT type, payload->>'content' AS content FROM thread_events WHERE chat_id = (SELECT chat_id FROM agent_threads WHERE id = $1) ORDER BY seq LIMIT 1",
       [runs[0]!.thread_id],
@@ -193,10 +196,9 @@ dbDescribe("agent scheduler", () => {
     await scheduler.reconcileClaimed();
     expect((await listOccurrences(env!.db, routine.id))[0]!.status).toBe("claimed");
     // The claimer died: past the lease the claim returns to pending.
-    await env!.db.query(
-      "UPDATE agent_routine_occurrences SET claimed_at = now() - interval '1 hour' WHERE id = $1",
-      [occurrence.id],
-    );
+    await env!.db.query("UPDATE agent_routine_occurrences SET claimed_at = now() - interval '1 hour' WHERE id = $1", [
+      occurrence.id,
+    ]);
     await scheduler.reconcileClaimed();
     expect((await listOccurrences(env!.db, routine.id))[0]!.status).toBe("pending");
   });
@@ -229,13 +231,17 @@ dbDescribe("agent scheduler", () => {
   it("runs a routine manually and refuses an archived agent", async () => {
     scheduler = makeScheduler();
     const routine = await createRoutine(env!.db, agent.id, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "Manual",
       kind: "once",
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       prompt: "Manual run.",
     });
-    const run = await runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, agent, routine);
+    const run = await runRoutineNow(
+      { pool: env!.db, store, threads: new ThreadStore(env!.db), runtime },
+      agent,
+      routine,
+    );
     expect(run.trigger).toBe("manual");
     expect(calls).toHaveLength(1);
     const occurrence = (await listOccurrences(env!.db, routine.id))[0]!;
@@ -244,7 +250,7 @@ dbDescribe("agent scheduler", () => {
 
     const archived = await store.create(owner, { name: "Archived", model: "GLM-Test" });
     const archivedRoutine = await createRoutine(env!.db, archived.id, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "Archived routine",
       kind: "once",
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
@@ -252,7 +258,11 @@ dbDescribe("agent scheduler", () => {
     });
     await store.lifecycle.archive(owner, archived.id);
     await expect(
-      runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, { ...archived, status: "archived" }, archivedRoutine),
+      runRoutineNow(
+        { pool: env!.db, store, threads: new ThreadStore(env!.db), runtime },
+        { ...archived, status: "archived" },
+        archivedRoutine,
+      ),
     ).rejects.toThrow(/not active/);
   });
   it("refuses a routine whose creator can no longer use the agent", async () => {

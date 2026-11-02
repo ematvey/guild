@@ -20,7 +20,7 @@ import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
 import type { UserRow } from "../store/identity.js";
 import { uuidv7, isUuid } from "../time.js";
-import { LiveHub, type LiveMember } from "../../hub/live.js";
+import type { LiveHub, LiveMember } from "../../hub/live.js";
 import { SocketSink } from "../../hub/sink.js";
 import { DEFERRED_UNTIL_SYNC, parseClientMsg, serializeServerMsg, type WsServerMsg } from "../../hub/protocol.js";
 import type { TicketIdentity } from "../../hub/tickets.js";
@@ -339,12 +339,7 @@ async function driveSocket(
       await sendTerminal(socket, { type: "error", message: "machine belongs to another user" });
       return;
     }
-    const registration = await hub.registerMachineInstance(
-      member,
-      machineId,
-      query.instance_id!,
-      query.resume,
-    );
+    const registration = await hub.registerMachineInstance(member, machineId, query.instance_id!, query.resume);
     if ("kind" in registration) {
       if (registration.kind === "foreign_owner") {
         await sendTerminal(socket, { type: "error", message: "machine belongs to another user" });
@@ -529,8 +524,14 @@ async function driveSocket(
   socket.on("pong", (data: Buffer) => {
     sink.notifyPong(data);
   });
-  socket.on("close", (code, reason) => { chats.sockets.log(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
-  socket.on("error", (err) => { chats.sockets.log(`ws socket error: ${err.message}`); finish("reader"); });
+  socket.on("close", (code, reason) => {
+    chats.sockets.log(`ws close frame code=${code} reason=${String(reason)}`);
+    finish("reader");
+  });
+  socket.on("error", (err) => {
+    chats.sockets.log(`ws socket error: ${err.message}`);
+    finish("reader");
+  });
 
   // --- connect bootstrap ------------------------------------------------------
   sink.send({ type: "hello" });
@@ -627,11 +628,7 @@ async function timedSend(
 
 /** Terminal notice flush, bypassing the queued backlog; 1s deadline. `alreadyWrote` dedupes double
  *  notices. */
-async function terminalNotice(
-  socket: WebSocket,
-  msg: WsServerMsg,
-  alreadyWrote: () => boolean,
-): Promise<void> {
+async function terminalNotice(socket: WebSocket, msg: WsServerMsg, alreadyWrote: () => boolean): Promise<void> {
   if (!alreadyWrote()) {
     await timedSend(socket, { kind: "message", msg });
   }
@@ -653,7 +650,7 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
   const deadline = Date.now() + HEARTBEAT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const pong = sink.backlog.lastPong;
-    if (pong !== null && pong.equals(challenge)) return true;
+    if (pong?.equals(challenge)) return true;
     await sleep(PONG_POLL_MS);
   }
   return false;
@@ -665,12 +662,7 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
  *  displays the chat from the moment the gate passes, before the capture
  *  reads, so nothing committed after the capture read is missed; a chat the
  *  caller cannot read leaves the socket displaying none. */
-async function runSyncStarted(
-  chats: ChatsCtx,
-  user: UserRow,
-  chatId: string,
-  sink: SocketSink,
-): Promise<void> {
+async function runSyncStarted(chats: ChatsCtx, user: UserRow, chatId: string, sink: SocketSink): Promise<void> {
   sink.sendSync({ type: "sync_begin", chat_id: chatId });
   try {
     try {

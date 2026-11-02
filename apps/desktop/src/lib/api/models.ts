@@ -24,7 +24,6 @@ export function modelLabel(m: ModelOption): string {
   return m.alias !== "" ? m.alias : m.id;
 }
 
-
 export interface ApiKeyInfo {
   id: string;
   name: string;

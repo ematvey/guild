@@ -22,7 +22,10 @@ function identity(name: string, telemetry: boolean): WorkspaceIdentity {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.reject(new Error("offline"))),
+  );
 });
 
 afterEach(() => {

@@ -100,9 +100,11 @@ function fakeDeps(options: FakeOptions): SkillRuntimeDeps {
       byUserAndSlug: async () => null,
       listForUser: async () => (options.installs ?? []) as never,
     },
-    events: { emit: async () => {
-      throw new Error("not expected in this suite");
-    } },
+    events: {
+      emit: async () => {
+        throw new Error("not expected in this suite");
+      },
+    },
     teams: { isMember: async () => false },
     objects: undefined,
     skillReads: undefined,
@@ -162,9 +164,11 @@ describe("combined skills index section", () => {
 
   it("clips uninstalled descriptions at 120 chars with an ellipsis", async () => {
     const long = "p".repeat(130);
-    const runtime = makeRuntime(fakeDeps({
-      search: [{ slug: "big-skill", description: long, latest_version: "v1", review_status: "draft" }],
-    }));
+    const runtime = makeRuntime(
+      fakeDeps({
+        search: [{ slug: "big-skill", description: long, latest_version: "v1", review_status: "draft" }],
+      }),
+    );
     const section = (await runtime.indexSection(ORG, USER))!;
     expect(section).toContain(`- big-skill: ${"p".repeat(120)}… (org)`);
     expect(section).not.toContain("p".repeat(121));
@@ -247,13 +251,13 @@ describe("guild extension skills section", () => {
   it("renders nothing when the conversation has no org", async () => {
     const runtime = makeRuntime(fakeDeps({ search: SEARCH }));
     const extension = createGuildExtension(extensionDeps(runtime, null));
-    const section = extension.sections?.find((s) => s.key === "skills")!;
+    const section = extension.sections!.find((s) => s.key === "skills")!;
     expect(await section.render(input, CTX)).toBeUndefined();
   });
 
   it("renders nothing without a skill runtime", async () => {
     const extension = createGuildExtension(extensionDeps(undefined, ORG));
-    const section = extension.sections?.find((s) => s.key === "skills")!;
+    const section = extension.sections!.find((s) => s.key === "skills")!;
     expect(await section.render(input, CTX)).toBeUndefined();
   });
 
@@ -273,10 +277,7 @@ describe("submitTurn skills_index plumbing", () => {
   const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-skills-index-"));
 
   beforeAll(async () => {
-    stack = await setupGatewayStack(
-      { GUILD_SANDBOX_ROOT: sandboxRoot },
-      { dbPrefix: "guild_skills_index_test" },
-    );
+    stack = await setupGatewayStack({ GUILD_SANDBOX_ROOT: sandboxRoot }, { dbPrefix: "guild_skills_index_test" });
     await stack.routeModel("GLM-Test-Model");
     memberToken = stack.memberToken;
     runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;

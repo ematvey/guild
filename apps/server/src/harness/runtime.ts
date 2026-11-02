@@ -29,7 +29,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
-import { PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
+import { type PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { chatsWithWork, durableSchemaVersion } from "../storage/postgres/queries.js";
@@ -402,7 +402,10 @@ export class GuildRuntime {
         const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
         const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
         const resolved = agent?.model?.modelId ?? null;
-        this.log.debug({ conversationId, found: conversation !== undefined, agentModel: resolved }, "currentModel probe");
+        this.log.debug(
+          { conversationId, found: conversation !== undefined, agentModel: resolved },
+          "currentModel probe",
+        );
         return resolved;
       },
       threadTools: createThreadHistoryTools({ chats: stores.chats, threads: stores.threads, chatOfConversation }),
@@ -602,7 +605,8 @@ export class GuildRuntime {
       const scopeId = scope === undefined ? undefined : this.chatToConversation.get(scope);
       if (scope !== undefined && scopeId === undefined) throw new Error("worker has no conversation mapping");
       const repaired = await durable.repairLiveProjections(scopeId as ConversationId | undefined);
-      if (repaired.length) this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
+      if (repaired.length)
+        this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
       // A worker's view: every scan forced onto its conversation, by-id
       // reads refusing foreign records — the boundary that keeps the
       // scheduler from adopting another conversation's work.
@@ -634,7 +638,9 @@ export class GuildRuntime {
         },
         BACKGROUND_CONTEXT,
       );
-      void harness.closed.then(() => this.log.info({ durable: durable.diagnostics() }, "durable storage lifetime closed"));
+      void harness.closed.then(() =>
+        this.log.info({ durable: durable.diagnostics() }, "durable storage lifetime closed"),
+      );
       return { harness, storage, watches: new Map() };
     } catch (error) {
       await durable.close(BACKGROUND_CONTEXT).catch((closeError: unknown) => {
@@ -667,7 +673,8 @@ export class GuildRuntime {
     // Org model providers register before resume: a re-driven run resolves
     // its model through the registry, and without this it fails no_model —
     // submit-time refresh alone only covers turns submitted in this process.
-    if (this.turns.scope !== undefined) await this.orgModels.refresh(await this.stores.chats.requireOrgOf(this.turns.scope));
+    if (this.turns.scope !== undefined)
+      await this.orgModels.refresh(await this.stores.chats.requireOrgOf(this.turns.scope));
     else await this.orgModels.refreshAll();
     // Tool provisioning rides the same path a submit uses: a re-driven run
     // (crash or deploy restart) must issue new integration/MCP calls
@@ -716,7 +723,10 @@ export class GuildRuntime {
       const delays = GuildRuntime.REOPEN_DELAYS_MS;
       const delay = delays[Math.min(this.reopenAttempts, delays.length - 1)]!;
       this.reopenAttempts++;
-      this.log.error({ err: lastError, attempt: this.reopenAttempts, delayMs: delay }, "durable session failed; reopening");
+      this.log.error(
+        { err: lastError, attempt: this.reopenAttempts, delayMs: delay },
+        "durable session failed; reopening",
+      );
       await new Promise((resolve) => setTimeout(resolve, delay));
       if (this.stopped) return;
       try {
@@ -796,7 +806,9 @@ export class GuildRuntime {
   private async attachWatchOnce(chatId: string, conversationId: number): Promise<void> {
     const existing = this.watches.get(chatId);
     if (existing) {
-      await existing.stop().catch((error: unknown) => this.log.debug({ err: error, chatId }, "previous watch stop failed"));
+      await existing
+        .stop()
+        .catch((error: unknown) => this.log.debug({ err: error, chatId }, "previous watch stop failed"));
       this.watches.delete(chatId);
     }
     const key = String(conversationId);
@@ -930,7 +942,13 @@ export class GuildRuntime {
   }
 
   /** Binds a chat to a chosen agent (agents/thread-binding.ts). */
-  bindChatAgent(chatId: string, userId: string, agentId: string, title: string, user: UserRow): Promise<ChatAgentBinding> {
+  bindChatAgent(
+    chatId: string,
+    userId: string,
+    agentId: string,
+    title: string,
+    user: UserRow,
+  ): Promise<ChatAgentBinding> {
     return this.binding.bind(chatId, userId, agentId, title, user);
   }
 
@@ -967,7 +985,12 @@ export class GuildRuntime {
     return this.turns.deliverSteer(chatId, orgId, text, model);
   }
 
-  private async deliverSteerInProcess(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+  private async deliverSteerInProcess(
+    chatId: string,
+    orgId: string,
+    text: string,
+    model: string | null,
+  ): Promise<void> {
     await this.start();
     const conversation = await this.conversationForChat(chatId);
     const pending = await conversation.commit(async (tx) => {
@@ -1016,7 +1039,12 @@ export class GuildRuntime {
       });
   }
 
-  private async admitInProcess(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number> {
+  private async admitInProcess(
+    chatId: string,
+    orgId: string,
+    input: SubmitTurnInput,
+    signal: AbortSignal,
+  ): Promise<number> {
     await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId);
     await this.orgModels.refresh(orgId);
@@ -1035,7 +1063,10 @@ export class GuildRuntime {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const current = agent.model;
       if (!current || current.provider !== guildProviderId(orgId) || current.modelId !== input.model) {
-        await conversation.configure({ model: { provider: guildProviderId(orgId), modelId: input.model } }, BACKGROUND_CONTEXT);
+        await conversation.configure(
+          { model: { provider: guildProviderId(orgId), modelId: input.model } },
+          BACKGROUND_CONTEXT,
+        );
       }
     }
     const content: UserMessage["content"] =
@@ -1143,7 +1174,9 @@ export class GuildRuntime {
   private async stopInProcess(chatId: string): Promise<void> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return;
-    await conversation.abort(BACKGROUND_CONTEXT).catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
+    await conversation
+      .abort(BACKGROUND_CONTEXT)
+      .catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
     await this.stores.chats.setGenerating(await this.stores.chats.requireOrgOf(chatId), chatId, false);
   }
 

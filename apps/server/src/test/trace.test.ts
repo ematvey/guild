@@ -29,7 +29,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
@@ -435,7 +437,11 @@ describe("run lifecycle mirror", () => {
       expect(created.statusCode).toBe(200);
       const agentId = (JSON.parse(created.body) as { agent: { id: string } }).agent.id;
 
-      const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), trace: stack.env.app.platform.trace });
+      const store = new AgentStore({
+        pool: stack.env.db,
+        chats: new ChatStore(stack.env.db),
+        trace: stack.env.app.platform.trace,
+      });
       const run = await store.runs.createRun({
         agent_id: agentId,
         user_id: stack.memberId,

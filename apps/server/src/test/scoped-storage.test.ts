@@ -36,14 +36,39 @@ async function seedWork(conversationIds: number[]): Promise<SeedTask[]> {
       `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record)
        VALUES ($1, $2, 'test-kind', 'pending', false, false, $3)
        ON CONFLICT (id) DO NOTHING`,
-      [taskId, conversationId, JSON.stringify({ id: taskId, conversationId, kind: "test-kind", version: 1, input: {}, background: false, abortRequested: false, state: { status: "pending" } })],
+      [
+        taskId,
+        conversationId,
+        JSON.stringify({
+          id: taskId,
+          conversationId,
+          kind: "test-kind",
+          version: 1,
+          input: {},
+          background: false,
+          abortRequested: false,
+          state: { status: "pending" },
+        }),
+      ],
     );
     const submissionId = conversationId * 10 + 2;
     await stack.env.db.query(
       `INSERT INTO submissions (id, conversation_id, request_id, status, record)
        VALUES ($1, $2, $3, 'queued', $4)
        ON CONFLICT (id) DO NOTHING`,
-      [submissionId, conversationId, JSON.stringify(`req-${conversationId}`), JSON.stringify({ id: submissionId, conversationId, type: "input", status: "queued", requestId: `req-${conversationId}`, input: {} })],
+      [
+        submissionId,
+        conversationId,
+        JSON.stringify(`req-${conversationId}`),
+        JSON.stringify({
+          id: submissionId,
+          conversationId,
+          type: "input",
+          status: "queued",
+          requestId: `req-${conversationId}`,
+          input: {},
+        }),
+      ],
     );
     seeded.push({ id: taskId, conversationId });
   }
@@ -84,7 +109,9 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
       const subsA = await scopedA.scanSubmissions({ status: "queued" }, 10, undefined, BACKGROUND_CONTEXT);
       expect(subsA.items.map((s) => s.conversationId)).toEqual([convA]);
       expect(await scopedA.submissionByRequest(convB as ConversationId, "req-x", BACKGROUND_CONTEXT)).toBeUndefined();
-      expect((await scopedA.submissionByRequest(convA as ConversationId, `req-${convA}`, BACKGROUND_CONTEXT))?.id).toBe(convA * 10 + 2);
+      expect((await scopedA.submissionByRequest(convA as ConversationId, `req-${convA}`, BACKGROUND_CONTEXT))?.id).toBe(
+        convA * 10 + 2,
+      );
 
       // By-id readers refuse foreign records.
       expect(await scopedA.task(seeded[1]!.id as TaskId, BACKGROUND_CONTEXT)).toBeUndefined();
@@ -94,7 +121,10 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
       await unscoped.close(BACKGROUND_CONTEXT);
       for (const { id, conversationId } of seeded) {
         await stack.env.db.query("DELETE FROM tasks WHERE id = $1 AND conversation_id = $2", [id, conversationId]);
-        await stack.env.db.query("DELETE FROM submissions WHERE id = $1 AND conversation_id = $2", [id + 1, conversationId]);
+        await stack.env.db.query("DELETE FROM submissions WHERE id = $1 AND conversation_id = $2", [
+          id + 1,
+          conversationId,
+        ]);
       }
     }
   }, 60_000);
@@ -133,7 +163,10 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
       await unscoped.close(BACKGROUND_CONTEXT);
       for (const { id, conversationId } of seeded) {
         await stack.env.db.query("DELETE FROM tasks WHERE id = $1 AND conversation_id = $2", [id, conversationId]);
-        await stack.env.db.query("DELETE FROM submissions WHERE id = $1 AND conversation_id = $2", [id + 1, conversationId]);
+        await stack.env.db.query("DELETE FROM submissions WHERE id = $1 AND conversation_id = $2", [
+          id + 1,
+          conversationId,
+        ]);
       }
     }
   }, 60_000);

@@ -91,7 +91,7 @@ dbDescribe("routine store", () => {
 
   it("creates, updates, disables and deletes a routine with next_run_at", async () => {
     const routine = await createRoutine(env!.db, agentId, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "Quarter hour",
       kind: "cron",
       schedule: "every 15m",
@@ -135,7 +135,7 @@ dbDescribe("routine store", () => {
   it("creates a once routine whose next run is its run_at", async () => {
     const runAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const routine = await createRoutine(env!.db, agentId, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "One shot",
       kind: "once",
       run_at: runAt,
@@ -149,7 +149,7 @@ dbDescribe("routine store", () => {
 
   it("creates occurrences idempotently on (routine_id, scheduled_for)", async () => {
     const routine = await createRoutine(env!.db, agentId, {
-    created_by_user_id: owner.id,
+      created_by_user_id: owner.id,
       name: "Occurrence",
       kind: "cron",
       schedule: "0 * * * *",

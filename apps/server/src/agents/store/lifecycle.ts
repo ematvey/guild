@@ -135,7 +135,10 @@ export class AgentLifecycleStore {
       threads.push(...page.threads);
       cursor = page.next_cursor;
     } while (cursor !== null);
-    const [routines, runs] = await Promise.all([this.runs.listRoutines(agentId), this.runs.listRuns(agentId, { limit: 200 })]);
+    const [routines, runs] = await Promise.all([
+      this.runs.listRoutines(agentId),
+      this.runs.listRuns(agentId, { limit: 200 }),
+    ]);
     return { exported_at: new Date().toISOString(), agent, threads, routines, runs };
   }
 
@@ -146,7 +149,9 @@ export class AgentLifecycleStore {
       "SELECT to_regclass('public.agent_settings') IS NOT NULL AS present",
     );
     if (!present.rows[0]?.present) return DEFAULT_GRACE_DAYS;
-    const row = await this.pool.query<Record<string, unknown>>("SELECT * FROM agent_settings WHERE org_id = $1", [orgId]);
+    const row = await this.pool.query<Record<string, unknown>>("SELECT * FROM agent_settings WHERE org_id = $1", [
+      orgId,
+    ]);
     const raw = row.rows[0]?.grace_days ?? row.rows[0]?.deletion_grace_days;
     const days = Number(raw);
     return Number.isFinite(days) && days > 0 ? days : DEFAULT_GRACE_DAYS;

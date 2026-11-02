@@ -19,12 +19,7 @@ import {
 } from "../usage-route";
 import { SETTINGS_PATHS, usageBreakdownPath, usageSeriesPath } from "../../../lib/api/settings";
 import type { SectionDetailProps } from "../section-nav";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@guild/ui/components/chart";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@guild/ui/components/chart";
 import { PageHeader } from "../../../components/page-header";
 
 interface UsageRow {
@@ -55,11 +50,10 @@ const PERIOD_MS: Record<Period, number> = {
   "30d": 30 * 24 * 3_600_000,
 };
 
-const dayLabel = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const hourLabel = (iso: string) =>
-  new Date(iso).toLocaleTimeString(undefined, { hour: "numeric" });
-const fullStamp = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
+const dayLabel = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const hourLabel = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric" });
+const fullStamp = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
 
 export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: SectionDetailProps) {
   const summaryRes = useCachedGet<{
@@ -81,9 +75,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
   // current (partial) bucket or the newest events never appear.
   const from = quantizeIso(600_000, Date.now() - PERIOD_MS[period]);
   const to = quantizeIso(600_000, Date.now() + 600_000);
-  const breakdownRes = useCachedGet<{ rows: UsageRow[] }>(
-    usageBreakdownPath(group, from, to),
-  );
+  const breakdownRes = useCachedGet<{ rows: UsageRow[] }>(usageBreakdownPath(group, from, to));
   const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(
     usageSeriesPath("none", period === "24h" ? "hour" : "day", from, to),
   );
@@ -146,8 +138,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
       requests: r.requests,
     }));
   const barsByRequests =
-    barRows.some((r) => r.requests > 0) &&
-    barRows.every((r) => (metric === "tokens" ? r.tokens === 0 : r.cost === 0));
+    barRows.some((r) => r.requests > 0) && barRows.every((r) => (metric === "tokens" ? r.tokens === 0 : r.cost === 0));
   const barDataKey = barsByRequests ? "requests" : metric;
 
   return (
@@ -155,9 +146,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
       <PageHeader
         title="Usage"
         description="Spend and request volume across the organization, scoped by period."
-        actions={
-          <MetricPicker metric={metric} onPick={(m) => pick({ metric: m })} />
-        }
+        actions={<MetricPicker metric={metric} onPick={(m) => pick({ metric: m })} />}
       />
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -183,30 +172,36 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
             ]
               .flat()
               .map((s) => (
-              <div key={s.label} className={card}>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {s.label}
-                </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums">{s.value}</p>
-              </div>
-            ))}
+                <div key={s.label} className={card}>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{s.label}</p>
+                  <p className="mt-1 text-2xl font-semibold tabular-nums">{s.value}</p>
+                </div>
+              ))}
       </div>
 
       {/* cost over time */}
       <div className="rounded-lg border border-border bg-card">
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Usage, last {period}
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Usage, last {period}</p>
           <PeriodPicker period={period} onPick={(p) => pick({ period: p })} />
         </div>
         <div className="p-4">
-          {timeline === null && seriesRes.error ? <p role="alert" className="text-sm text-destructive">{seriesRes.error}</p> : timeline === null ? (
-            <div role="status" aria-label="Loading usage chart" className="flex h-40 items-end gap-4 border-b border-border px-4 pb-1">{[35, 55, 40, 70, 50, 65, 45].map((height, i) => <Skeleton key={i} className="flex-1 rounded-sm" style={{ height: `${height}%` }} />)}</div>
-          ) : timeline.every((p) => p.cost === 0 && p.requests === 0) ? (
-            <p className="py-16 text-center text-sm text-muted-foreground">
-              No usage in the last {period}.
+          {timeline === null && seriesRes.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {seriesRes.error}
             </p>
+          ) : timeline === null ? (
+            <div
+              role="status"
+              aria-label="Loading usage chart"
+              className="flex h-40 items-end gap-4 border-b border-border px-4 pb-1"
+            >
+              {[35, 55, 40, 70, 50, 65, 45].map((height, i) => (
+                <Skeleton key={i} className="flex-1 rounded-sm" style={{ height: `${height}%` }} />
+              ))}
+            </div>
+          ) : timeline.every((p) => p.cost === 0 && p.requests === 0) ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">No usage in the last {period}.</p>
           ) : (
             <CostChart timeline={timeline} metric={metric} />
           )}
@@ -216,9 +211,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
       {/* breakdown: bars + table */}
       <div className="rounded-lg border border-border bg-card">
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Usage breakdown
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Usage breakdown</p>
           <div className="flex items-center gap-3">
             <PeriodPicker period={period} onPick={(p) => pick({ period: p })} />
             <div className="flex items-center gap-1">
@@ -253,13 +246,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
             >
               <BarChart data={barRows} layout="vertical" margin={{ left: 4, right: 12 }}>
                 <XAxis type="number" hide />
-                <YAxis
-                  dataKey="group"
-                  type="category"
-                  width={150}
-                  tickLine={false}
-                  axisLine={false}
-                />
+                <YAxis dataKey="group" type="category" width={150} tickLine={false} axisLine={false} />
                 <ChartTooltip
                   cursor={false}
                   content={
@@ -275,17 +262,16 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
                     />
                   }
                 />
-                <Bar
-                  dataKey={barDataKey}
-                  fill={`var(--color-${barDataKey})`}
-                  radius={4}
-                  barSize={14}
-                />
+                <Bar dataKey={barDataKey} fill={`var(--color-${barDataKey})`} radius={4} barSize={14} />
               </BarChart>
             </ChartContainer>
           </div>
         )}
-        {rows === null && breakdownRes.error ? <p role="alert" className="p-4 text-sm text-destructive">{breakdownRes.error}</p> : rows === null ? (
+        {rows === null && breakdownRes.error ? (
+          <p role="alert" className="p-4 text-sm text-destructive">
+            {breakdownRes.error}
+          </p>
+        ) : rows === null ? (
           <div className="space-y-2 p-4">
             {[0, 1, 2].map((i) => (
               <SkeletonRows key={i} rows={1} />
@@ -308,11 +294,7 @@ export default function UsageSection({ usage = DEFAULT_USAGE, onUsageChange }: S
               {rows.map((r) => (
                 <tr key={r.group} className="border-t border-border/60">
                   {/* emails/team names read as text; model ids stay mono */}
-                  <td
-                    className={`max-w-48 truncate px-4 py-2 text-xs ${
-                      group === "model" ? "font-mono" : ""
-                    }`}
-                  >
+                  <td className={`max-w-48 truncate px-4 py-2 text-xs ${group === "model" ? "font-mono" : ""}`}>
                     {r.group === "none" && group === "team" ? "no team" : r.group}
                   </td>
                   <td className="py-2 pr-3 tabular-nums">{compact(r.tokens_in)}</td>
@@ -359,9 +341,7 @@ function CostChart({
           axisLine={false}
           width={44}
           tickFormatter={(v: number) =>
-            dataKey === "cost"
-              ? `$${v < 0.01 && v > 0 ? v.toFixed(3) : v.toFixed(2)}`
-              : compact(v)
+            dataKey === "cost" ? `$${v < 0.01 && v > 0 ? v.toFixed(3) : v.toFixed(2)}` : compact(v)
           }
         />
         <ChartTooltip

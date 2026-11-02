@@ -3,12 +3,7 @@
 import { useEffect, useState } from "react";
 import { Copy, Download } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { toast } from "sonner";
 import { createPairingToken, pairingCode } from "../lib/api/folders";
@@ -40,13 +35,7 @@ function platformLabel(platform: string): string {
   return platform;
 }
 
-export function DeviceSetupDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
+export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [os, setOs] = useState<DesktopOs>("linux");
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [pairCode, setPairCode] = useState<string | null>(null);
@@ -75,7 +64,9 @@ export function DeviceSetupDialog({
   }, [open]);
 
   const installers =
-    releases === null ? null : releases.filter((r) => r.platform.startsWith(OS_KEY[os]) && !r.filename.endsWith(".app.tar.gz"));
+    releases === null
+      ? null
+      : releases.filter((r) => r.platform.startsWith(OS_KEY[os]) && !r.filename.endsWith(".app.tar.gz"));
 
   const generatePairing = () => {
     setPairBusy(true);
@@ -99,8 +90,8 @@ export function DeviceSetupDialog({
         </DialogHeader>
         <div className="min-w-0 space-y-4 text-left">
           <p className="text-muted-foreground">
-            The desktop app runs a Guild agent on your machine — it can work directly in your
-            projects and with your files, which the browser chat can't. Chat alone stays right here.
+            The desktop app runs a Guild agent on your machine — it can work directly in your projects and with your
+            files, which the browser chat can't. Chat alone stays right here.
           </p>
 
           <div>
@@ -111,9 +102,7 @@ export function DeviceSetupDialog({
                   key={k}
                   onClick={() => setOs(k)}
                   className={`rounded-md px-2 py-1.5 outline-none transition-colors ${
-                    os === k
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
+                    os === k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {OS_LABEL[k]}
@@ -123,15 +112,10 @@ export function DeviceSetupDialog({
             <div className="mt-2 min-w-0 space-y-2">
               {installers === null && [0, 1].map((i) => <SkeletonRows key={i} rows={1} />)}
               {installers !== null && installers.length === 0 && (
-                <p className="text-muted-foreground">
-                  No {OS_LABEL[os]} installer published yet — check back soon.
-                </p>
+                <p className="text-muted-foreground">No {OS_LABEL[os]} installer published yet — check back soon.</p>
               )}
               {installers?.map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
-                >
+                <div key={r.id} className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate" title={r.filename}>
                       {platformLabel(r.platform)}
@@ -151,16 +135,13 @@ export function DeviceSetupDialog({
           {os === "mac" && (
             <div className="mt-2 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-muted-foreground">
               <p className="text-sm">
-                <span className="font-medium text-amber-300">macOS first install:</span> the app is
-                not notarized yet, so Gatekeeper may report it as "damaged". Run this once in
-                Terminal after copying it to Applications:
+                <span className="font-medium text-amber-300">macOS first install:</span> the app is not notarized yet,
+                so Gatekeeper may report it as "damaged". Run this once in Terminal after copying it to Applications:
               </p>
               <code className="mt-1.5 block truncate rounded bg-muted px-2 py-1 font-mono text-xs">
                 xattr -dr com.apple.quarantine /Applications/Guild.app
               </code>
-              <p className="mt-1 text-xs">
-                Updates delivered inside the app are signed and don't need this.
-              </p>
+              <p className="mt-1 text-xs">Updates delivered inside the app are signed and don't need this.</p>
             </div>
           )}
 
@@ -169,10 +150,7 @@ export function DeviceSetupDialog({
             {pairCode ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
-                  <code
-                    className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono"
-                    title={pairCode}
-                  >
+                  <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono" title={pairCode}>
                     {pairCode}
                   </code>
                   <Button

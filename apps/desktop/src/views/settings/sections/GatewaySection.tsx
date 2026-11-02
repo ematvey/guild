@@ -57,9 +57,7 @@ function Snippet({ label, code }: { label: string; code: string }) {
           <Copy className="size-3" /> Copy
         </Button>
       </div>
-      <pre className="overflow-x-auto rounded-lg border border-border bg-muted p-3 text-xs leading-relaxed">
-        {code}
-      </pre>
+      <pre className="overflow-x-auto rounded-lg border border-border bg-muted p-3 text-xs leading-relaxed">{code}</pre>
     </div>
   );
 }
@@ -206,9 +204,9 @@ console.log(msg.content[0].text);`,
       toast.error("Could not revoke API key");
       return;
     }
-    keysStore.update((prev) => (prev ?? []).map((k) =>
-      k.id === revokeTarget.id ? { ...k, revoked_at: new Date().toISOString() } : k,
-    ));
+    keysStore.update((prev) =>
+      (prev ?? []).map((k) => (k.id === revokeTarget.id ? { ...k, revoked_at: new Date().toISOString() } : k)),
+    );
     setRevokeTarget(null);
     toast.success("API key revoked");
   }
@@ -233,16 +231,16 @@ console.log(msg.content[0].text);`,
       <div className="rounded-lg border border-border bg-card p-3 text-sm">
         <p className="mb-2 font-medium">Connecting in three steps</p>
         <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
-          <li>Create an API key below (it starts with <code>gk_</code>).</li>
           <li>
-            Point your client at{" "}
-            <code>{openaiBase}</code> (OpenAI-compatible) or{" "}
-            <code>{anthropicBase}</code> (Anthropic-compatible).
+            Create an API key below (it starts with <code>gk_</code>).
           </li>
           <li>
-            Authenticate with <code>Authorization: Bearer gk_…</code> or{" "}
-            <code>x-api-key: gk_…</code> — any routed model works, the same
-            ones chats use.
+            Point your client at <code>{openaiBase}</code> (OpenAI-compatible) or <code>{anthropicBase}</code>{" "}
+            (Anthropic-compatible).
+          </li>
+          <li>
+            Authenticate with <code>Authorization: Bearer gk_…</code> or <code>x-api-key: gk_…</code> — any routed model
+            works, the same ones chats use.
           </li>
         </ol>
         <Button variant="link" className="h-auto p-0 text-xs" onClick={() => setDetails(true)}>
@@ -250,12 +248,15 @@ console.log(msg.content[0].text);`,
         </Button>
       </div>
 
-      {loadError && keys === null ? <p role="alert" className="text-sm text-destructive">Could not load API keys.</p> : keys === null ? (
+      {loadError && keys === null ? (
+        <p role="alert" className="text-sm text-destructive">
+          Could not load API keys.
+        </p>
+      ) : keys === null ? (
         <SkeletonRows rows={2} />
       ) : keys.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
-          No API keys yet. Create one to give an external client gateway
-          access under your account.
+          No API keys yet. Create one to give an external client gateway access under your account.
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -296,20 +297,14 @@ console.log(msg.content[0].text);`,
           <DialogHeader>
             <DialogTitle>Connecting to the gateway</DialogTitle>
             <DialogDescription>
-              Both surfaces serve the org's routed models with your API key
-              (<code>gk_…</code>). OpenAI clients speak{" "}
-              <code>/openai/v1</code>; Anthropic clients speak{" "}
-              <code>/anthropic</code> (the SDK appends <code>/v1/messages</code>).
+              Both surfaces serve the org's routed models with your API key (<code>gk_…</code>). OpenAI clients speak{" "}
+              <code>/openai/v1</code>; Anthropic clients speak <code>/anthropic</code> (the SDK appends{" "}
+              <code>/v1/messages</code>).
             </DialogDescription>
           </DialogHeader>
           <div className="flex gap-1">
             {SURFACES.map((s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant={surface === s ? "default" : "outline"}
-                onClick={() => setSurface(s)}
-              >
+              <Button key={s} size="sm" variant={surface === s ? "default" : "outline"} onClick={() => setSurface(s)}>
                 {s}
               </Button>
             ))}
@@ -331,10 +326,7 @@ console.log(msg.content[0].text);`,
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New API key</DialogTitle>
-            <DialogDescription>
-              Give the key a name you will recognize later (e.g. what uses
-              it).
-            </DialogDescription>
+            <DialogDescription>Give the key a name you will recognize later (e.g. what uses it).</DialogDescription>
           </DialogHeader>
           <Input
             autoFocus
@@ -356,9 +348,7 @@ console.log(msg.content[0].text);`,
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Copy your API key</DialogTitle>
-            <DialogDescription>
-              This is the only time the full key is shown — store it now.
-            </DialogDescription>
+            <DialogDescription>This is the only time the full key is shown — store it now.</DialogDescription>
           </DialogHeader>
           <code className="block break-all rounded-lg border border-border bg-muted p-3 text-sm select-all">
             {issued}
@@ -381,8 +371,7 @@ console.log(msg.content[0].text);`,
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke “{revokeTarget?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Clients using this key immediately lose gateway access. This
-              cannot be undone.
+              Clients using this key immediately lose gateway access. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

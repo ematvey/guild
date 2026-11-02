@@ -95,9 +95,7 @@ const inject = (
     url,
     headers: {
       authorization: `Bearer ${token}`,
-      ...(payload === undefined || isBuffer
-        ? {}
-        : { "content-type": "application/json" }),
+      ...(payload === undefined || isBuffer ? {} : { "content-type": "application/json" }),
       ...(isBuffer ? { "content-type": "application/octet-stream" } : {}),
     },
     ...(payload === undefined ? {} : { payload: payload as object }),
@@ -108,12 +106,7 @@ function skillManifest(slug: string, version: string, description = "d"): Record
   return { kind: "skill", slug, version, description };
 }
 
-async function publish(
-  slug: string,
-  version: string,
-  token: string,
-  md = "# x",
-): Promise<Reply> {
+async function publish(slug: string, version: string, token: string, md = "# x"): Promise<Reply> {
   const bundle = await packBundle({
     "manifest.json": JSON.stringify(skillManifest(slug, version)),
     "SKILL.md": md,
@@ -133,7 +126,7 @@ describe("skills publish", () => {
 
     const row = await e.env.db.query<{ skill_md_text: string | null; files: unknown }>(
       "SELECT rv.skill_md_text, rv.files FROM registry_versions rv JOIN registry_items i ON i.id = rv.item_id " +
-      "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.slug = 'test-skill' AND rv.version = 'v1'",
+        "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.slug = 'test-skill' AND rv.version = 'v1'",
       [e.orgId],
     );
     expect(row.rows[0]!.skill_md_text).toContain("# hello");
@@ -165,7 +158,12 @@ describe("skills publish", () => {
 
   it("emits the pre-fix actorless payload for non-skill kinds (integration)", async () => {
     const bundle = await packBundle({
-      "manifest.json": JSON.stringify({ kind: "integration", slug: "plain-integration", version: "v1", description: "d" }),
+      "manifest.json": JSON.stringify({
+        kind: "integration",
+        slug: "plain-integration",
+        version: "v1",
+        description: "d",
+      }),
     });
     expect(
       (await inject("POST", "/api/v1/registry/integration?slug=plain-integration&version=v1", e.memberToken, bundle))

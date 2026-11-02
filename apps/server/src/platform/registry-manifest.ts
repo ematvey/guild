@@ -46,8 +46,7 @@ export function singleLineDescription(text: string): string {
 
 /** serde Debug render of a FieldSpec (feeds the settings error messages). */
 function debugField(f: FieldSpec): string {
-  const opt = (v: unknown): string =>
-    v === null || v === undefined ? "None" : `Some(${JSON.stringify(v)})`;
+  const opt = (v: unknown): string => (v === null || v === undefined ? "None" : `Some(${JSON.stringify(v)})`);
   return (
     `FieldSpec { name: ${JSON.stringify(f.name)}, kind: ${JSON.stringify(f.kind)}, ` +
     `label: ${opt(f.label)}, required: ${f.required === true}, default: ${opt(f.default)}, ` +
@@ -88,7 +87,8 @@ export function validateV2(m: Manifest): void {
     if (typeof m.auth.kind !== "string" || !AUTH_KINDS.includes(m.auth.kind)) {
       throw new Error("auth.kind must be org_secret, org_secret_impersonated, or per_user_token");
     }
-    const identityKey = m.auth.identity_key === undefined || m.auth.identity_key === null ? "email" : m.auth.identity_key;
+    const identityKey =
+      m.auth.identity_key === undefined || m.auth.identity_key === null ? "email" : m.auth.identity_key;
     if (identityKey !== "email" && identityKey !== "") {
       throw new Error("auth.identity_key supports only email in v1");
     }
@@ -117,7 +117,11 @@ export function validateV2(m: Manifest): void {
         const defaultOk =
           d === undefined ||
           d === null ||
-          (f.kind === "number" ? typeof d === "number" : f.kind === "boolean" ? typeof d === "boolean" : typeof d === "string");
+          (f.kind === "number"
+            ? typeof d === "number"
+            : f.kind === "boolean"
+              ? typeof d === "boolean"
+              : typeof d === "string");
         if (!defaultOk) {
           throw new Error(`settings field ${debugField(f)} kind ${f.kind} needs a default of the same JSON type`);
         }
@@ -148,4 +152,3 @@ export function validateV2(m: Manifest): void {
     }
   }
 }
-

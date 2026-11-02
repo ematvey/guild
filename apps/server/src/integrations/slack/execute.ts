@@ -1,4 +1,13 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, requestJson, clampNumber, callVendorApi, slackBaseUrl, type JsonRequestErrors } from "../shared.js";
+import {
+  LIST_TIMEOUT_MS,
+  VENDOR_API_MAX_CHARS,
+  secret,
+  requestJson,
+  clampNumber,
+  callVendorApi,
+  slackBaseUrl,
+  type JsonRequestErrors,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- slack ----------
@@ -18,7 +27,12 @@ async function slackApi(url: string, init: RequestInit): Promise<JsonObject> {
   return body;
 }
 
-async function slackGet(base: string, botToken: string, endpoint: string, query: [string, string][]): Promise<JsonObject> {
+async function slackGet(
+  base: string,
+  botToken: string,
+  endpoint: string,
+  query: [string, string][],
+): Promise<JsonObject> {
   const url = new URL(`${base}/${endpoint}`);
   for (const [k, v] of query) url.searchParams.set(k, v);
   return slackApi(url.toString(), { method: "GET", headers: { authorization: `Bearer ${botToken}` } });
@@ -36,7 +50,13 @@ function slackJsonText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export async function slackExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function slackExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const base = slackBaseUrl(config);
   if (tool === "api") {
     const token = secret(secrets, "bot_token");
@@ -107,7 +127,11 @@ export async function slackExecute(config: JsonObject, tool: string, args: JsonO
       }));
       const metadata = (body["response_metadata"] ?? {}) as JsonObject;
       return {
-        content: slackJsonText({ messages, has_more: body["has_more"] === true, next_cursor: metadata["next_cursor"] ?? null }),
+        content: slackJsonText({
+          messages,
+          has_more: body["has_more"] === true,
+          next_cursor: metadata["next_cursor"] ?? null,
+        }),
         meta: { has_more: body["has_more"] === true, response_metadata: metadata["next_cursor"] ?? null },
       };
     }
@@ -143,4 +167,3 @@ export async function slackExecute(config: JsonObject, tool: string, args: JsonO
       throw new Error(`slack integration has no tool ${tool}`);
   }
 }
-

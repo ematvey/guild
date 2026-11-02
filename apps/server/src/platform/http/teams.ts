@@ -70,4 +70,3 @@ function readName(req: FastifyRequest): string {
   if (typeof name !== "string") throw ApiError.badRequest("missing name");
   return name;
 }
-

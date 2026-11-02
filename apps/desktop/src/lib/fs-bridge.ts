@@ -2,7 +2,6 @@
 //! files. Rust exposes the allowlisted `fs.*` verbs over the app-process
 //! RPC channel; browser mode has no local files and returns empty results.
 
-
 /** What a directory entry looks like over the bridge. */
 export interface DirEntry {
   name: string;

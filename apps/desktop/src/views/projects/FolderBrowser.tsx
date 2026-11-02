@@ -9,14 +9,7 @@ import { ChevronRight, CornerDownLeft, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { DirEntry } from "../../lib/api/folders";
-import {
-  displayPath,
-  expandError,
-  expandPath,
-  linuxBreadcrumbs,
-  pickerReducer,
-  pickerFor,
-} from "./projects";
+import { displayPath, expandError, expandPath, linuxBreadcrumbs, pickerReducer, pickerFor } from "./projects";
 
 export function FolderBrowser({
   source,
@@ -45,11 +38,7 @@ export function FolderBrowser({
 }) {
   // The browse state lives in inner Linux paths; the canonical stored form
   // exists only at the edges — listing calls and the confirmed folder.
-  const [state, dispatch] = useReducer(
-    pickerReducer,
-    undefined,
-    () => pickerFor(source, "/"),
-  );
+  const [state, dispatch] = useReducer(pickerReducer, undefined, () => pickerFor(source, "/"));
   const [homeLinux, setHomeLinux] = useState<string | null>(null);
   // The path field holds the DISPLAY form (~-shortened); empty means the
   // user has not typed, so Enter descends the highlighted row.
@@ -154,9 +143,7 @@ export function FolderBrowser({
             <button
               type="button"
               className={`rounded px-1 py-0.5 hover:bg-accent ${
-                i === crumbs.length - 1
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground"
+                i === crumbs.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
               }`}
               onClick={() => dispatch({ type: "go", path: c.path })}
             >
@@ -198,9 +185,7 @@ export function FolderBrowser({
                 if (entry.is_dir) dispatch({ type: "descend" });
               }}
               className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm outline-none ${
-                i === state.highlight
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent"
+                i === state.highlight ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent"
               } ${entry.is_dir ? "" : "opacity-50"}`}
             >
               {entry.is_dir ? (

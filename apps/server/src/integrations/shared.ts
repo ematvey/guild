@@ -135,8 +135,13 @@ export function pathSegment(value: string): string {
   let out = "";
   for (const b of Buffer.from(value, "utf8")) {
     if (
-      (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || (b >= 0x30 && b <= 0x39) ||
-      b === 0x2d || b === 0x5f || b === 0x2e || b === 0x7e
+      (b >= 0x41 && b <= 0x5a) ||
+      (b >= 0x61 && b <= 0x7a) ||
+      (b >= 0x30 && b <= 0x39) ||
+      b === 0x2d ||
+      b === 0x5f ||
+      b === 0x2e ||
+      b === 0x7e
     ) {
       out += String.fromCharCode(b);
     } else {
@@ -163,9 +168,7 @@ export function fetchTimeout(ms: number, init?: RequestInit): RequestInit {
 }
 
 export function transportCause(error: unknown): string {
-  return error instanceof Error
-    ? (error.cause instanceof Error ? error.cause.message : error.message)
-    : String(error);
+  return error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
 }
 
 /** Char-bounded head of an error body (byte slicing would cut a multibyte
@@ -259,7 +262,12 @@ export async function requestJson(
   }
 }
 
-export async function fetchJson(url: string, init: RequestInit, api: string, timeoutMs = CALL_TIMEOUT_MS): Promise<JsonObject> {
+export async function fetchJson(
+  url: string,
+  init: RequestInit,
+  api: string,
+  timeoutMs = CALL_TIMEOUT_MS,
+): Promise<JsonObject> {
   return requestJson(url, init, timeoutMs, jsonErrors(api));
 }
 
@@ -285,7 +293,13 @@ export type ApiAuth =
 /** Runs one generic vendor REST call: `path` must start with `/`; the
  *  method is whitelisted; the body rides as JSON when present. The raw
  *  response text is the content, truncated to `max_chars`. */
-export async function callVendorApi(base: string, auth: ApiAuth, args: JsonObject, maxChars: number, extraHeaders: [string, string][] = []): Promise<ToolOutcome> {
+export async function callVendorApi(
+  base: string,
+  auth: ApiAuth,
+  args: JsonObject,
+  maxChars: number,
+  extraHeaders: [string, string][] = [],
+): Promise<ToolOutcome> {
   const path = args["path"];
   if (typeof path !== "string") throw new Error("api requires path (starting with /)");
   if (!path.startsWith("/")) throw new Error("api path must start with /");
@@ -295,14 +309,15 @@ export async function callVendorApi(base: string, auth: ApiAuth, args: JsonObjec
   }
   const headers: Record<string, string> = {};
   if (auth.kind === "bearer") headers["authorization"] = `Bearer ${auth.token}`;
-  else if (auth.kind === "basic") headers["authorization"] = `Basic ${Buffer.from(`${auth.user}:${auth.pass}`).toString("base64")}`;
+  else if (auth.kind === "basic")
+    headers["authorization"] = `Basic ${Buffer.from(`${auth.user}:${auth.pass}`).toString("base64")}`;
   else headers["PRIVATE-TOKEN"] = auth.token;
   for (const [name, value] of extraHeaders) headers[name] = value;
   const url = new URL(`${base}${path}`);
   const query = args["query"];
   if (query !== null && typeof query === "object" && !Array.isArray(query)) {
     for (const [k, v] of Object.entries(query as JsonObject)) {
-      url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v) ?? "");
+      url.searchParams.set(k, typeof v === "string" ? v : (JSON.stringify(v) ?? ""));
     }
   }
   const body = args["body"];

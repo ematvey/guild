@@ -85,7 +85,10 @@ const plugin: IntegrationPlugin = {
     const token = secret(secrets, "token");
     const url = new URL(`${hubspotBaseUrl(config)}/crm/v3/objects/contacts`);
     url.searchParams.set("limit", "1");
-    await probe(fetch(url, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${token}` } })), "hubspot");
+    await probe(
+      fetch(url, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${token}` } })),
+      "hubspot",
+    );
   },
   execute: hubspotExecute,
 };

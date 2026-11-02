@@ -76,7 +76,12 @@ function pageOf(rows: readonly MessageEventDb[], limit: number): { rows: Message
 
 /** Inserts one event row (an id conflict returns the existing row) and
  *  notifies `guild_thread_committed` inside the caller's transaction. */
-async function insertEvent(client: PoolClient, chatId: string, eventId: string, event: ThreadEvent): Promise<ThreadEventRow> {
+async function insertEvent(
+  client: PoolClient,
+  chatId: string,
+  eventId: string,
+  event: ThreadEvent,
+): Promise<ThreadEventRow> {
   const res = await client.query<EventRowDb>(
     `INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4::jsonb)
      ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
@@ -92,7 +97,11 @@ async function insertEvent(client: PoolClient, chatId: string, eventId: string, 
 }
 
 /** The first decision journaled for one approval call, if any. */
-async function recordedDecision(client: PoolClient, chatId: string, callId: string): Promise<ThreadEventRow | undefined> {
+async function recordedDecision(
+  client: PoolClient,
+  chatId: string,
+  callId: string,
+): Promise<ThreadEventRow | undefined> {
   const res = await client.query<EventRowDb>(
     `SELECT id, chat_id, seq, payload,
             ${utcText("created_at")} AS created_at
@@ -209,10 +218,7 @@ export class ThreadStore {
 
   /** One delivery row in the parent thread. It stays unconsumed until a
    *  parent run takes the batch. */
-  appendChildResult(
-    chatId: string,
-    event: Extract<ThreadEvent, { type: "child_result" }>,
-  ): Promise<ThreadEventRow> {
+  appendChildResult(chatId: string, event: Extract<ThreadEvent, { type: "child_result" }>): Promise<ThreadEventRow> {
     return this.appendEvent(chatId, event);
   }
 
@@ -249,10 +255,10 @@ export class ThreadStore {
         .map(toRow)
         .filter((row): row is ChildResultRecord => row !== undefined && row.event.type === "child_result");
       if (rows.length > 0) {
-        await client.query(
-          "UPDATE thread_events SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])",
-          [rows.map((row) => row.id), runId],
-        );
+        await client.query("UPDATE thread_events SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])", [
+          rows.map((row) => row.id),
+          runId,
+        ]);
       }
       return rows;
     });
@@ -357,7 +363,9 @@ export class ThreadStore {
         // created_at rides through to_char like every other reader here —
         // a raw RETURNING hands the pg driver's Date to
         // pgTimestampToRfc3339, which expects the microsecond text shape.
-        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, " + utcText("created_at") + " AS created_at",
+        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, " +
+          utcText("created_at") +
+          " AS created_at",
         [id, chatId, row.type, jsonbText(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
@@ -496,7 +504,10 @@ export class ThreadStore {
   }
 
   /** The latest decision journaled for one approval call, if any. */
-  async latestApprovalDecision(chatId: string, callId: string): Promise<{ approved: boolean; reason: string | null } | null> {
+  async latestApprovalDecision(
+    chatId: string,
+    callId: string,
+  ): Promise<{ approved: boolean; reason: string | null } | null> {
     const res = await this.pool.query<{ approved: boolean; reason: string | null }>(
       `SELECT (payload->>'approved')::boolean AS approved, payload->>'reason' AS reason
        FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2

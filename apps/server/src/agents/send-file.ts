@@ -5,11 +5,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { Type } from "typebox";
-import {
-  defineTool,
-  type ToolExecutionResult,
-  type ToolRegistration,
-} from "@earendil-works/pi-durable";
+import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import { attachmentObjectKey, safeFilename, type AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
@@ -96,7 +92,15 @@ const output = Type.Object({
 });
 
 const errorResult = (error: unknown): ToolExecutionResult => ({
-  output: [{ type: "text", text: JSON.stringify({ error: "send_file_failed", message: error instanceof Error ? error.message : String(error) }) }],
+  output: [
+    {
+      type: "text",
+      text: JSON.stringify({
+        error: "send_file_failed",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    },
+  ],
   isError: true,
 });
 

@@ -11,13 +11,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, ctx: IdentityCtx): vo
     const admin = await requireAdminUser(ctx, req);
     const body = requireJsonBody(req);
     const name = typeof body["name"] === "string" ? body["name"] : "api key";
-    const created = await ctx.apiKeys.create(
-      admin.org_id,
-      admin.id,
-      name,
-      null,
-      admin.session_generation ?? null,
-    );
+    const created = await ctx.apiKeys.create(admin.org_id, admin.id, name, null, admin.session_generation ?? null);
     return JSON.stringify({ key: created.key, plaintext: created.plaintext });
   });
 
@@ -38,13 +32,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, ctx: IdentityCtx): vo
     const user = await requireUser(ctx, req);
     const body = requireJsonBody(req);
     const name = typeof body["name"] === "string" ? body["name"] : "api key";
-    const created = await ctx.apiKeys.create(
-      user.org_id,
-      user.id,
-      name,
-      user.id,
-      user.session_generation ?? null,
-    );
+    const created = await ctx.apiKeys.create(user.org_id, user.id, name, user.id, user.session_generation ?? null);
     return JSON.stringify({ key: created.key, plaintext: created.plaintext });
   });
 

@@ -166,7 +166,9 @@ function requireProxyUrl(env: NodeJS.ProcessEnv): string {
   if (!raw) throw new Error("GUILD_SANDBOX_PROXY_URL is required in proxied network mode (http://<egress ip>:3128)");
   const url = new URL(raw);
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname)) {
-    throw new Error("GUILD_SANDBOX_PROXY_URL must name the egress proxy by IP address (no DNS inside gVisor sandboxes)");
+    throw new Error(
+      "GUILD_SANDBOX_PROXY_URL must name the egress proxy by IP address (no DNS inside gVisor sandboxes)",
+    );
   }
   return `${url.protocol}//${url.host}`;
 }

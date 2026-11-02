@@ -139,11 +139,11 @@ export interface ArtifactCard {
  * "artifact" alongside id/filename/…); a nested card object is also
  * accepted for compatibility. */
 export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | null {
-  const meta = t.meta as Partial<ArtifactCard> & { card?: unknown; kind?: unknown } | null | undefined;
+  const meta = t.meta as (Partial<ArtifactCard> & { card?: unknown; kind?: unknown }) | null | undefined;
   if (!meta || typeof meta !== "object") return null;
-  const nested = (meta.card ?? null) as Partial<ArtifactCard> & { card?: unknown; kind?: unknown } | null;
+  const nested = (meta.card ?? null) as (Partial<ArtifactCard> & { card?: unknown; kind?: unknown }) | null;
   const a =
-    (meta.card === "artifact" || meta.kind === "artifact")
+    meta.card === "artifact" || meta.kind === "artifact"
       ? meta
       : nested && typeof nested === "object" && (nested.card === "artifact" || nested.kind === "artifact")
         ? nested
@@ -308,12 +308,7 @@ function liveKey(): string {
 const nowIso = () => new Date().toISOString();
 
 /// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
-const CLIENT_TOOL_NAMES = [
-  "read_file",
-  "execute",
-  "edit_file",
-  "write_file",
-];
+const CLIENT_TOOL_NAMES = ["read_file", "execute", "edit_file", "write_file"];
 
 /** A result or close event may carry no label of its own; the spawn record
  *  already in the transcript names the thread and holds its chat id. */
@@ -639,8 +634,7 @@ export function eventsToBlocks(rows: ThreadEventRow[]): RenderBlock[] {
 /// a view takes this path; later publishes apply incrementally.
 export function threadStateBlocks(state: ThreadState): RenderBlock[] {
   let blocks = eventsToBlocks(state.events);
-  if (state.thinking)
-    blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${state.chat_id}`);
+  if (state.thinking) blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${state.chat_id}`);
   if (state.text) blocks.push({ kind: "text", text: state.text, key: `unpersisted-${state.chat_id}` });
   return blocks;
 }
@@ -722,7 +716,7 @@ export function reconcilePendingSend(
   pending: PendingSend | null,
 ): RenderBlock[] {
   if (!pending) return blocks;
-  const durable = rows.some(row => row.event.type === "user_message" && row.id === pending.key);
+  const durable = rows.some((row) => row.event.type === "user_message" && row.id === pending.key);
   if (durable) return blocks;
   if (blocks.some((block) => block.key === pending.key)) return blocks;
   return [
@@ -872,7 +866,10 @@ export function createThreadReducer(): ThreadReducer {
   const pendingByChat = new Map<string, Map<string, PendingSend>>();
   const pendingOf = (cid: string) => {
     let sends = pendingByChat.get(cid);
-    if (!sends) { sends = new Map(); pendingByChat.set(cid, sends); }
+    if (!sends) {
+      sends = new Map();
+      pendingByChat.set(cid, sends);
+    }
     return sends;
   };
 
@@ -914,16 +911,17 @@ export function createThreadReducer(): ThreadReducer {
     for (const b of v.blocks) {
       if (b.key.startsWith("unpersisted-") || b.key.startsWith("live-")) {
         live.push(b);
-      } else if (b.kind === "tool" && b.tool && b.key.startsWith("frame-") && !d.blocks.some(
-        (x) => x.kind === "tool" && x.tool?.callId === b.tool?.callId,
-      )) {
+      } else if (
+        b.kind === "tool" &&
+        b.tool &&
+        b.key.startsWith("frame-") &&
+        !d.blocks.some((x) => x.kind === "tool" && x.tool?.callId === b.tool?.callId)
+      ) {
         live.push(b);
         d.toolsByCall.set(b.tool.callId, b.tool);
       }
     }
-    const pending = v.blocks.filter(
-      (b) => b.kind === "user" && b.pending && !d.blocks.some((x) => x.key === b.key),
-    );
+    const pending = v.blocks.filter((b) => b.kind === "user" && b.pending && !d.blocks.some((x) => x.key === b.key));
     v.blocks = [...d.blocks, ...live, ...pending];
     v.toolsByCall = d.toolsByCall;
     v.approvalsByCall = d.approvalsByCall;
@@ -1000,9 +998,7 @@ export function createThreadReducer(): ThreadReducer {
         rebuild(v);
         v.lastEventSeq = v.events.reduce((max, r) => Math.max(max, r.seq), -1);
       } else {
-        const fresh = state.events
-          .filter((r) => r.seq > v.lastEventSeq)
-          .sort((a, b) => a.seq - b.seq);
+        const fresh = state.events.filter((r) => r.seq > v.lastEventSeq).sort((a, b) => a.seq - b.seq);
         for (const row of fresh) {
           applyEvent(v, row);
           v.lastEventSeq = Math.max(v.lastEventSeq, row.seq);
@@ -1023,28 +1019,32 @@ export function createThreadReducer(): ThreadReducer {
       // The live-thinking stamp publishes ~10×/s while thinking streams: its
       // replacement carries the ORIGINAL open-time across, or the working
       // card's elapsed clock resets on every publish.
-      const liveThinkTs = v.blocks
-        .filter((b) => b.kind === "reasoning" && b.key.startsWith("live-"))
-        .at(-1)?.ts;
-      let blocks = v.blocks.filter(
-        (b) => !b.key.startsWith("unpersisted-") && !b.key.startsWith("live-"),
-      );
+      const liveThinkTs = v.blocks.filter((b) => b.kind === "reasoning" && b.key.startsWith("live-")).at(-1)?.ts;
+      let blocks = v.blocks.filter((b) => !b.key.startsWith("unpersisted-") && !b.key.startsWith("live-"));
       if (state.thinking)
         blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${cid}`, liveThinkTs ?? nowIso());
-      if (state.text)
-        blocks = [...blocks, { kind: "text", text: state.text, key: `unpersisted-${cid}` }];
+      if (state.text) blocks = [...blocks, { kind: "text", text: state.text, key: `unpersisted-${cid}` }];
       v.blocks = blocks;
       // Optimistic send: the durable user_message echo (matched by client
       // message id) settles the marker; before it, keep the command visible.
       for (const [key, pending] of pendingOf(cid)) {
-        const durable = state.events.some(r => r.event.type === "user_message" && r.id === key);
+        const durable = state.events.some((r) => r.event.type === "user_message" && r.id === key);
         if (durable) {
           pendingOf(cid).delete(key);
-          v.blocks = v.blocks.filter(b => !(b.key === key && b.pending));
-        } else if (!v.blocks.some(b => b.key === key)) {
-          v.blocks = [...v.blocks, { kind: "user", text: pending.text, key,
-            eventId: key, attachments: pending.attachments, pending: true,
-            ...(pending.queued ? { queued: true, queuedMode: pending.queuedMode ?? "queue" } : {}) }];
+          v.blocks = v.blocks.filter((b) => !(b.key === key && b.pending));
+        } else if (!v.blocks.some((b) => b.key === key)) {
+          v.blocks = [
+            ...v.blocks,
+            {
+              kind: "user",
+              text: pending.text,
+              key,
+              eventId: key,
+              attachments: pending.attachments,
+              pending: true,
+              ...(pending.queued ? { queued: true, queuedMode: pending.queuedMode ?? "queue" } : {}),
+            },
+          ];
         }
       }
       // Queued sends reconcile against the authoritative log: withdrawal
@@ -1077,9 +1077,7 @@ export function createThreadReducer(): ThreadReducer {
 
     applyThreadEvents(chatId, seq, events) {
       const v = viewOf(chatId);
-      const fresh = events
-        .filter((r) => r.seq > v.lastEventSeq)
-        .sort((a, b) => a.seq - b.seq);
+      const fresh = events.filter((r) => r.seq > v.lastEventSeq).sort((a, b) => a.seq - b.seq);
       for (const row of fresh) {
         applyEvent(v, row);
         v.lastEventSeq = Math.max(v.lastEventSeq, row.seq);
@@ -1110,15 +1108,9 @@ export function createThreadReducer(): ThreadReducer {
         case "delta": {
           const last = v.blocks[v.blocks.length - 1];
           if (last?.kind === "text" && last.key === `unpersisted-${current}`) {
-            v.blocks = [
-              ...v.blocks.slice(0, -1),
-              { ...last, text: last.text + (frame.content ?? "") },
-            ];
+            v.blocks = [...v.blocks.slice(0, -1), { ...last, text: last.text + (frame.content ?? "") }];
           } else {
-            v.blocks = [
-              ...v.blocks,
-              { kind: "text", text: frame.content ?? "", key: `unpersisted-${current}` },
-            ];
+            v.blocks = [...v.blocks, { kind: "text", text: frame.content ?? "", key: `unpersisted-${current}` }];
           }
           break;
         }
@@ -1150,7 +1142,7 @@ export function createThreadReducer(): ThreadReducer {
           if (tb) {
             const next = {
               ...tb,
-              status: frame.is_error ? "error" as const : "done" as const,
+              status: frame.is_error ? ("error" as const) : ("done" as const),
               content: frame.content ?? tb.content,
               endTs: nowIso(),
             };
@@ -1206,7 +1198,7 @@ export function createThreadReducer(): ThreadReducer {
     optimisticSend(pending) {
       const v = viewOf(pending.chatId ?? LOOSE);
       v.blocks = [
-        ...v.blocks.filter(b => b.key !== pending.key),
+        ...v.blocks.filter((b) => b.key !== pending.key),
         {
           kind: "user",
           text: pending.text,
@@ -1223,15 +1215,18 @@ export function createThreadReducer(): ThreadReducer {
     },
 
     settleAttachment(key, pendingId, uploadedId) {
-      const update = (attachments: PendingSend["attachments"]) => attachments?.map(a =>
-        a.id === pendingId ? { ...a, ...(uploadedId ? { id: uploadedId, previewUrl: undefined } : {}) } : a);
+      const update = (attachments: PendingSend["attachments"]) =>
+        attachments?.map((a) =>
+          a.id === pendingId ? { ...a, ...(uploadedId ? { id: uploadedId, previewUrl: undefined } : {}) } : a,
+        );
       for (const sends of pendingByChat.values()) {
         const pending = sends.get(key);
         if (pending) sends.set(key, { ...pending, attachments: update(pending.attachments) });
       }
       for (const v of views.values()) {
-        v.blocks = v.blocks.map(b => b.key === key && b.kind === "user"
-          ? { ...b, attachments: update(b.attachments) } : b);
+        v.blocks = v.blocks.map((b) =>
+          b.key === key && b.kind === "user" ? { ...b, attachments: update(b.attachments) } : b,
+        );
       }
       return result(viewOf(current));
     },
@@ -1247,10 +1242,7 @@ export function createThreadReducer(): ThreadReducer {
     failSend(chatId, key, errorText) {
       const v = viewOf(chatId ?? LOOSE);
       pendingOf(chatId ?? LOOSE).delete(key);
-      v.blocks = [
-        ...v.blocks.filter((b) => b.key !== key),
-        { kind: "error", text: errorText, key: liveKey() },
-      ];
+      v.blocks = [...v.blocks.filter((b) => b.key !== key), { kind: "error", text: errorText, key: liveKey() }];
       return result(v);
     },
 

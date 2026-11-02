@@ -31,7 +31,11 @@ const other: AttachmentRow = {
   content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
-const foreign: AttachmentRow = { ...statement, id: "33333333-3333-7333-8333-333333333333", chat_id: "44444444-4444-7444-8444-444444444444" };
+const foreign: AttachmentRow = {
+  ...statement,
+  id: "33333333-3333-7333-8333-333333333333",
+  chat_id: "44444444-4444-7444-8444-444444444444",
+};
 
 class FakeObjects {
   readonly bytes = new Map<string, Buffer>();
@@ -54,7 +58,8 @@ function harness(rows: readonly AttachmentRow[], objects: FakeObjects, env: Node
     chatOfConversation: async () => CHAT,
     orgOfConversation: async () => ORG,
   });
-  const call = (args: Record<string, unknown>) => tool.execute(args as never, { conversationId: CONVERSATION, env } as never, {} as never);
+  const call = (args: Record<string, unknown>) =>
+    tool.execute(args as never, { conversationId: CONVERSATION, env } as never, {} as never);
   return { tool, call };
 }
 

@@ -4,9 +4,20 @@ import type { ThreadEventRow } from "./thread-events";
 import type { ThreadEvent } from "./thread-events";
 
 const chat = {
-  id: "chat-1", org_id: "o1", user_id: "u1", title: "Chat", created_at: "now",
-  generating: false, unread: false, working: false, blocked: false,
-  last_activity_at: "now", machine_online: false, type: "user" as const, archived: false, deleted: false,
+  id: "chat-1",
+  org_id: "o1",
+  user_id: "u1",
+  title: "Chat",
+  created_at: "now",
+  generating: false,
+  unread: false,
+  working: false,
+  blocked: false,
+  last_activity_at: "now",
+  machine_online: false,
+  type: "user" as const,
+  archived: false,
+  deleted: false,
 };
 const delta = { type: "delta" as const, content: "hello" };
 
@@ -60,9 +71,24 @@ describe("routeMessage", () => {
     routeMessage({ type: "thread_list", chats: [chat] }, handlers);
     routeMessage({ type: "chat_status", chat_id: "chat-1", generating: true }, handlers);
     routeMessage({ type: "sync_begin", chat_id: "chat-1" }, handlers);
-    routeMessage({ type: "thread_state", chat_id: "chat-1", seq: 1, events: [], text: "hello", thinking: "", generating: true, has_more_events: false }, handlers);
+    routeMessage(
+      {
+        type: "thread_state",
+        chat_id: "chat-1",
+        seq: 1,
+        events: [],
+        text: "hello",
+        thinking: "",
+        generating: true,
+        has_more_events: false,
+      },
+      handlers,
+    );
     routeMessage({ type: "sync_done", chat_id: "chat-1" }, handlers);
-    routeMessage({ type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: null, event: delta }, handlers);
+    routeMessage(
+      { type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: null, event: delta },
+      handlers,
+    );
     routeMessage({ type: "displaced" }, handlers);
     routeMessage({ type: "auth_required" }, handlers);
     routeMessage({ type: "machine_status", machine_id: "m1", online: false }, handlers);
@@ -97,7 +123,10 @@ describe("routeMessage", () => {
     const identities: unknown[] = [];
     const lists: unknown[] = [];
     const handlers: SocketHandlers = {
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
       onWorkspaceIdentity: (identity) => identities.push(identity),
       onModelList: (models) => lists.push(models),
     };
@@ -110,13 +139,23 @@ describe("routeMessage", () => {
   it("hands the pushed member profile to its handler", () => {
     const seen: unknown[] = [];
     const user = {
-      id: "u1", email: "ada@example.org", org_id: "o1", role: "admin",
-      display_name: "Ada", avatar_url: null, onboarded: true,
+      id: "u1",
+      email: "ada@example.org",
+      org_id: "o1",
+      role: "admin",
+      display_name: "Ada",
+      avatar_url: null,
+      onboarded: true,
     };
     routeMessage(
       { type: "member_profile", user },
-      { onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
-        onMemberProfile: (profile) => seen.push(profile) },
+      {
+        onThreadList: () => {},
+        onChatStatus: () => {},
+        onFrame: () => {},
+        onSync: () => {},
+        onMemberProfile: (profile) => seen.push(profile),
+      },
     );
     expect(seen).toEqual([user]);
   });
@@ -124,7 +163,10 @@ describe("routeMessage", () => {
   it("routes the agent, skill catalog and chat tree frames", () => {
     const calls: string[] = [];
     const handlers: SocketHandlers = {
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
       onAgentList: (agents) => calls.push(`agents:${agents.length}`),
       onAgentRun: (run) => calls.push(`run:${run.id}`),
       onAgentThreads: (agentId, threads) => calls.push(`threads:${agentId}:${threads.length}`),
@@ -138,19 +180,29 @@ describe("routeMessage", () => {
     routeMessage({ type: "agent_routines", agent_id: "a1", routines: [] }, handlers);
     routeMessage({ type: "skill_catalog", items: [], installs: [] }, handlers);
     routeMessage({ type: "chat_tree", chat_id: "c1", tree: { chat_id: "c1" } } as never, handlers);
-    expect(calls).toEqual([
-      "agents:0", "run:r1", "threads:a1:0", "routines:a1:0", "skills:0:0", "tree:c1",
-    ]);
+    expect(calls).toEqual(["agents:0", "run:r1", "threads:a1:0", "routines:a1:0", "skills:0:0", "tree:c1"]);
   });
 
   it("routes incremental thread_events frames to their handler", () => {
     const seen: { chatId: string; seq: number; rows: ThreadEventRow[] }[] = [];
     routeMessage(
-      { type: "thread_events", chat_id: "chat-1", seq: 9, events: [row(9, { type: "user_message", content: "go", attachments: [] })] } as never,
-      { onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
-        onThreadEvents: (chatId, seq, rows) => seen.push({ chatId, seq, rows }) },
+      {
+        type: "thread_events",
+        chat_id: "chat-1",
+        seq: 9,
+        events: [row(9, { type: "user_message", content: "go", attachments: [] })],
+      } as never,
+      {
+        onThreadList: () => {},
+        onChatStatus: () => {},
+        onFrame: () => {},
+        onSync: () => {},
+        onThreadEvents: (chatId, seq, rows) => seen.push({ chatId, seq, rows }),
+      },
     );
-    expect(seen).toEqual([{ chatId: "chat-1", seq: 9, rows: [row(9, { type: "user_message", content: "go", attachments: [] })] }]);
+    expect(seen).toEqual([
+      { chatId: "chat-1", seq: 9, rows: [row(9, { type: "user_message", content: "go", attachments: [] })] },
+    ]);
   });
 });
 
@@ -174,8 +226,12 @@ describe("startSocket", () => {
     vi.stubGlobal("fetch", fetchMock);
     const errors: string[] = [];
     const connection = startSocket({
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
-      onError: (message) => errors.push(message), getOpenChatId: () => null,
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
+      onError: (message) => errors.push(message),
+      getOpenChatId: () => null,
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(errors).toHaveLength(1);
@@ -189,21 +245,39 @@ describe("startSocket", () => {
   it("discards reflected views and resets an interrupted sync on reconnect", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "client" });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })),
+    );
     const sockets: FakeSocket[] = [];
     const accepted: number[] = [];
     const depths = new Map<string, number>();
     const connection = startSocket({
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
       onConnect: () => depths.clear(),
       onSync: (chat, phase) => depths.set(chat, (depths.get(chat) ?? 0) + (phase === "begin" ? 1 : -1)),
-      onThreadState: state => accepted.push(state.seq), getOpenChatId: () => "chat",
-      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      onThreadState: (state) => accepted.push(state.seq),
+      getOpenChatId: () => "chat",
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].open();
     const deliver = (socket: FakeSocket, message: unknown) => socket.onmessage?.({ data: JSON.stringify(message) });
-    const state = { type: "thread_state", chat_id: "chat", seq: 9, text: "latest", thinking: "", events: [], generating: false };
+    const state = {
+      type: "thread_state",
+      chat_id: "chat",
+      seq: 9,
+      text: "latest",
+      thinking: "",
+      events: [],
+      generating: false,
+    };
     deliver(sockets[0], state);
     deliver(sockets[0], { ...state, seq: 8, text: "older" });
     deliver(sockets[0], state);
@@ -217,18 +291,30 @@ describe("startSocket", () => {
     deliver(sockets[1], { type: "sync_done", chat_id: "chat" });
     expect(depths.get("chat")).toBe(0);
     expect(accepted).toEqual([9, 10]);
-    connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+    connection.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("reports a dropped read mark instead of claiming it was sent", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "client" });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "ticket" }) })),
+    );
     const sockets: FakeSocket[] = [];
     const connection = startSocket({
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
       getOpenChatId: () => "chat",
-      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(connection.markRead("chat")).toBe(false);
@@ -237,42 +323,66 @@ describe("startSocket", () => {
     expect(sockets[0].sent.some((frame) => frame.includes('"type":"read"'))).toBe(true);
     sockets[0].close();
     expect(connection.markRead("chat")).toBe(false);
-    connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+    connection.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it.each([false, true])("refreshes before reminting, including transient refresh failure (%s)", async (transientFailure) => {
-    vi.useFakeTimers();
-    vi.stubGlobal("localStorage", { getItem: () => "token", setItem: () => {} });
-    const paths: string[] = [];
-    let refreshAttempts = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      paths.push(url);
-      if (url.endsWith("refresh") && transientFailure && refreshAttempts++ === 0) {
-        return { ok: false, status: 503, json: async () => ({}) };
-      }
-      return { ok: true, status: 200, json: async () => url.endsWith("refresh") ? { token: "fresh" } : { ticket: "one-use" } };
-    }));
-    const sockets: FakeSocket[] = [];
-    const signedOut = vi.fn();
-    const connected = vi.fn();
-    const connection = startSocket({
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
-      onAuthRequired: signedOut, onConnect: connected, getOpenChatId: () => "chat-1",
-      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    sockets[0].open();
-    sockets[0].onmessage?.({ data: JSON.stringify({ type: "auth_required" }) });
-    await vi.advanceTimersByTimeAsync(1000);
-    sockets[1].open();
-    expect(paths).toEqual(transientFailure
-      ? ["/api/v1/ws/ticket", "/api/v1/auth/refresh", "/api/v1/auth/refresh", "/api/v1/ws/ticket"]
-      : ["/api/v1/ws/ticket", "/api/v1/auth/refresh", "/api/v1/ws/ticket"]);
-    expect(connected).toHaveBeenCalledTimes(2);
-    expect(signedOut).not.toHaveBeenCalled();
-    connection.stop();
-    vi.useRealTimers(); vi.unstubAllGlobals();
-  });
+  it.each([false, true])(
+    "refreshes before reminting, including transient refresh failure (%s)",
+    async (transientFailure) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("localStorage", { getItem: () => "token", setItem: () => {} });
+      const paths: string[] = [];
+      let refreshAttempts = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          paths.push(url);
+          if (url.endsWith("refresh") && transientFailure && refreshAttempts++ === 0) {
+            return { ok: false, status: 503, json: async () => ({}) };
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => (url.endsWith("refresh") ? { token: "fresh" } : { ticket: "one-use" }),
+          };
+        }),
+      );
+      const sockets: FakeSocket[] = [];
+      const signedOut = vi.fn();
+      const connected = vi.fn();
+      const connection = startSocket({
+        onThreadList: () => {},
+        onChatStatus: () => {},
+        onFrame: () => {},
+        onSync: () => {},
+        onAuthRequired: signedOut,
+        onConnect: connected,
+        getOpenChatId: () => "chat-1",
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0].open();
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "auth_required" }) });
+      await vi.advanceTimersByTimeAsync(1000);
+      sockets[1].open();
+      expect(paths).toEqual(
+        transientFailure
+          ? ["/api/v1/ws/ticket", "/api/v1/auth/refresh", "/api/v1/auth/refresh", "/api/v1/ws/ticket"]
+          : ["/api/v1/ws/ticket", "/api/v1/auth/refresh", "/api/v1/ws/ticket"],
+      );
+      expect(connected).toHaveBeenCalledTimes(2);
+      expect(signedOut).not.toHaveBeenCalled();
+      connection.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    },
+  );
 
   it("sends the current sync on open and reconnects after the backoff delay", async () => {
     vi.useFakeTimers();
@@ -330,12 +440,22 @@ describe("startSocket", () => {
   it("pings while open and force-reconnects a silent (half-open) socket", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "client" });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })),
+    );
     const sockets: FakeSocket[] = [];
     const connection = startSocket({
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
       getOpenChatId: () => null,
-      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].open();
@@ -368,11 +488,17 @@ describe("startSocket", () => {
       vi.stubGlobal("window", win);
       vi.stubGlobal("document", doc);
       vi.stubGlobal("localStorage", { getItem: () => "client" });
-      vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })),
+      );
       return { win, doc };
     }
     const handlers = {
-      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onThreadList: () => {},
+      onChatStatus: () => {},
+      onFrame: () => {},
+      onSync: () => {},
       getOpenChatId: () => null,
     };
 
@@ -382,7 +508,11 @@ describe("startSocket", () => {
       const sockets: FakeSocket[] = [];
       const connection = startSocket({
         ...handlers,
-        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
       });
       await vi.advanceTimersByTimeAsync(0);
       sockets[0].open();
@@ -396,7 +526,9 @@ describe("startSocket", () => {
       expect(sockets).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(sockets).toHaveLength(2);
-      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+      connection.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     });
 
     it("a fresh dial closes the socket it replaces", async () => {
@@ -407,7 +539,11 @@ describe("startSocket", () => {
       const connection = startSocket({
         ...handlers,
         onThreadState: (state) => states.push(state.seq),
-        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
       });
       await vi.advanceTimersByTimeAsync(0);
       // Still connecting (readyState 0) and silent past the dead line: the
@@ -418,9 +554,21 @@ describe("startSocket", () => {
       expect(sockets).toHaveLength(2);
       expect(sockets[0].closed).toBe(true);
       // The replaced socket's late frame never reaches the handlers.
-      sockets[0].onmessage?.({ data: JSON.stringify({ type: "thread_state", chat_id: "c", seq: 1, text: "", thinking: "", events: [], generating: false }) });
+      sockets[0].onmessage?.({
+        data: JSON.stringify({
+          type: "thread_state",
+          chat_id: "c",
+          seq: 1,
+          text: "",
+          thinking: "",
+          events: [],
+          generating: false,
+        }),
+      });
       expect(states).toEqual([]);
-      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+      connection.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     });
 
     it("a wake on a current link probes it without a resync; a stale one resyncs", async () => {
@@ -429,7 +577,11 @@ describe("startSocket", () => {
       const sockets: FakeSocket[] = [];
       const connection = startSocket({
         ...handlers,
-        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
       });
       await vi.advanceTimersByTimeAsync(0);
       sockets[0].open();
@@ -443,7 +595,9 @@ describe("startSocket", () => {
       doc.dispatchEvent(new Event("visibilitychange"));
       expect(sent().slice(-2)).toEqual(["ping", "sync"]);
       expect(sockets).toHaveLength(1);
-      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+      connection.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     });
 
     it("stop removes the wake listeners", async () => {
@@ -452,7 +606,11 @@ describe("startSocket", () => {
       const sockets: FakeSocket[] = [];
       const connection = startSocket({
         ...handlers,
-        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
       });
       await vi.advanceTimersByTimeAsync(0);
       const removedWin = vi.spyOn(win, "removeEventListener");
@@ -465,13 +623,18 @@ describe("startSocket", () => {
       doc.dispatchEvent(new Event("visibilitychange"));
       await vi.advanceTimersByTimeAsync(5_000);
       expect(sockets).toHaveLength(1);
-      vi.useRealTimers(); vi.unstubAllGlobals();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     });
   });
 
   it("routes liveness and machine-socket frames to no handler", () => {
     const handlers = {
-      onThreadList: vi.fn(), onChatStatus: vi.fn(), onFrame: vi.fn(), onSync: vi.fn(), onError: vi.fn(),
+      onThreadList: vi.fn(),
+      onChatStatus: vi.fn(),
+      onFrame: vi.fn(),
+      onSync: vi.fn(),
+      onError: vi.fn(),
     } satisfies SocketHandlers;
     routeMessage({ type: "pong" }, handlers);
     routeMessage({ type: "machine_request", request_id: "r", op: "fs.read", payload: null }, handlers);

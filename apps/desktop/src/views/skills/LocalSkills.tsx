@@ -6,36 +6,19 @@
 // org installs arrive in the pushed skill catalog.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Ban,
-  CircleArrowUp,
-  CircleCheck,
-  RefreshCw,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { Ban, CircleArrowUp, CircleCheck, RefreshCw, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { rpcCall } from "../../lib/machine-rpc";
 import { resolveProjectDir } from "../settings/resolve-project-dir";
 import { daemonFs, type BridgeRpc } from "../../lib/fs-bridge";
 import { listSkills, setSkillDisabled } from "../../lib/skills";
-import {
-  skillsPin,
-  skillsUninstall,
-  type SkillInstall,
-} from "./skills-api";
+import { skillsPin, skillsUninstall, type SkillInstall } from "./skills-api";
 import { formatVersion } from "./version";
 import { useSkillCatalog } from "./skills-store";
 import { Button } from "@guild/ui/components/button";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogTitle,
-} from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@guild/ui/components/dialog";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 
 /** One local skill row (the rpc list's entry, shaped for the UI). */
@@ -85,10 +68,7 @@ export function installRow(install: SkillInstall, latest: string | null): Instal
 /** The enable/disable toggle's rpc wiring: flips skillsDisabled[row.path]
  *  in the app-server's settings.json (`disabled: true` on the row means
  *  the toggle enables it — the call passes the desired enabled state). */
-export async function toggleDisabled(
-  rpc: BridgeRpc,
-  row: Pick<LocalSkillRow, "path" | "disabled">,
-): Promise<void> {
+export async function toggleDisabled(rpc: BridgeRpc, row: Pick<LocalSkillRow, "path" | "disabled">): Promise<void> {
   const fs = daemonFs(rpc);
   await setSkillDisabled(fs, await fs.scopes(), row.path, row.disabled);
 }
@@ -99,12 +79,11 @@ export async function toggleDisabled(
  *  local folder removal so the panel doesn't wait for the machine-sync
  *  push. A server refusal (a dir copied in carrying provenance but no
  *  install record) falls back to the local-only removal. */
-export async function uninstallSkill(
-  slug: string,
-  rpc: BridgeRpc,
-  localGlobal: boolean,
-): Promise<void> {
-  const removed = await skillsUninstall(slug).then(() => true, () => false);
+export async function uninstallSkill(slug: string, rpc: BridgeRpc, localGlobal: boolean): Promise<void> {
+  const removed = await skillsUninstall(slug).then(
+    () => true,
+    () => false,
+  );
   const projectDir = (await resolveProjectDir()) ?? undefined;
   if (!removed) {
     await rpc("registry.uninstall", { slug, global: localGlobal, project_dir: projectDir });
@@ -205,8 +184,8 @@ export default function LocalSkills() {
     <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          Read from <code className="text-xs">.agents/skills</code> in the project and your
-          home directory, plus Guild-installed skills.
+          Read from <code className="text-xs">.agents/skills</code> in the project and your home directory, plus
+          Guild-installed skills.
         </p>
         <Button size="sm" variant="ghost" onClick={() => void reload()} title="Re-scan skill folders">
           <RefreshCw className="size-4" />
@@ -229,9 +208,7 @@ export default function LocalSkills() {
                     <span className="font-medium">/{vm.slug}</span>
                     <p className="text-xs text-muted-foreground">
                       {vm.pinnedVersion === null ? "follows latest" : `pinned at ${vm.pinnedVersion}`}
-                      {latest.has(vm.slug)
-                        ? ` · latest ${formatVersion(latest.get(vm.slug) ?? "")}`
-                        : ""}
+                      {latest.has(vm.slug) ? ` · latest ${formatVersion(latest.get(vm.slug) ?? "")}` : ""}
                     </p>
                   </div>
                   {vm.updateAvailable && vm.pinTarget !== null && (
@@ -290,22 +267,16 @@ export default function LocalSkills() {
             >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`font-medium ${row.disabled ? "text-muted-foreground" : ""}`}>
-                    /{row.name}
-                  </span>
+                  <span className={`font-medium ${row.disabled ? "text-muted-foreground" : ""}`}>/{row.name}</span>
                   <SourceBadge row={row} />
-                  <span className="text-xs text-muted-foreground">
-                    {SCOPE_LABELS[row.scope] ?? row.scope}
-                  </span>
+                  <span className="text-xs text-muted-foreground">{SCOPE_LABELS[row.scope] ?? row.scope}</span>
                   {row.disabled && (
                     <Badge variant="outline" className="text-muted-foreground">
                       disabled
                     </Badge>
                   )}
                 </div>
-                <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
-                  {row.description}
-                </p>
+                <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{row.description}</p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 <Button
@@ -319,13 +290,11 @@ export default function LocalSkills() {
                       row.disabled ? "Skill enabled" : "Skill disabled",
                     )
                   }
-                  title={row.disabled ? "Show in the agent index and composer" : "Hide from the agent index and composer"}
+                  title={
+                    row.disabled ? "Show in the agent index and composer" : "Hide from the agent index and composer"
+                  }
                 >
-                  {row.disabled ? (
-                    <CircleCheck className="size-4" />
-                  ) : (
-                    <Ban className="size-4" />
-                  )}
+                  {row.disabled ? <CircleCheck className="size-4" /> : <Ban className="size-4" />}
                   {row.disabled ? "Enable" : "Disable"}
                 </Button>
                 <Button
@@ -350,12 +319,7 @@ export default function LocalSkills() {
                     onClick={() =>
                       void act(
                         `rm-${row.path}`,
-                        () =>
-                          uninstallSkill(
-                            row.provenance?.slug ?? row.name,
-                            rpcCall,
-                            row.scope === "user",
-                          ),
+                        () => uninstallSkill(row.provenance?.slug ?? row.name, rpcCall, row.scope === "user"),
                         "Skill uninstalled",
                       )
                     }
@@ -380,8 +344,8 @@ export default function LocalSkills() {
         <DialogContent className="max-w-md">
           <DialogTitle>Publish /{publishing?.name ?? ""}</DialogTitle>
           <DialogDescription>
-            Uploads this skill folder to the org registry as a new version. It goes to pending
-            review; an admin approves it before others can install.
+            Uploads this skill folder to the org registry as a new version. It goes to pending review; an admin approves
+            it before others can install.
           </DialogDescription>
           <div className="space-y-2">
             <label className="text-sm font-medium" htmlFor="skill-version">

@@ -123,7 +123,7 @@ const addressParts = (address: DocumentAddress) => {
   return {
     kind: encodeIndexedString(address.kind),
     ...scope,
-    family: address.key === undefined ? false : true,
+    family: address.key !== undefined,
     keyValue: encodeIndexedString(address.key ?? ""),
   };
 };
@@ -195,7 +195,7 @@ export class PostgresDurableStorage implements Storage {
     const operation = this.db
       .query("DELETE FROM durable_commits WHERE key=ANY($1::text[])", [keys])
       .then(() => {
-        keys.forEach((key) => this.acknowledgedReceipts.delete(key));
+        for (const key of keys) this.acknowledgedReceipts.delete(key);
         this.stats.receiptDeletes += keys.length;
       })
       .catch(() => {
@@ -258,7 +258,6 @@ export class PostgresDurableStorage implements Storage {
         const id = asDocumentId(Number(row.id));
         try {
           await this.materializeDocument(tx, id, "current");
-          continue;
         } catch (error) {
           if (!(error instanceof Error) || error.name !== "PathError") throw error;
           const record = parseJson(row.record) as DocumentRecord;
@@ -988,9 +987,10 @@ export class PostgresDurableStorage implements Storage {
         break;
       case "task": {
         await this.claimId(tx, write.value.id, "task");
-        const outcome = write.value.state.status === "completing" || write.value.state.status === "terminal"
-          ? write.value.state.outcome
-          : undefined;
+        const outcome =
+          write.value.state.status === "completing" || write.value.state.status === "terminal"
+            ? write.value.state.outcome
+            : undefined;
         const outcomeStatus = outcome?.status ?? null;
         await tx.query(
           `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, outcome_status, record)
@@ -1105,7 +1105,13 @@ export class PostgresDurableStorage implements Storage {
         }
         await tx.query(
           "INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES ($1, $2, $3, $4, $5)",
-          [id, seq, content.kind, content.version, recordJsonText(content.kind === "base" ? content.value : content.ops)],
+          [
+            id,
+            seq,
+            content.kind,
+            content.version,
+            recordJsonText(content.kind === "base" ? content.value : content.ops),
+          ],
         );
       }
       if (action.retire) {

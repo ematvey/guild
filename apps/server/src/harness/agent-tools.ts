@@ -3,12 +3,7 @@
 // `read`/`write`/`edit`/`bash` on the user's machine, so the agent reaches
 // its workspace through these names.
 
-import {
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-} from "@earendil-works/pi-durable/tools";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { JsonValue } from "@earendil-works/chord";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
@@ -55,7 +50,6 @@ export function createAgentWorkspaceTools(env: ExecutionEnv): ToolRegistration[]
     execute: (args, api, context) => tool.execute(args, withEnv(api, env), context),
   })) as ToolRegistration[];
 }
-
 
 /** The direct tool surface for an agent: its allowlist narrows the coding
  *  and skill tools, and codemode is always present (the only path to the

@@ -16,7 +16,9 @@ export function ThreadSkeleton({ width }: { width: number }) {
   return (
     <div role="status" aria-label="Loading conversation" className="min-h-0 flex-1 overflow-hidden">
       <div className="mx-auto w-full space-y-8 px-4 py-6" style={{ maxWidth: width }}>
-        <div className="flex justify-end"><Skeleton className="h-4 w-2/5" /></div>
+        <div className="flex justify-end">
+          <Skeleton className="h-4 w-2/5" />
+        </div>
         <SkeletonText lines={4} />
       </div>
     </div>
@@ -27,11 +29,7 @@ export function ThreadSkeleton({ width }: { width: number }) {
 /// track, so an idle view shows no line.
 export function ThreadProgress() {
   return (
-    <div
-      role="progressbar"
-      aria-label="Loading thread"
-      className="absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden"
-    >
+    <div role="progressbar" aria-label="Loading thread" className="absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden">
       <div className="h-full w-1/3 bg-gradient-to-r from-transparent via-primary to-transparent opacity-70 motion-safe:animate-thread-progress" />
     </div>
   );
@@ -39,15 +37,7 @@ export function ThreadProgress() {
 
 /// The chat header's title slot: a fixed-size placeholder while the title is
 /// still unknown, so the header height never changes when it lands.
-export function ThreadTitle({
-  chatId,
-  title,
-  loading,
-}: {
-  chatId: string | null;
-  title: string;
-  loading: boolean;
-}) {
+export function ThreadTitle({ chatId, title, loading }: { chatId: string | null; title: string; loading: boolean }) {
   if (chatId !== null && loading) {
     return (
       <span className="min-w-0 flex-1">
@@ -59,11 +49,7 @@ export function ThreadTitle({
   // stays that way until its first message, so it says so instead of
   // holding a skeleton open forever.
   if (title === "") {
-    return (
-      <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-        New thread
-      </span>
-    );
+    return <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">New thread</span>;
   }
   return <span className="min-w-0 flex-1 truncate font-medium">{title}</span>;
 }
@@ -81,14 +67,10 @@ export function ReasoningFrame({ text, live }: { text: string; live: boolean }) 
       icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
       title={(open) => (
         <>
-          <span className="mr-3 font-medium text-foreground/80">
-            {live ? "Thinking…" : "Thinking"}
-          </span>
+          <span className="mr-3 font-medium text-foreground/80">{live ? "Thinking…" : "Thinking"}</span>
           {/* collapsed only: expanded, the full thoughts show below */}
           {head && !open && (
-            <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
-              {head.slice(0, 160)}
-            </span>
+            <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">{head.slice(0, 160)}</span>
           )}
         </>
       )}
@@ -108,7 +90,9 @@ export function CompactionCard({ c }: { c: CompactionBlock }) {
     <Frame title={<span>Context compacted</span>}>
       <div className="space-y-2">
         <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-          <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{c.summary}</Markdown>
+          <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
+            {c.summary}
+          </Markdown>
         </div>
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
@@ -137,7 +121,7 @@ export function prettyStamp(iso: string): string {
   if (cached !== undefined) return cached;
   const d = new Date(iso);
   let text = "";
-  if (!isNaN(d.getTime())) {
+  if (!Number.isNaN(d.getTime())) {
     const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     if (d.toDateString() === day) {
       text = time;

@@ -18,7 +18,6 @@ export interface MediaRef {
 
 export type MediaMap = Map<string, MediaRef>;
 
-
 /** Inline cap for one document attachment's textual content (chars) — a
  *  single huge file must not blow the context window by itself. */
 const ATTACHMENT_INLINE_LIMIT = 80_000;
@@ -49,12 +48,14 @@ export function buildTurnText(
     if (modality === "document") {
       let text = media.get(row.id) ? Buffer.from(media.get(row.id)!.b64, "base64").toString("utf-8") : "";
       if (text.length > ATTACHMENT_INLINE_LIMIT) {
-        text = Array.from(text).slice(0, ATTACHMENT_INLINE_LIMIT).join("") + "\n…[truncated]";
+        text = `${Array.from(text).slice(0, ATTACHMENT_INLINE_LIMIT).join("")}\n…[truncated]`;
       }
       if (isTextual(row.content_type, row.filename) && text.length > 0) {
         blocks.push(`[Attachment: ${row.filename} (${row.content_type}, ${row.size_bytes} bytes)]\n${text}`);
       } else {
-        blocks.push(`[Attachment: ${row.filename} (${row.content_type}, ${row.size_bytes} bytes) — content not inlined]`);
+        blocks.push(
+          `[Attachment: ${row.filename} (${row.content_type}, ${row.size_bytes} bytes) — content not inlined]`,
+        );
       }
     } else {
       const supported = modalities.includes(modality);

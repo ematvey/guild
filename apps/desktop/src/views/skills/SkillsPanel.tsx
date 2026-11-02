@@ -15,13 +15,7 @@ import { Button } from "@guild/ui/components/button";
 import { Avatar } from "@guild/ui/components/avatar";
 import { Badge } from "@guild/ui/components/badge";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
 import { avatarChip } from "../../lib/format";
 import { compareVersions } from "./version";
@@ -64,9 +58,7 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
   const installed = install != null;
   const pin = install?.pinned_version ?? null;
   const updateTo =
-    pin !== null && item.latest_version !== null && pin !== item.latest_version
-      ? item.latest_version
-      : null;
+    pin !== null && item.latest_version !== null && pin !== item.latest_version ? item.latest_version : null;
   const meta = `${item.latest_version ?? "—"} · ${count(item.installs, "install")}`;
   return {
     slug: item.slug,
@@ -77,9 +69,7 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     latestVersion: item.latest_version ?? "—",
     installsCount: item.installs,
     gated: item.maintainer_gated,
-    gatedLabel: item.maintainer_gated
-      ? editAccessLabel(editAccess(item), item.owner?.label)
-      : null,
+    gatedLabel: item.maintainer_gated ? editAccessLabel(editAccess(item), item.owner?.label) : null,
     installed,
     pin,
     updateTo,
@@ -156,7 +146,9 @@ export function sortSkills(items: SkillItem[], key: SkillSortKey): SkillItem[] {
     case "updated":
       // The catalog carries no publish timestamps, so recency is
       // approximated by version order (versions only ever grow).
-      return copy.sort((a, b) => compareVersions(b.latest_version ?? "", a.latest_version ?? "") || a.slug.localeCompare(b.slug));
+      return copy.sort(
+        (a, b) => compareVersions(b.latest_version ?? "", a.latest_version ?? "") || a.slug.localeCompare(b.slug),
+      );
     case "az":
       return copy.sort((a, b) => a.slug.localeCompare(b.slug));
   }
@@ -241,9 +233,7 @@ export function SkillsPanel({
   const kind = filterByKind(search, filterKind, { installedSlugs, me });
   const filtered = sortSkills(kind, sortKey);
   const empty =
-    skills === null
-      ? null
-      : skillsEmptyState(query, filtered.length, filterKind !== "all" || query.trim() !== "");
+    skills === null ? null : skillsEmptyState(query, filtered.length, filterKind !== "all" || query.trim() !== "");
 
   if (editor !== null) {
     return (
@@ -333,10 +323,7 @@ export function SkillsPanel({
             <div className="flex-1" />
             {tab === "catalog" && (
               <>
-                <Select
-                  value={filterKind}
-                  onValueChange={(v) => setFilterKind(v as SkillFilterKind)}
-                >
+                <Select value={filterKind} onValueChange={(v) => setFilterKind(v as SkillFilterKind)}>
                   <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
                     <SelectValue />
                   </SelectTrigger>
@@ -373,16 +360,10 @@ export function SkillsPanel({
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
             <div className="flex flex-col gap-1.5">
-              {skills === null &&
-                [0, 1, 2, 3, 4, 5].map((i) => (
-                  <SkeletonRows key={i} rows={1} />
-                ))}
+              {skills === null && [0, 1, 2, 3, 4, 5].map((i) => <SkeletonRows key={i} rows={1} />)}
               {skills !== null &&
                 filtered.map((item) => {
-                  const row = skillRow(
-                    item,
-                    installs?.find((i) => i.slug === item.slug) ?? null,
-                  );
+                  const row = skillRow(item, installs?.find((i) => i.slug === item.slug) ?? null);
                   return (
                     <div
                       key={row.slug}
@@ -442,7 +423,7 @@ export function SkillsPanel({
                           )}
                           <span className="min-w-[90px] whitespace-nowrap text-right">
                             <span className="font-medium text-foreground">{row.latestVersion}</span>
-                            {' · '}
+                            {" · "}
                             {count(row.installsCount, "install")}
                           </span>
                         </div>

@@ -7,12 +7,7 @@ import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { REGISTRY_KINDS, registryDetailCodec, type RegistryKind, type SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import {
-  registryItemPath,
-  registryItemsPath,
-  reviewRegistryItem,
-  SETTINGS_PATHS,
-} from "../../../lib/api/settings";
+import { registryItemPath, registryItemsPath, reviewRegistryItem, SETTINGS_PATHS } from "../../../lib/api/settings";
 import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
 import { formatVersion } from "../../skills/version";
@@ -60,34 +55,21 @@ function ReviewBadge({ status }: { status: string }) {
   );
 }
 
-export default function RegistrySection({
-  detail = null,
-  onDetailChange,
-}: SectionDetailProps) {
+export default function RegistrySection({ detail = null, onDetailChange }: SectionDetailProps) {
   const view = registryDetailCodec.parse(detail);
   if (view.kind === "item") {
-    return (
-      <ItemDetail
-        kind={view.itemKind}
-        slug={view.slug}
-        onBack={() => onDetailChange(null)}
-      />
-    );
+    return <ItemDetail kind={view.itemKind} slug={view.slug} onBack={() => onDetailChange(null)} />;
   }
   return (
     <RegistryList
-      onOpen={(itemKind, slug) =>
-        onDetailChange(registryDetailCodec.format({ kind: "item", itemKind, slug }))
-      }
+      onOpen={(itemKind, slug) => onDetailChange(registryDetailCodec.format({ kind: "item", itemKind, slug }))}
     />
   );
 }
 
 function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {
   const mcp = useCachedGet<{ items: ItemRow[] }>(SETTINGS_PATHS.registryMcp);
-  const integration = useCachedGet<{ items: ItemRow[] }>(
-    SETTINGS_PATHS.registryIntegration,
-  );
+  const integration = useCachedGet<{ items: ItemRow[] }>(SETTINGS_PATHS.registryIntegration);
   const items: Record<Kind, ItemRow[] | null> = {
     mcp: mcp.data?.items ?? null,
     integration: integration.data?.items ?? null,
@@ -110,9 +92,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
             <div className="min-w-0">
               <p className="truncate font-medium">{row.original.slug}</p>
               {row.original.description && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {row.original.description}
-                </p>
+                <p className="truncate text-xs text-muted-foreground">{row.original.description}</p>
               )}
             </div>
           </div>
@@ -167,21 +147,11 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
   );
 }
 
-function ItemDetail({
-  kind,
-  slug,
-  onBack,
-}: {
-  kind: Kind;
-  slug: string;
-  onBack: () => void;
-}) {
+function ItemDetail({ kind, slug, onBack }: { kind: Kind; slug: string; onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const itemsRes = useCachedGet<{ items: ItemRow[] }>(registryItemsPath(kind));
-  const versionsRes = useCachedGet<{ versions: VersionRow[] }>(
-    registryItemPath(kind, slug),
-  );
+  const versionsRes = useCachedGet<{ versions: VersionRow[] }>(registryItemPath(kind, slug));
   const item = itemsRes.data?.items.find((x) => x.slug === slug) ?? null;
   const versions = versionsRes.data?.versions ?? null;
 
@@ -225,7 +195,12 @@ function ItemDetail({
   };
 
   if (item === null) {
-    if (itemsRes.error) return <p role="alert" className="text-sm text-destructive">{itemsRes.error}</p>;
+    if (itemsRes.error)
+      return (
+        <p role="alert" className="text-sm text-destructive">
+          {itemsRes.error}
+        </p>
+      );
     if (itemsRes.settled) return <EmptyState icon={Package} title="Item not found" hint="It may have been removed." />;
     return <SkeletonForm />;
   }
@@ -237,22 +212,15 @@ function ItemDetail({
         description={item?.description ?? undefined}
         back={{ label: "Registry", onClick: onBack }}
         actions={
-          <>
-            {item?.review_status !== "approved" ? (
-              <Button size="sm" disabled={busy} onClick={() => review("approved")}>
-                Approve
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => review("draft")}
-              >
-                Revert to draft
-              </Button>
-            )}
-          </>
+          item?.review_status !== "approved" ? (
+            <Button size="sm" disabled={busy} onClick={() => review("approved")}>
+              Approve
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => review("draft")}>
+              Revert to draft
+            </Button>
+          )
         }
       />
 
@@ -260,19 +228,19 @@ function ItemDetail({
         <FactCard label="Kind">
           <Badge variant="secondary">{KIND_LABELS[kind]}</Badge>
         </FactCard>
-        <FactCard label="Review status">
-          {item ? <ReviewBadge status={item.review_status} /> : "…"}
-        </FactCard>
+        <FactCard label="Review status">{item ? <ReviewBadge status={item.review_status} /> : "…"}</FactCard>
         <FactCard label="Latest version">
-          <span className="font-mono">
-            {item?.latest_version ? formatVersion(item.latest_version) : "—"}
-          </span>
+          <span className="font-mono">{item?.latest_version ? formatVersion(item.latest_version) : "—"}</span>
         </FactCard>
       </FactGrid>
 
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium">Versions</p>
-        {versionsRes.error && versions === null ? <p role="alert" className="text-sm text-destructive">{versionsRes.error}</p> : versions === null ? (
+        {versionsRes.error && versions === null ? (
+          <p role="alert" className="text-sm text-destructive">
+            {versionsRes.error}
+          </p>
+        ) : versions === null ? (
           <SkeletonRows rows={1} />
         ) : versions.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">No versions published.</p>
@@ -292,8 +260,7 @@ function ItemDetail({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       <p className="flex items-center gap-1 text-xs text-muted-foreground">
-        <ArrowUpRight className="size-3.5" /> publishing stays API-side
-        ({`POST /api/v1/registry/${kind}`})
+        <ArrowUpRight className="size-3.5" /> publishing stays API-side ({`POST /api/v1/registry/${kind}`})
       </p>
     </div>
   );

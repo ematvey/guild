@@ -1,22 +1,8 @@
-import {
-  ArrowRight,
-  Clock,
-  FileText,
-  MessageSquare,
-  Pencil,
-  Plus,
-  Wrench,
-} from "lucide-react";
+import { ArrowRight, Clock, FileText, MessageSquare, Pencil, Plus, Wrench } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { relativeTime } from "../../lib/relative-time";
 import { count } from "../../lib/format";
-import {
-  createAgentThread,
-  sendAgentTurn,
-  type Agent,
-  type AgentRoutine,
-  type AgentThread,
-} from "./agents-api";
+import { createAgentThread, sendAgentTurn, type Agent, type AgentRoutine, type AgentThread } from "./agents-api";
 import {
   AGENT_TABS,
   DEFAULT_ACTIVITY_FILTERS,
@@ -150,7 +136,15 @@ export function AgentPage({
   if (error !== null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <PageHeader variant="bar" title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
+        <PageHeader
+          variant="bar"
+          title="Agent"
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>
+              Agents
+            </Button>
+          }
+        />
         <PageBody>
           <ErrorState message={error} />
         </PageBody>
@@ -170,7 +164,8 @@ export function AgentPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader variant="bar"
+      <PageHeader
+        variant="bar"
         title={
           <span className="flex min-w-0 items-center gap-2">
             <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
@@ -192,62 +187,39 @@ export function AgentPage({
         actions={
           <>
             {tab !== "threads" && (
-              <Button variant="outline" size="sm" onClick={() => void newThread()} disabled={agent.status === "deleting"}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void newThread()}
+                disabled={agent.status === "deleting"}
+              >
                 <Plus />
                 New thread
               </Button>
             )}
-            <AgentActions
-              agent={agent}
-              manage={manage}
-              onDeleted={() => onNavigate({ view: "directory" })}
-            />
+            <AgentActions agent={agent} manage={manage} onDeleted={() => onNavigate({ view: "directory" })} />
           </>
         }
         tabs={
           <TabBar
             label="Agent sections"
-            tabs={
-              viewer.role === "admin"
-                ? AGENT_TABS
-                : AGENT_TABS.filter(([id]) => id !== "activity")
-            }
+            tabs={viewer.role === "admin" ? AGENT_TABS : AGENT_TABS.filter(([id]) => id !== "activity")}
             value={tab}
             onChange={setTab}
           />
         }
       />
       {tab === "threads" && threadId ? (
-        <ThreadList
-          agent={agent}
-          onNavigate={onNavigate}
-          onNewThread={newThread}
-          onOpenChat={onOpenChat}
-        />
+        <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
       ) : tab === "files" ? (
-        <AgentFiles
-          agentId={agent.id}
-          filePath={filePath}
-          onNavigate={onNavigate}
-          onOpenChat={onOpenChat}
-        />
+        <AgentFiles agentId={agent.id} filePath={filePath} onNavigate={onNavigate} onOpenChat={onOpenChat} />
       ) : (
         <PageBody>
           {tab === "overview" && (
-            <AgentOverview
-              agent={agent}
-              onNavigate={onNavigate}
-              onNewThread={newThread}
-              onOpenChat={onOpenChat}
-            />
+            <AgentOverview agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
           )}
           {tab === "threads" && (
-            <ThreadList
-              agent={agent}
-              onNavigate={onNavigate}
-              onNewThread={newThread}
-              onOpenChat={onOpenChat}
-            />
+            <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
           )}
           {tab === "routines" && (
             <AgentRoutines
@@ -302,10 +274,7 @@ function AgentOverview({
   const runs = runSlice.rows;
   const recent = (threads ?? []).slice(0, 3);
   const recentRuns = [...(runs ?? [])]
-    .sort(
-      (a, b) =>
-        Date.parse(b.started_at ?? b.created_at) - Date.parse(a.started_at ?? a.created_at),
-    )
+    .sort((a, b) => Date.parse(b.started_at ?? b.created_at) - Date.parse(a.started_at ?? a.created_at))
     .slice(0, 4);
 
   return (
@@ -331,8 +300,8 @@ function AgentOverview({
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            The agent reads these files at the start of each thread and can edit them itself. Changes apply on the
-            next turn.
+            The agent reads these files at the start of each thread and can edit them itself. Changes apply on the next
+            turn.
           </p>
         </Section>
 
@@ -359,16 +328,19 @@ function AgentOverview({
                     <MessageSquare className="size-3.5 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{thread.title}</span>
                     {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
-                    <span className="text-xs text-muted-foreground">
-                      {relativeTime(thread.last_activity_at)}
-                    </span>
+                    <span className="text-xs text-muted-foreground">{relativeTime(thread.last_activity_at)}</span>
                   </button>
                 </li>
               ))}
             </ul>
           )}
           <div className="mt-2 flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => void onNewThread()} disabled={agent.status === "deleting"}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void onNewThread()}
+              disabled={agent.status === "deleting"}
+            >
               <Plus />
               New thread
             </Button>

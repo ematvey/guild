@@ -3,15 +3,20 @@
 // FIFOs and oversized files. Normal files still read and write.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  readWorkspaceFile,
-  writeWorkspaceFile,
-  WorkspaceFsError,
-} from "../../agents/workspace-fs.js";
+import { readWorkspaceFile, writeWorkspaceFile, WorkspaceFsError } from "../../agents/workspace-fs.js";
 import { CONFIG_MAX_BYTES, readAgentConfig, seedAgentWorkspace } from "../../agents/workspace-config.js";
 
 const dirs: string[] = [];
@@ -53,7 +58,9 @@ describe("readWorkspaceFile", () => {
   it("refuses a symlinked final segment", async () => {
     const { root, outside } = scratch();
     symlinkSync(path.join(outside, "secret.txt"), path.join(root, "AGENTS.md"));
-    expect(await reasonOf(readWorkspaceFile(root, "AGENTS.md", { maxBytes: 1024, overflow: "refuse" }))).toBe("symlink");
+    expect(await reasonOf(readWorkspaceFile(root, "AGENTS.md", { maxBytes: 1024, overflow: "refuse" }))).toBe(
+      "symlink",
+    );
   });
 
   it("refuses a symlinked directory segment", async () => {
@@ -66,9 +73,9 @@ describe("readWorkspaceFile", () => {
 
   it("refuses a hard path escape and a device", async () => {
     const { root } = scratch();
-    expect(await reasonOf(readWorkspaceFile(root, "../outside/secret.txt", { maxBytes: 1024, overflow: "refuse" }))).toBe(
-      "bad_path",
-    );
+    expect(
+      await reasonOf(readWorkspaceFile(root, "../outside/secret.txt", { maxBytes: 1024, overflow: "refuse" })),
+    ).toBe("bad_path");
     symlinkSync("/dev/zero", path.join(root, "zero"));
     expect(await reasonOf(readWorkspaceFile(root, "zero", { maxBytes: 1024, overflow: "refuse" }))).toBe("symlink");
   });
@@ -81,7 +88,9 @@ describe("readWorkspaceFile", () => {
     } catch {
       return;
     }
-    expect(await reasonOf(readWorkspaceFile(root, "AGENTS.md", { maxBytes: 1024, overflow: "refuse" }))).toBe("not_file");
+    expect(await reasonOf(readWorkspaceFile(root, "AGENTS.md", { maxBytes: 1024, overflow: "refuse" }))).toBe(
+      "not_file",
+    );
   });
 
   it("caps a huge sparse file: refused or truncated to its head", async () => {

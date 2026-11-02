@@ -2,7 +2,15 @@ import { describe, it, expect } from "vitest";
 import { beginOidcLogin, consumeOidcLogin } from "./oidc-login";
 const storage = () => {
   const values = new Map<string, string>();
-  return { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
+  return {
+    getItem: (k: string) => values.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      values.set(k, v);
+    },
+    removeItem: (k: string) => {
+      values.delete(k);
+    },
+  };
 };
 describe("browser-bound OIDC", () => {
   it("accepts its tab's callback once", () => {

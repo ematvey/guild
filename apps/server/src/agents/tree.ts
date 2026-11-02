@@ -8,17 +8,13 @@ import type { ChatTree, SubagentNode } from "@guild/wire/rest";
 
 /** A thread's display title: its chat's title, the name the sidebar shows
  *  (a chat rename writes only the chat), else the thread's own title. */
-const CHAT_TITLE = (chat: string, thread: string): string =>
-  `COALESCE(NULLIF(${chat}.title, ''), ${thread}.title)`;
+const CHAT_TITLE = (chat: string, thread: string): string => `COALESCE(NULLIF(${chat}.title, ''), ${thread}.title)`;
 
 /** One node of a chat's thread subtree, with its latest run status. */
 export type { SubagentNode };
 
 /** Every thread under the chat's own thread, at any depth. */
-export async function chatSubagentNodes(
-  pool: PlatformPool,
-  chatId: string,
-): Promise<SubagentNode[]> {
+export async function chatSubagentNodes(pool: PlatformPool, chatId: string): Promise<SubagentNode[]> {
   const res = await pool.query<{
     thread_id: string;
     chat_id: string;

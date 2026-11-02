@@ -21,10 +21,30 @@ const running: AgentRun = makeRun({ agent_name: "Echo", started_at: "2026-11-01T
 
 function span(id: string, output: string): SpanRow {
   return {
-    span_id: id, trace_id: "r1", run_id: "r1", parent_span_id: null, name: "model", span_type: "llm",
-    status: "ok", start_time: "2026-11-01T00:00:01Z", end_time: "2026-11-01T00:00:02Z", duration_ms: 1000,
-    model: "m", provider: "p", tokens_in: 10, tokens_out: 5, reasoning_tokens: 0, cost_usd: 0, error: "",
-    input: "", output, request_id: null, caller: "model", session_id: null, chat_id: null, attributes: {},
+    span_id: id,
+    trace_id: "r1",
+    run_id: "r1",
+    parent_span_id: null,
+    name: "model",
+    span_type: "llm",
+    status: "ok",
+    start_time: "2026-11-01T00:00:01Z",
+    end_time: "2026-11-01T00:00:02Z",
+    duration_ms: 1000,
+    model: "m",
+    provider: "p",
+    tokens_in: 10,
+    tokens_out: 5,
+    reasoning_tokens: 0,
+    cost_usd: 0,
+    error: "",
+    input: "",
+    output,
+    request_id: null,
+    caller: "model",
+    session_id: null,
+    chat_id: null,
+    attributes: {},
   };
 }
 
@@ -51,7 +71,11 @@ describe("run page", () => {
 
     const done: AgentRun = { ...running, status: "succeeded", tokens: 1500, finished_at: "2026-11-01T00:00:03Z" };
     const stale: TraceRow = { ...first, call_count: 2, tokens_in: 20, tokens_out: 10 };
-    api.getTrace.mockResolvedValueOnce({ trace: stale, spans: [span("s1", "first"), span("s2", "final")], children: [] });
+    api.getTrace.mockResolvedValueOnce({
+      trace: stale,
+      spans: [span("s1", "first"), span("s2", "final")],
+      children: [],
+    });
     api.getRun.mockResolvedValue(done);
     act(() => applyAgentRun(done));
 

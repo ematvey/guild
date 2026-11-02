@@ -60,10 +60,11 @@ beforeAll(async () => {
     orgId,
   };
   // A registered machine for the member (project bindability).
-  await env.db.query(
-    "INSERT INTO machines (machine_id, org_id, user_id) VALUES ($1, $2, $3)",
-    ["machine-1", orgId, memberId],
-  );
+  await env.db.query("INSERT INTO machines (machine_id, org_id, user_id) VALUES ($1, $2, $3)", [
+    "machine-1",
+    orgId,
+    memberId,
+  ]);
 }, 120_000);
 
 afterAll(async () => {
@@ -89,9 +90,7 @@ const inject = (
     url,
     headers: {
       authorization: `Bearer ${token}`,
-      ...(payload === undefined || isBuffer
-        ? {}
-        : { "content-type": "application/json" }),
+      ...(payload === undefined || isBuffer ? {} : { "content-type": "application/json" }),
       ...(isBuffer ? { "content-type": "application/octet-stream" } : {}),
     },
     ...(payload === undefined ? {} : { payload: payload as object }),
@@ -165,7 +164,9 @@ describe("M6 registry", () => {
       status: "approved",
     });
     expect(bare.statusCode).toBe(400);
-    expect(json(bare).error).toMatchObject({ message: "approval requires reviewed_version and reviewed_bundle_sha256" });
+    expect(json(bare).error).toMatchObject({
+      message: "approval requires reviewed_version and reviewed_bundle_sha256",
+    });
 
     const stale = await inject("POST", "/api/v1/registry/skill/hello-skill/review", e.adminToken, {
       status: "approved",
@@ -175,8 +176,11 @@ describe("M6 registry", () => {
     expect(stale.statusCode).toBe(409);
     expect(json(stale).error).toMatchObject({ code: "reviewed_version_stale" });
 
-    const sha = ((json(await inject("GET", "/api/v1/registry/skill/hello-skill", e.memberToken))["versions"] ??
-      []) as { bundle_sha256: string }[])[0]!.bundle_sha256;
+    const sha = (
+      (json(await inject("GET", "/api/v1/registry/skill/hello-skill", e.memberToken))["versions"] ?? []) as {
+        bundle_sha256: string;
+      }[]
+    )[0]!.bundle_sha256;
     const wrongSha = await inject("POST", "/api/v1/registry/skill/hello-skill/review", e.adminToken, {
       status: "approved",
       reviewed_version: "1.0.0",
@@ -305,7 +309,7 @@ describe("M6 releases", () => {
 
     const list = await inject("GET", "/api/v1/releases", e.memberToken);
     expect(list.statusCode).toBe(200);
-    expect(((json(list)["releases"] ?? []) as unknown[])).toHaveLength(1);
+    expect((json(list)["releases"] ?? []) as unknown[]).toHaveLength(1);
   });
 
   it("validates upload params", async () => {
@@ -458,7 +462,10 @@ describe("M6 projects", () => {
     expect(listed.statusCode).toBe(200);
     expect(((json(listed)["projects"] ?? []) as unknown[]).length).toBeGreaterThanOrEqual(1);
 
-    const updated = await inject("PUT", `/api/v1/projects/${pid}`, e.memberToken, { name: "web2", folder: "C:\\code\\web2" });
+    const updated = await inject("PUT", `/api/v1/projects/${pid}`, e.memberToken, {
+      name: "web2",
+      folder: "C:\\code\\web2",
+    });
     expect(updated.statusCode).toBe(200);
     expect((JSON.parse(updated.body) as Record<string, unknown>)["name"]).toBe("web2");
 
@@ -597,10 +604,12 @@ describe("M6 teams", () => {
 
   it("manages members", async () => {
     const created = await inject("POST", "/api/v1/admin/teams", e.adminToken, { name: "members-team" });
-    const teamId = ((json(created) as unknown as { id: string }).id);
+    const teamId = (json(created) as unknown as { id: string }).id;
     const add = await inject("POST", `/api/v1/admin/teams/${teamId}/members`, e.adminToken, { user_id: e.memberId });
     expect(add.statusCode).toBe(200);
-    const addAgain = await inject("POST", `/api/v1/admin/teams/${teamId}/members`, e.adminToken, { user_id: e.memberId });
+    const addAgain = await inject("POST", `/api/v1/admin/teams/${teamId}/members`, e.adminToken, {
+      user_id: e.memberId,
+    });
     expect(addAgain.statusCode).toBe(200); // idempotent
 
     const members = await inject("GET", `/api/v1/admin/teams/${teamId}/members`, e.adminToken);
@@ -616,7 +625,7 @@ describe("M6 teams", () => {
     const remove = await inject("DELETE", `/api/v1/admin/teams/${teamId}/members/${e.memberId}`, e.adminToken);
     expect(remove.statusCode).toBe(200);
     const after = await inject("GET", `/api/v1/admin/teams/${teamId}/members`, e.adminToken);
-    expect(((json(after)["members"] ?? []) as unknown[])).toHaveLength(0);
+    expect((json(after)["members"] ?? []) as unknown[]).toHaveLength(0);
     await inject("DELETE", `/api/v1/admin/teams/${teamId}`, e.adminToken);
   });
 });
@@ -680,7 +689,9 @@ describe("M6 admin users + prompts", () => {
     const set = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "You are terse." });
     expect(set.statusCode).toBe(200);
     expect(json(set)).toEqual({ ok: true });
-    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toMatchObject({ prompt: "You are terse." });
+    expect(json(await inject("GET", "/api/v1/admin/assistant-prompt", e.adminToken))).toMatchObject({
+      prompt: "You are terse.",
+    });
 
     const reset = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "" });
     expect(reset.statusCode).toBe(200);
@@ -761,7 +772,9 @@ describe("M6 admin integrations (read paths)", () => {
     expect(json(put)).toEqual({ name: "search_repositories", enabled: true, approval: "always_ask" });
 
     const stored = await e.env.db.query("SELECT config FROM integrations WHERE id = $1", [rowId]);
-    expect(((stored.rows[0]!.config as Record<string, unknown>)["tools"] as Record<string, unknown>)["search_repositories"]).toEqual({
+    expect(
+      ((stored.rows[0]!.config as Record<string, unknown>)["tools"] as Record<string, unknown>)["search_repositories"],
+    ).toEqual({
       enabled: true,
       approval: "always_ask",
     });
@@ -773,7 +786,9 @@ describe("M6 admin integrations (read paths)", () => {
     );
     expect((events.rows[0]!.payload as Record<string, unknown>)["tool"]).toBe("search_repositories");
 
-    const badName = await inject("PUT", `/api/v1/admin/integrations/${rowId}/tools/bad%2Fname`, e.adminToken, { enabled: true });
+    const badName = await inject("PUT", `/api/v1/admin/integrations/${rowId}/tools/bad%2Fname`, e.adminToken, {
+      enabled: true,
+    });
     expect(badName.statusCode).toBe(400); // the path segment arrives decoded as bad/name → invalid
   });
 
@@ -788,7 +803,9 @@ describe("M6 admin integrations (read paths)", () => {
     expect(json(put)).toEqual({ name: "get_file", enabled: true, approval: "always_allow" });
 
     const stored = await e.env.db.query("SELECT config FROM integrations WHERE id = $1", [rowId]);
-    expect(((stored.rows[0]!.config as Record<string, unknown>)["tools"] as Record<string, unknown>)["get_file"]).toEqual({
+    expect(
+      ((stored.rows[0]!.config as Record<string, unknown>)["tools"] as Record<string, unknown>)["get_file"],
+    ).toEqual({
       enabled: true,
       approval: "always_allow",
     });
@@ -800,7 +817,11 @@ describe("M6 admin integrations (read paths)", () => {
   });
 
   it("deletes an integration row with its secrets", async () => {
-    const delGithub = await inject("DELETE", `/api/v1/admin/integrations/${(await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = 'github'", [e.orgId])).rows[0]!.id}`, e.adminToken);
+    const delGithub = await inject(
+      "DELETE",
+      `/api/v1/admin/integrations/${(await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = 'github'", [e.orgId])).rows[0]!.id}`,
+      e.adminToken,
+    );
     expect(delGithub.statusCode).toBe(200);
     // Deleting the configured row puts github back on the available list.
     const after = json(await inject("GET", "/api/v1/admin/integrations", e.adminToken)) as unknown as {
@@ -821,7 +842,10 @@ describe("M6 admin integrations (read paths)", () => {
     expect(del.statusCode).toBe(200);
     const left = await e.env.db.query("SELECT * FROM integrations WHERE id = $1", [rowId]);
     expect(left.rows).toHaveLength(0);
-    const secrets = await e.env.db.query("SELECT * FROM integration_secrets WHERE org_id = $1 AND integration = 'slack'", [e.orgId]);
+    const secrets = await e.env.db.query(
+      "SELECT * FROM integration_secrets WHERE org_id = $1 AND integration = 'slack'",
+      [e.orgId],
+    );
     expect(secrets.rows).toHaveLength(0);
   });
 });
@@ -866,9 +890,9 @@ describe("M6 web serving", () => {
         expect(JSON.parse(api.body)).toEqual({ error: { code: "not_found", message: "no such route" } });
 
         // A traversal attempt is not a bundled file → index.html.
-        const escape = await env.app.inject({ method: "GET", url: "/assets/../../etc/passwd" });
-        expect(escape.statusCode).toBe(200);
-        expect(escape.body).toBe("<html>index</html>");
+        const traversal = await env.app.inject({ method: "GET", url: "/assets/../../etc/passwd" });
+        expect(traversal.statusCode).toBe(200);
+        expect(traversal.body).toBe("<html>index</html>");
       } finally {
         await env.cleanup();
       }
@@ -904,7 +928,11 @@ describe("M6 faro ingest", () => {
     });
     await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
     const addr = collector.address() as { port: number };
-    const env = await createObjectStoreStack("error", { GUILD_FARO_URL: `http://127.0.0.1:${addr.port}/collect` }, "m6");
+    const env = await createObjectStoreStack(
+      "error",
+      { GUILD_FARO_URL: `http://127.0.0.1:${addr.port}/collect` },
+      "m6",
+    );
     try {
       const payload = JSON.stringify({ type: "measurement", meta: { browser: "test" } });
       const res = await env.app.inject({

@@ -3,7 +3,14 @@
 // updater manifest. Artifacts are ed25519-signed over the sha256 digest so
 // downloads are verifiable offline.
 
-import { createHmac, createPrivateKey, createPublicKey, randomBytes, sign as cryptoSign, timingSafeEqual } from "node:crypto";
+import {
+  createHmac,
+  createPrivateKey,
+  createPublicKey,
+  randomBytes,
+  sign as cryptoSign,
+  timingSafeEqual,
+} from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
@@ -166,11 +173,7 @@ export function registerReleaseRoutes(
     await requireAdminUser(ctx, req);
     const version = queryParam(req, "version");
     if (version === undefined) throw ApiError.badRequest("missing version");
-    if (
-      version === "" ||
-      version.length > 64 ||
-      ![...version].every((c) => /[a-zA-Z0-9.\-_]/.test(c))
-    ) {
+    if (version === "" || version.length > 64 || ![...version].every((c) => /[a-zA-Z0-9.\-_]/.test(c))) {
       throw ApiError.badRequest("bad version");
     }
     const kind = queryParam(req, "kind");
@@ -364,7 +367,7 @@ export function toRfc3339Offset(pgText: string): string {
   let fraction = "";
   if (m[2] !== undefined) {
     const digits = m[2].replace(/0+$/, "");
-    if (digits.length > 0) fraction = "." + digits.padEnd(digits.length <= 3 ? 3 : 6, "0");
+    if (digits.length > 0) fraction = `.${digits.padEnd(digits.length <= 3 ? 3 : 6, "0")}`;
   }
   return `${m[1]}${fraction}+00:00`;
 }

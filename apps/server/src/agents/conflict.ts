@@ -46,7 +46,10 @@ interface TurnRow {
 
 function clipPaths(paths: string[]): string {
   const unique = [...new Set(paths)];
-  const shown = unique.slice(0, MAX_NOTICE_PATHS).map((item) => `\`${item}\``).join(", ");
+  const shown = unique
+    .slice(0, MAX_NOTICE_PATHS)
+    .map((item) => `\`${item}\``)
+    .join(", ");
   return unique.length > MAX_NOTICE_PATHS ? `${shown} and ${unique.length - MAX_NOTICE_PATHS} more` : shown;
 }
 
@@ -60,9 +63,11 @@ function pathArg(args: Record<string, unknown>): string[] {
  *  future or MCP-provided patch tool is covered. */
 function patchPaths(args: Record<string, unknown>): string[] {
   const out = pathArg(args);
-  const patch = typeof args["patch"] === "string" ? args["patch"] : typeof args["input"] === "string" ? args["input"] : "";
+  const patch =
+    typeof args["patch"] === "string" ? args["patch"] : typeof args["input"] === "string" ? args["input"] : "";
   for (const line of patch.split(/\r?\n/)) {
-    const match = /^\*\*\* (?:Update|Add|Delete) File:\s*(.+)$/.exec(line) ?? /^(?:\+\+\+|---)\s+[ab]\/(.+)$/.exec(line);
+    const match =
+      /^\*\*\* (?:Update|Add|Delete) File:\s*(.+)$/.exec(line) ?? /^(?:\+\+\+|---)\s+[ab]\/(.+)$/.exec(line);
     if (match?.[1] !== undefined) out.push(match[1].trim());
   }
   return out;
@@ -145,11 +150,7 @@ export class AgentConflictJournal {
    *  for the writer when another running turn touched an overlapping path
    *  after this turn's baseline. Also appends reciprocal system messages to
    *  the other turn's thread. */
-  async recordToolCall(
-    chatId: string,
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<string | null> {
+  async recordToolCall(chatId: string, toolName: string, args: Record<string, unknown>): Promise<string | null> {
     const paths = writtenPaths(toolName, args);
     if (paths.length === 0) return null;
     const turn = await this.beginTurn(chatId);
@@ -188,9 +189,7 @@ export class AgentConflictJournal {
       // Paths carry no per-touch timestamp in the journal schema, so an
       // overlap with another running turn is reported to both sides. The
       // conservative extra notice is preferable to a missed conflict.
-      writerNotices.push(
-        `Thread ${otherTitle} modified ${clipPaths(overlap)} — re-read before editing.`,
-      );
+      writerNotices.push(`Thread ${otherTitle} modified ${clipPaths(overlap)} — re-read before editing.`);
       if (otherStarted <= myStarted) {
         await this.appendNotice(other, mine, paths);
       }
@@ -209,18 +208,16 @@ export class AgentConflictJournal {
   }
 
   private async threadTitle(threadId: string): Promise<string> {
-    const res = await this.deps.pool.query<{ title: string }>(
-      "SELECT title FROM agent_threads WHERE id = $1",
-      [threadId],
-    );
+    const res = await this.deps.pool.query<{ title: string }>("SELECT title FROM agent_threads WHERE id = $1", [
+      threadId,
+    ]);
     return res.rows[0]?.title?.trim() || threadId;
   }
 
   private async appendNotice(other: TurnRow, writer: TurnRow, paths: string[]): Promise<void> {
-    const chat = await this.deps.pool.query<{ chat_id: string }>(
-      "SELECT chat_id FROM agent_threads WHERE id = $1",
-      [other.thread_id],
-    );
+    const chat = await this.deps.pool.query<{ chat_id: string }>("SELECT chat_id FROM agent_threads WHERE id = $1", [
+      other.thread_id,
+    ]);
     const chatId = chat.rows[0]?.chat_id;
     if (chatId === undefined) return;
     const title = await this.threadTitle(writer.thread_id);
@@ -248,11 +245,7 @@ export function createConflictHook(
       try {
         const chatId = await chatOfConversation(api.conversationId);
         if (chatId === null) return result;
-        const notice = await journal.recordToolCall(
-          chatId,
-          call.name,
-          call.arguments as Record<string, unknown>,
-        );
+        const notice = await journal.recordToolCall(chatId, call.name, call.arguments as Record<string, unknown>);
         if (notice === null) return result;
         return {
           ...result,

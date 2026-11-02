@@ -19,12 +19,7 @@ import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../mark
 import { highlightJs } from "../js-highlight";
 import { openExternal } from "../../lib/open-external";
 import { toolArtifactBlobUrl } from "../../lib/api/chats";
-import {
-  artifactCardOf,
-  type ArtifactCard,
-  type CodemodeCallRow,
-  type ToolBlock,
-} from "../../lib/thread-reducer";
+import { artifactCardOf, type ArtifactCard, type CodemodeCallRow, type ToolBlock } from "../../lib/thread-reducer";
 import { formatBytes } from "../../lib/format";
 import { argOf, codemodeDuration, parseSearchResults, safeUrl, toolKind, toolLabel, toolPreview } from "./tool-text";
 
@@ -36,11 +31,7 @@ export function StatusPill({ status }: { status: "running" | "done" | "error" })
     error: "border-destructive/40 bg-destructive/10 text-destructive",
   }[status];
   return (
-    <span
-      className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}
-    >
-      {status}
-    </span>
+    <span className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}>{status}</span>
   );
 }
 
@@ -113,10 +104,7 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
         <span className="hidden shrink-0 text-muted-foreground/70 sm:inline">{card.content_type}</span>
       )}
       {card.path && (
-        <span
-          className="hidden w-full truncate font-mono text-xs text-muted-foreground/60 sm:block"
-          title={card.path}
-        >
+        <span className="hidden w-full truncate font-mono text-xs text-muted-foreground/60 sm:block" title={card.path}>
           {card.path}
         </span>
       )}
@@ -127,11 +115,7 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
         disabled={state === "busy"}
         onClick={() => void download()}
       >
-        {state === "busy" ? (
-          <Loader2 className="size-3 animate-spin" />
-        ) : (
-          <Download className="size-3" />
-        )}
+        {state === "busy" ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
         {state === "failed" ? "Retry" : "Download"}
       </button>
     </div>
@@ -199,7 +183,12 @@ function ToolBody({ t }: { t: ToolBlock }) {
     let code = "";
     try {
       const a: unknown = JSON.parse(t.args);
-      code = typeof a === "string" ? a : typeof (a as { code?: unknown })?.code === "string" ? ((a as { code: string }).code) : "";
+      code =
+        typeof a === "string"
+          ? a
+          : typeof (a as { code?: unknown })?.code === "string"
+            ? (a as { code: string }).code
+            : "";
     } catch {
       code = t.args ?? "";
     }
@@ -220,9 +209,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             {t.content}
           </pre>
         )}
-        {t.status === "running" && (
-          <span className="animate-pulse text-muted-foreground">running…</span>
-        )}
+        {t.status === "running" && <span className="animate-pulse text-muted-foreground">running…</span>}
       </div>
     );
   }
@@ -233,9 +220,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
     if (card) return <ArtifactDownloadCard card={card} />;
   }
   if (kind === "search") {
-    const sources = m?.sources?.length
-      ? m.sources
-      : parseSearchResults(t.content ?? "");
+    const sources = m?.sources?.length ? m.sources : parseSearchResults(t.content ?? "");
     return (
       <div className="space-y-2">
         {sources.map((s, i) => {
@@ -246,7 +231,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
                 <a
                   href={href}
                   className="break-all font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
-                  onClick={e => {
+                  onClick={(e) => {
                     e.preventDefault();
                     openExternal(href);
                   }}
@@ -260,9 +245,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             </div>
           );
         })}
-        {t.status === "running" && (
-          <span className="animate-pulse text-muted-foreground">running…</span>
-        )}
+        {t.status === "running" && <span className="animate-pulse text-muted-foreground">running…</span>}
         {sources.length === 0 && t.content && (
           <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs text-muted-foreground">
             {t.content}
@@ -283,7 +266,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
                 href={href}
                 className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
                 title={url}
-                onClick={e => {
+                onClick={(e) => {
                   e.preventDefault();
                   openExternal(href);
                 }}
@@ -309,12 +292,12 @@ function ToolBody({ t }: { t: ToolBlock }) {
         {m?.title && <p className="font-medium">{m.title}</p>}
         {t.content && (
           <div className={`max-h-64 overflow-y-auto ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{t.content}</Markdown>
+            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
+              {t.content}
+            </Markdown>
           </div>
         )}
-        {t.status === "running" && (
-          <span className="animate-pulse text-muted-foreground">running…</span>
-        )}
+        {t.status === "running" && <span className="animate-pulse text-muted-foreground">running…</span>}
       </div>
     );
   }
@@ -363,9 +346,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
         <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed">
           {lines.map((l, i) => (
             <div key={i} className="flex gap-2">
-              <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">
-                {start + i}
-              </span>
+              <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">{start + i}</span>
               <span className="whitespace-pre-wrap break-all">{l}</span>
             </div>
           ))}
@@ -424,9 +405,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
           {t.content}
         </pre>
       )}
-      {t.status === "running" && (
-        <span className="animate-pulse text-muted-foreground">running…</span>
-      )}
+      {t.status === "running" && <span className="animate-pulse text-muted-foreground">running…</span>}
     </div>
   );
 }
@@ -444,14 +423,9 @@ export function ToolFrame({ t }: { t: ToolBlock }) {
       icon={<ToolKindIcon kind={toolKind(t)} />}
       title={
         <>
-          <span className={`mr-3 font-medium text-foreground/80 ${pulse}`}>
-            {toolLabel(t)}
-          </span>
+          <span className={`mr-3 font-medium text-foreground/80 ${pulse}`}>{toolLabel(t)}</span>
           {preview && (
-            <span
-              className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${pulse}`}
-              title={preview}
-            >
+            <span className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${pulse}`} title={preview}>
               {preview}
             </span>
           )}

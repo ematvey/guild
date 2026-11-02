@@ -11,7 +11,11 @@ export const TITLE_SYSTEM =
 
 /** The model's title line, stripped of wrappers a chat model may add. */
 export function cleanGeneratedTitle(raw: string): string {
-  const line = raw.split(/\r?\n/).map((part) => part.trim()).find((part) => part !== "") ?? "";
+  const line =
+    raw
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .find((part) => part !== "") ?? "";
   const stripped = line
     .replace(/^title\s*:\s*/i, "")
     .replace(/^["'`“”]+|["'`“”]+$/g, "")

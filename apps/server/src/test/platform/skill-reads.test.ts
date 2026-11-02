@@ -3,8 +3,8 @@
 // either, so this mirrors the minimal-stub approach).
 
 import { describe, expect, it, vi } from "vitest";
-import { ClickhouseClient } from "../../platform/clickhouse.js";
-import { SkillReadSink, SkillReadEvent } from "../../platform/skill-reads.js";
+import type { ClickhouseClient } from "../../platform/clickhouse.js";
+import { SkillReadSink, type SkillReadEvent } from "../../platform/skill-reads.js";
 import type { PlatformPool } from "../../platform/db.js";
 
 interface FakeClient {
@@ -96,7 +96,11 @@ describe("SkillReadSink.record", () => {
   });
 
   it("swallows insert failures (logged, resolved)", async () => {
-    const client = fakeClient({ insert: vi.fn(async () => { throw new Error("clickhouse down"); }) });
+    const client = fakeClient({
+      insert: vi.fn(async () => {
+        throw new Error("clickhouse down");
+      }),
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await expect(sink(client).record(event())).resolves.toBeUndefined();
@@ -148,31 +152,25 @@ describe("SkillReadSink.ensureOnce", () => {
 describe("readsBySlug", () => {
   it("queries the count for (org, slug, window) and returns the number", async () => {
     const client = fakeClient({ query: vi.fn(async () => [{ reads: 7 }]) });
-    const value = await sink(client).readsBySlug(
-      "018f0000-0000-7000-8000-000000000001",
-      "python-style",
-      30,
-    );
+    const value = await sink(client).readsBySlug("018f0000-0000-7000-8000-000000000001", "python-style", 30);
 
     expect(value).toBe(7);
     expect(client.query).toHaveBeenCalledTimes(1);
     const [sql, params] = client.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain("FROM skill_reads");
     expect(sql).toContain("count()");
-    expect(params).toEqual([
-      "018f0000-0000-7000-8000-000000000001",
-      "python-style",
-      expect.any(Number),
-    ]);
+    expect(params).toEqual(["018f0000-0000-7000-8000-000000000001", "python-style", expect.any(Number)]);
   });
 
   it("degrades to 0 when the query throws", async () => {
-    const client = fakeClient({ query: vi.fn(async () => { throw new Error("UNKNOWN_TABLE"); }) });
+    const client = fakeClient({
+      query: vi.fn(async () => {
+        throw new Error("UNKNOWN_TABLE");
+      }),
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await expect(
-        sink(client).readsBySlug("org", "slug", 30),
-      ).resolves.toBe(0);
+      await expect(sink(client).readsBySlug("org", "slug", 30)).resolves.toBe(0);
     } finally {
       warn.mockRestore();
     }
@@ -201,7 +199,11 @@ describe("readsByDay", () => {
   });
 
   it("degrades to an empty array when the query throws", async () => {
-    const client = fakeClient({ query: vi.fn(async () => { throw new Error("boom"); }) });
+    const client = fakeClient({
+      query: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await expect(sink(client).readsByDay("org", "slug", 14)).resolves.toEqual([]);

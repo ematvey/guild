@@ -17,7 +17,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
@@ -34,8 +36,7 @@ const auth = (token: string): Record<string, string> => ({
   "content-type": "application/json",
 });
 
-const sseDelta = (content: string): string =>
-  `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+const sseDelta = (content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
@@ -102,10 +103,7 @@ describe("supervisor reopen", () => {
 
     stack.mock.setResponses([
       {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          sseDelta("recovered once") +
-          sseDone(),
+        body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("recovered once")}${sseDone()}`,
       },
     ]);
     await waitFor(async () => {
@@ -135,10 +133,7 @@ describe("supervisor reopen", () => {
         chunkDelayMs: 400,
       },
       {
-        body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          sseDelta("recovered twice") +
-          sseDone(),
+        body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("recovered twice")}${sseDone()}`,
       },
       {
         body:
@@ -186,8 +181,9 @@ describe("supervisor reopen", () => {
         url: "/api/v1/chats",
         headers: auth(stack.memberToken),
       });
-      return (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats
-        .find((c) => c.id === chat.id);
+      return (JSON.parse(chatList.body) as { chats: { id: string; generating: boolean }[] }).chats.find(
+        (c) => c.id === chat.id,
+      );
     };
     // The answer is committed before the run lifecycle clears `generating`,
     // so poll for the settled row rather than reading once.

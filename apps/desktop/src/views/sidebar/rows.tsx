@@ -1,14 +1,5 @@
 import { useRef, useState } from "react";
-import {
-  Archive,
-  ArchiveRestore,
-  ChevronRight,
-  EllipsisVertical,
-  Loader2,
-  Pencil,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Archive, ArchiveRestore, ChevronRight, EllipsisVertical, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,16 +9,9 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { FadeTitle } from "./chrome";
 
-
 /** Inline rename field: Enter or blur commits, Esc cancels; `onDone(null)`
  * means "no change". */
-function RenameInput({
-  initial,
-  onDone,
-}: {
-  initial: string;
-  onDone: (value: string | null) => void;
-}) {
+function RenameInput({ initial, onDone }: { initial: string; onDone: (value: string | null) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const settled = useRef(false);
   const finish = (commit: boolean) => {
@@ -97,21 +81,14 @@ function RowActions({
         )}
         {onArchive && (
           <DropdownMenuItem onSelect={() => onArchive()}>
-            {archiveLabel === "Unarchive" ? (
-              <ArchiveRestore className="size-4" />
-            ) : (
-              <Archive className="size-4" />
-            )}
+            {archiveLabel === "Unarchive" ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
             {archiveLabel ?? "Archive"}
           </DropdownMenuItem>
         )}
         {onDelete && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => onDelete()}
-            >
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => onDelete()}>
               <Trash2 className="size-4" />
               Delete
             </DropdownMenuItem>
@@ -216,10 +193,7 @@ export function ChatListItem({
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
         {title === "" ? (
-          <span
-            data-title-placeholder
-            className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground"
-          >
+          <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
             New thread
           </span>
         ) : (
@@ -295,9 +269,7 @@ export function ProjectHeader({
       className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-sidebar-accent hover:text-sidebar-foreground pointer-coarse:pr-14"
       title={folder}
     >
-      <ChevronRight
-        className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-      />
+      <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
       <FadeTitle text={name} />
       {machine?.name && (
         <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">

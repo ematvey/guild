@@ -25,7 +25,7 @@ import type {
   TaskQuery,
   TaskRecord,
 } from "@earendil-works/pi-durable";
-import { PostgresDurableStorage } from "./storage.js";
+import type { PostgresDurableStorage } from "./storage.js";
 
 /** The empty page a scope-refused scan returns. */
 const emptyPage = <T>(): Page<T, never> => ({ items: [] });

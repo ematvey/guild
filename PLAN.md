@@ -164,7 +164,10 @@ first. Code comments describe only the present.
   - *Gate.* `check.mjs` compares property shapes by name (array elements,
     inline objects, maps) and fails on undeclared types or refs; the release
     script refuses a dirty tree or a moved tag and runs it before building.
-    `check.sh` gains `fmt` and typechecks `packages/ui`; coherence gates
+    `check.sh` gains `fmt` and `biome` (`biome ci`: the TypeScript and
+    JavaScript trees are formatted and linted by `biome.json`; captured
+    fixtures and JSON data are left as written) and typechecks `packages/ui`;
+    the desktop targets ES2022 like the server; coherence gates
     `milestone_tags`. Tests share one disposable-database factory under
     feature names.
 

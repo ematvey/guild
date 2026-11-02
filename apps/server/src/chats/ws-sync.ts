@@ -27,8 +27,7 @@ export interface SyncSeams {
 /** The sync seams over one set of reads. */
 export function syncSeams(ctx: SyncReads): SyncSeams {
   return {
-    sync: async ({ chatId, user }) =>
-      threadStateMsg(await captureThreadState(ctx, ctx.pool, user.org_id, chatId)),
+    sync: async ({ chatId, user }) => threadStateMsg(await captureThreadState(ctx, ctx.pool, user.org_id, chatId)),
     subagentTree: async ({ chatId, user }) => {
       const [nodes, tree, usage] = await Promise.all([
         chatSubagentNodes(ctx.pool, chatId),

@@ -39,8 +39,7 @@ export interface UserRow {
   session_generation?: number;
 }
 
-const USER_COLUMNS =
-  "id, org_id, email, role, identity_type, display_name, avatar_url, onboarded_at";
+const USER_COLUMNS = "id, org_id, email, role, identity_type, display_name, avatar_url, onboarded_at";
 
 interface UserAuthGenDbRow extends UserRow {
   password_hash: string;
@@ -66,10 +65,7 @@ export class IdentityStore {
   async ensureBootstrapAdmin(email: string, password: string): Promise<string> {
     return withTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('guild:bootstrap'))");
-      const existing = await client.query<UserRow>(
-        `SELECT ${USER_COLUMNS} FROM users WHERE email = $1`,
-        [email],
-      );
+      const existing = await client.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE email = $1`, [email]);
       if (existing.rows.length > 0) {
         return existing.rows[0]!.id;
       }
@@ -95,27 +91,21 @@ export class IdentityStore {
 
   /** Finds an existing user by email within an org (any identity type). */
   async findByEmail(orgId: string, email: string): Promise<UserRow | null> {
-    const res = await this.pool.query<UserRow>(
-      `SELECT ${USER_COLUMNS} FROM users WHERE org_id = $1 AND email = $2`,
-      [orgId, email],
-    );
+    const res = await this.pool.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE org_id = $1 AND email = $2`, [
+      orgId,
+      email,
+    ]);
     return res.rows[0] ?? null;
   }
 
   /** Email lookup across orgs (bootstrap/single-org flows). */
   async findByEmailAny(email: string): Promise<UserRow | null> {
-    const res = await this.pool.query<UserRow>(
-      `SELECT ${USER_COLUMNS} FROM users WHERE email = $1`,
-      [email],
-    );
+    const res = await this.pool.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE email = $1`, [email]);
     return res.rows[0] ?? null;
   }
 
   async getUser(id: string): Promise<UserRow> {
-    const res = await this.pool.query<UserRow>(
-      `SELECT ${USER_COLUMNS} FROM users WHERE id = $1`,
-      [id],
-    );
+    const res = await this.pool.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [id]);
     if (res.rows.length === 0) throw ApiError.notFound("no such user");
     return res.rows[0]!;
   }
@@ -123,10 +113,7 @@ export class IdentityStore {
   /** The rows of the given users that exist, in one read. */
   async getUsers(ids: readonly string[]): Promise<UserRow[]> {
     if (ids.length === 0) return [];
-    const res = await this.pool.query<UserRow>(
-      `SELECT ${USER_COLUMNS} FROM users WHERE id = ANY($1::uuid[])`,
-      [ids],
-    );
+    const res = await this.pool.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = ANY($1::uuid[])`, [ids]);
     return res.rows;
   }
 
@@ -134,20 +121,17 @@ export class IdentityStore {
    *  "user with NULL policy" — the latter is the normal server-default
    *  case. */
   async approval(userId: string): Promise<unknown> {
-    const res = await this.pool.query<{ approval: unknown }>(
-      "SELECT approval FROM users WHERE id = $1",
-      [userId],
-    );
+    const res = await this.pool.query<{ approval: unknown }>("SELECT approval FROM users WHERE id = $1", [userId]);
     if (res.rows.length === 0) throw ApiError.notFound("no such user");
     return res.rows[0]!.approval;
   }
 
   /** Stores (or with null, clears) the user's approval policy. */
   async setApproval(userId: string, approval: unknown): Promise<void> {
-    await this.pool.query(
-      "UPDATE users SET approval = $2 WHERE id = $1",
-      [userId, approval === null ? null : jsonbText(approval)],
-    );
+    await this.pool.query("UPDATE users SET approval = $2 WHERE id = $1", [
+      userId,
+      approval === null ? null : jsonbText(approval),
+    ]);
   }
 
   /** Creates a managed user (admin console): email + password + role. A
@@ -198,11 +182,7 @@ export class IdentityStore {
 
   /** Refreshes the OIDC-synced profile (name, avatar) after a login whose
    *  IdP claims differ from what is stored. */
-  async updateOidcProfile(
-    userId: string,
-    displayName: string | null,
-    avatarUrl: string | null,
-  ): Promise<void> {
+  async updateOidcProfile(userId: string, displayName: string | null, avatarUrl: string | null): Promise<void> {
     await this.pool.query("UPDATE users SET display_name = $2, avatar_url = $3 WHERE id = $1", [
       userId,
       displayName,
@@ -283,9 +263,7 @@ export class IdentityStore {
   }
 
   async revokeSession(token: string): Promise<void> {
-    await this.pool.query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1", [
-      sha256Hex(token),
-    ]);
+    await this.pool.query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1", [sha256Hex(token)]);
   }
 
   /** Revokes a session by its stored hash (the ws ticket's form), for callers
@@ -321,8 +299,9 @@ export class IdentityStore {
   async listUsers(orgId: string): Promise<UserListRow[]> {
     const res = await this.pool.query(
       "SELECT id, email, role, identity_type, " +
-      utcText("created_at") + " AS created_at " +
-      "FROM users WHERE org_id = $1 ORDER BY created_at",
+        utcText("created_at") +
+        " AS created_at " +
+        "FROM users WHERE org_id = $1 ORDER BY created_at",
       [orgId],
     );
     return res.rows.map((r: Record<string, unknown>) => ({
@@ -339,12 +318,7 @@ export class IdentityStore {
    *  reset revokes the user's sessions, pairing tokens, and api keys — the
    *  old credentials must not keep working. Demoting the org's last admin
    *  is a 409. */
-  async updateUser(
-    orgId: string,
-    userId: string,
-    role: string | null,
-    password: string | null,
-  ): Promise<UserListRow> {
+  async updateUser(orgId: string, userId: string, role: string | null, password: string | null): Promise<UserListRow> {
     const hash = password === null ? null : await hashPassword(password);
     return withTransaction(this.pool, async (client) => {
       // All admin removals serialize on the same org row, including deletes.
@@ -362,11 +336,12 @@ export class IdentityStore {
       }
       const res = await client.query(
         "UPDATE users SET role = COALESCE($2::text, role), " +
-        "password_hash = COALESCE($3::text, password_hash), " +
-        "auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END " +
-        "WHERE id = $1 AND org_id = $4 " +
-        "RETURNING id, email, role, identity_type, " +
-        utcText("created_at") + " AS created_at",
+          "password_hash = COALESCE($3::text, password_hash), " +
+          "auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END " +
+          "WHERE id = $1 AND org_id = $4 " +
+          "RETURNING id, email, role, identity_type, " +
+          utcText("created_at") +
+          " AS created_at",
         [userId, role, hash, orgId],
       );
       if (res.rows.length === 0) throw ApiError.notFound("no such user");
@@ -394,22 +369,22 @@ export class IdentityStore {
   async deleteUser(orgId: string, userId: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
       await client.query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE", [orgId]);
-      const targetRes = await client.query(
-        "SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE",
-        [orgId, userId],
-      );
+      const targetRes = await client.query("SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE", [
+        orgId,
+        userId,
+      ]);
       const role = targetRes.rows[0]?.role as string | undefined;
       if (role === undefined) throw ApiError.notFound("no such user");
       const deleted =
         role === "admin"
-          ? (
+          ? ((
               await client.query(
                 "DELETE FROM users WHERE id = $1 AND (role <> 'admin' OR " +
-                "(SELECT COUNT(*) FROM users WHERE org_id = $2 AND role = 'admin' AND id <> $1) > 0)",
+                  "(SELECT COUNT(*) FROM users WHERE org_id = $2 AND role = 'admin' AND id <> $1) > 0)",
                 [userId, orgId],
               )
-            ).rowCount ?? 0
-          : (await client.query("DELETE FROM users WHERE id = $1", [userId])).rowCount ?? 0;
+            ).rowCount ?? 0)
+          : ((await client.query("DELETE FROM users WHERE id = $1", [userId])).rowCount ?? 0);
       if (deleted === 0) {
         throw ApiError.conflict("last_admin", "cannot delete the last admin");
       }

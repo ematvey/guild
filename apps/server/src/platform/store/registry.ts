@@ -59,14 +59,10 @@ function searchRow(r: Record<string, unknown>): SkillSearchRow {
     ...itemRow(r),
     publisher: (r.publisher as string | null) ?? null,
     published_at:
-      r.published_at === null || r.published_at === undefined
-        ? null
-        : pgTimestampToRfc3339(r.published_at as string),
+      r.published_at === null || r.published_at === undefined ? null : pgTimestampToRfc3339(r.published_at as string),
     owner_kind: ownerUserId !== null ? "user" : ownerTeamId !== null ? "team" : null,
     owner_label:
-      (ownerUserId !== null
-        ? (r.owner_user_label as string | null)
-        : (r.owner_team_label as string | null)) ?? null,
+      (ownerUserId !== null ? (r.owner_user_label as string | null) : (r.owner_team_label as string | null)) ?? null,
     forked_from: (r.forked_from as string | null) ?? null,
   };
 }
@@ -78,7 +74,8 @@ const SEARCH_COLUMNS =
   "i.slug, i.description, i.latest_version, i.review_status, i.forked_from, " +
   "i.owner_user_id, i.owner_team_id, " +
   "COALESCE(NULLIF(pu.display_name, ''), pu.email) AS publisher, " +
-  utcText("v.published_at") + " AS published_at, " +
+  utcText("v.published_at") +
+  " AS published_at, " +
   "COALESCE(NULLIF(ou.display_name, ''), ou.email) AS owner_user_label, t.name AS owner_team_label";
 
 /** Joins behind SEARCH_COLUMNS: the latest version row, its publisher, the
@@ -142,7 +139,7 @@ export class RegistryStore {
         tombstoned_at: string | null;
       }>(
         "SELECT id, latest_version, review_status, reviewed_version, owner_user_id, owner_team_id, maintainer_gated, tombstoned_at " +
-        "FROM registry_items WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
+          "FROM registry_items WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
         [orgId, kind, slug],
       );
       let itemId: string;
@@ -179,17 +176,16 @@ export class RegistryStore {
           prev !== undefined &&
           canonicalJson(prev.manifest) === canonicalJson(manifest) &&
           prev.bundle_sha256 === bundleSha256;
-        const approvalBound =
-          item.reviewed_version !== null && item.reviewed_version === item.latest_version;
+        const approvalBound = item.reviewed_version !== null && item.reviewed_version === item.latest_version;
         const status =
           unchanged && item.latest_version === version && (item.review_status !== "approved" || approvalBound)
             ? item.review_status
             : "draft";
         await client.query(
           "UPDATE registry_items SET latest_version = $2, description = $3, review_status = $4, " +
-          "reviewed_version = CASE WHEN $4 = 'approved' THEN latest_version ELSE NULL END, " +
-          "reviewed_bundle_sha256 = CASE WHEN $4 = 'approved' THEN $5 ELSE NULL END " +
-          "WHERE id = $1",
+            "reviewed_version = CASE WHEN $4 = 'approved' THEN latest_version ELSE NULL END, " +
+            "reviewed_bundle_sha256 = CASE WHEN $4 = 'approved' THEN $5 ELSE NULL END " +
+            "WHERE id = $1",
           [item.id, version, description, status, bundleSha256],
         );
         itemId = item.id;
@@ -197,18 +193,18 @@ export class RegistryStore {
         itemId = uuidv7();
         await client.query(
           "INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version, owner_user_id) " +
-          "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
           [itemId, orgId, kind, slug, description, version, publisher],
         );
       }
       await client.query(
         "INSERT INTO registry_versions (id, item_id, version, manifest, object_key, bundle_sha256, published_by, skill_md_text, files) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) " +
-        "ON CONFLICT (item_id, version) " +
-        "DO UPDATE SET manifest = EXCLUDED.manifest, object_key = EXCLUDED.object_key, " +
-        "bundle_sha256 = EXCLUDED.bundle_sha256, published_by = EXCLUDED.published_by, " +
-        "skill_md_text = EXCLUDED.skill_md_text, files = EXCLUDED.files, " +
-        "published_at = now()",
+          "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) " +
+          "ON CONFLICT (item_id, version) " +
+          "DO UPDATE SET manifest = EXCLUDED.manifest, object_key = EXCLUDED.object_key, " +
+          "bundle_sha256 = EXCLUDED.bundle_sha256, published_by = EXCLUDED.published_by, " +
+          "skill_md_text = EXCLUDED.skill_md_text, files = EXCLUDED.files, " +
+          "published_at = now()",
         [
           uuidv7(),
           itemId,
@@ -227,7 +223,7 @@ export class RegistryStore {
   async listItems(orgId: string, kind: string): Promise<RegistryItemRow[]> {
     const res = await this.pool.query(
       "SELECT slug, description, latest_version, review_status FROM registry_items " +
-      "WHERE org_id = $1 AND kind = $2 AND tombstoned_at IS NULL ORDER BY slug",
+        "WHERE org_id = $1 AND kind = $2 AND tombstoned_at IS NULL ORDER BY slug",
       [orgId, kind],
     );
     return res.rows.map(itemRow);
@@ -241,9 +237,9 @@ export class RegistryStore {
   async searchSkills(orgId: string, q: string, limit = 12): Promise<SkillSearchRow[]> {
     const res = await this.pool.query(
       `SELECT ${SEARCH_COLUMNS} FROM registry_items i ${SEARCH_JOINS} ` +
-      "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL " +
-      "AND (i.slug ILIKE '%' || $2 || '%' OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%') " +
-      "ORDER BY v.published_at DESC NULLS LAST, i.slug LIMIT $3",
+        "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL " +
+        "AND (i.slug ILIKE '%' || $2 || '%' OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%') " +
+        "ORDER BY v.published_at DESC NULLS LAST, i.slug LIMIT $3",
       [orgId, q, Math.min(Math.max(limit, 1), 500)],
     );
     return res.rows.map(searchRow);
@@ -251,9 +247,11 @@ export class RegistryStore {
 
   async itemVersions(orgId: string, kind: string, slug: string): Promise<VersionRow[]> {
     const res = await this.pool.query(
-      "SELECT v.version, " + utcText("v.published_at") + " AS published_at, v.bundle_sha256, v.published_by AS publisher " +
-      "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
-      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 ORDER BY v.published_at DESC",
+      "SELECT v.version, " +
+        utcText("v.published_at") +
+        " AS published_at, v.bundle_sha256, v.published_by AS publisher " +
+        "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
+        "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 ORDER BY v.published_at DESC",
       [orgId, kind, slug],
     );
     return res.rows.map((r: Record<string, unknown>) => ({
@@ -268,7 +266,11 @@ export class RegistryStore {
    *  the gate/unpublish permission checks, and the agent tools' provenance
    *  lines read this). `owner_label` is the owner's display label (user
    *  name or team name), null when the item has no owner. */
-  async itemControl(orgId: string, kind: string, slug: string): Promise<{
+  async itemControl(
+    orgId: string,
+    kind: string,
+    slug: string,
+  ): Promise<{
     owner_user_id: string | null;
     owner_team_id: string | null;
     owner_label: string | null;
@@ -280,10 +282,10 @@ export class RegistryStore {
   } | null> {
     const res = await this.pool.query(
       "SELECT i.owner_user_id, i.owner_team_id, i.maintainer_gated, i.tombstoned_at, i.latest_version, i.description, i.forked_from, " +
-      "COALESCE(COALESCE(NULLIF(ou.display_name, ''), ou.email), t.name) AS owner_label " +
-      "FROM registry_items i LEFT JOIN users ou ON ou.id = i.owner_user_id " +
-      "LEFT JOIN teams t ON t.id = i.owner_team_id " +
-      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3",
+        "COALESCE(COALESCE(NULLIF(ou.display_name, ''), ou.email), t.name) AS owner_label " +
+        "FROM registry_items i LEFT JOIN users ou ON ou.id = i.owner_user_id " +
+        "LEFT JOIN teams t ON t.id = i.owner_team_id " +
+        "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3",
       [orgId, kind, slug],
     );
     const r = res.rows[0];
@@ -311,10 +313,12 @@ export class RegistryStore {
 
   /** Records fork provenance ("slug@version") on the item. */
   async setForkedFrom(orgId: string, kind: string, slug: string, forkedFrom: string): Promise<void> {
-    await this.pool.query(
-      "UPDATE registry_items SET forked_from = $4 WHERE org_id = $1 AND kind = $2 AND slug = $3",
-      [orgId, kind, slug, forkedFrom],
-    );
+    await this.pool.query("UPDATE registry_items SET forked_from = $4 WHERE org_id = $1 AND kind = $2 AND slug = $3", [
+      orgId,
+      kind,
+      slug,
+      forkedFrom,
+    ]);
   }
 
   /** Hands item ownership to a team (the create route's owner pick). */
@@ -346,11 +350,12 @@ export class RegistryStore {
   } | null> {
     const res = await this.pool.query(
       "SELECT v.manifest, v.object_key, v.bundle_sha256, v.published_by, v.skill_md_text, v.files, " +
-      "COALESCE(NULLIF(u.display_name, ''), u.email) AS publisher_label, " +
-      utcText("v.published_at") + " AS published_at " +
-      "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
-      "LEFT JOIN users u ON u.id = v.published_by " +
-      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
+        "COALESCE(NULLIF(u.display_name, ''), u.email) AS publisher_label, " +
+        utcText("v.published_at") +
+        " AS published_at " +
+        "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
+        "LEFT JOIN users u ON u.id = v.published_by " +
+        "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
       [orgId, kind, slug, version],
     );
     const r = res.rows[0];
@@ -362,9 +367,7 @@ export class RegistryStore {
       publisher: (r.published_by as string | null) ?? null,
       publisher_label: (r.publisher_label as string | null) ?? null,
       published_at:
-        r.published_at === null || r.published_at === undefined
-          ? null
-          : pgTimestampToRfc3339(r.published_at as string),
+        r.published_at === null || r.published_at === undefined ? null : pgTimestampToRfc3339(r.published_at as string),
       skill_md_text: (r.skill_md_text as string | null) ?? null,
       files: (r.files as Array<{ path: string; size: number; sha256: string }> | null) ?? null,
     };
@@ -374,7 +377,14 @@ export class RegistryStore {
    *  the owner team's members, and admins only; tombstoned slugs reject
    *  everything (T3's editor-save path clears the tombstone before
    *  republishing). */
-  async publishGate(orgId: string, kind: string, slug: string, userId: string, role: string, isTeamMember: boolean): Promise<void> {
+  async publishGate(
+    orgId: string,
+    kind: string,
+    slug: string,
+    userId: string,
+    role: string,
+    isTeamMember: boolean,
+  ): Promise<void> {
     const item = await this.itemControl(orgId, kind, slug);
     if (item === null) return; // new slug — no gate
     if (item.tombstoned) throw ApiError.forbidden("this item was unpublished");
@@ -404,8 +414,8 @@ export class RegistryStore {
   async getVersion(orgId: string, kind: string, slug: string, version: string): Promise<StoredVersion> {
     const res = await this.pool.query(
       "SELECT v.manifest, v.object_key, v.bundle_sha256 FROM registry_versions v " +
-      "JOIN registry_items i ON i.id = v.item_id " +
-      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
+        "JOIN registry_items i ON i.id = v.item_id " +
+        "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
       [orgId, kind, slug, version],
     );
     const row = res.rows[0];
@@ -424,12 +434,12 @@ export class RegistryStore {
   async approvedBundle(orgId: string, kind: string, slug: string): Promise<[string, string] | null> {
     const res = await this.pool.query(
       "SELECT i.latest_version, v.bundle_sha256 FROM registry_items i " +
-      "JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
-      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 " +
-      "AND i.review_status = 'approved' " +
-      "AND i.reviewed_version = i.latest_version " +
-      "AND i.reviewed_bundle_sha256 IS NOT NULL " +
-      "AND i.reviewed_bundle_sha256 = v.bundle_sha256",
+        "JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
+        "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 " +
+        "AND i.review_status = 'approved' " +
+        "AND i.reviewed_version = i.latest_version " +
+        "AND i.reviewed_bundle_sha256 IS NOT NULL " +
+        "AND i.reviewed_bundle_sha256 = v.bundle_sha256",
       [orgId, kind, slug],
     );
     const row = res.rows[0];

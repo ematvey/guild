@@ -63,9 +63,7 @@ function formatChildResults(rows: readonly ChildResultRecord[]): string {
       lines.push(text === "" ? "(no final text)" : text);
       if (event.attachments.length > 0) {
         lines.push(
-          `Files: ${event.attachments
-            .map((attachment) => `${attachment.filename} (${attachment.id})`)
-            .join(", ")}`,
+          `Files: ${event.attachments.map((attachment) => `${attachment.filename} (${attachment.id})`).join(", ")}`,
         );
       }
       return lines.join("\n");
@@ -77,11 +75,7 @@ function formatChildResults(rows: readonly ChildResultRecord[]): string {
  *  call), used when a user stop ends a run without a terminal assistant
  *  event. A stopped run usually has none: the parent gets no partial
  *  narration. */
-export async function assistantTextForRun(
-  pool: PlatformPool,
-  chatId: string,
-  since: string,
-): Promise<string> {
+export async function assistantTextForRun(pool: PlatformPool, chatId: string, since: string): Promise<string> {
   const res = await pool.query<{ type: string; payload: Record<string, unknown> }>(
     `SELECT type, payload FROM thread_events
      WHERE chat_id = $1 AND type = 'assistant_message'
@@ -198,9 +192,7 @@ export class ChildResultDelivery {
       // A concurrent drain took the batch. An idle-parent run we opened has
       // nothing to do, so it must not stay running.
       if (opened) {
-        await store.runs
-          .updateRun(runId, { status: "skipped", finished_at: new Date().toISOString() })
-          .catch(() => {});
+        await store.runs.updateRun(runId, { status: "skipped", finished_at: new Date().toISOString() }).catch(() => {});
       }
       return false;
     }

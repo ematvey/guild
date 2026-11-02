@@ -108,7 +108,11 @@ dbDescribe("agent run lifecycle", () => {
     const withDelivery = new AgentRunLifecycle({
       pool: env!.db,
       log: pino({ level: "silent" }),
-      delivery: { deliver: async (input) => { delivered.push(input); } },
+      delivery: {
+        deliver: async (input) => {
+          delivered.push(input);
+        },
+      },
     });
     const run = await store.runs.createRun({
       agent_id: agentId,

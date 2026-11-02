@@ -10,8 +10,14 @@ function row(chatId: string, seq: number, event: ThreadEvent): ThreadEventRow {
 
 function state(chatId: string, seq: number, events: ThreadEventRow[], hasMore = false): ThreadState {
   return {
-    type: "thread_state", has_more_events: hasMore, chat_id: chatId, seq, events,
-    text: "", thinking: "", generating: false,
+    type: "thread_state",
+    has_more_events: hasMore,
+    chat_id: chatId,
+    seq,
+    events,
+    text: "",
+    thinking: "",
+    generating: false,
   };
 }
 
@@ -112,7 +118,9 @@ describe("thread view store", () => {
     open(store, "a");
     deliver(store, state("a", 1, [say("a", 1, "hi")]));
     let calls = 0;
-    store.subscribe(() => { calls += 1; });
+    store.subscribe(() => {
+      calls += 1;
+    });
     const before = store.getSnapshot();
     store.mutate((r) => r.applyState(state("z", 1, [say("z", 1, "elsewhere")])));
     expect(calls).toBe(0);

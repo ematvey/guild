@@ -1,12 +1,7 @@
 // S3-compatible object storage client (rustfs/MinIO; spec §4.4/§4.9): same
 // object keys, same put/get/delete surface across the eras.
 
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export class ObjectStore {
   private readonly client: S3Client;
@@ -26,9 +21,7 @@ export class ObjectStore {
   }
 
   async put(key: string, bytes: Buffer): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: bytes }),
-    );
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: bytes }));
   }
 
   async get(key: string): Promise<Buffer> {

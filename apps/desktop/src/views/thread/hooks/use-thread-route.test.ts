@@ -16,7 +16,10 @@ describe("settings address normalisation", () => {
     expect(canonicalSettings("registry", "bogus", "admin")).toEqual({ section: "registry", detail: null });
     expect(canonicalSettings("registry", "mcp/github", "admin")).toEqual({ section: "registry", detail: "mcp/github" });
     expect(canonicalSettings("users", "new", "admin")).toEqual({ section: "users", detail: "new" });
-    expect(canonicalSettings("models", "provider/openai", "admin")).toEqual({ section: "models", detail: "provider/openai" });
+    expect(canonicalSettings("models", "provider/openai", "admin")).toEqual({
+      section: "models",
+      detail: "provider/openai",
+    });
   });
 
   it("replaces the entry, so Back skips the bad address", () => {
@@ -127,7 +130,11 @@ describe("canonicalRoute", () => {
   });
 
   it("is stable: a canonical result needs no second pass", () => {
-    for (const [path, role] of [["/settings", "member"], ["/activity", "member"], ["/agents/a1/bogus", "admin"]] as const) {
+    for (const [path, role] of [
+      ["/settings", "member"],
+      ["/activity", "member"],
+      ["/agents/a1/bogus", "admin"],
+    ] as const) {
       const once = fix(path, role)!;
       expect(fix(once, role)).toBeNull();
     }
@@ -139,8 +146,12 @@ function fakeHistory(start: string) {
   const entries = [start];
   let index = 0;
   return {
-    get current() { return entries[index]!; },
-    get length() { return entries.length; },
+    get current() {
+      return entries[index]!;
+    },
+    get length() {
+      return entries.length;
+    },
     pushState(_d: unknown, _t: string, url?: string | URL | null) {
       entries.splice(index + 1);
       entries.push(String(url));
@@ -149,7 +160,9 @@ function fakeHistory(start: string) {
     replaceState(_d: unknown, _t: string, url?: string | URL | null) {
       entries[index] = String(url);
     },
-    back() { index = Math.max(0, index - 1); },
+    back() {
+      index = Math.max(0, index - 1);
+    },
   };
 }
 

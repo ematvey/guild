@@ -54,9 +54,9 @@ describe("assertPublicFetchTarget", () => {
       await expect(
         firecrawlExecute({ base_url: base }, "web_fetch", { url: "http://127.0.0.1:5432/" }, [], null),
       ).rejects.toThrow(/not allowed/);
-      await expect(firecrawlExecute({ base_url: base }, "map", { url: "file:///etc/passwd" }, [], null)).rejects.toThrow(
-        /http\(s\)/,
-      );
+      await expect(
+        firecrawlExecute({ base_url: base }, "map", { url: "file:///etc/passwd" }, [], null),
+      ).rejects.toThrow(/http\(s\)/);
       expect(calls).toBe(0);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

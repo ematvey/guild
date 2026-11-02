@@ -18,7 +18,12 @@ import { createRoutine, deleteRoutine, getRoutine, updateRoutine } from "../../a
 import { search } from "../../agents/search.js";
 import { resolveIntegrations } from "../../integrations/plugins.js";
 import { toolCurate } from "../../integrations/policy.js";
-import { refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "../../agents/store.js";
+import {
+  refuseDeletingAgent,
+  type ActivityFilters,
+  type RunFilters,
+  type UpdateAgentInput,
+} from "../../agents/store.js";
 import { cancelThread, closeThread } from "../../agents/subagents.js";
 import { chatSubagentNodes, chatTreeFacts } from "../../agents/tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "../../agents/types.js";
@@ -34,25 +39,115 @@ import type {
   AgentVisibility,
 } from "../../agents/types.js";
 
-
 /** Built-in agent tools, in form order. Names match the runtime's tool
  *  registrations. */
 const AGENT_TOOL_CATALOG = [
-  { name: "read", label: "Read file", group: "Workspace", description: "Read a file from the agent workspace.", safe: true },
-  { name: "write", label: "Write file", group: "Workspace", description: "Create or overwrite a workspace file.", safe: true },
-  { name: "edit", label: "Edit file", group: "Workspace", description: "Apply a targeted edit to a workspace file.", safe: true },
-  { name: "bash", label: "Shell / list files", group: "Workspace", description: "Run shell commands in the workspace (includes listing files).", safe: true },
-  { name: "conversations_search", label: "Search conversations", group: "Memory", description: "Search this agent's own thread history.", safe: true },
-  { name: "conversations_list", label: "List conversations", group: "Memory", description: "List this agent's own threads with type and archive filters, sorted and paginated.", safe: true },
-  { name: "conversation_read", label: "Read conversation", group: "Memory", description: "Read a bounded excerpt from one of the agent's threads.", safe: true },
-  { name: "send_message", label: "Send message", group: "Messaging", description: "Open a new thread with a message to the user.", safe: true },
-  { name: "schedule_reminder", label: "Schedule reminder", group: "Routines", description: "Schedule a one-shot reminder for this agent.", safe: true },
-  { name: "list_routines", label: "List routines", group: "Routines", description: "List this agent's routines and their schedules.", safe: true },
-  { name: "create_routine", label: "Create routine", group: "Routines", description: "Create a recurring routine from a cron or interval schedule.", safe: true },
-  { name: "update_routine", label: "Update routine", group: "Routines", description: "Change a routine's schedule, prompt or enabled state.", safe: true },
-  { name: "delete_routine", label: "Delete routine", group: "Routines", description: "Delete a routine and stop its schedule.", safe: true },
-  { name: "subagents", label: "Subagents", group: "Agents", description: "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.", safe: false },
-  { name: "send_file", label: "Send file", group: "Files", description: "Attach a workspace file to the turn's response.", safe: false },
+  {
+    name: "read",
+    label: "Read file",
+    group: "Workspace",
+    description: "Read a file from the agent workspace.",
+    safe: true,
+  },
+  {
+    name: "write",
+    label: "Write file",
+    group: "Workspace",
+    description: "Create or overwrite a workspace file.",
+    safe: true,
+  },
+  {
+    name: "edit",
+    label: "Edit file",
+    group: "Workspace",
+    description: "Apply a targeted edit to a workspace file.",
+    safe: true,
+  },
+  {
+    name: "bash",
+    label: "Shell / list files",
+    group: "Workspace",
+    description: "Run shell commands in the workspace (includes listing files).",
+    safe: true,
+  },
+  {
+    name: "conversations_search",
+    label: "Search conversations",
+    group: "Memory",
+    description: "Search this agent's own thread history.",
+    safe: true,
+  },
+  {
+    name: "conversations_list",
+    label: "List conversations",
+    group: "Memory",
+    description: "List this agent's own threads with type and archive filters, sorted and paginated.",
+    safe: true,
+  },
+  {
+    name: "conversation_read",
+    label: "Read conversation",
+    group: "Memory",
+    description: "Read a bounded excerpt from one of the agent's threads.",
+    safe: true,
+  },
+  {
+    name: "send_message",
+    label: "Send message",
+    group: "Messaging",
+    description: "Open a new thread with a message to the user.",
+    safe: true,
+  },
+  {
+    name: "schedule_reminder",
+    label: "Schedule reminder",
+    group: "Routines",
+    description: "Schedule a one-shot reminder for this agent.",
+    safe: true,
+  },
+  {
+    name: "list_routines",
+    label: "List routines",
+    group: "Routines",
+    description: "List this agent's routines and their schedules.",
+    safe: true,
+  },
+  {
+    name: "create_routine",
+    label: "Create routine",
+    group: "Routines",
+    description: "Create a recurring routine from a cron or interval schedule.",
+    safe: true,
+  },
+  {
+    name: "update_routine",
+    label: "Update routine",
+    group: "Routines",
+    description: "Change a routine's schedule, prompt or enabled state.",
+    safe: true,
+  },
+  {
+    name: "delete_routine",
+    label: "Delete routine",
+    group: "Routines",
+    description: "Delete a routine and stop its schedule.",
+    safe: true,
+  },
+  {
+    name: "subagents",
+    label: "Subagents",
+    group: "Agents",
+    description:
+      "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.",
+    safe: false,
+  },
+  {
+    name: "send_file",
+    label: "Send file",
+    group: "Files",
+    description: "Attach a workspace file to the turn's response.",
+    safe: false,
+  },
 ];
 
 /** The enabled integration tools an agent may be granted. Names are the
@@ -81,9 +176,7 @@ async function integrationToolCatalog(
         label: traitLabel ?? info.raw.replace(/_/g, " "),
         group:
           info.trait === undefined
-            ? `Integration · ${turn.slug
-                .replace(/_/g, " ")
-                .replace(/\b\w/g, (c) => c.toUpperCase())}`
+            ? `Integration · ${turn.slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`
             : "Web",
         description: info.spec.description,
         safe: false,
@@ -95,7 +188,15 @@ async function integrationToolCatalog(
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "team", "org"]);
 const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
-const RUN_STATUSES = new Set<AgentRunStatus>(["queued", "running", "succeeded", "failed", "silent", "skipped", "cancelled"]);
+const RUN_STATUSES = new Set<AgentRunStatus>([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "silent",
+  "skipped",
+  "cancelled",
+]);
 const TRIGGERS = new Set<AgentTrigger>(["message", "routine", "manual", "delegation"]);
 
 function sendJson(reply: FastifyReply, value: unknown): FastifyReply {
@@ -304,12 +405,8 @@ export function registerAgentRoutes(
           model: agent.model,
           messages: [{ role: "user", content: message }],
           attachment_ids: attachmentIds,
-          ...(typeof body["user_message_id"] === "string"
-            ? { user_message_id: body["user_message_id"] }
-            : {}),
-          ...(body["send_mode"] === "steer" || body["send_mode"] === "queue"
-            ? { send_mode: body["send_mode"] }
-            : {}),
+          ...(typeof body["user_message_id"] === "string" ? { user_message_id: body["user_message_id"] } : {}),
+          ...(body["send_mode"] === "steer" || body["send_mode"] === "queue" ? { send_mode: body["send_mode"] } : {}),
         },
         thread.chat_id,
         chat,
@@ -550,36 +647,35 @@ export function registerAgentRoutes(
    *  are writes: only the chat's owner passes the gate, as for every other
    *  chat write. A chat with no thread row has nothing to act on. `close`
    *  marks the subtree closed, which also drops late results. */
-  const threadAction =
-    (action: "cancel" | "close") => async (req: FastifyRequest, reply: FastifyReply) => {
-      const user = await requireUser(auth, req);
-      const chatId = parseUuidParam(req, "id");
-      await chats.chats.getOwnChat(user.org_id, chatId, user);
-      const thread = await store.threads.threadByChatId(chatId);
-      if (thread === null) throw ApiError.notFound("no such thread");
-      // Closing is a child-only act: the root thread is the conversation the
-      // caller is having, and stopping its turn is `cancel`.
-      if (action === "close" && thread.parent_thread_id === null) {
-        throw ApiError.badRequest("the root thread cannot be closed");
+  const threadAction = (action: "cancel" | "close") => async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
+    const thread = await store.threads.threadByChatId(chatId);
+    if (thread === null) throw ApiError.notFound("no such thread");
+    // Closing is a child-only act: the root thread is the conversation the
+    // caller is having, and stopping its turn is `cancel`.
+    if (action === "close" && thread.parent_thread_id === null) {
+      throw ApiError.badRequest("the root thread cannot be closed");
+    }
+    const context = { store, runtime: chats.runtime, pool: infra.pool };
+    if (action === "cancel") {
+      return sendJson(reply, await cancelThread(context, thread.id));
+    }
+    const result = await closeThread(context, thread.id);
+    // A close leaves a row in the parent chat, so the child row stays
+    // closed after a reload. A repeat close writes nothing.
+    if (result.closed > 0 && thread.parent_thread_id !== null) {
+      const parent = await store.threads.threadById(thread.parent_thread_id);
+      if (parent !== null) {
+        await chats.threads.appendEvent(parent.chat_id, {
+          type: "child_closed",
+          thread_id: thread.id,
+        });
       }
-      const context = { store, runtime: chats.runtime, pool: infra.pool };
-      if (action === "cancel") {
-        return sendJson(reply, await cancelThread(context, thread.id));
-      }
-      const result = await closeThread(context, thread.id);
-      // A close leaves a row in the parent chat, so the child row stays
-      // closed after a reload. A repeat close writes nothing.
-      if (result.closed > 0 && thread.parent_thread_id !== null) {
-        const parent = await store.threads.threadById(thread.parent_thread_id);
-        if (parent !== null) {
-          await chats.threads.appendEvent(parent.chat_id, {
-            type: "child_closed",
-            thread_id: thread.id,
-          });
-        }
-      }
-      return sendJson(reply, result);
-    };
+    }
+    return sendJson(reply, result);
+  };
   app.post("/api/v1/threads/:id/cancel", threadAction("cancel"));
   app.post("/api/v1/threads/:id/close", threadAction("close"));
 

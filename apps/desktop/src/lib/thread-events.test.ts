@@ -36,14 +36,14 @@ describe("thread reads", () => {
     const page = await fetchThreadEventsPage("c 1", 42, 20, new AbortController().signal);
     expect(page).toEqual({ events: [], has_more: false });
     expect(calls[0].url).toBe("/api/v1/threads/c%201/events?before=42&limit=20");
-    expect((calls[0].init?.headers as Record<string, string>).authorization).toBe("Bearer tok");
+    expect((calls[0].init!.headers as Record<string, string>).authorization).toBe("Bearer tok");
   });
 
   it("rejects a failed page read", async () => {
     setup(new Response("nope", { status: 500 }));
     const { fetchThreadEventsPage } = await import("./thread-events");
-    await expect(
-      fetchThreadEventsPage("c1", 10, 20, new AbortController().signal),
-    ).rejects.toMatchObject({ status: 500 });
+    await expect(fetchThreadEventsPage("c1", 10, 20, new AbortController().signal)).rejects.toMatchObject({
+      status: 500,
+    });
   });
 });

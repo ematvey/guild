@@ -15,7 +15,12 @@ import { SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
-import { getApprovalPolicyPrompt, getAssistantPrompt, setApprovalPolicyPrompt, setAssistantPrompt } from "../../../lib/api/approvals";
+import {
+  getApprovalPolicyPrompt,
+  getAssistantPrompt,
+  setApprovalPolicyPrompt,
+  setAssistantPrompt,
+} from "../../../lib/api/approvals";
 import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { useTransientFlag } from "../../../lib/use-transient";
@@ -40,7 +45,7 @@ export function AssistantSection() {
         rows={8}
       />
       <PromptField
-        label={"Approval policy prompt (\"Approve for me\" mode)"}
+        label={'Approval policy prompt ("Approve for me" mode)'}
         load={async () => {
           const v = await getApprovalPolicyPrompt();
           return { custom: v.prompt, fallback: v.default };
@@ -82,7 +87,8 @@ function PromptField({
     setError(null);
     clearSaved();
     setLoading(true);
-    loadRef.current()
+    loadRef
+      .current()
       .then((r) => {
         setLoaded(true);
         // The field renders the CURRENT effective text filled in: the
@@ -137,8 +143,22 @@ function PromptField({
     }
   };
 
-  if (loading) return <Field label={label}><div className="rounded-md border border-border p-3" style={{ minHeight: `${rows + 1}rem` }}><SkeletonText lines={Math.min(rows, 5)} /></div></Field>;
-  if (!loaded) return <Field label={label}><p role="alert" className="text-sm text-destructive">{error}</p></Field>;
+  if (loading)
+    return (
+      <Field label={label}>
+        <div className="rounded-md border border-border p-3" style={{ minHeight: `${rows + 1}rem` }}>
+          <SkeletonText lines={Math.min(rows, 5)} />
+        </div>
+      </Field>
+    );
+  if (!loaded)
+    return (
+      <Field label={label}>
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      </Field>
+    );
 
   return (
     <Field label={`${label} ${isCustom ? "(custom)" : "(default)"}`}>

@@ -127,10 +127,10 @@ dbDescribe("AgentStore", () => {
 
     const teamAgent = await store.create(owner, { name: "Team", model: "GLM-Test", visibility: "team" });
     await expect(store.get(member, teamAgent.id)).rejects.toMatchObject({ status: 404 });
-    await env!.db.query(
-      "INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, 'editor')",
-      [teamAgent.id, teamId],
-    );
+    await env!.db.query("INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, 'editor')", [
+      teamAgent.id,
+      teamId,
+    ]);
     await expect(store.get(member, teamAgent.id)).rejects.toMatchObject({ status: 404 });
     await env!.db.query("UPDATE agent_team_grants SET role = 'user' WHERE agent_id = $1", [teamAgent.id]);
     const teamAccess = await store.access(member, await store.get(member, teamAgent.id));
@@ -272,9 +272,19 @@ dbDescribe("AgentStore", () => {
     const agent = await store.create(owner, { name: "Leaving", model: "GLM-Test" });
     const main = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
     const side = await store.threads.createThread(agent.id, owner.id, "Side");
-    const live = await store.runs.createRun({ agent_id: agent.id, thread_id: main.id, trigger: "message", status: "running" });
+    const live = await store.runs.createRun({
+      agent_id: agent.id,
+      thread_id: main.id,
+      trigger: "message",
+      status: "running",
+    });
     const queued = await store.runs.createRun({ agent_id: agent.id, thread_id: side.id, trigger: "message" });
-    const done = await store.runs.createRun({ agent_id: agent.id, thread_id: side.id, trigger: "message", status: "succeeded" });
+    const done = await store.runs.createRun({
+      agent_id: agent.id,
+      thread_id: side.id,
+      trigger: "message",
+      status: "succeeded",
+    });
     const chats = await store.lifecycle.cancelAgentRuns(agent.id);
     expect(chats.sort()).toEqual([main.chat_id, side.chat_id].sort());
     expect((await store.runs.getRun(live.id)).status).toBe("cancelled");

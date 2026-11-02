@@ -2,7 +2,7 @@
 // ensure-once DDL, defensive catch-and-log on every write and read so an
 // unreachable ClickHouse never breaks a turn.
 
-import { clickhouseDateTime, ClickhouseClient } from "./clickhouse.js";
+import { clickhouseDateTime, type ClickhouseClient } from "./clickhouse.js";
 import { errorText, primaryTeamId } from "./usage.js";
 import type { PlatformPool } from "./db.js";
 
@@ -44,8 +44,7 @@ export class SkillReadSink {
       // a failed ensure is caught below with the insert — ClickHouse being
       // down drops the read, never breaks the turn.
       await this.ensureOnce();
-      const teamId =
-        event.team_id ?? (await primaryTeamId(this.pool, event.user_id, event.org_id)) ?? "";
+      const teamId = event.team_id ?? (await primaryTeamId(this.pool, event.user_id, event.org_id)) ?? "";
       await this.client.insert("skill_reads", [
         {
           ts: clickhouseDateTime(event.ts),
@@ -68,8 +67,7 @@ export class SkillReadSink {
   async readsBySlug(orgId: string, slug: string, days: number): Promise<number> {
     try {
       const rows = await this.client.query(
-        "SELECT count() AS reads FROM skill_reads " +
-          "WHERE org_id = ? AND slug = ? AND ts >= toDateTime(?)",
+        "SELECT count() AS reads FROM skill_reads " + "WHERE org_id = ? AND slug = ? AND ts >= toDateTime(?)",
         [orgId, slug, sinceEpochSeconds(days)],
       );
       return firstNumber(rows);
@@ -81,11 +79,7 @@ export class SkillReadSink {
 
   /** Reads of one skill per day over the last `days` days, ordered by day.
    *  Degrades to an empty array when the query fails. */
-  async readsByDay(
-    orgId: string,
-    slug: string,
-    days: number,
-  ): Promise<Array<{ day: string; reads: number }>> {
+  async readsByDay(orgId: string, slug: string, days: number): Promise<Array<{ day: string; reads: number }>> {
     try {
       const rows = await this.client.query(
         "SELECT toDate(ts) AS day, count() AS reads FROM skill_reads " +

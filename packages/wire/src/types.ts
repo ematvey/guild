@@ -27,17 +27,7 @@ import type {
   UserInfo,
 } from "./rest.js";
 
-export type {
-  Chat,
-  EventRow,
-  Json,
-  MachineInfo,
-  Project,
-  SubagentNode,
-  ThreadEventRow,
-  ToolCall,
-  ToolKind,
-};
+export type { Chat, EventRow, Json, MachineInfo, Project, SubagentNode, ThreadEventRow, ToolCall, ToolKind };
 
 /** A JSON UUID string. */
 export type Uuid = string;

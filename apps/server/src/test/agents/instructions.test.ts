@@ -55,10 +55,7 @@ describe("composeAgentInstructions", () => {
   });
 
   it("marks a missing required file and skips a missing optional one", () => {
-    const text = composeAgentInstructions(
-      { name: "Scout", is_personal: false },
-      config({}, ["AGENTS.md"]),
-    );
+    const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config({}, ["AGENTS.md"]));
     expect(text).toContain('path="/workspace/AGENTS.md">\n(missing: AGENTS.md)');
     expect(text).not.toContain('path="/workspace/MEMORY.md"');
   });

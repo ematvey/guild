@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /** A value that falls back to `idle` `ms` after it is shown ("Copied",
  *  "Saved", an optimistic click). The timer dies with the component. */
-export function useTransient<T>(idle: T, ms: number): {
+export function useTransient<T>(
+  idle: T,
+  ms: number,
+): {
   value: T;
   /** Shows `next`, falling back to idle after `ms`. */
   show: (next: T) => void;
@@ -19,14 +22,17 @@ export function useTransient<T>(idle: T, ms: number): {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
   }, []);
-  const show = useCallback((next: T) => {
-    hold();
-    setValue(next);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      setValue(idleRef.current);
-    }, ms);
-  }, [hold, ms]);
+  const show = useCallback(
+    (next: T) => {
+      hold();
+      setValue(next);
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        setValue(idleRef.current);
+      }, ms);
+    },
+    [hold, ms],
+  );
   const clear = useCallback(() => {
     hold();
     setValue(idleRef.current);

@@ -27,7 +27,7 @@ describe("runningSubagentTree", () => {
     ]);
     expect(tree?.node.thread_id).toBe("root");
     expect(tree?.children.map((c) => c.node.thread_id)).toEqual(["child"]);
-    expect(tree?.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
+    expect(tree!.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
   });
 
   it("drops a finished branch but keeps a finished parent with a running grandchild", () => {
@@ -38,7 +38,7 @@ describe("runningSubagentTree", () => {
       node({ thread_id: "grand", parent_thread_id: "done", status: "running", depth: 2 }),
     ]);
     expect(tree?.children.map((c) => c.node.thread_id)).toEqual(["done", "live"]);
-    expect(tree?.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
+    expect(tree!.children[0]!.children.map((c) => c.node.thread_id)).toEqual(["grand"]);
   });
 
   it("finds the root of a child chat's own subtree", () => {
@@ -94,9 +94,7 @@ describe("RunningSubagents", () => {
   });
 
   it("the expanded tree names every kept node", () => {
-    const html = renderToStaticMarkup(
-      <SubagentTree tree={runningSubagentTree(nodes)!} onOpen={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<SubagentTree tree={runningSubagentTree(nodes)!} onOpen={() => {}} />);
     expect(html).toContain("Researcher · T1-A");
     expect(html).toContain("Researcher · T1-A-1");
     expect(html).not.toContain("im testing a subagent tree");

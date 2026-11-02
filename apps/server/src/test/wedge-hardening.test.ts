@@ -86,7 +86,9 @@ describe("wedge hardening", () => {
       expect(await commands.sweepExpired(15 * 60)).toBe(0);
       expect((await commands.byId(fresh, chatId))!.status).toBe("pending");
       // Backdating the created_at makes the command expire.
-      await stack.env.db.query("UPDATE turn_commands SET created_at = created_at - interval '1 hour' WHERE id = $1", [fresh]);
+      await stack.env.db.query("UPDATE turn_commands SET created_at = created_at - interval '1 hour' WHERE id = $1", [
+        fresh,
+      ]);
       expect(await commands.sweepExpired(15 * 60)).toBeGreaterThanOrEqual(1);
       expect((await commands.byId(fresh, chatId))!.status).toBe("failed");
     });

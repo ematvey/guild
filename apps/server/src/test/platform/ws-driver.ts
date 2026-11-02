@@ -6,6 +6,9 @@
 import WebSocket from "ws";
 import crypto from "node:crypto";
 
+/** The machine socket the current driver step talks through. */
+let machineWs: ScriptedClient | undefined;
+
 export type FrameRecord =
   | { kind: "text"; data: string; t?: number }
   | { kind: "ping"; data: string; t?: number }
@@ -144,10 +147,7 @@ export interface ScenarioStep {
   upgradeFailure?: { code: number; message: string } | null;
 }
 
-async function http(
-  base: string,
-  step: HttpStep,
-): Promise<{ status: number; body: string }> {
+async function http(base: string, step: HttpStep): Promise<{ status: number; body: string }> {
   const res = await fetch(`${base}${step.path}`, {
     method: step.method,
     headers: {
@@ -244,13 +244,13 @@ export async function runScenario(
     const machines = await http(base, { method: "GET", path: "/api/v1/machines", token });
     s.http = [machines];
     // Keep the socket open for the heartbeat + dispatch steps.
-    globalThis.__m5MachineWs = ws;
+    machineWs = ws;
   }
 
   // -- heartbeat: the server pings every 5s; answer with a matched pong ------
   {
     const s = step("machine-heartbeat");
-    const ws = globalThis.__m5MachineWs as ScriptedClient;
+    const ws = machineWs!;
     const ping = await ws.until((f) => f.kind === "ping", 15_000);
     const pong = ws.frames.find((f) => f.kind === "pong" && f.data === ping.data);
     s.frames.push({ socket: 0, frame: ping });
@@ -260,18 +260,15 @@ export async function runScenario(
   // -- control-plane dispatch round-trip (fs_home) ---------------------------
   {
     const s = step("fs-roundtrip");
-    const ws = globalThis.__m5MachineWs as ScriptedClient;
+    const ws = machineWs!;
     const post = http(base, {
       method: "POST",
       path: `/api/v1/machines/${opts.machineId}/fs`,
       token,
       body: { op: "fs_home" },
     });
-    const reqFrame = await ws.until(
-      (f) => f.kind === "text" && f.data.includes("machine_request"),
-    );
-    const requestId = (JSON.parse((reqFrame as { data: string }).data) as { request_id: string })
-      .request_id;
+    const reqFrame = await ws.until((f) => f.kind === "text" && f.data.includes("machine_request"));
+    const requestId = (JSON.parse((reqFrame as { data: string }).data) as { request_id: string }).request_id;
     ws.send(
       JSON.stringify({
         type: "machine_response",
@@ -312,7 +309,7 @@ export async function runScenario(
   // -- second instance is REJECTED (0.5.25 live-slot rule); holder unharmed ---
   {
     const s = step("foreign-instance-rejected");
-    const ws = globalThis.__m5MachineWs as ScriptedClient;
+    const ws = machineWs!;
     const t = await ticket(base, token);
     const thief = new ScriptedClient(
       base,
@@ -327,9 +324,7 @@ export async function runScenario(
     // for it; heartbeat pings continue as usual and don't count).
     const before = ws.frames.length;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const disturbed = ws.frames
-      .slice(before)
-      .some((f) => f.kind === "closed" || f.kind === "text");
+    const disturbed = ws.frames.slice(before).some((f) => f.kind === "closed" || f.kind === "text");
     if (disturbed) throw new Error("holder socket was disturbed by the rejected connect");
   }
 
@@ -420,9 +415,7 @@ export async function runScenario(
     const threadList = ws.frames.find((f) => f.kind === "text" && f.data.includes("thread_list"))!;
     s.frames.push({ socket: 0, frame: threadList });
     ws.end();
-    const ws2 = globalThis.__m5MachineWs as ScriptedClient | undefined;
+    const ws2 = machineWs;
     ws2?.end();
   }
 }
-
-declare const globalThis: { __m5MachineWs?: ScriptedClient };

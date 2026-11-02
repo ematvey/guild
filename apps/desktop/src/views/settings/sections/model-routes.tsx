@@ -4,11 +4,7 @@
 
 import { useState } from "react";
 import { updateCached, useCachedGet } from "../use-cached-api";
-import {
-  deleteGatewayRoute,
-  putGatewayRoute,
-  SETTINGS_PATHS,
-} from "../../../lib/api/settings";
+import { deleteGatewayRoute, putGatewayRoute, SETTINGS_PATHS } from "../../../lib/api/settings";
 import { Blocks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
@@ -23,28 +19,14 @@ import {
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
 import { Input } from "@guild/ui/components/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "@guild/ui/components/empty-state";
 import { FactCard, FactGrid } from "../components/fact-card";
 
-
-import {
-  Chip,
-  fmtUsd,
-  MODALITIES,
-  StatusDot,
-  type ProviderRow,
-  type RouteRow,
-} from "./model-providers";
+import { Chip, fmtUsd, MODALITIES, StatusDot, type ProviderRow, type RouteRow } from "./model-providers";
 
 function useRouteField(model: string) {
   const res = useCachedGet<{ routes: RouteRow[] }>(SETTINGS_PATHS.gatewayRoutes);
@@ -111,8 +93,14 @@ export function RouteDetail({
   const [error, setError] = useState<string | null>(null);
 
   if (r === null) {
-    if (loadError) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
-    if (settled && r === null) return <EmptyState icon={Blocks} title="Route not found" hint="It may have been deleted." />;
+    if (loadError)
+      return (
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      );
+    if (settled && r === null)
+      return <EmptyState icon={Blocks} title="Route not found" hint="It may have been deleted." />;
     return (
       <div>
         <PageHeader title={model} back={{ label: "Models", onClick: onBack }} />
@@ -147,9 +135,7 @@ export function RouteDetail({
         ...(draft.quota_monthly_usd != null ? { quota_monthly_usd: draft.quota_monthly_usd } : {}),
         reasoning: draft.reasoning,
         ...(draft.context_window != null ? { context_window: draft.context_window } : {}),
-        ...(draft.max_output_tokens != null
-          ? { max_output_tokens: draft.max_output_tokens }
-          : {}),
+        ...(draft.max_output_tokens != null ? { max_output_tokens: draft.max_output_tokens } : {}),
         ...(draft.temperature != null || tempText.trim() !== "" ? { temperature: parsedTemp } : {}),
         modalities: draft.modalities,
       });
@@ -199,10 +185,7 @@ export function RouteDetail({
           back={{ label: "Models", onClick: onBack }}
         />
         <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-          <Field
-            label="Display name"
-            hint="Shown to chat users. The model id stays internal."
-          >
+          <Field label="Display name" hint="Shown to chat users. The model id stays internal.">
             <Input
               value={draft.alias}
               placeholder="e.g. Guild Fast"
@@ -216,11 +199,7 @@ export function RouteDetail({
             <Input value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
           </Field>
           <Field label="Provider">
-            <ProviderSelect
-              providers={providers}
-              value={draft.provider}
-              onChange={(v) => patch({ provider: v })}
-            />
+            <ProviderSelect providers={providers} value={draft.provider} onChange={(v) => patch({ provider: v })} />
           </Field>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -259,12 +238,13 @@ export function RouteDetail({
               <Input
                 value={draft.context_window != null ? String(draft.context_window) : ""}
                 placeholder="128000"
-                onChange={(e) =>
-                  patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })
-                }
+                onChange={(e) => patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })}
               />
             </Field>
-            <Field label="Max output tokens" hint="Per model call; empty = provider default. Anthropic requires this when you want long answers.">
+            <Field
+              label="Max output tokens"
+              hint="Per model call; empty = provider default. Anthropic requires this when you want long answers."
+            >
               <Input
                 value={draft.max_output_tokens != null ? String(draft.max_output_tokens) : ""}
                 placeholder="4096"
@@ -275,7 +255,10 @@ export function RouteDetail({
                 }
               />
             </Field>
-            <Field label="Temperature" hint="Sampling temperature, 0–2; empty = provider default. Lower (0.6) makes long tool-call scripts reliable; a client that sends its own temperature overrides it.">
+            <Field
+              label="Temperature"
+              hint="Sampling temperature, 0–2; empty = provider default. Lower (0.6) makes long tool-call scripts reliable; a client that sends its own temperature overrides it."
+            >
               <Input
                 value={tempText}
                 inputMode="decimal"
@@ -316,10 +299,7 @@ export function RouteDetail({
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
-            <Button
-              disabled={busy || !draft.model.trim() || !draft.alias.trim()}
-              onClick={save}
-            >
+            <Button disabled={busy || !draft.model.trim() || !draft.alias.trim()} onClick={save}>
               {busy ? "Saving…" : "Save"}
             </Button>
             <Button
@@ -343,9 +323,7 @@ export function RouteDetail({
     <div>
       <PageHeader
         title={r.alias || r.model}
-        description={
-          r.enabled ? "Selectable in chats." : "Disabled — not selectable in chats."
-        }
+        description={r.enabled ? "Selectable in chats." : "Disabled — not selectable in chats."}
         back={{ label: "Models", onClick: onBack }}
         actions={
           <>
@@ -385,9 +363,7 @@ export function RouteDetail({
           </span>
         </FactCard>
         <FactCard label="Context window">
-          {r.context_window != null
-            ? `${(r.context_window / 1000).toFixed(0)}k tokens`
-            : "provider default"}
+          {r.context_window != null ? `${(r.context_window / 1000).toFixed(0)}k tokens` : "provider default"}
         </FactCard>
         <FactCard label="Capabilities">
           <div className="flex flex-wrap gap-1.5">
@@ -450,22 +426,11 @@ export function RouteAdd({
         back={{ label: "Models", onClick: onBack }}
       />
       <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-        <Field
-          label="Display name"
-          hint="Shown to chat users. The model id stays internal."
-        >
-          <Input
-            value={alias}
-            placeholder="e.g. Guild Fast"
-            onChange={(e) => setAlias(e.target.value)}
-          />
+        <Field label="Display name" hint="Shown to chat users. The model id stays internal.">
+          <Input value={alias} placeholder="e.g. Guild Fast" onChange={(e) => setAlias(e.target.value)} />
         </Field>
         <Field label="Model id" hint="The name sent to the provider and used by API clients.">
-          <Input
-            value={model}
-            placeholder="e.g. GLM-5.3-Flash"
-            onChange={(e) => setModel(e.target.value)}
-          />
+          <Input value={model} placeholder="e.g. GLM-5.3-Flash" onChange={(e) => setModel(e.target.value)} />
         </Field>
         <Field
           label="Provider"

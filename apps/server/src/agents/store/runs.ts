@@ -8,7 +8,14 @@ import type { PlatformPool } from "../../platform/db.js";
 import { uuidv7 } from "../../platform/time.js";
 import type { TraceStore } from "../../platform/trace.js";
 import type { UserRow } from "../../platform/store/identity.js";
-import type { AgentActivityEntry, AgentRoutine, AgentRun, AgentRunStatus, AgentRunStep, AgentTrigger } from "../types.js";
+import type {
+  AgentActivityEntry,
+  AgentRoutine,
+  AgentRun,
+  AgentRunStatus,
+  AgentRunStep,
+  AgentTrigger,
+} from "../types.js";
 import { listRoutines } from "../routines.js";
 import { notifySubagentTree } from "../tree.js";
 import { visiblePredicate } from "./access.js";
@@ -115,9 +122,10 @@ export class AgentRunStore {
   }
 
   async getRun(runId: string): Promise<AgentRun> {
-    const res = await this.pool.query<Record<string, unknown>>(`SELECT ${RUN_COLUMNS} FROM agent_runs r WHERE r.id = $1`, [
-      runId,
-    ]);
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${RUN_COLUMNS} FROM agent_runs r WHERE r.id = $1`,
+      [runId],
+    );
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such run");
     return toRun(row);
@@ -149,7 +157,9 @@ export class AgentRunStore {
             steps.push({ type: "user_message", seq: Number(row.seq), ts, text: text.slice(0, 4_000) });
           }
         } else if (row.type === "assistant_message") {
-          const blocks = Array.isArray(row.payload.blocks) ? (row.payload.blocks as { type?: string; text?: string }[]) : [];
+          const blocks = Array.isArray(row.payload.blocks)
+            ? (row.payload.blocks as { type?: string; text?: string }[])
+            : [];
           for (const block of blocks) {
             if (block.type === "text" && typeof block.text === "string" && block.text.trim() !== "") {
               steps.push({ type: "assistant_text", seq: Number(row.seq), ts, text: block.text.slice(0, 2_000) });
@@ -247,7 +257,7 @@ export class AgentRunStore {
     const sets: string[] = [];
     const params: unknown[] = [runId];
     for (const key of UPDATE_COLUMNS) {
-      if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+      if (!Object.hasOwn(patch, key)) continue;
       params.push(patch[key]);
       sets.push(`${key} = $${params.length}`);
     }
@@ -362,7 +372,11 @@ export class AgentRunStore {
     return res.rows.map((row) => ({ ...toRun(row), agent_name: row.agent_name as string }));
   }
 
-  async listRoutineRuns(agentId: string, routineId: string, filters: { limit?: number; before?: string } = {}): Promise<AgentRun[]> {
+  async listRoutineRuns(
+    agentId: string,
+    routineId: string,
+    filters: { limit?: number; before?: string } = {},
+  ): Promise<AgentRun[]> {
     const params: unknown[] = [agentId, routineId];
     let where = "r.agent_id = $1 AND r.routine_id = $2";
     if (filters.before !== undefined) {

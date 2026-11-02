@@ -18,12 +18,14 @@ export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
  *  stored config: adapter-bound (built-in connector) → enabled, follow user
  *  policy; MCP-bound (live discovery) → disabled — nothing is exposed that
  *  the admin did not approve. Unknown approval values read as the default. */
-export function toolCurate(rowConfig: JsonObject, mcp: boolean, rawTool: string): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
+export function toolCurate(
+  rowConfig: JsonObject,
+  mcp: boolean,
+  rawTool: string,
+): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
   const tools = rowConfig["tools"];
   const stored =
-    tools !== null && typeof tools === "object" && !Array.isArray(tools)
-      ? (tools as JsonObject)[rawTool]
-      : undefined;
+    tools !== null && typeof tools === "object" && !Array.isArray(tools) ? (tools as JsonObject)[rawTool] : undefined;
   if (stored !== null && typeof stored === "object" && !Array.isArray(stored)) {
     const c = stored as JsonObject;
     return {
@@ -45,9 +47,7 @@ function allowedClasses(rowConfig: JsonObject, role: string): string[] {
     if (Array.isArray(tp)) {
       // A stored policy entry replaces the default for that role — an empty
       // list allows nothing.
-      return tp
-        .filter((v): v is string => typeof v === "string")
-        .filter(isToolClass);
+      return tp.filter((v): v is string => typeof v === "string").filter(isToolClass);
     }
   }
   return role === "admin" ? ["read", "write", "admin"] : ["read"];

@@ -1,4 +1,15 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, excerpt, clampNumber, callVendorApi, gitlabBaseUrl, type JsonRequestErrors } from "../shared.js";
+import {
+  LIST_TIMEOUT_MS,
+  VENDOR_API_MAX_CHARS,
+  secretOrNull,
+  pathSegment,
+  requestJson,
+  excerpt,
+  clampNumber,
+  callVendorApi,
+  gitlabBaseUrl,
+  type JsonRequestErrors,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- gitlab ----------
@@ -37,7 +48,13 @@ function gitlabGet(base: string, token: string, path: string, query: [string, st
   return gitlabSend(url.toString(), { method: "GET", headers: { "PRIVATE-TOKEN": token } });
 }
 
-export async function gitlabExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function gitlabExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("gitlab secret 'token' is not stored");
   const base = gitlabBaseUrl(config);
@@ -134,4 +151,3 @@ export async function gitlabExecute(config: JsonObject, tool: string, args: Json
       throw new Error(`gitlab integration has no tool ${tool}`);
   }
 }
-

@@ -2,7 +2,7 @@
 // shared usage_events table/columns; unreachable ClickHouse must never
 // break model calls: failures are logged and dropped.
 
-import { clickhouseDateTime, ClickhouseClient } from "./clickhouse.js";
+import { clickhouseDateTime, type ClickhouseClient } from "./clickhouse.js";
 import { uuidv7 } from "./time.js";
 import { ApiError } from "./errors.js";
 import type { PlatformPool } from "./db.js";
@@ -27,14 +27,9 @@ export function usageCostUsd(tokensIn: number, tokensOut: number, priceIn: numbe
   return (tokensIn / 1_000_000) * priceIn + (tokensOut / 1_000_000) * priceOut;
 }
 
-
 /** The user's earliest-created team in the org (membership has no primary
  *  flag), or null without a pool. */
-export async function primaryTeamId(
-  pool: PlatformPool | null,
-  userId: string,
-  orgId: string,
-): Promise<string | null> {
+export async function primaryTeamId(pool: PlatformPool | null, userId: string, orgId: string): Promise<string | null> {
   if (pool === null) return null;
   const res = await pool.query<{ id: string }>(
     "SELECT t.id FROM teams t JOIN team_members m ON m.team_id = t.id " +
@@ -127,9 +122,7 @@ export function startOfMonthUtc(now = new Date()): Date {
 }
 
 export function startOfDayUtc(now = new Date()): Date {
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 export function newRequestId(): string {

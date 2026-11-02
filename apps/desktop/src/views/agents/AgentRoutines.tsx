@@ -1,31 +1,11 @@
 import { useEffect, useState } from "react";
-import {
-  ArrowLeft,
-  Clock,
-  Loader2,
-  Pencil,
-  Play,
-  Plus,
-} from "lucide-react";
+import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
-import {
-  listRoutineRuns,
-  runRoutine,
-  type AgentRoutine,
-  type AgentRun,
-} from "./agents-api";
+import { listRoutineRuns, runRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
-import {
-  ErrorState,
-  InlineLoading,
-  LoadingRows,
-  Mono,
-  RunStatusBadge,
-  Section,
-  ToneBadge,
-} from "./agent-ui";
+import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -97,21 +77,10 @@ export function AgentRoutines({
 }) {
   if (routineId && routineId !== "new") {
     return (
-      <RoutineDetail
-        agentId={agentId}
-        routineId={routineId}
-        onNavigate={onNavigate}
-        onEditRoutine={onEditRoutine}
-      />
+      <RoutineDetail agentId={agentId} routineId={routineId} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
     );
   }
-  return (
-    <RoutineList
-      agentId={agentId}
-      onNavigate={onNavigate}
-      onNewRoutine={onNewRoutine}
-    />
-  );
+  return <RoutineList agentId={agentId} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
 }
 
 function RoutineList({
@@ -199,9 +168,7 @@ function RoutineList({
                   title={routine.schedule ?? undefined}
                 >
                   {scheduleLabel(routine)}
-                  {routine.next_run_at
-                    ? ` · next ${nextRunLabel(routine.next_run_at)}`
-                    : ""}
+                  {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
                 </span>
               </span>
               {routine.last_run && <RunStatusBadge status={routine.last_run.status} />}
@@ -361,9 +328,7 @@ function RoutineDetail({
                   {run.summary?.trim() || "No summary"}
                 </span>
                 <Mono>{run.id.slice(0, 8)}</Mono>
-                <span className="text-muted-foreground">
-                  {relativeTime(run.started_at ?? run.created_at)}
-                </span>
+                <span className="text-muted-foreground">{relativeTime(run.started_at ?? run.created_at)}</span>
                 <button
                   type="button"
                   className="text-primary underline-offset-4 hover:underline"
@@ -380,19 +345,9 @@ function RoutineDetail({
   );
 }
 
-function BackButton({
-  agentId,
-  onNavigate,
-}: {
-  agentId: string;
-  onNavigate: (routes: AgentsRoute) => void;
-}) {
+function BackButton({ agentId, onNavigate }: { agentId: string; onNavigate: (routes: AgentsRoute) => void }) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => onNavigate({ view: "agent", agentId, tab: "routines" })}
-    >
+    <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "agent", agentId, tab: "routines" })}>
       <ArrowLeft />
       Routines
     </Button>

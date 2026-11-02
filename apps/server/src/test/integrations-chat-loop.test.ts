@@ -6,7 +6,7 @@
 // event lands.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,14 +26,16 @@ const dataDir = mkdtempSync(path.join(tmpdir(), "guild-m8-data-"));
 const toolCallSse = (name: string, args: string): string => {
   args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
   name = "codemode";
-  return 'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
-  name +
-  '","arguments":' +
-  JSON.stringify(args) +
-  "}}]}}]}\n\n" +
-  'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
-  'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
-  "data: [DONE]\n\n";
+  return (
+    'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
+    name +
+    '","arguments":' +
+    JSON.stringify(args) +
+    "}}]}}]}\n\n" +
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+    'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
+    "data: [DONE]\n\n"
+  );
 };
 
 const finalSse =
@@ -53,11 +55,34 @@ function route(_req: IncomingMessage, url: URL): { status: number; body: string 
   if (p === "/rest/api/3/search/jql") {
     return {
       status: 200,
-      body: JSON.stringify({ issues: [{ key: "PROJ-1", fields: { summary: "First", status: { name: "Open" }, issuetype: { name: "Bug" }, assignee: { displayName: "Alice" } } }] }),
+      body: JSON.stringify({
+        issues: [
+          {
+            key: "PROJ-1",
+            fields: {
+              summary: "First",
+              status: { name: "Open" },
+              issuetype: { name: "Bug" },
+              assignee: { displayName: "Alice" },
+            },
+          },
+        ],
+      }),
     };
   }
   if (p === "/rest/api/3/issue/PROJ-1") {
-    return { status: 200, body: JSON.stringify({ key: "PROJ-1", fields: { summary: "First", status: { name: "Open" }, issuetype: { name: "Bug" }, assignee: { displayName: "Alice" } } }) };
+    return {
+      status: 200,
+      body: JSON.stringify({
+        key: "PROJ-1",
+        fields: {
+          summary: "First",
+          status: { name: "Open" },
+          issuetype: { name: "Bug" },
+          assignee: { displayName: "Alice" },
+        },
+      }),
+    };
   }
   if (p === "/api/chat.postMessage") {
     return { status: 200, body: JSON.stringify({ ok: true, channel: "C1", ts: "1760000000.000100" }) };
@@ -82,7 +107,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
@@ -114,7 +141,16 @@ beforeAll(async () => {
   );
   await stack.env.db.query(
     "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'slack', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
-    [orgId, JSON.stringify({ base_url: `${vendorBase}/api`, tools: { conversations_list: { enabled: true, approval: "always_ask" }, post_message: { enabled: true, approval: "always_allow" } } })],
+    [
+      orgId,
+      JSON.stringify({
+        base_url: `${vendorBase}/api`,
+        tools: {
+          conversations_list: { enabled: true, approval: "always_ask" },
+          post_message: { enabled: true, approval: "always_allow" },
+        },
+      }),
+    ],
   );
   await stack.env.db.query(
     "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
@@ -199,26 +235,33 @@ describe("M8: integrations chat runtime", () => {
     "registers list_tools + guide + connector tools; discovery returns the member-visible specs",
     async () => {
       const chatId = await createChat("m8-discovery");
-      scriptFor(
-        { body: toolCallSse("atlassian_list_tools", "{}") },
-        { body: finalSse },
-      );
+      scriptFor({ body: toolCallSse("atlassian_list_tools", "{}") }, { body: finalSse });
       await submitTurn(chatId, "what atlassian tools do I have?");
       await turnSettled(chatId);
 
       const events = await threadEvents(chatId);
       const call = toolCalls(events).find((b) => (b as { name: string }).name === "codemode");
       expect(call).toBeDefined();
-      const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
+      const result = toolResults(events).find(
+        (e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id,
+      );
       expect(result).toBeDefined();
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
-      const specs = JSON.parse((result!.event as { content: string }).content.split("Output:\n")[1]!) as Record<string, unknown>[];
+      const specs = JSON.parse((result!.event as { content: string }).content.split("Output:\n")[1]!) as Record<
+        string,
+        unknown
+      >[];
       const names = specs.map((s) => s["name"]);
       // Read-class connector tools for the member; write-class tools
       // (confluence_create_page, api) are role-filtered out; the list_tools
       // JSON carries connector specs only (the guide auto is a registered
       // tool, not a spec).
-      for (const expected of ["atlassian_jira_search", "atlassian_jira_get_issue", "atlassian_confluence_search", "atlassian_confluence_get_page"]) {
+      for (const expected of [
+        "atlassian_jira_search",
+        "atlassian_jira_get_issue",
+        "atlassian_confluence_search",
+        "atlassian_confluence_get_page",
+      ]) {
         expect(names).toContain(expected);
       }
       expect(names).not.toContain("atlassian_confluence_create_page");
@@ -286,7 +329,9 @@ describe("M8: integrations chat runtime", () => {
       expect(events.find((e) => (e.event as { type?: string }).type === "approval_request")).toBeUndefined();
       const call = toolCalls(events).find((b) => (b as { name: string }).name === "codemode");
       expect(call).toBeDefined();
-      const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
+      const result = toolResults(events).find(
+        (e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id,
+      );
       expect(result).toBeDefined();
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
       expect((result!.event as { content: string }).content).toContain("1760000000.000100");

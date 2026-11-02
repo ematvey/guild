@@ -133,7 +133,13 @@ describe("chat tree", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as {
       chat_id: string;
-      nodes: { thread_id: string; parent_thread_id: string | null; status: string | null; title: string; depth: number }[];
+      nodes: {
+        thread_id: string;
+        parent_thread_id: string | null;
+        status: string | null;
+        title: string;
+        depth: number;
+      }[];
     };
     expect(body.chat_id).toBe(rootChat);
     expect(body.nodes.map((n) => [n.thread_id, n.parent_thread_id, n.status])).toEqual([
@@ -259,10 +265,9 @@ describe("thread stop actions", () => {
       [child.threadId],
     );
     expect(thread.rows[0]?.closed_at).not.toBeNull();
-    const run = await stack.env.db.query<{ status: string }>(
-      "SELECT status FROM agent_runs WHERE id = $1",
-      [child.runId],
-    );
+    const run = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [
+      child.runId,
+    ]);
     expect(run.rows[0]?.status).toBe("cancelled");
   });
 
@@ -373,7 +378,16 @@ describe("thread delete", () => {
       await stack.env.db.query(
         `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, type, parent_thread_id, depth)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [threadId, agentId, stack.memberId, chatId, label, depth === 0 ? "user" : "subagent", threads.at(-1) ?? null, depth],
+        [
+          threadId,
+          agentId,
+          stack.memberId,
+          chatId,
+          label,
+          depth === 0 ? "user" : "subagent",
+          threads.at(-1) ?? null,
+          depth,
+        ],
       );
       chats.push(chatId);
       threads.push(threadId);
@@ -406,11 +420,17 @@ describe("thread delete", () => {
     expect(res.statusCode, res.body).toBe(200);
     const after = await flags(tree.chats);
     for (const chatId of tree.chats) expect(after[chatId]).toEqual({ deleted: true, closed: true });
-    const run = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [tree.runId]);
+    const run = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [
+      tree.runId,
+    ]);
     expect(run.rows[0]!.status).toBe("cancelled");
 
     // The child's header reports the deletion, and the child refuses writes.
-    const header = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${tree.chats[1]}/tree`, headers: auth() });
+    const header = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${tree.chats[1]}/tree`,
+      headers: auth(),
+    });
     expect(JSON.parse(header.body)).toMatchObject({ type: "subagent", deleted: true });
     const rename = await stack.env.app.inject({
       method: "PATCH",

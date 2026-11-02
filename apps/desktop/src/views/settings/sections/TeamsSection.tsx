@@ -80,18 +80,23 @@ export default function TeamsSection({ detail = null, onDetailChange }: SectionD
   );
 
   const view = entityDetailCodec.parse(detail);
-  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) =>
-    onDetailChange(entityDetailCodec.format(next));
+  const open = (next: Parameters<typeof entityDetailCodec.format>[0]) => onDetailChange(entityDetailCodec.format(next));
 
   if (view.kind !== "list") {
     // Deep-linked team page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-team form.
     if (view.kind === "row" && teams === null) {
-      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+      if (error)
+        return (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        );
       return <SkeletonForm />;
     }
-    const team = view.kind === "new" ? null : teams?.find((t) => t.id === view.id) ?? null;
-    if (view.kind === "row" && !team) return <EmptyState title="Team not found" hint="It may have been deleted." icon={UsersRound} />;
+    const team = view.kind === "new" ? null : (teams?.find((t) => t.id === view.id) ?? null);
+    if (view.kind === "row" && !team)
+      return <EmptyState title="Team not found" hint="It may have been deleted." icon={UsersRound} />;
     return (
       <TeamDetail
         team={team}
@@ -160,9 +165,7 @@ function TeamDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const membersRes = useCachedGet<{ members: UserRow[] }>(
-    creating ? null : teamMembersPath(team!.id),
-  );
+  const membersRes = useCachedGet<{ members: UserRow[] }>(creating ? null : teamMembersPath(team!.id));
   const members = creating ? [] : (membersRes.data?.members ?? null);
   const orgUsers = useCachedGet<{ users: UserRow[] }>(SETTINGS_PATHS.users).data?.users ?? null;
 
@@ -327,10 +330,7 @@ function TeamDetail({
         ) : (
           <ul>
             {members.map((m) => (
-              <li
-                key={m.id}
-                className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
-              >
+              <li key={m.id} className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0">
                 <p className="min-w-0 flex-1 truncate text-sm">{m.email}</p>
                 <Badge variant="secondary" className="capitalize">
                   {m.role}
@@ -372,8 +372,7 @@ function TeamDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete team?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{team!.name}” is removed for all members. Users are not deleted. This cannot be
-              undone.
+              “{team!.name}” is removed for all members. Users are not deleted. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

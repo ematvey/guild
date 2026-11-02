@@ -25,7 +25,14 @@ import {
   type WatchChange,
   type WatchTarget,
 } from "@earendil-works/pi-durable/env";
-import { decodeValue, encodeValue, type SandboxAgentFrame, type SandboxClientFrame, type HandleRef, type Wire } from "./protocol.js";
+import {
+  decodeValue,
+  encodeValue,
+  type SandboxAgentFrame,
+  type SandboxClientFrame,
+  type HandleRef,
+  type Wire,
+} from "./protocol.js";
 
 type Lost = "file" | "exec" | "void";
 
@@ -292,13 +299,21 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>> {
     return this.handleCall("openTextLineReader", [path], context);
   }
-  readTextLines(path: string, options: { maxLines?: number } | undefined, context: Context): Promise<Result<string[], FileError>> {
+  readTextLines(
+    path: string,
+    options: { maxLines?: number } | undefined,
+    context: Context,
+  ): Promise<Result<string[], FileError>> {
     return this.fileCall("readTextLines", [path, options], context);
   }
   readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
     return this.fileCall("readBinaryFile", [path], context);
   }
-  openBinaryReader(path: string, options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
+  openBinaryReader(
+    path: string,
+    options: { noFollow?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<BinaryReader, FileError>> {
     return this.handleCall("openBinaryReader", [path, options], context);
   }
   writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
@@ -322,7 +337,11 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>> {
     return this.fileCall("listDir", [path], context);
   }
-  listFiles(path: string, options: ListFilesOptions | undefined, context: Context): Promise<Result<FileListing, FileError>> {
+  listFiles(
+    path: string,
+    options: ListFilesOptions | undefined,
+    context: Context,
+  ): Promise<Result<FileListing, FileError>> {
     return this.fileCall("listFiles", [path, options], context);
   }
   openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
@@ -369,16 +388,27 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
     return this.fileCall("exists", [path], context);
   }
-  createDir(path: string, options: { recursive?: boolean } | undefined, context: Context): Promise<Result<void, FileError>> {
+  createDir(
+    path: string,
+    options: { recursive?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
     return this.fileCall("createDir", [path, options], context);
   }
-  remove(path: string, options: { recursive?: boolean; force?: boolean } | undefined, context: Context): Promise<Result<void, FileError>> {
+  remove(
+    path: string,
+    options: { recursive?: boolean; force?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
     return this.fileCall("remove", [path, options], context);
   }
   createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
     return this.fileCall("createTempDir", [prefix], context);
   }
-  createTempFile(options: { prefix?: string; suffix?: string } | undefined, context: Context): Promise<Result<string, FileError>> {
+  createTempFile(
+    options: { prefix?: string; suffix?: string } | undefined,
+    context: Context,
+  ): Promise<Result<string, FileError>> {
     return this.fileCall("createTempFile", [options], context);
   }
 
@@ -416,7 +446,11 @@ export class SandboxExecutionEnv implements ExecutionEnv {
             },
     })) as Result<ShellExecResult, ExecutionError>;
     if (callbackError !== undefined) {
-      const error = new ExecutionError("callback_error", `output callback failed: ${callbackError.message}`, callbackError);
+      const error = new ExecutionError(
+        "callback_error",
+        `output callback failed: ${callbackError.message}`,
+        callbackError,
+      );
       if (!result.ok && result.error.spillPath !== undefined) error.spillPath = result.error.spillPath;
       return err(error);
     }

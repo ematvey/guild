@@ -35,10 +35,7 @@ export interface RpcEnvelope<R = unknown> {
   error?: { message?: string; code?: number } | null;
 }
 
-const rpcWaiters = new Map<
-  number,
-  { resolve: (v: RpcEnvelope) => void; reject: (e: Error) => void }
->();
+const rpcWaiters = new Map<number, { resolve: (v: RpcEnvelope) => void; reject: (e: Error) => void }>();
 // Results drained by the poll loop before their caller's waiter was
 // registered (a fast call completes in the engine while its submit ack is
 // still in flight). Kept briefly so the registration can pick them up.
@@ -143,4 +140,3 @@ export function clientId(): string {
   }
   return id;
 }
-

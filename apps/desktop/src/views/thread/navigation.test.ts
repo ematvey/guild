@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  initialNavigation,
-  transitionNavigation,
-  type NavigationEvent,
-  type NavigationState,
-} from "./navigation";
+import { initialNavigation, transitionNavigation, type NavigationEvent, type NavigationState } from "./navigation";
 import { busyFrom } from "./status";
 
 const run = (events: NavigationEvent[], state = initialNavigation()): NavigationState => {

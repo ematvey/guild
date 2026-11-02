@@ -26,9 +26,7 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
       identity.orgs.get(user.org_id),
       identity.orgKv.telemetryEnabled(user.org_id),
     ]);
-    return reply
-      .status(200)
-      .send(sortedJson({ name: org.name, logo_url: org.logo_url, telemetry }));
+    return reply.status(200).send(sortedJson({ name: org.name, logo_url: org.logo_url, telemetry }));
   });
 
   // The workspace telemetry switch: admin-only, on by default. Members see
@@ -97,13 +95,8 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
         continue;
       }
       const ct = LOGO_TYPES.find(([, e]) => e === ext)?.[0] ?? "application/octet-stream";
-      return reply
-        .status(200)
-        .type(ct)
-        .header("cache-control", "public, max-age=60")
-        .send(bytes);
+      return reply.status(200).type(ct).header("cache-control", "public, max-age=60").send(bytes);
     }
     throw ApiError.notFound("no logo set");
   });
 }
-

@@ -44,19 +44,51 @@ export function SidebarSurface({
   const projects = projectsStore.use();
   const archivedProjects = archivedProjectsStore.use();
   const machines = useMachines();
-  const {
-    renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject,
-  } = useChatActions();
-  const renameChatRow = useCallback((id: string, title: string) => { void renameChat(id, title); }, [renameChat]);
-  const archiveChatRow = useCallback((id: string) => { void archiveChat(id); }, [archiveChat]);
-  const unarchiveChatRow = useCallback((id: string) => { void unarchiveChat(id); }, [unarchiveChat]);
-  const deleteChatRow = useCallback((id: string) => {
-    void deleteChat(id);
-    if (chatId === id) onOpenChatDeleted();
-  }, [deleteChat, chatId, onOpenChatDeleted]);
-  const renameProjectRow = useCallback((id: string, name: string) => { void renameProject(id, name); }, [renameProject]);
-  const archiveProjectRow = useCallback((id: string) => { void archiveProject(id); }, [archiveProject]);
-  const unarchiveProjectRow = useCallback((id: string) => { void unarchiveProject(id); }, [unarchiveProject]);
+  const { renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject } =
+    useChatActions();
+  const renameChatRow = useCallback(
+    (id: string, title: string) => {
+      void renameChat(id, title);
+    },
+    [renameChat],
+  );
+  const archiveChatRow = useCallback(
+    (id: string) => {
+      void archiveChat(id);
+    },
+    [archiveChat],
+  );
+  const unarchiveChatRow = useCallback(
+    (id: string) => {
+      void unarchiveChat(id);
+    },
+    [unarchiveChat],
+  );
+  const deleteChatRow = useCallback(
+    (id: string) => {
+      void deleteChat(id);
+      if (chatId === id) onOpenChatDeleted();
+    },
+    [deleteChat, chatId, onOpenChatDeleted],
+  );
+  const renameProjectRow = useCallback(
+    (id: string, name: string) => {
+      void renameProject(id, name);
+    },
+    [renameProject],
+  );
+  const archiveProjectRow = useCallback(
+    (id: string) => {
+      void archiveProject(id);
+    },
+    [archiveProject],
+  );
+  const unarchiveProjectRow = useCallback(
+    (id: string) => {
+      void unarchiveProject(id);
+    },
+    [unarchiveProject],
+  );
 
   if (tab === "work") {
     return (

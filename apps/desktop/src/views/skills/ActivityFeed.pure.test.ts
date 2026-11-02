@@ -94,11 +94,13 @@ describe("activityKind + activityIcon", () => {
   it("maps each event kind to its row icon", () => {
     expect(activityKind(published)).toBe("publish");
     expect(activityIcon(published)).toBe(Upload);
-    expect(activityIcon({
-      ts: "2026-10-13T10:00:00Z",
-      kind: "registry.updated",
-      payload: { slug: "s", version: "v2" },
-    })).toBe(RefreshCw);
+    expect(
+      activityIcon({
+        ts: "2026-10-13T10:00:00Z",
+        kind: "registry.updated",
+        payload: { slug: "s", version: "v2" },
+      }),
+    ).toBe(RefreshCw);
     expect(activityIcon(forked)).toBe(GitFork);
     expect(activityIcon(installed)).toBe(Download);
     expect(activityIcon(pinned)).toBe(Pin);
@@ -126,11 +128,7 @@ describe("activityMatchesFilter (the pill filter)", () => {
 describe("activityRows", () => {
   it("drops unknown kinds and applies the filter, newest first", () => {
     const rows = activityRows(
-      [
-        installed,
-        { ts: "2026-10-13T10:00:00Z", kind: "auth.login", payload: {} },
-        published,
-      ],
+      [installed, { ts: "2026-10-13T10:00:00Z", kind: "auth.login", payload: {} }, published],
       "changes",
     );
     expect(rows).toEqual([

@@ -19,8 +19,7 @@ import { resetSessionState } from "./lib/session-reset";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 import type { LoginResult, SessionResult } from "@guild/wire/rpc";
 
-const BAKED_URL: string =
-  (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
+const BAKED_URL: string = (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
 
 function defaultServerUrl(): string {
   try {
@@ -85,11 +84,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
         <CardContent className="flex flex-col gap-3">
           {sso && !showPassword ? (
             <>
-              <Button
-                onClick={() => (window.location.href = beginOidcLogin(sso.org_id))}
-              >
-                Continue with SSO
-              </Button>
+              <Button onClick={() => (window.location.href = beginOidcLogin(sso.org_id))}>Continue with SSO</Button>
               <button
                 className="text-center text-xs text-muted-foreground outline-none hover:text-foreground"
                 onClick={() => setShowPassword(true)}
@@ -154,7 +149,7 @@ function UpdateToast() {
       listen("update-failed", () => setVersion(null)),
     ];
     return () => {
-      unlisteners.forEach((p) => p.then((u) => u()).catch(() => {}));
+      for (const p of unlisteners) p.then((u) => u()).catch(() => {});
     };
   }, []);
   if (!version) return null;
@@ -232,7 +227,9 @@ function DesktopApp() {
   // version visible so that's checkable at a glance (web: not a Tauri
   // context, hide it).
   useEffect(() => {
-    getVersion().then(setAppVersion).catch(() => {});
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
   }, []);
 
   // Restore auth on mount (and after F5): the engine keeps the session and
@@ -313,8 +310,11 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await timeoutAfter(invoke("start_engine"), 30_000,
-        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
+      await timeoutAfter(
+        invoke("start_engine"),
+        30_000,
+        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.",
+      );
       const res = await rpcCall<LoginResult>("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       if (addWorkspace) {
@@ -334,9 +334,16 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await timeoutAfter(invoke("start_engine"), 30_000,
-        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await rpcCall<LoginResult>("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
+      await timeoutAfter(
+        invoke("start_engine"),
+        30_000,
+        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.",
+      );
+      const res = await rpcCall<LoginResult>(
+        "login",
+        { base_url: url, email, password, machine_id: machineId() },
+        45_000,
+      );
       if (res.error) throw new Error(res.error.message ?? "login failed");
       if (addWorkspace) {
         setBusy(false);
@@ -461,9 +468,7 @@ function DesktopApp() {
               </button>
             </>
           )}
-          {appVersion && (
-            <p className="text-center text-xs text-muted-foreground/70">Guild v{appVersion}</p>
-          )}
+          {appVersion && <p className="text-center text-xs text-muted-foreground/70">Guild v{appVersion}</p>}
           {addWorkspace && (
             <button
               className="text-xs text-muted-foreground outline-none hover:text-foreground"
@@ -525,8 +530,7 @@ function AppInner() {
       .finally(() => setReady(true));
   }, []);
 
-  if (!ready)
-    return <BootBackground />;
+  if (!ready) return <BootBackground />;
 
   if (!HAS_ENGINE) {
     const signOut = async () => {

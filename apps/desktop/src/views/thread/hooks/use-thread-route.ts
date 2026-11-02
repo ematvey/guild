@@ -3,7 +3,14 @@
 // together.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HAS_ENGINE } from "../../../lib/session";
-import { applyRoutePatch, canonicalRoute, chatRoutePath, parseChatRoute, type ChatRoute, type RoutePatch } from "../route";
+import {
+  applyRoutePatch,
+  canonicalRoute,
+  chatRoutePath,
+  parseChatRoute,
+  type ChatRoute,
+  type RoutePatch,
+} from "../route";
 
 export interface RouteNavOptions {
   /** Rewrite the current history entry instead of adding one: a normalising
@@ -47,9 +54,7 @@ export function commitRoute(
  *  addresses are canonical (`canonicalRoute`): every route that is not is
  *  rewritten in place as soon as it is entered. */
 export function useThreadRoute({ role }: { role: string }) {
-  const [route, setRoute] = useState<ChatRoute>(() =>
-    parseChatRoute(window.location.pathname, window.location.search),
-  );
+  const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname, window.location.search));
   // The route every navigation patches. A push writes it before React
   // re-renders, so two navigations in one handler compose.
   const routeRef = useRef(route);
@@ -58,8 +63,7 @@ export function useThreadRoute({ role }: { role: string }) {
   // chatId effect takes care of (re)loading or clearing the thread, and the
   // settings/device surfaces follow the parsed route.
   useEffect(() => {
-    const onPop = () =>
-      setRoute(parseChatRoute(window.location.pathname, window.location.search));
+    const onPop = () => setRoute(parseChatRoute(window.location.pathname, window.location.search));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -69,12 +73,7 @@ export function useThreadRoute({ role }: { role: string }) {
   // stable, so callbacks built on it keep their identity across renders.
   const pushRoute = useCallback<PushRoute>((next, options) => {
     const resolved = applyRoutePatch(routeRef.current, next);
-    commitRoute(
-      window.history,
-      `${window.location.pathname}${window.location.search}`,
-      resolved,
-      options,
-    );
+    commitRoute(window.history, `${window.location.pathname}${window.location.search}`, resolved, options);
     routeRef.current = resolved;
     setRoute(resolved);
   }, []);

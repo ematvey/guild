@@ -141,7 +141,9 @@ export class AgentStateFeed {
   /** `guild_agent_threads`: one user's threads with one agent moved. */
   threads({ agent_id: agentId, user_id: userId }: OrgPayload): void {
     if (agentId === null || userId === null) return;
-    void this.chains.run(`threads:${userId}:${agentId}`, "guild_agent_threads", () => this.sendThreads(userId, agentId));
+    void this.chains.run(`threads:${userId}:${agentId}`, "guild_agent_threads", () =>
+      this.sendThreads(userId, agentId),
+    );
   }
 
   /** A new member socket's first paint: the member's agent list (their
@@ -228,7 +230,11 @@ export class AgentStateFeed {
   private async sendThreads(userId: string, agentId: string): Promise<void> {
     if (!this.connected(userId)) return;
     const page = await this.store.threads.listThreads(agentId, userId);
-    this.sendKeyed(userId, `agent_threads:${agentId}`, { type: "agent_threads", agent_id: agentId, threads: page.threads });
+    this.sendKeyed(userId, `agent_threads:${agentId}`, {
+      type: "agent_threads",
+      agent_id: agentId,
+      threads: page.threads,
+    });
   }
 
   private async sendSkillCatalogs(orgId: string, userIds: string[]): Promise<void> {

@@ -24,13 +24,16 @@ describe("apiMe uses the adopted credential", () => {
       removeItem: (k: string) => void store.delete(k),
     });
     const calls: { url: string; auth: string | null }[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
-      calls.push({
-        url: String(input),
-        auth: (init?.headers as Record<string, string>)?.authorization ?? null,
-      });
-      return new Response(JSON.stringify({ email: "a@b.c", role: "admin" }), { status: 200 });
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          auth: (init?.headers as Record<string, string>)?.authorization ?? null,
+        });
+        return new Response(JSON.stringify({ email: "a@b.c", role: "admin" }), { status: 200 });
+      }),
+    );
 
     // afterAuth's order: store, then fetch.
     localStorage.setItem("guild.serverUrl", "https://guild.example");

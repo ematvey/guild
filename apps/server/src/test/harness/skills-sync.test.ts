@@ -73,9 +73,11 @@ function makeFixture(options: { selfBaseUrl?: string } = {}): Fixture {
       byUserAndSlug: async () => null,
       listForUser: async () => fx.installs,
     },
-    events: { emit: async () => {
-      throw new Error("not used here");
-    } },
+    events: {
+      emit: async () => {
+        throw new Error("not used here");
+      },
+    },
     teams: { isMember: async () => false },
     objects: undefined,
     skillReads: undefined,
@@ -229,9 +231,11 @@ describe("skills syncUser", () => {
         byUserAndSlug: async () => null,
         listForUser: async () => fx.installs,
       },
-      events: { emit: async () => {
-        throw new Error("not used here");
-      } },
+      events: {
+        emit: async () => {
+          throw new Error("not used here");
+        },
+      },
       teams: { isMember: async () => false },
       objects: undefined,
       skillReads: undefined,
@@ -268,9 +272,11 @@ describe("skills syncUser", () => {
         byUserAndSlug: async () => null,
         listForUser: async () => fx.installs,
       },
-      events: { emit: async () => {
-        throw new Error("not used here");
-      } },
+      events: {
+        emit: async () => {
+          throw new Error("not used here");
+        },
+      },
       teams: { isMember: async () => false },
       objects: undefined,
       skillReads: undefined,
@@ -278,7 +284,11 @@ describe("skills syncUser", () => {
       chatOwner: async () => null,
       executorKind: async () => null,
       conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
-      machines: { listForUser: async () => { throw new Error("db down"); } },
+      machines: {
+        listForUser: async () => {
+          throw new Error("db down");
+        },
+      },
       machineOnline: () => true,
       machineRequest: async (args) => {
         fx.calls.push(args);

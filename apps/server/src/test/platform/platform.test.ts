@@ -5,7 +5,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { createPlatformTestEnv, type PlatformTestEnv } from "../support/platform-env.js";
 import { PlatformContext } from "../../composition.js";
 import { hashPassword, verifyPassword } from "../../platform/crypto.js";
@@ -21,8 +21,8 @@ let ctx: PlatformContext;
 let orgId: string;
 let adminId: string;
 let memberId: string;
-let adminEmail = "admin@example.test";
-let memberEmail = "member@example.test";
+const adminEmail = "admin@example.test";
+const memberEmail = "member@example.test";
 let adminToken = "";
 
 async function login(email: string, password: string): Promise<{ status: number; token?: string; user?: unknown }> {
@@ -95,10 +95,7 @@ describe("bootstrap + login", () => {
 
   it("authenticates with argon2id PHC params matching the Rust defaults", async () => {
     const stored = (
-      await ctx.pool.query<{ password_hash: string }>(
-        "SELECT password_hash FROM users WHERE id = $1",
-        [adminId],
-      )
+      await ctx.pool.query<{ password_hash: string }>("SELECT password_hash FROM users WHERE id = $1", [adminId])
     ).rows[0]!.password_hash;
     expect(stored).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
     expect(await verifyPassword(PASSWORD, stored)).toBe(true);
@@ -168,10 +165,10 @@ describe("auth generation semantics (Rust identity test ports)", () => {
 
     // the reset commits between validation and issuance
     genPassword = "newpass99";
-    await ctx.pool.query(
-      "UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1",
-      [genUserId, await hashPassword(genPassword)],
-    );
+    await ctx.pool.query("UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1", [
+      genUserId,
+      await hashPassword(genPassword),
+    ]);
     const [, stale] = await ctx.identity.createSessionForCredential(genUserId, generation);
     expect(await meStatus(stale)).toBe(401);
     // issuance from a post-reset validation is unaffected
@@ -184,23 +181,18 @@ describe("auth generation semantics (Rust identity test ports)", () => {
   });
 
   it("a pre-reset mint with a superseded generation is refused", async () => {
-    const validated = await ctx.identity.validateSession(
-      (await ctx.identity.createSession(genUserId))[1],
-    );
+    const validated = await ctx.identity.validateSession((await ctx.identity.createSession(genUserId))[1]);
     // the reset commits after validation, before the mint
     genPassword = "another99";
-    await ctx.pool.query(
-      "UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1",
-      [genUserId, await hashPassword(genPassword)],
-    );
-    await expect(
-      ctx.pairing.create(orgId, genUserId, 30, validated.session_generation ?? null),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    await ctx.pool.query("UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1", [
+      genUserId,
+      await hashPassword(genPassword),
+    ]);
+    await expect(ctx.pairing.create(orgId, genUserId, 30, validated.session_generation ?? null)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
     const generationBefore = (
-      await ctx.pool.query<{ auth_generation: number }>(
-        "SELECT auth_generation FROM users WHERE id = $1",
-        [genUserId],
-      )
+      await ctx.pool.query<{ auth_generation: number }>("SELECT auth_generation FROM users WHERE id = $1", [genUserId])
     ).rows[0]!.auth_generation;
     // a mint whose INSERT lands at the then-current generation, then a
     // second reset's generation bump commits without seeing it —
@@ -208,10 +200,10 @@ describe("auth generation semantics (Rust identity test ports)", () => {
     const mintedRace = await ctx.pairing.create(orgId, genUserId, 30, null);
     expect(mintedRace.token.id).toBeDefined();
     genPassword = "yetanother9";
-    await ctx.pool.query(
-      "UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1",
-      [genUserId, await hashPassword(genPassword)],
-    );
+    await ctx.pool.query("UPDATE users SET auth_generation = auth_generation + 1, password_hash = $2 WHERE id = $1", [
+      genUserId,
+      await hashPassword(genPassword),
+    ]);
     const [, , stamped] = await ctx.pairing.redeemWithGeneration(mintedRace.secret);
     expect(stamped).toBe(generationBefore);
     const [, session] = await ctx.identity.createSessionForCredential(genUserId, stamped);
@@ -295,15 +287,13 @@ describe("OIDC provisioning rules (Rust test port)", () => {
       "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) VALUES ($1, $2, $3, 'x', 'member', 'managed')",
       [uuidv7(), orgId, freshManaged],
     );
-    await expect(
-      resolveOidcUser(ctx, orgId, freshManaged, false, null, null),
-    ).rejects.toMatchObject({ status: 401 });
-    await expect(
-      resolveOidcUser(ctx, orgId, freshManaged, true, null, null),
-    ).rejects.toMatchObject({ code: "email_taken", status: 409 });
-    const managedId = (
-      await ctx.pool.query<{ id: string }>("SELECT id FROM users WHERE email = $1", [freshManaged])
-    ).rows[0]!.id;
+    await expect(resolveOidcUser(ctx, orgId, freshManaged, false, null, null)).rejects.toMatchObject({ status: 401 });
+    await expect(resolveOidcUser(ctx, orgId, freshManaged, true, null, null)).rejects.toMatchObject({
+      code: "email_taken",
+      status: 409,
+    });
+    const managedId = (await ctx.pool.query<{ id: string }>("SELECT id FROM users WHERE email = $1", [freshManaged]))
+      .rows[0]!.id;
     const sessions = await ctx.pool.query("SELECT 1 FROM sessions WHERE user_id = $1", [managedId]);
     expect(sessions.rowCount).toBe(0);
 

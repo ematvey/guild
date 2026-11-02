@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
@@ -44,10 +44,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
   return <DialogPrimitive.Title className={cn("text-lg font-semibold", className)} {...props} />;
 }
 
-function DialogDescription({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {
   return <DialogPrimitive.Description className={cn("text-sm text-muted-foreground", className)} {...props} />;
 }
 
@@ -55,4 +52,13 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("flex justify-end gap-2", className)} {...props} />;
 }
 
-export { Dialog, DialogTrigger, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter };
+export {
+  Dialog,
+  DialogTrigger,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+};

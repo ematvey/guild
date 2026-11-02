@@ -92,7 +92,9 @@ describe("applyPlatformMigrations", () => {
     const { url } = await bareDatabase();
     const pool = new pg.Pool({ connectionString: url, max: 2 });
     await applyPlatformMigrations(pool, { dir: REAL_MIGRATIONS_DIR });
-    const expected = readdirSync(REAL_MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()
+    const expected = readdirSync(REAL_MIGRATIONS_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
       .map((f) => f.replace(/\.sql$/, "")); // history names are stems
     const rows = await history(url);
     expect(rows.map((r) => r.name)).toEqual(expected);
@@ -151,9 +153,7 @@ describe("applyPlatformMigrations", () => {
       await pool.query(
         "CREATE TABLE schema_history (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now(), content_hash text)",
       );
-      await pool.query(
-        "INSERT INTO schema_history (name) VALUES ('0001_done')",
-      );
+      await pool.query("INSERT INTO schema_history (name) VALUES ('0001_done')");
       await expect(applyPlatformMigrations(pool, { dir })).resolves.toBeUndefined();
       await pool.end();
     } finally {

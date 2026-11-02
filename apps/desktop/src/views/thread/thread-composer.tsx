@@ -2,7 +2,19 @@
 // loading placeholder, or the editable card — queued chips, retryable sends,
 // attachments, the mention picker, the prompt, and the action row (attach,
 // project chip, approval mode, context ring, agent chip, send / stop).
-import { ArrowUp, Check, ChevronDown, CornerDownRight, FolderOpen, Loader2, Plus, ShieldCheck, Square, Trash2, Users } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  CornerDownRight,
+  FolderOpen,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  Square,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   DropdownMenu,
@@ -86,7 +98,9 @@ function ProjectChip({
       }
     >
       {showMachine && (
-        <span className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+        <span
+          className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+        />
       )}
       <span className="flex min-w-0 items-center gap-1 px-2">
         <FolderOpen className="size-4 shrink-0" />
@@ -280,8 +294,23 @@ export function ThreadComposer({
   onManageAgents: () => void;
 }) {
   const {
-    fileStore, prompt, setPrompt, promptRef, outgoingRef, setCaret, setMentionDismissed, mentionIndex,
-    setMentionIndex, mentionMatches, acceptMention, ta, autoGrow, pending, setPending, fileInput, addFiles,
+    fileStore,
+    prompt,
+    setPrompt,
+    promptRef,
+    outgoingRef,
+    setCaret,
+    setMentionDismissed,
+    mentionIndex,
+    setMentionIndex,
+    mentionMatches,
+    acceptMention,
+    ta,
+    autoGrow,
+    pending,
+    setPending,
+    fileInput,
+    addFiles,
   } = composer;
   const { steeringMessage, steerChip, withdrawChip, deliverOutgoing, send, requestStop } = sending;
   const { facts, foreign } = access;
@@ -408,29 +437,49 @@ export function ThreadComposer({
               ))}
             </div>
           )}
-          {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === viewChatId).map(command => (
-            <div key={command.id} className="px-2 pb-2 text-sm text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate" title={command.text}>Send needs retry: {command.text || "attachments"}</span>
-                <Button variant="outline" size="sm" disabled={command.running} onClick={() => void deliverOutgoing(command)}>Retry send</Button>
+          {[...outgoingRef.current.values()]
+            .filter((c) => c.error && (c.chatId ?? c.originChatId) === viewChatId)
+            .map((command) => (
+              <div key={command.id} className="px-2 pb-2 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate" title={command.text}>
+                    Send needs retry: {command.text || "attachments"}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={command.running}
+                    onClick={() => void deliverOutgoing(command)}
+                  >
+                    Retry send
+                  </Button>
+                </div>
+                {command.error && (
+                  <div className="truncate text-xs text-muted-foreground/80" title={command.error}>
+                    {command.error}
+                  </div>
+                )}
               </div>
-              {command.error && (
-                <div className="truncate text-xs text-muted-foreground/80" title={command.error}>{command.error}</div>
-              )}
-            </div>
-          ))}
+            ))}
           {pending.length > 0 && (
             <div className="flex flex-wrap items-start gap-2 px-1 pb-2">
-              {pending.filter((a) => a.modality === "image").map((a) => (
-                <AttachmentImageThumb key={a.id} att={a} onRemove={() => removePending(a.id)} />
-              ))}
-              {pending.filter((a) => a.modality !== "image").map((a) => (
-                <AttachmentFileChip key={a.id} att={a} onRemove={() => removePending(a.id)} />
-              ))}
+              {pending
+                .filter((a) => a.modality === "image")
+                .map((a) => (
+                  <AttachmentImageThumb key={a.id} att={a} onRemove={() => removePending(a.id)} />
+                ))}
+              {pending
+                .filter((a) => a.modality !== "image")
+                .map((a) => (
+                  <AttachmentFileChip key={a.id} att={a} onRemove={() => removePending(a.id)} />
+                ))}
             </div>
           )}
           {mentionMatches.length > 0 && (
-            <div data-scrollable className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md">
+            <div
+              data-scrollable
+              className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
+            >
               {mentionMatches.map((sk, i) => (
                 <button
                   key={sk.name}
@@ -548,10 +597,15 @@ export function ThreadComposer({
                 size="icon"
                 className="size-8 rounded-full pointer-coarse:size-10"
                 onClick={() =>
-                  mode === "stop" || mode === "stopping" ? void requestStop() : void send(generating ? "queue" : "normal")
+                  mode === "stop" || mode === "stopping"
+                    ? void requestStop()
+                    : void send(generating ? "queue" : "normal")
                 }
                 disabled={
-                  navigating || mode === "pending" || mode === "stopping" || (mode === "send" && (!model || !hasContent))
+                  navigating ||
+                  mode === "pending" ||
+                  mode === "stopping" ||
+                  (mode === "send" && (!model || !hasContent))
                 }
                 title={
                   mode === "stopping"

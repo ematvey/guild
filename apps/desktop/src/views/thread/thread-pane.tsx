@@ -44,12 +44,16 @@ const TextBlock = memo(function TextBlock({
         </Markdown>
         {b.attachments && b.attachments.length > 0 && (
           <div className="flex max-w-full flex-wrap items-start gap-2">
-            {b.attachments.filter((a) => a.modality === "image").map((a) => (
-              <AttachmentImageThumb key={a.id} att={a} />
-            ))}
-            {b.attachments.filter((a) => a.modality !== "image").map((a) => (
-              <AttachmentFileChip key={a.id} att={a} />
-            ))}
+            {b.attachments
+              .filter((a) => a.modality === "image")
+              .map((a) => (
+                <AttachmentImageThumb key={a.id} att={a} />
+              ))}
+            {b.attachments
+              .filter((a) => a.modality !== "image")
+              .map((a) => (
+                <AttachmentFileChip key={a.id} att={a} />
+              ))}
           </div>
         )}
         {origin != null && (
@@ -63,9 +67,7 @@ const TextBlock = memo(function TextBlock({
             <span className="max-w-56 truncate text-foreground">{origin.title}</span>
           </button>
         )}
-        {b.interrupted && showInterrupted && (
-          <div className="text-xs text-muted-foreground">stopped</div>
-        )}
+        {b.interrupted && showInterrupted && <div className="text-xs text-muted-foreground">stopped</div>}
       </div>
       {showStamp && <HoverStamp ts={b.ts} side="left" />}
     </div>
@@ -170,8 +172,7 @@ export function ThreadPane({
   const transcriptEntries = useMemo(
     () =>
       displayEntries.map((e, i) =>
-        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
-        e.kind === "work" ? (
+        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null : e.kind === "work" ? (
           <WorkedForBlock
             key={`work-${e.run[0]!.key}`}
             run={e.run}
@@ -203,12 +204,16 @@ export function ThreadPane({
               {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
               {e.b.attachments && e.b.attachments.length > 0 && (
                 <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
-                  {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
-                    <AttachmentImageThumb key={a.id} att={a} />
-                  ))}
-                  {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
-                    <AttachmentFileChip key={a.id} att={a} />
-                  ))}
+                  {e.b.attachments
+                    .filter((a) => a.modality === "image")
+                    .map((a) => (
+                      <AttachmentImageThumb key={a.id} att={a} />
+                    ))}
+                  {e.b.attachments
+                    .filter((a) => a.modality !== "image")
+                    .map((a) => (
+                      <AttachmentFileChip key={a.id} att={a} />
+                    ))}
                 </div>
               )}
             </div>
@@ -236,7 +241,20 @@ export function ThreadPane({
           />
         ),
       ),
-    [displayEntries, finalAgent, lastAgent, busy, viewChatId, isStopping, lastBlockIndex, blocks, onOpenChildChat, onOpenChat, originLink, firstTextIndex],
+    [
+      displayEntries,
+      finalAgent,
+      lastAgent,
+      busy,
+      viewChatId,
+      isStopping,
+      lastBlockIndex,
+      blocks,
+      onOpenChildChat,
+      onOpenChat,
+      originLink,
+      firstTextIndex,
+    ],
   );
 
   if (blocks.length === 0) {
@@ -310,8 +328,7 @@ export function ThreadPane({
             {busy &&
               !(
                 blocks.length > 0 &&
-                (blocks[blocks.length - 1].kind === "text" ||
-                  blocks[blocks.length - 1].kind === "reasoning")
+                (blocks[blocks.length - 1].kind === "text" || blocks[blocks.length - 1].kind === "reasoning")
               ) &&
               displayEntries[displayEntries.length - 1]?.kind !== "work" && (
                 <div className="max-w-none py-1">

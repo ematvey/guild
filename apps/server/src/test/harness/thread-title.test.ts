@@ -19,9 +19,7 @@ describe("cleanGeneratedTitle", () => {
 
 describe("resolveGeneratedTitle", () => {
   it("uses the model's title when it produced one", () => {
-    expect(resolveGeneratedTitle("Продовольствие в ОАЭ", "почему цены выросли")).toBe(
-      "Продовольствие в ОАЭ",
-    );
+    expect(resolveGeneratedTitle("Продовольствие в ОАЭ", "почему цены выросли")).toBe("Продовольствие в ОАЭ");
   });
 
   it("names the thread from the first message when the reply is empty", () => {

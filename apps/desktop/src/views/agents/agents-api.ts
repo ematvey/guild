@@ -2,13 +2,7 @@
 // agents.md, "API surface"). Shapes mirror the design's data model; every
 // response is the server's keyed envelope (`{agents: [...]}`, `{agent}`).
 
-import type {
-  Agent,
-  AgentRoutine,
-  AgentThread,
-  AgentVisibility,
-  AgentRun as WireAgentRun,
-} from "@guild/wire/rest";
+import type { Agent, AgentRoutine, AgentThread, AgentVisibility, AgentRun as WireAgentRun } from "@guild/wire/rest";
 import { request, requestResponse } from "../../lib/api/request";
 
 /** Authed binary/blob request (file preview and download). */
@@ -120,10 +114,7 @@ export async function createAgent(input: CreateAgentInput): Promise<Agent> {
   return (await request<{ agent: Agent }>("POST", "/api/v1/agents", input)).agent;
 }
 
-export async function updateAgent(
-  id: string,
-  input: UpdateAgentInput,
-): Promise<Agent> {
+export async function updateAgent(id: string, input: UpdateAgentInput): Promise<Agent> {
   return (await request<{ agent: Agent }>("PATCH", agentBase(id), input)).agent;
 }
 
@@ -155,10 +146,7 @@ export type ChildThreadActionResult =
   | { ok: false; unavailable: true }
   | { ok: false; unavailable: false; error: string };
 
-export async function createAgentThread(
-  id: string,
-  title?: string,
-): Promise<AgentThread> {
+export async function createAgentThread(id: string, title?: string): Promise<AgentThread> {
   return (await request<{ thread: AgentThread }>("POST", `${agentBase(id)}/threads`, title ? { title } : {})).thread;
 }
 
@@ -204,49 +192,29 @@ export async function listRoutines(id: string): Promise<AgentRoutine[]> {
   return (await request<{ routines: AgentRoutine[] }>("GET", `${agentBase(id)}/routines`)).routines;
 }
 
-export async function runRoutine(
-  id: string,
-  routineId: string,
-): Promise<AgentRun> {
-  return (
-    await request<{ run: AgentRun }>(
-      "POST",
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
-    )
-  ).run;
+export async function runRoutine(id: string, routineId: string): Promise<AgentRun> {
+  return (await request<{ run: AgentRun }>("POST", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`))
+    .run;
 }
 
-export async function listRoutineRuns(
-  id: string,
-  routineId: string,
-): Promise<AgentRun[]> {
-  return (await request<{ runs: AgentRun[] }>("GET", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/runs`)).runs;
+export async function listRoutineRuns(id: string, routineId: string): Promise<AgentRun[]> {
+  return (await request<{ runs: AgentRun[] }>("GET", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/runs`))
+    .runs;
 }
 
-export async function listAgentFiles(
-  id: string,
-  path: string,
-  hidden = false,
-): Promise<AgentFileEntry[]> {
+export async function listAgentFiles(id: string, path: string, hidden = false): Promise<AgentFileEntry[]> {
   return (await listAgentDir(id, path, hidden)).entries;
 }
 
 /** One listing request for any path. A file path answers with its parent
  *  folder's entries plus `file`, so a file deep link needs no second call. */
-export async function listAgentDir(
-  id: string,
-  path: string,
-  hidden = false,
-): Promise<AgentDirListing> {
+export async function listAgentDir(id: string, path: string, hidden = false): Promise<AgentDirListing> {
   const query = new URLSearchParams({ path });
   if (hidden) query.set("hidden", "1");
   return request<AgentDirListing>("GET", `${agentBase(id)}/files?${query}`);
 }
 
-export async function getAgentFileContent(
-  id: string,
-  path: string,
-): Promise<AgentFileContent> {
+export async function getAgentFileContent(id: string, path: string): Promise<AgentFileContent> {
   const query = new URLSearchParams({ path });
   return request<AgentFileContent>("GET", `${agentBase(id)}/files/content?${query}`);
 }
@@ -352,9 +320,7 @@ export const SAFE_BASELINE_NAMES = SAFE_BASELINE_TOOLS.map((t) => t.name);
 
 /** Group tools for the creation/settings checklists, stable by group order
  *  of first appearance. */
-export function groupTools(
-  tools: AgentToolInfo[],
-): { group: string; tools: AgentToolInfo[] }[] {
+export function groupTools(tools: AgentToolInfo[]): { group: string; tools: AgentToolInfo[] }[] {
   const groups: { group: string; tools: AgentToolInfo[] }[] = [];
   for (const tool of tools) {
     const found = groups.find((g) => g.group === tool.group);
@@ -489,9 +455,7 @@ function activityQuery(filters: ActivityQuery): string {
   return query.toString() ? `?${query}` : "";
 }
 
-export async function listTraces(
-  filters: ActivityQuery = {},
-): Promise<{ traces: TraceRow[]; total: number }> {
+export async function listTraces(filters: ActivityQuery = {}): Promise<{ traces: TraceRow[]; total: number }> {
   return request<{ traces: TraceRow[]; total: number }>("GET", `/api/v1/activity/traces${activityQuery(filters)}`);
 }
 
@@ -500,31 +464,34 @@ export async function getTrace(traceId: string): Promise<{
   spans: SpanRow[];
   children: TraceRow[];
 }> {
-  return request<{ trace: TraceRow; spans: SpanRow[]; children: TraceRow[] }>("GET", `/api/v1/activity/traces/${encodeURIComponent(traceId)}`);
+  return request<{ trace: TraceRow; spans: SpanRow[]; children: TraceRow[] }>(
+    "GET",
+    `/api/v1/activity/traces/${encodeURIComponent(traceId)}`,
+  );
 }
 
-export async function listSpans(
-  filters: ActivityQuery = {},
-): Promise<{ spans: SpanRow[]; total: number }> {
+export async function listSpans(filters: ActivityQuery = {}): Promise<{ spans: SpanRow[]; total: number }> {
   return request<{ spans: SpanRow[]; total: number }>("GET", `/api/v1/activity/spans${activityQuery(filters)}`);
 }
 
 export async function listChatActivity(
   filters: ActivityQuery = {},
 ): Promise<{ chats: ChatActivityRow[]; total: number }> {
-  const body = await request<{ sessions: ChatActivityRow[]; total: number }>("GET", `/api/v1/activity/sessions${activityQuery(filters)}`);
+  const body = await request<{ sessions: ChatActivityRow[]; total: number }>(
+    "GET",
+    `/api/v1/activity/sessions${activityQuery(filters)}`,
+  );
   return { chats: body.sessions, total: body.total };
 }
 
-export async function getActivitySummary(
-  filters: ActivityQuery = {},
-): Promise<ActivitySummary> {
+export async function getActivitySummary(filters: ActivityQuery = {}): Promise<ActivitySummary> {
   return request<ActivitySummary>("GET", `/api/v1/activity/summary${activityQuery(filters)}`);
 }
 
-export async function getSpanPayloads(
-  spanId: string,
-): Promise<{ kind: string; body: string }[]> {
-  const body = await request<{ payloads: { kind: string; body: string }[] }>("GET", `/api/v1/activity/spans/${encodeURIComponent(spanId)}/payloads`);
+export async function getSpanPayloads(spanId: string): Promise<{ kind: string; body: string }[]> {
+  const body = await request<{ payloads: { kind: string; body: string }[] }>(
+    "GET",
+    `/api/v1/activity/spans/${encodeURIComponent(spanId)}/payloads`,
+  );
   return body.payloads;
 }

@@ -115,9 +115,7 @@ export interface Config {
   agentMaxChildrenPerNode: number;
 }
 
-export type SandboxConfig =
-  | { mode: "runner"; runnerUrl: string; runnerToken: string }
-  | { mode: "inprocess-unsafe" };
+export type SandboxConfig = { mode: "runner"; runnerUrl: string; runnerToken: string } | { mode: "inprocess-unsafe" };
 
 export function parseSandboxConfig(env: NodeJS.ProcessEnv): SandboxConfig {
   const runnerUrl = env.GUILD_SANDBOX_RUNNER_URL;
@@ -175,7 +173,7 @@ function parseUrl(raw: string, label: string): string {
       throw new Error(`must be http(s), got "${url.protocol}"`);
     }
     return url.origin;
-  } catch (error) {
+  } catch {
     throw new Error(`${label}: not a valid URL: "${raw}"`);
   }
 }
@@ -223,16 +221,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (internalKey !== null) rejectPlaceholder(internalKey, "GUILD_INTERNAL_KEY", production);
   const selfBaseUrl = parseUrl(env.GUILD_SELF_BASE_URL ?? `http://127.0.0.1:${bind.port}`, "GUILD_SELF_BASE_URL");
   const faroUrl = env.GUILD_FARO_URL ?? DEFAULT_FARO_URL;
-  const webDistDir = env.GUILD_WEB_DIST === undefined || env.GUILD_WEB_DIST === ""
-    ? defaultWebDistDir()
-    : env.GUILD_WEB_DIST;
+  const webDistDir =
+    env.GUILD_WEB_DIST === undefined || env.GUILD_WEB_DIST === "" ? defaultWebDistDir() : env.GUILD_WEB_DIST;
   const sandbox = parseSandboxConfig(env);
   if (sandbox.mode === "runner") {
     rejectPlaceholder(sandbox.runnerToken, "GUILD_SANDBOX_RUNNER_TOKEN", production);
   }
-  const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === undefined || env.GUILD_ALLOW_SHELL_TOOLS === ""
-    ? sandbox.mode === "runner"
-    : env.GUILD_ALLOW_SHELL_TOOLS === "1";
+  const allowShellTools =
+    env.GUILD_ALLOW_SHELL_TOOLS === undefined || env.GUILD_ALLOW_SHELL_TOOLS === ""
+      ? sandbox.mode === "runner"
+      : env.GUILD_ALLOW_SHELL_TOOLS === "1";
   const approvalTimeoutMs = positiveInt(env, "GUILD_APPROVAL_TIMEOUT_MS", 300_000);
   const clientToolTimeoutMs = positiveInt(env, "GUILD_CLIENT_TOOL_TIMEOUT_MS", 300_000);
   const poolMax = positiveInt(env, "GUILD_POOL_MAX", 10);
@@ -263,8 +261,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     poolMax,
     dataDir,
     agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
-    agentWorkspaceWriteRoot:
-      env.GUILD_AGENT_WORKSPACE_WRITE_ROOT || env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
+    agentWorkspaceWriteRoot: env.GUILD_AGENT_WORKSPACE_WRITE_ROOT || env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",
     allowShellTools,
     sandbox,
     approvalTimeoutMs,
@@ -325,7 +322,9 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): { config: Config; chat
   const raw = env[WORKER_CONFIG_ENV];
   const chatId = env[WORKER_CHAT_ENV];
   if (!raw || !chatId) {
-    throw new Error(`${WORKER_CONFIG_ENV} and ${WORKER_CHAT_ENV} are not set — this entry is forked by the supervisor only`);
+    throw new Error(
+      `${WORKER_CONFIG_ENV} and ${WORKER_CHAT_ENV} are not set — this entry is forked by the supervisor only`,
+    );
   }
   return { config: JSON.parse(raw) as Config, chatId };
 }

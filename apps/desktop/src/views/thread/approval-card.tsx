@@ -18,11 +18,7 @@ function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" | 
     expired: "border-border bg-muted text-muted-foreground",
   }[status];
   return (
-    <span
-      className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}
-    >
-      {status}
-    </span>
+    <span className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}>{status}</span>
   );
 }
 
@@ -37,11 +33,13 @@ function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" | 
 /// retries are idempotent (the endpoint echoes the recorded decision).
 export function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }) {
   // The optimistic click: it re-enables after 15 s if no answer settles it.
-  const { value: acted, show: showActed, hold: holdActed, clear: clearActed } =
-    useTransient<null | "approved" | "denied">(null, 15_000);
-  const [remote, setRemote] = useState<null | { status: "approved" | "denied" | "expired"; reason?: string }>(
-    null,
-  );
+  const {
+    value: acted,
+    show: showActed,
+    hold: holdActed,
+    clear: clearActed,
+  } = useTransient<null | "approved" | "denied">(null, 15_000);
+  const [remote, setRemote] = useState<null | { status: "approved" | "denied" | "expired"; reason?: string }>(null);
   const status = remote?.status ?? a.status;
   const settled = status !== "pending";
   const busy = !settled && acted !== null;
@@ -100,12 +98,16 @@ export function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string |
       badge={
         <>
           {a.reason && settled && status !== "expired" && (
-            <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">
-              {a.reason}
-            </span>
+            <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">{a.reason}</span>
           )}
           <ApprovalPill
-            status={settled ? (status as "approved" | "denied" | "expired") : busy ? (acted as "approved" | "denied") : "pending"}
+            status={
+              settled
+                ? (status as "approved" | "denied" | "expired")
+                : busy
+                  ? (acted as "approved" | "denied")
+                  : "pending"
+            }
           />
         </>
       }

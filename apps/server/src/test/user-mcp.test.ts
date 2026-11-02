@@ -5,7 +5,7 @@
 // app + harness + mock provider and the fixture MCP server.
 
 import { createServer } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,14 +36,16 @@ let master: Buffer;
 const toolCallSse = (name: string, args: string): string => {
   args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
   name = "codemode";
-  return 'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_mcp","type":"function","function":{"name":"' +
-  name +
-  '","arguments":' +
-  JSON.stringify(args) +
-  "}}]}}]}\n\n" +
-  'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
-  'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
-  "data: [DONE]\n\n";
+  return (
+    'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_mcp","type":"function","function":{"name":"' +
+    name +
+    '","arguments":' +
+    JSON.stringify(args) +
+    "}}]}}]}\n\n" +
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+    'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
+    "data: [DONE]\n\n"
+  );
 };
 
 const finalSse =
@@ -61,7 +63,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
@@ -89,7 +93,10 @@ beforeAll(async () => {
     method: "POST",
     url: "/api/v1/auth/login",
     headers: { "content-type": "application/json" },
-    payload: { email: (await stack.env.db.query("SELECT email FROM users WHERE id = $1", [member2Id])).rows[0]!.email, password: TEST_PASSWORD },
+    payload: {
+      email: (await stack.env.db.query("SELECT email FROM users WHERE id = $1", [member2Id])).rows[0]!.email,
+      password: TEST_PASSWORD,
+    },
   });
   member2Token = (JSON.parse(loginRes.body) as { token: string }).token;
 
@@ -170,7 +177,8 @@ async function seedServer(opts: {
   headers?: Record<string, string>;
 }): Promise<string> {
   const id = crypto.randomUUID();
-  const headersEnc = opts.headers !== undefined ? Buffer.from(encryptSecret(master, JSON.stringify(opts.headers)), "utf8") : null;
+  const headersEnc =
+    opts.headers !== undefined ? Buffer.from(encryptSecret(master, JSON.stringify(opts.headers)), "utf8") : null;
   await stack.env.db.query(
     "INSERT INTO user_mcp_servers (id, org_id, user_id, name, url, headers_enc, enabled) VALUES ($1, $2, $3, $4, $5, $6, $7)",
     [id, orgId, opts.userId ?? stack.memberId, opts.name, opts.url, headersEnc, opts.enabled ?? true],
@@ -182,7 +190,15 @@ async function seedServer(opts: {
 
 describe("user mcp store", () => {
   it("creates, lists, gets, updates, deletes rows scoped to the user", async () => {
-    const created = await store.create(orgId, stack.memberId, "storetest", "https://mcp.example.test/sse", { authorization: "Bearer abc" }, true, master);
+    const created = await store.create(
+      orgId,
+      stack.memberId,
+      "storetest",
+      "https://mcp.example.test/sse",
+      { authorization: "Bearer abc" },
+      true,
+      master,
+    );
     expect(created.name).toBe("storetest");
     expect(created.url).toBe("https://mcp.example.test/sse");
     expect(created.enabled).toBe(true);
@@ -202,7 +218,9 @@ describe("user mcp store", () => {
 
   it("enforces unique names per user", async () => {
     await store.create(orgId, stack.memberId, "dupname", "https://a.example.test", undefined, true, master);
-    await expect(store.create(orgId, stack.memberId, "dupname", "https://b.example.test", undefined, true, master)).rejects.toThrow();
+    await expect(
+      store.create(orgId, stack.memberId, "dupname", "https://b.example.test", undefined, true, master),
+    ).rejects.toThrow();
     // A different user may reuse the name.
     const other = await store.create(orgId, member2Id, "dupname", "https://b.example.test", undefined, true, master);
     await store.delete(orgId, member2Id, other.id);
@@ -211,7 +229,15 @@ describe("user mcp store", () => {
   });
 
   it("round-trips encrypted headers and masks the previews", async () => {
-    const created = await store.create(orgId, stack.memberId, "hdrtest", "https://mcp.example.test", { authorization: "Bearer verysecrettoken9", "x-api-key": "plainkey1234567890" }, true, master);
+    const created = await store.create(
+      orgId,
+      stack.memberId,
+      "hdrtest",
+      "https://mcp.example.test",
+      { authorization: "Bearer verysecrettoken9", "x-api-key": "plainkey1234567890" },
+      true,
+      master,
+    );
     expect(store.resolveHeaders(created.headers_enc, master)).toEqual({
       authorization: "Bearer verysecrettoken9",
       "x-api-key": "plainkey1234567890",
@@ -241,15 +267,22 @@ describe("user mcp routes", () => {
       method: "POST",
       url: "/api/v1/mcp/servers",
       headers: auth(),
-      payload: { name: "routetest", url: "https://mcp.example.test/mcp", headers: { authorization: "Bearer sekritvalue9" } },
+      payload: {
+        name: "routetest",
+        url: "https://mcp.example.test/mcp",
+        headers: { authorization: "Bearer sekritvalue9" },
+      },
     });
     expect(create.statusCode).toBe(200);
-    const created = (JSON.parse(create.body) as { server: { id: string; headers: { name: string; masked: string }[] } }).server;
+    const created = (JSON.parse(create.body) as { server: { id: string; headers: { name: string; masked: string }[] } })
+      .server;
     expect(created.headers).toEqual([{ name: "authorization", masked: "Bearer ••••••••••••" }]);
     expect(create.body).not.toContain("sekritvalue9");
 
     const list = await stack.env.app.inject({ method: "GET", url: "/api/v1/mcp/servers", headers: auth() });
-    expect((JSON.parse(list.body) as { servers: { id: string }[] }).servers.some((s) => s.id === created.id)).toBe(true);
+    expect((JSON.parse(list.body) as { servers: { id: string }[] }).servers.some((s) => s.id === created.id)).toBe(
+      true,
+    );
 
     const patch = await stack.env.app.inject({
       method: "PATCH",
@@ -268,14 +301,36 @@ describe("user mcp routes", () => {
     });
     expect(otherGet.statusCode).toBe(404);
 
-    const del = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/mcp/servers/${created.id}`, headers: authNoBody() });
+    const del = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/mcp/servers/${created.id}`,
+      headers: authNoBody(),
+    });
     expect(del.statusCode).toBe(200);
-    const del2 = await stack.env.app.inject({ method: "DELETE", url: `/api/v1/mcp/servers/${created.id}`, headers: authNoBody() });
+    const del2 = await stack.env.app.inject({
+      method: "DELETE",
+      url: `/api/v1/mcp/servers/${created.id}`,
+      headers: authNoBody(),
+    });
     expect(del2.statusCode).toBe(404);
   });
 
   it("validates names, urls, and the reserved namespaces", async () => {
-    for (const name of ["Bad-Name", "-lead", "a".repeat(65), "bash", "read", "write", "edit", "codemode", "read_skill", "search_skills", "push_skill", "tool_search", "int_foo"]) {
+    for (const name of [
+      "Bad-Name",
+      "-lead",
+      "a".repeat(65),
+      "bash",
+      "read",
+      "write",
+      "edit",
+      "codemode",
+      "read_skill",
+      "search_skills",
+      "push_skill",
+      "tool_search",
+      "int_foo",
+    ]) {
       const res = await stack.env.app.inject({
         method: "POST",
         url: "/api/v1/mcp/servers",
@@ -284,7 +339,18 @@ describe("user mcp routes", () => {
       });
       expect(res.statusCode, `name ${name}`).toBe(400);
     }
-    for (const url of ["not-a-url", "ftp://mcp.example.test", "http://127.0.0.1:9000", "http://10.1.2.3", "http://172.16.0.9", "http://10.0.0.4", "http://169.254.169.254", "http://[::1]:9000", "http://[fe80::1]", "http://localhost:9000"]) {
+    for (const url of [
+      "not-a-url",
+      "ftp://mcp.example.test",
+      "http://127.0.0.1:9000",
+      "http://10.1.2.3",
+      "http://172.16.0.9",
+      "http://10.0.0.4",
+      "http://169.254.169.254",
+      "http://[::1]:9000",
+      "http://[fe80::1]",
+      "http://localhost:9000",
+    ]) {
       const res = await stack.env.app.inject({
         method: "POST",
         url: "/api/v1/mcp/servers",
@@ -349,13 +415,22 @@ describe("user mcp routes", () => {
 
   it("probes the fixture server (ok) and a dead port (ok:false, HTTP 200)", async () => {
     const okId = await seedServer({ name: "probeok", url: fixtureBase, headers: { "x-test": "v" } });
-    const ok = await stack.env.app.inject({ method: "POST", url: `/api/v1/mcp/servers/${okId}/probe`, headers: auth(), payload: {} });
+    const ok = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/mcp/servers/${okId}/probe`,
+      headers: auth(),
+      payload: {},
+    });
     expect(ok.statusCode).toBe(200);
     const okBody = JSON.parse(ok.body) as { ok: boolean; tools: { name: string; call_name: string }[]; error?: string };
     expect(okBody.ok).toBe(true);
     expect(okBody.tools.map((t) => t.name).sort()).toEqual(["add", "echo"]);
     expect(okBody.tools.map((t) => t.call_name).sort()).toEqual(["mcp7_probeok_add", "mcp7_probeok_echo"]);
-    const listed = await stack.env.app.inject({ method: "GET", url: `/api/v1/mcp/servers/${okId}/tools`, headers: authNoBody() });
+    const listed = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/mcp/servers/${okId}/tools`,
+      headers: authNoBody(),
+    });
     expect(JSON.parse(listed.body).tools).toEqual(okBody.tools);
 
     // The dead-port row needs a private literal URL — seeded directly, so
@@ -363,7 +438,12 @@ describe("user mcp routes", () => {
     process.env.GUILD_MCP_ALLOW_PRIVATE = "1";
     try {
       const deadId = await seedServer({ name: "probedead", url: `http://127.0.0.1:9/mcp` });
-      const dead = await stack.env.app.inject({ method: "POST", url: `/api/v1/mcp/servers/${deadId}/probe`, headers: auth(), payload: {} });
+      const dead = await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/mcp/servers/${deadId}/probe`,
+        headers: auth(),
+        payload: {},
+      });
       expect(dead.statusCode).toBe(200);
       const deadBody = JSON.parse(dead.body) as { ok: boolean; error: string };
       expect(deadBody.ok).toBe(false);
@@ -374,7 +454,11 @@ describe("user mcp routes", () => {
     }
 
     // The tools listing rides the same probe path.
-    const tools = await stack.env.app.inject({ method: "GET", url: `/api/v1/mcp/servers/${okId}/tools`, headers: auth() });
+    const tools = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/mcp/servers/${okId}/tools`,
+      headers: auth(),
+    });
     expect((JSON.parse(tools.body) as { ok: boolean }).ok).toBe(true);
     await stack.env.app.inject({ method: "DELETE", url: `/api/v1/mcp/servers/${okId}`, headers: authNoBody() });
   });
@@ -390,9 +474,17 @@ describe("user mcp routes", () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.ok).toBe(true);
-      expect(body.tools.map((t: { call_name: string }) => t.call_name).sort()).toEqual(["mcp5_draft_add", "mcp5_draft_echo"]);
+      expect(body.tools.map((t: { call_name: string }) => t.call_name).sort()).toEqual([
+        "mcp5_draft_add",
+        "mcp5_draft_echo",
+      ]);
       expect(result.body).not.toContain("probe-only-header");
-      const withoutHeaders = await stack.env.app.inject({ method: "POST", url, headers: auth(), payload: { name: "draft", url: fixtureBase } });
+      const withoutHeaders = await stack.env.app.inject({
+        method: "POST",
+        url,
+        headers: auth(),
+        payload: { name: "draft", url: fixtureBase },
+      });
       expect(JSON.parse(withoutHeaders.body).ok).toBe(true);
       expect(await store.list(orgId, stack.memberId)).toEqual(before);
       expect((await stack.env.app.inject({ method: "POST", url, payload })).statusCode).toBe(401);
@@ -419,10 +511,7 @@ describe("user mcp chat runtime", () => {
     async () => {
       await seedServer({ name: "testsvr", url: fixtureBase, headers: { authorization: "Bearer turnsecret9" } });
       const chatId = await createChat("mcp-declare");
-      scriptFor(
-        { body: toolCallSse("mcp7_testsvr_add", JSON.stringify({ a: 2, b: 3 })) },
-        { body: finalSse },
-      );
+      scriptFor({ body: toolCallSse("mcp7_testsvr_add", JSON.stringify({ a: 2, b: 3 })) }, { body: finalSse });
       await submitTurn(chatId, "add two numbers with my mcp server");
       await turnSettled(chatId);
 
@@ -434,7 +523,10 @@ describe("user mcp chat runtime", () => {
 
       // The system prompt carries the index line; the request declared the
       // wire tool names.
-      const modelReq = stack.mock.requests[0]!.body as { messages: { role: string; content: string }[]; tools: { function: { name: string } }[] };
+      const modelReq = stack.mock.requests[0]!.body as {
+        messages: { role: string; content: string }[];
+        tools: { function: { name: string } }[];
+      };
       // Coding tools are direct; the MCP tools stay script-only.
       const direct = modelReq.tools.map((tool) => tool.function.name);
       expect(direct).toContain("codemode");

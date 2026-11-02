@@ -51,11 +51,7 @@ export function secretFromCode(code: string): string | null {
   const parts = rest.split("|");
   if (parts.length !== 2) return null;
   const [server, secret] = parts as [string, string];
-  if (
-    server === "" ||
-    secret === "" ||
-    !/^[0-9a-fA-F]+$/.test(secret)
-  ) {
+  if (server === "" || secret === "" || !/^[0-9a-fA-F]+$/.test(secret)) {
     return null;
   }
   return secret;
@@ -68,12 +64,7 @@ export class PairingStore {
    *  `generation` is the minting session's auth generation (null: the
    *  user's current one); the token is stamped with it and the INSERT
    *  refuses a generation a reset already superseded. */
-  async create(
-    orgId: string,
-    userId: string,
-    ttlMinutes: number,
-    generation: number | null,
-  ): Promise<NewPairingToken> {
+  async create(orgId: string, userId: string, ttlMinutes: number, generation: number | null): Promise<NewPairingToken> {
     const secret = randomHex();
     const id = uuidv7();
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
@@ -127,10 +118,7 @@ export class PairingStore {
 
   /** Revokes an outstanding token. Owner-only. */
   async revoke(userId: string, id: string): Promise<void> {
-    const res = await this.pool.query(
-      "DELETE FROM pairing_tokens WHERE id = $1 AND user_id = $2",
-      [id, userId],
-    );
+    const res = await this.pool.query("DELETE FROM pairing_tokens WHERE id = $1 AND user_id = $2", [id, userId]);
     if (res.rowCount === 0) throw ApiError.notFound("no such pairing token");
   }
 }

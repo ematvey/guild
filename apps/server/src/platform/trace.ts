@@ -11,7 +11,7 @@
 // tables are TS-owned (idempotent DDL on first use).
 
 import { createHash } from "node:crypto";
-import { clickhouseDateTime64, ClickhouseClient } from "./clickhouse.js";
+import { clickhouseDateTime64, type ClickhouseClient } from "./clickhouse.js";
 import { errorText } from "./usage.js";
 
 /** The zero uuid: "no parent" on a payload row and "no chain row yet". */
@@ -312,7 +312,10 @@ export class TraceStore {
           summary: (trace.summary ?? "").slice(0, 4000),
           error: (trace.error ?? "").slice(0, 4000),
           started_at: clickhouseDateTime64(trace.started_at),
-          finished_at: trace.finished_at === null || trace.finished_at === undefined ? null : clickhouseDateTime64(trace.finished_at),
+          finished_at:
+            trace.finished_at === null || trace.finished_at === undefined
+              ? null
+              : clickhouseDateTime64(trace.finished_at),
           updated_at: clickhouseDateTime64(new Date()),
         },
       ]);
@@ -530,7 +533,9 @@ export class TraceStore {
       binds.push(filter.sessionId);
     }
     if (filter.query !== undefined && filter.query !== "") {
-      where.push("(positionCaseInsensitive(summary, ?) > 0 OR positionCaseInsensitive(agent_name, ?) > 0 OR positionCaseInsensitive(name, ?) > 0)");
+      where.push(
+        "(positionCaseInsensitive(summary, ?) > 0 OR positionCaseInsensitive(agent_name, ?) > 0 OR positionCaseInsensitive(name, ?) > 0)",
+      );
       binds.push(filter.query, filter.query, filter.query);
     }
     const predicate = where.join(" AND ");
@@ -544,7 +549,10 @@ export class TraceStore {
         "ORDER BY started_at DESC, trace_id DESC LIMIT ? OFFSET ?",
       [...binds, filter.limit, filter.offset],
     );
-    const aggregates = await this.spanAggregates(filter.orgId, rows.map((row) => String(row["trace_id"])));
+    const aggregates = await this.spanAggregates(
+      filter.orgId,
+      rows.map((row) => String(row["trace_id"])),
+    );
     return {
       rows: rows.map((row) => ({ ...row, ...(aggregates.get(String(row["trace_id"])) ?? {}) })),
       total: countOf(totalRes),
@@ -552,7 +560,10 @@ export class TraceStore {
   }
 
   /** One trace row with its spans and direct child traces. */
-  async trace(orgId: string, traceId: string): Promise<{
+  async trace(
+    orgId: string,
+    traceId: string,
+  ): Promise<{
     trace: Record<string, unknown> | null;
     spans: Record<string, unknown>[];
     children: Record<string, unknown>[];
@@ -574,7 +585,10 @@ export class TraceStore {
     );
     const trace = traces[0] ?? null;
     if (trace !== null) Object.assign(trace, spanTotals(spans));
-    const childAggregates = await this.spanAggregates(orgId, children.map((row) => String(row["trace_id"])));
+    const childAggregates = await this.spanAggregates(
+      orgId,
+      children.map((row) => String(row["trace_id"])),
+    );
     return {
       trace,
       spans,
@@ -631,10 +645,7 @@ export class TraceStore {
     }
     const predicate = where.join(" AND ");
     await this.ensureOnce();
-    const totalRes = await this.client.query(
-      `SELECT count() AS total FROM agent_spans WHERE ${predicate}`,
-      binds,
-    );
+    const totalRes = await this.client.query(`SELECT count() AS total FROM agent_spans WHERE ${predicate}`, binds);
     const rows = await this.client.query(
       `SELECT ${SPAN_COLUMNS} FROM agent_spans WHERE ${predicate} ` +
         "ORDER BY start_time DESC, span_id DESC LIMIT ? OFFSET ?",
@@ -680,14 +691,13 @@ export class TraceStore {
   }
 
   /** Totals for the activity header + the daily series. */
-  async summary(filter: {
-    orgId: string;
-    userId?: string;
-    from: Date;
-    to: Date;
-  }): Promise<Record<string, unknown>> {
+  async summary(filter: { orgId: string; userId?: string; from: Date; to: Date }): Promise<Record<string, unknown>> {
     const where = ["org_id = toUUID(?)", "start_time >= toDateTime64(?, 3)", "start_time <= toDateTime64(?, 3)"];
-    const binds: (string | number)[] = [filter.orgId, clickhouseDateTime64(filter.from), clickhouseDateTime64(filter.to)];
+    const binds: (string | number)[] = [
+      filter.orgId,
+      clickhouseDateTime64(filter.from),
+      clickhouseDateTime64(filter.to),
+    ];
     if (filter.userId !== undefined) {
       where.push("user_id = toUUID(?)");
       binds.push(filter.userId);

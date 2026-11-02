@@ -48,13 +48,19 @@ export function createRunnerServer(manager: SandboxManager, log: Logger): http.S
       const url = new URL(req.url ?? "/", "http://runner");
       if (!authorized(req, token)) return send(res, 401, { error: "unauthorized" });
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
-        return send(res, 200, { ok: true, runtime: manager.config.runtime, image: manager.config.image, network: manager.config.network });
+        return send(res, 200, {
+          ok: true,
+          runtime: manager.config.runtime,
+          image: manager.config.image,
+          network: manager.config.network,
+        });
       }
       if (req.method === "POST" && url.pathname === "/v1/sandboxes") {
         const body = await readJson(req);
         const key = body["key"];
         const subpath = body["subpath"];
-        if (typeof key !== "string" || typeof subpath !== "string") throw new RunnerError(400, "key and subpath are required");
+        if (typeof key !== "string" || typeof subpath !== "string")
+          throw new RunnerError(400, "key and subpath are required");
         return send(res, 200, await manager.ensure(key, subpath));
       }
       if (req.method === "DELETE" && url.pathname === "/v1/sandboxes") {
@@ -122,7 +128,10 @@ export function createRunnerServer(manager: SandboxManager, log: Logger): http.S
 /** The runner's compose project, from its own container's labels. */
 async function discoverProject(docker: DockerClient): Promise<string | null> {
   try {
-    const self = await docker.request<{ Config: { Labels: Record<string, string> } }>("GET", `/containers/${os.hostname()}/json`);
+    const self = await docker.request<{ Config: { Labels: Record<string, string> } }>(
+      "GET",
+      `/containers/${os.hostname()}/json`,
+    );
     return self.Config.Labels["com.docker.compose.project"] ?? null;
   } catch {
     return null;
@@ -137,7 +146,16 @@ export async function main(): Promise<void> {
   await manager.start();
   const server = createRunnerServer(manager, log);
   server.listen(config.port, () =>
-    log.info({ port: config.port, project: config.project, runtime: config.runtime, volume: config.volume, network: config.network }, "sandbox runner listening"),
+    log.info(
+      {
+        port: config.port,
+        project: config.project,
+        runtime: config.runtime,
+        volume: config.volume,
+        network: config.network,
+      },
+      "sandbox runner listening",
+    ),
   );
   const shutdown = () => {
     manager.stop();

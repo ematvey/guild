@@ -5,15 +5,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@guild/ui/lib/utils";
 
-export function FactCard({
-  label,
-  children,
-  className,
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
+export function FactCard({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
     <div className={cn("rounded-lg border border-border bg-card p-4", className)}>
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -22,12 +14,6 @@ export function FactCard({
   );
 }
 
-export function FactGrid({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+export function FactGrid({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", className)}>{children}</div>;
 }

@@ -5,11 +5,7 @@
 import { Bot, CircleSlash, CornerUpRight, SquareArrowOutUpRight } from "lucide-react";
 import { Frame, FRAME_ROW_CLASS } from "../frame";
 import { PayloadPre } from "../payload-pre";
-import type {
-  ChildClosedBlock,
-  ChildResultBlock,
-  ChildSpawnBlock,
-} from "../../lib/thread-reducer";
+import type { ChildClosedBlock, ChildResultBlock, ChildSpawnBlock } from "../../lib/thread-reducer";
 
 function OpenThreadButton({
   chatId,
@@ -38,13 +34,7 @@ function OpenThreadButton({
 
 /** The spawn record: which agent, which session name, and the request the
  *  parent sent. */
-export function SubagentSpawnRecord({
-  block,
-  onOpen,
-}: {
-  block: ChildSpawnBlock;
-  onOpen: (chatId: string) => void;
-}) {
+export function SubagentSpawnRecord({ block, onOpen }: { block: ChildSpawnBlock; onOpen: (chatId: string) => void }) {
   const task = (block.task ?? "").trim();
   return (
     <Frame
@@ -60,11 +50,7 @@ export function SubagentSpawnRecord({
       }
     >
       <div className="space-y-2">
-        {task === "" ? (
-          <p className="text-xs">No request recorded.</p>
-        ) : (
-          <PayloadPre text={task} />
-        )}
+        {task === "" ? <p className="text-xs">No request recorded.</p> : <PayloadPre text={task} />}
         <OpenThreadButton chatId={block.chatId} agentName={block.agentName} onOpen={onOpen} />
       </div>
     </Frame>
@@ -72,13 +58,7 @@ export function SubagentSpawnRecord({
 }
 
 /** The result record: the child's terminal status and what it returned. */
-export function SubagentResultRecord({
-  block,
-  onOpen,
-}: {
-  block: ChildResultBlock;
-  onOpen: (chatId: string) => void;
-}) {
+export function SubagentResultRecord({ block, onOpen }: { block: ChildResultBlock; onOpen: (chatId: string) => void }) {
   const returned = (block.finalText ?? "").trim();
   const failed = block.status !== "succeeded";
   return (
@@ -96,11 +76,7 @@ export function SubagentResultRecord({
       }
     >
       <div className="space-y-2">
-        {returned === "" ? (
-          <p className="text-xs">No answer returned.</p>
-        ) : (
-          <PayloadPre text={returned} />
-        )}
+        {returned === "" ? <p className="text-xs">No answer returned.</p> : <PayloadPre text={returned} />}
         <OpenThreadButton chatId={block.chatId} agentName={block.agentName} onOpen={onOpen} />
       </div>
     </Frame>
@@ -109,13 +85,7 @@ export function SubagentResultRecord({
 
 /** The close record: the thread is gone from the running tree, and the
  *  transcript keeps the fact. */
-export function SubagentClosedRecord({
-  block,
-  onOpen,
-}: {
-  block: ChildClosedBlock;
-  onOpen: (chatId: string) => void;
-}) {
+export function SubagentClosedRecord({ block, onOpen }: { block: ChildClosedBlock; onOpen: (chatId: string) => void }) {
   return (
     <div className={`${FRAME_ROW_CLASS} text-sm text-muted-foreground`}>
       <CircleSlash className="size-3 shrink-0" />

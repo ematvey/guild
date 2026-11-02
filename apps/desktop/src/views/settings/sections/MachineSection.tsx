@@ -55,9 +55,8 @@ export function MachineSection() {
         <SkeletonForm />
       ) : machines.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
-          No machines yet. Start the Guild desktop app on the machine and sign
-          it in with a device token (Settings → Connect desktop app in the web
-          app generates one); the machine appears here once it signs in.
+          No machines yet. Start the Guild desktop app on the machine and sign it in with a device token (Settings →
+          Connect desktop app in the web app generates one); the machine appears here once it signs in.
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -85,22 +84,13 @@ export function MachineSection() {
                       )}
                     </span>
                     {!m.connected && meta && (
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                        {meta}
-                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{meta}</span>
                     )}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 pl-3">
-                  <span className="text-xs text-muted-foreground">
-                    {m.connected ? "connected" : ""}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive"
-                    onClick={() => setTarget(m)}
-                  >
+                  <span className="text-xs text-muted-foreground">{m.connected ? "connected" : ""}</span>
+                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setTarget(m)}>
                     Deauthorize
                   </Button>
                 </div>
@@ -110,9 +100,8 @@ export function MachineSection() {
         </div>
       )}
       <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
-        Machines bind at device sign-in: sign in with a device token on the
-        machine and it shows up here, ready for your chats. A chat runs on the
-        machine its project names — bind the project, not the chat.
+        Machines bind at device sign-in: sign in with a device token on the machine and it shows up here, ready for your
+        chats. A chat runs on the machine its project names — bind the project, not the chat.
       </p>
 
       <Dialog open={target !== null} onOpenChange={(open) => !open && setTarget(null)}>
@@ -120,9 +109,8 @@ export function MachineSection() {
           <DialogHeader>
             <DialogTitle>Deauthorize {target?.name}?</DialogTitle>
             <DialogDescription>
-              The machine is removed from this list and its app is signed out.
-              Chats that ran there continue on the server. A machine with
-              projects bound to it refuses — delete those projects first.
+              The machine is removed from this list and its app is signed out. Chats that ran there continue on the
+              server. A machine with projects bound to it refuses — delete those projects first.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

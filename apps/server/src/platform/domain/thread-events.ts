@@ -28,14 +28,7 @@ import type {
   ToolKind,
 } from "@guild/wire/rest";
 
-export type {
-  Block,
-  JudgeVerdict,
-  MessageAttachment,
-  ThreadEvent,
-  ThreadEventRow,
-  UsagePayload,
-};
+export type { Block, JudgeVerdict, MessageAttachment, ThreadEvent, ThreadEventRow, UsagePayload };
 
 // ---------------------------------------------------------------------------
 // Constructors (declaration order = future wire order)
@@ -60,7 +53,8 @@ export function assistantMessageEvent(
   attachments?: MessageAttachment[],
 ): ThreadEvent {
   const ev: ThreadEvent = { type: "assistant_message", turn, step, blocks, usage, model };
-  if (attachments !== undefined && attachments.length > 0) (ev as { attachments?: MessageAttachment[] }).attachments = attachments;
+  if (attachments !== undefined && attachments.length > 0)
+    (ev as { attachments?: MessageAttachment[] }).attachments = attachments;
   if (interrupted !== undefined) (ev as { interrupted?: boolean }).interrupted = interrupted;
   // A failed provider attempt tracks its error on the event itself; the
   // client renders it only while it is the thread's latest block (a later
@@ -107,12 +101,7 @@ export function compactionEvent(
   return ev;
 }
 
-export function approvalRequestEvent(
-  callId: string,
-  name: string,
-  args: string,
-  judge?: JudgeVerdict,
-): ThreadEvent {
+export function approvalRequestEvent(callId: string, name: string, args: string, judge?: JudgeVerdict): ThreadEvent {
   const ev: ThreadEvent & { judge?: JudgeVerdict } = {
     type: "approval_request",
     call_id: callId,
@@ -165,9 +154,7 @@ export function threadEventObject(event: ThreadEvent): ThreadEvent {
         blocks: event.blocks,
         usage: event.usage ?? {},
         model: event.model,
-        ...(event.attachments !== undefined && event.attachments.length > 0
-          ? { attachments: event.attachments }
-          : {}),
+        ...(event.attachments !== undefined && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
         interrupted: event.interrupted,
         error: event.error ?? undefined,
       };
@@ -274,7 +261,9 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         content: String(payload["content"] ?? ""),
         attachments: Array.isArray(payload["attachments"]) ? (payload["attachments"] as MessageAttachment[]) : [],
         ...(payload["queued"] === true ? { queued: true } : {}),
-        ...(payload["mode"] === "steer" || payload["mode"] === "queue" ? { mode: payload["mode"] as "steer" | "queue" } : {}),
+        ...(payload["mode"] === "steer" || payload["mode"] === "queue"
+          ? { mode: payload["mode"] as "steer" | "queue" }
+          : {}),
       };
     case "system_message":
       return { type: "system_message", content: String(payload["content"] ?? "") };
@@ -368,8 +357,6 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
       return undefined;
   }
 }
-
-
 
 /** Renders the model-facing summary text of a pi-durable CompactionEntry as
  *  the Guild Compaction event's `summary` (strips pi-durable's wrapper when

@@ -18,9 +18,18 @@ import { clearSettingsCaches, useCachedGet } from "../use-cached-api";
 import { RouteDetail } from "./model-routes";
 
 const route: RouteRow = {
-  model: "auto", alias: "Auto", provider: "p1", enabled: true, price_per_mtok_in_usd: 0,
-  price_per_mtok_out_usd: 0, quota_monthly_usd: null, reasoning: false, context_window: null,
-  max_output_tokens: null, temperature: null, modalities: [],
+  model: "auto",
+  alias: "Auto",
+  provider: "p1",
+  enabled: true,
+  price_per_mtok_in_usd: 0,
+  price_per_mtok_out_usd: 0,
+  quota_monthly_usd: null,
+  reasoning: false,
+  context_window: null,
+  max_output_tokens: null,
+  temperature: null,
+  modalities: [],
 };
 
 afterEach(() => {

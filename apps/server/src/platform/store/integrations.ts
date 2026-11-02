@@ -50,11 +50,11 @@ export class IntegrationStore {
   ): Promise<string> {
     const res = await db.query(
       "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, $2, $3, $4) " +
-      "ON CONFLICT (org_id, name) " +
-      "DO UPDATE SET config = jsonb_set($3, '{tools}', " +
-      "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
-      "enabled = $4, updated_at = now() " +
-      "RETURNING id",
+        "ON CONFLICT (org_id, name) " +
+        "DO UPDATE SET config = jsonb_set($3, '{tools}', " +
+        "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
+        "enabled = $4, updated_at = now() " +
+        "RETURNING id",
       [orgId, name, jsonbText(config), enabled],
     );
     return res.rows[0]!.id as string;
@@ -85,13 +85,7 @@ export class IntegrationStore {
    *  other's curation entry. Entries for not-currently-declared tools are
    *  allowed — they are how a preset survives a bundle republish. Returns
    *  the integration row's name (for the caller's org audit event). */
-  async curateTool(
-    orgId: string,
-    id: string,
-    tool: string,
-    enabled: boolean,
-    approval: string,
-  ): Promise<string> {
+  async curateTool(orgId: string, id: string, tool: string, enabled: boolean, approval: string): Promise<string> {
     return withTransaction(this.pool, async (client) => {
       const rowRes = await client.query(
         "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
@@ -110,10 +104,11 @@ export class IntegrationStore {
           : {};
       tools[tool] = { enabled, approval };
       config["tools"] = tools;
-      await client.query(
-        "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
-        [orgId, jsonbText(config), id],
-      );
+      await client.query("UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3", [
+        orgId,
+        jsonbText(config),
+        id,
+      ]);
       return name;
     });
   }
@@ -182,9 +177,9 @@ export class IntegrationSecretStore {
     const encrypted = encryptSecret(masterKey, plaintext);
     await db.query(
       "INSERT INTO integration_secrets (org_id, integration, name, secret_enc, masked) " +
-      "VALUES ($1, $2, $3, $4, $5) " +
-      "ON CONFLICT (org_id, integration, name) " +
-      "DO UPDATE SET secret_enc = $4, masked = $5, updated_at = now()",
+        "VALUES ($1, $2, $3, $4, $5) " +
+        "ON CONFLICT (org_id, integration, name) " +
+        "DO UPDATE SET secret_enc = $4, masked = $5, updated_at = now()",
       [orgId, integration, name, encrypted, maskSecretLen([...plaintext].length)],
     );
   }
@@ -205,8 +200,10 @@ export class IntegrationSecretStore {
    *  returned. */
   async list(orgId: string, integration: string, masterKey: Buffer): Promise<SecretRow[]> {
     const res = await this.pool.query(
-      "SELECT name, " + utcText("updated_at") + " AS updated_at, masked " +
-      "FROM integration_secrets WHERE org_id = $1 AND integration = $2 ORDER BY name",
+      "SELECT name, " +
+        utcText("updated_at") +
+        " AS updated_at, masked " +
+        "FROM integration_secrets WHERE org_id = $1 AND integration = $2 ORDER BY name",
       [orgId, integration],
     );
     const rows = res.rows.map((r: Record<string, unknown>) => ({

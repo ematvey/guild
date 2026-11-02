@@ -21,7 +21,13 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 /** A durable user_message whose row id is the client's message id — the
  * shape the optimistic-send reconciliation matches on. */
 function echo(seq: number, content: string, messageId: string): ThreadEventRow {
-  return { id: messageId, chat_id: "chat-1", seq, event: { type: "user_message", content, attachments: [] }, created_at: "t" };
+  return {
+    id: messageId,
+    chat_id: "chat-1",
+    seq,
+    event: { type: "user_message", content, attachments: [] },
+    created_at: "t",
+  };
 }
 
 function state(
@@ -174,9 +180,7 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
     expect(r.applyState(state("c1", 3, [], "", "")).blocks).toHaveLength(0);
     const committed = r.applyState(state("c1", 4, [row(3, step)], "", ""));
     expect(committed.blocks.map((b) => b.kind)).toEqual(["reasoning", "text"]);
-    expect(
-      committed.blocks.some((b) => b.key.startsWith("live-") || b.key.startsWith("unpersisted")),
-    ).toBe(false);
+    expect(committed.blocks.some((b) => b.key.startsWith("live-") || b.key.startsWith("unpersisted"))).toBe(false);
   });
 
   it("strips ws-streamed buffer orphans at commit, not just the sentinel keys", () => {
@@ -314,21 +318,29 @@ describe("queued steering mode updates", () => {
     const reducer = createThreadReducer();
     reducer.open("chat");
     const queued: ThreadEventRow = {
-      id: "same-message", chat_id: "chat", seq: 1, created_at: "t",
+      id: "same-message",
+      chat_id: "chat",
+      seq: 1,
+      created_at: "t",
       event: { type: "user_message", content: "correction", attachments: [], queued: true, mode: "queue" },
     };
     reducer.applyState(state("chat", 1, [queued]));
     const promoted: ThreadEventRow = {
-      ...queued, seq: 2,
+      ...queued,
+      seq: 2,
       event: { type: "user_message", content: "correction", attachments: [], queued: true, mode: "steer" },
     };
     const update = reducer.applyThreadEvents("chat", 2, [promoted]);
-    expect(update.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+    expect(update.blocks.filter((block) => block.kind === "user")).toHaveLength(1);
     expect(update.blocks[0]).toMatchObject({ eventId: "same-message", queued: true, queuedMode: "steer" });
-    const delivered = reducer.applyThreadEvents("chat", 3, [{
-      ...queued, seq: 3, event: { type: "user_message", content: "correction", attachments: [] },
-    }]);
-    expect(delivered.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+    const delivered = reducer.applyThreadEvents("chat", 3, [
+      {
+        ...queued,
+        seq: 3,
+        event: { type: "user_message", content: "correction", attachments: [] },
+      },
+    ]);
+    expect(delivered.blocks.filter((block) => block.kind === "user")).toHaveLength(1);
     expect(delivered.blocks[0]).toMatchObject({ eventId: "same-message" });
     expect(delivered.blocks[0]!.queued).toBeUndefined();
   });
@@ -336,7 +348,8 @@ describe("queued steering mode updates", () => {
 
 describe("applyThreadEvents: incremental journal fan-out", () => {
   it("applies fresh rows live; a later sync with the same rows dedupes", () => {
-    const r = createThreadReducer(); r.open("chat");
+    const r = createThreadReducer();
+    r.open("chat");
     const applied = r.applyThreadEvents("chat", 10, [
       row(9, assistantText("hi", 1)),
       row(8, { type: "user_message", content: "go", attachments: [] }),
@@ -346,15 +359,22 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
     const again = r.applyThreadEvents("chat", 10, [row(9, assistantText("hi", 1))]);
     expect(again.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
     // A full sync with the same log adds no duplicates.
-    const synced = r.applyState(state("chat", 11, [
-      row(8, { type: "user_message", content: "go", attachments: [] }),
-      row(9, assistantText("hi", 1)),
-    ], "", "", false));
+    const synced = r.applyState(
+      state(
+        "chat",
+        11,
+        [row(8, { type: "user_message", content: "go", attachments: [] }), row(9, assistantText("hi", 1))],
+        "",
+        "",
+        false,
+      ),
+    );
     expect(synced.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
   });
 
   it("never regresses the watermark", () => {
-    const r = createThreadReducer(); r.open("chat");
+    const r = createThreadReducer();
+    r.open("chat");
     r.applyState(state("chat", 50, [row(10, { type: "user_message", content: "a", attachments: [] })]));
     r.applyThreadEvents("chat", 5, [row(4, { type: "user_message", content: "old", attachments: [] })]);
     // A stale thread_state with an older seq is still recognized as stale.
@@ -362,7 +382,8 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
   });
 
   it("tool_started provisions the row; the carrying message adopts it (no duplicate)", () => {
-    const r = createThreadReducer(); r.open("chat");
+    const r = createThreadReducer();
+    r.open("chat");
     r.applyFrame({ type: "tool_started", call_id: "call-1", name: "hubspot_api", arguments: "{}", executor: "server" });
     expect(r.applyFrame({ type: "noop" } as never).blocks.map((b) => b.kind)).toEqual(["tool"]);
     // The durable assistant_message carrying the same call fans out a beat
@@ -383,8 +404,15 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
   });
 
   it("tool_completed can beat the anchor event's fan-out and still renders", () => {
-    const r = createThreadReducer(); r.open("chat");
-    const first = r.applyFrame({ type: "tool_completed", call_id: "call-9", name: "hubspot_api", content: "result", is_error: false });
+    const r = createThreadReducer();
+    r.open("chat");
+    const first = r.applyFrame({
+      type: "tool_completed",
+      call_id: "call-9",
+      name: "hubspot_api",
+      content: "result",
+      is_error: false,
+    });
     expect(first.blocks.filter((b) => b.kind === "tool")).toHaveLength(1);
     // The anchor adopts the provisioned row instead of duplicating it.
     const applied = r.applyThreadEvents("chat", 12, [
@@ -394,13 +422,13 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
         step: 0,
         model: "m",
         usage,
-        blocks: [{ type: "tool_call", id: "call-9", name: "hubspot_api", arguments: "{\"q\":1}" } as never],
+        blocks: [{ type: "tool_call", id: "call-9", name: "hubspot_api", arguments: '{"q":1}' } as never],
       }),
     ]);
     const toolBlocks = applied.blocks.filter((b) => b.kind === "tool");
     expect(toolBlocks).toHaveLength(1);
     const tool = (toolBlocks[0] as { tool: { args: string; content?: string; status: string } }).tool;
-    expect(tool.args).toBe("{\"q\":1}");
+    expect(tool.args).toBe('{"q":1}');
     expect(tool.content).toBe("result");
     expect(tool.status).toBe("done");
   });
@@ -482,7 +510,9 @@ describe("optimistic send vs server sync", () => {
     r.optimisticSend(pending);
     expect(viewBlocks(r, "c1").some((b) => b.key === "pending-1" && b.pending)).toBe(true);
     // sync raced the HTTP request: no echo → the command stays visible
-    const racing = r.applyState(state("c1", 2, [row(1, { type: "user_message", content: "earlier", attachments: [] })]));
+    const racing = r.applyState(
+      state("c1", 2, [row(1, { type: "user_message", content: "earlier", attachments: [] })]),
+    );
     expect(racing.blocks.some((b) => b.key === "pending-1" && b.pending)).toBe(true);
     // the echo (row id == client message id) settles it
     const settled = r.applyState(
@@ -492,10 +522,7 @@ describe("optimistic send vs server sync", () => {
       ]),
     );
     expect(settled.blocks.some((b) => b.key === "pending-1")).toBe(false);
-    expect(settled.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual([
-      "earlier",
-      "hello",
-    ]);
+    expect(settled.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["earlier", "hello"]);
   });
 
   it("another tab's echo does not settle this tab's marker (row id mismatch)", () => {
@@ -555,7 +582,10 @@ describe("compacting guard (the null === null flash)", () => {
       state(
         "c1",
         3,
-        [row(1, { type: "user_message", content: "go", attachments: [] }), row(2, { type: "compaction", summary: "so far: go" })],
+        [
+          row(1, { type: "user_message", content: "go", attachments: [] }),
+          row(2, { type: "compaction", summary: "so far: go" }),
+        ],
         "",
         "",
         false,
@@ -604,7 +634,10 @@ describe("compacting guard (the null === null flash)", () => {
 
 describe("compacting flag from the server", () => {
   const go = row(1, { type: "user_message", content: "go", attachments: [] });
-  const flagged = (seq: number, compacting: boolean): ThreadState => ({ ...state("c1", seq, [go], "", "", false), compacting });
+  const flagged = (seq: number, compacting: boolean): ThreadState => ({
+    ...state("c1", seq, [go], "", "", false),
+    compacting,
+  });
 
   it("a compaction that ends without a summary lowers the line", () => {
     const r = createThreadReducer();
@@ -723,9 +756,7 @@ describe("artifact card on spilled tool_result frames", () => {
 
   it("renders the server's flat card shape (spill::artifact_meta output)", () => {
     expect(artifactCardOf({ meta: artifactMetaFlat })?.filename).toBe("report.xlsx");
-    expect(artifactCardOf({ meta: artifactMetaFlat })?.id).toBe(
-      "11111111-1111-1111-1111-111111111111",
-    );
+    expect(artifactCardOf({ meta: artifactMetaFlat })?.id).toBe("11111111-1111-1111-1111-111111111111");
     // A nested card still renders (compatibility).
     expect(artifactCardOf({ meta: artifactMeta })?.filename).toBe("report.xlsx");
     // Non-artifact meta still narrows to null.
@@ -776,7 +807,14 @@ describe("open / cache", () => {
       key: "k1",
       sentAt: 0,
       attachments: [
-        { id: "pending-x", filename: "pic.png", content_type: "image/png", size_bytes: 5, modality: "image", previewUrl: "blob:x" },
+        {
+          id: "pending-x",
+          filename: "pic.png",
+          content_type: "image/png",
+          size_bytes: 5,
+          modality: "image",
+          previewUrl: "blob:x",
+        },
         { id: "pending-y", filename: "doc.pdf", content_type: "application/pdf", size_bytes: 5, modality: "document" },
       ],
     });
@@ -798,15 +836,23 @@ function viewBlocks(r: ReturnType<typeof createThreadReducer>, chatId: string) {
 }
 
 it("retains every queued optimistic command across authoritative rebuilds", () => {
-  const r = createThreadReducer(); r.open("chat");
+  const r = createThreadReducer();
+  r.open("chat");
   r.optimisticSend({ chatId: "chat", text: "one", key: "id-1", sentAt: 1 });
   r.optimisticSend({ chatId: "chat", text: "two", key: "id-2", sentAt: 2 });
-  expect(r.applyState(state("chat", 1, [])).blocks.filter(b => b.pending).map(b => b.text)).toEqual(["one", "two"]);
+  expect(
+    r
+      .applyState(state("chat", 1, []))
+      .blocks.filter((b) => b.pending)
+      .map((b) => b.text),
+  ).toEqual(["one", "two"]);
   r.invalidate();
   const rebuilt = r.applyState(state("chat", 2, [echo(1, "one", "id-1")]));
-  expect(rebuilt.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["one", "two"]);
-  expect(rebuilt.blocks.filter(b => b.pending).map(b => b.text)).toEqual(["two"]);
-  expect(r.applyState(state("chat", 3, [echo(1, "one", "id-1"), echo(2, "two", "id-2")])).blocks.filter(b => b.pending)).toEqual([]);
+  expect(rebuilt.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["one", "two"]);
+  expect(rebuilt.blocks.filter((b) => b.pending).map((b) => b.text)).toEqual(["two"]);
+  expect(
+    r.applyState(state("chat", 3, [echo(1, "one", "id-1"), echo(2, "two", "id-2")])).blocks.filter((b) => b.pending),
+  ).toEqual([]);
 });
 
 describe("provider error surfacing (tracked on assistant_message, shown only while latest)", () => {
@@ -825,7 +871,7 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
       row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
     ]);
-    expect(blocks.filter(b => b.kind === "error").map(b => b.text)).toEqual(["502: provider auth failed"]);
+    expect(blocks.filter((b) => b.kind === "error").map((b) => b.text)).toEqual(["502: provider auth failed"]);
   });
 
   it("a later retry's content supersedes the earlier error", () => {
@@ -834,8 +880,8 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
       row(2, assistantError("502: transient")),
       row(3, assistantText("hi there")),
     ]);
-    expect(blocks.filter(b => b.kind === "error")).toEqual([]);
-    expect(blocks.filter(b => b.kind === "text").map(b => b.text)).toEqual(["hi there"]);
+    expect(blocks.filter((b) => b.kind === "error")).toEqual([]);
+    expect(blocks.filter((b) => b.kind === "text").map((b) => b.text)).toEqual(["hi there"]);
   });
 
   it("only the latest of several failed attempts renders", () => {
@@ -844,37 +890,38 @@ describe("provider error surfacing (tracked on assistant_message, shown only whi
       row(2, assistantError("502: attempt one")),
       row(3, assistantError("502: attempt two (final)")),
     ]);
-    expect(blocks.filter(b => b.kind === "error").map(b => b.text)).toEqual(["502: attempt two (final)"]);
+    expect(blocks.filter((b) => b.kind === "error").map((b) => b.text)).toEqual(["502: attempt two (final)"]);
   });
 
   it("an error from a finished turn is pruned once a new turn produces content", () => {
-    const r = createThreadReducer(); r.open("chat");
+    const r = createThreadReducer();
+    r.open("chat");
     r.applyThreadEvents("chat", 0, [
       row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
     ]);
-    expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(true);
+    expect(r.applyThreadEvents("chat", 0, []).blocks.some((b) => b.kind === "error")).toBe(true);
     const after = r.applyThreadEvents("chat", 0, [
       row(3, { type: "user_message", content: "try again", attachments: [] }),
       row(4, assistantText("works now", 1)),
     ]);
-    expect(after.blocks.some(b => b.kind === "error")).toBe(false);
+    expect(after.blocks.some((b) => b.kind === "error")).toBe(false);
   });
 
   it("an error is pruned once a newer user message lands, even before its answer", () => {
-    const r = createThreadReducer(); r.open("chat");
+    const r = createThreadReducer();
+    r.open("chat");
     r.applyThreadEvents("chat", 0, [
       row(1, { type: "user_message", content: "hello", attachments: [] }),
       row(2, assistantError("502: provider auth failed")),
       row(3, { type: "user_message", content: "queued retry", attachments: [] }),
     ]);
-    expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(false);
+    expect(r.applyThreadEvents("chat", 0, []).blocks.some((b) => b.kind === "error")).toBe(false);
   });
 });
 
 describe("older-page loading (bounded tail + prepend)", () => {
-  const user = (seq: number, content: string) =>
-    row(seq, { type: "user_message", content, attachments: [] });
+  const user = (seq: number, content: string) => row(seq, { type: "user_message", content, attachments: [] });
 
   it("a tail state reports has_more and the oldest loaded seq", () => {
     const r = createThreadReducer();
@@ -882,7 +929,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
     const applied = r.applyState({ ...state("chat", 100, [user(51, "a"), user(52, "b")]), has_more_events: true });
     expect(applied.hasMore).toBe(true);
     expect(applied.oldestSeq).toBe(51);
-    expect(applied.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["a", "b"]);
+    expect(applied.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["a", "b"]);
   });
 
   it("prepending an older page keeps the reader's content and re-derives in order", () => {
@@ -893,9 +940,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
     const older = r.prependEvents("chat", [user(49, "old-1"), user(50, "old-2")], false);
     expect(older.oldestSeq).toBe(49);
     expect(older.hasMore).toBe(false);
-    expect(older.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual([
-      "old-1", "old-2", "a", "b",
-    ]);
+    expect(older.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["old-1", "old-2", "a", "b"]);
   });
 
   it("prepended rows join their cross-page tool result and keep the live buffers", () => {
@@ -911,14 +956,26 @@ describe("older-page loading (bounded tail + prepend)", () => {
       executor: "server",
     });
 
-    const older = r.prependEvents("chat", [
-      row(40, assistantText("step", 0)),
-      row(41, { type: "tool_result", turn: 1, step: 0, call_id: "call-1", name: "bash", content: "ok", is_error: false }),
-    ], false);
-    const tools = older.blocks.filter(b => b.kind === "tool");
+    const older = r.prependEvents(
+      "chat",
+      [
+        row(40, assistantText("step", 0)),
+        row(41, {
+          type: "tool_result",
+          turn: 1,
+          step: 0,
+          call_id: "call-1",
+          name: "bash",
+          content: "ok",
+          is_error: false,
+        }),
+      ],
+      false,
+    );
+    const tools = older.blocks.filter((b) => b.kind === "tool");
     expect(tools).toHaveLength(1);
     expect(tools[0]!.tool?.content).toBe("ok");
-    expect(older.blocks.filter(b => b.kind === "text").map(b => b.text)).toEqual(["step"]);
+    expect(older.blocks.filter((b) => b.kind === "text").map((b) => b.text)).toEqual(["step"]);
   });
 
   it("a reconnect re-derives from the state's tail window", () => {
@@ -931,7 +988,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
     const after = r.applyState({ ...state("chat", 101, [user(51, "a"), user(52, "b")]), has_more_events: true });
     expect(after.oldestSeq).toBe(51);
     expect(after.hasMore).toBe(true);
-    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["a", "b"]);
+    expect(after.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["a", "b"]);
   });
 
   it("incremental fan-out rows append to the loaded window", () => {
@@ -940,7 +997,7 @@ describe("older-page loading (bounded tail + prepend)", () => {
     r.applyState({ ...state("chat", 100, [user(51, "a")]), has_more_events: true });
     r.prependEvents("chat", [user(49, "old")], false);
     const after = r.applyThreadEvents("chat", 102, [user(53, "new")]);
-    expect(after.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["old", "a", "new"]);
+    expect(after.blocks.filter((b) => b.kind === "user").map((b) => b.text)).toEqual(["old", "a", "new"]);
     expect(after.hasMore).toBe(false);
   });
 });
@@ -983,9 +1040,7 @@ describe("subagent records (child events)", () => {
   });
 
   it("renders a spawn as its own record with the request", () => {
-    const derived = deriveThread([
-      rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z"),
-    ]);
+    const derived = deriveThread([rowAt(1, spawned({ task: "scan the market" }), "2026-10-22T10:00:00.000Z")]);
     const records = derived.blocks.filter((b) => b.kind === "child_spawn");
     expect(records).toHaveLength(1);
     expect(records[0]!.key).toBe("1:0");
@@ -1021,7 +1076,11 @@ describe("subagent records (child events)", () => {
 
   it("keeps a result that has no loaded spawn", () => {
     const derived = deriveThread([
-      rowAt(9, result({ status: "cancelled", chat_id: "child-chat", started_at: "2026-10-22T09:59:00.000Z" }), "2026-10-22T10:00:00.000Z"),
+      rowAt(
+        9,
+        result({ status: "cancelled", chat_id: "child-chat", started_at: "2026-10-22T09:59:00.000Z" }),
+        "2026-10-22T10:00:00.000Z",
+      ),
     ]);
     const records = derived.blocks.filter((b) => b.kind === "child_result");
     expect(records).toHaveLength(1);
@@ -1075,7 +1134,13 @@ describe("subagent records (child events)", () => {
 });
 
 describe("the turn's attached files", () => {
-  const file = { id: "att-1", filename: "statement.docx", content_type: "application/docx", size_bytes: 42, modality: "document" };
+  const file = {
+    id: "att-1",
+    filename: "statement.docx",
+    content_type: "application/docx",
+    size_bytes: 42,
+    modality: "document",
+  };
   const withFiles = (text: string, attachments = [file]): ThreadEvent => ({
     type: "assistant_message",
     turn: 1,
@@ -1108,7 +1173,8 @@ describe("the turn's attached files", () => {
   });
 });
 
-describe("open cache reports synced, not non-empty", () => {  it("a previously synced empty thread swaps without a skeleton", () => {
+describe("open cache reports synced, not non-empty", () => {
+  it("a previously synced empty thread swaps without a skeleton", () => {
     const r = createThreadReducer();
     r.open("empty");
     r.applyState(state("empty", 1, []));

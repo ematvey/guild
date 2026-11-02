@@ -1,7 +1,14 @@
 import { cn } from "../lib/utils";
 
 function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
-  return <div aria-hidden="true" data-slot="skeleton" className={cn("motion-safe:animate-pulse rounded bg-muted-foreground/10", className)} {...props} />;
+  return (
+    <div
+      aria-hidden="true"
+      data-slot="skeleton"
+      className={cn("motion-safe:animate-pulse rounded bg-muted-foreground/10", className)}
+      {...props}
+    />
+  );
 }
 
 /** A compact content placeholder. Keep labels and surrounding layout visible. */

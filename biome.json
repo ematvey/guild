@@ -1,6 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
     "includes": [
       "**",
@@ -10,7 +14,9 @@
       "!apps/desktop/src-tauri/gen",
       "!**/*.schema.json",
       "!protocol/fixtures",
-      "!**/*.md"
+      "!**/*.md",
+      "!apps/server/src/test/fixtures",
+      "!apps/server/src/test/platform/fixtures"
     ]
   },
   "formatter": {
@@ -31,13 +37,20 @@
     }
   },
   "json": {
-    "formatter": { "trailingCommas": "none" }
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
   },
   "linter": {
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "a11y": { "preset": "none" },
+      "a11y": {
+        "preset": "none"
+      },
       "complexity": {
         "useLiteralKeys": "off"
       },
@@ -49,9 +62,17 @@
       },
       "suspicious": {
         "noArrayIndexKey": "off",
-        "noExplicitAny": "off"
+        "noExplicitAny": "off",
+        "noImplicitAnyLet": "off"
       }
     }
   },
-  "assist": { "enabled": false }
+  "assist": {
+    "enabled": false
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  }
 }

@@ -1,4 +1,12 @@
-import { VENDOR_API_MAX_CHARS, secret, pathSegment, fetchJson, clampNumber, callVendorApi, langfuseBaseUrl } from "../shared.js";
+import {
+  VENDOR_API_MAX_CHARS,
+  secret,
+  pathSegment,
+  fetchJson,
+  clampNumber,
+  callVendorApi,
+  langfuseBaseUrl,
+} from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- langfuse ----------
@@ -8,7 +16,13 @@ async function langfuseGet(base: string, path: string, publicKey: string, secret
   return fetchJson(`${base}${path}`, { headers: { authorization: `Basic ${basic}` } }, "langfuse");
 }
 
-export async function langfuseExecute(config: JsonObject, tool: string, args: JsonObject, secrets: [string, string][], _actingAs: string | null): Promise<ToolOutcome> {
+export async function langfuseExecute(
+  config: JsonObject,
+  tool: string,
+  args: JsonObject,
+  secrets: [string, string][],
+  _actingAs: string | null,
+): Promise<ToolOutcome> {
   const publicKey = secret(secrets, "public_key");
   const secretKey = secret(secrets, "secret_key");
   const base = langfuseBaseUrl(config, secrets);
@@ -41,10 +55,12 @@ export async function langfuseExecute(config: JsonObject, tool: string, args: Js
       if (typeof name !== "string") throw new Error("get_prompt requires name");
       // The prompt name is a path segment (folder names carry `/`):
       // encoded, so it cannot escape the segment or carry `?`/`#`.
-      const version = typeof args["version"] === "number" && Number.isFinite(args["version"]) ? Math.trunc(args["version"]) : null;
-      const path = version !== null
-        ? `/api/public/v2/prompts/${pathSegment(name)}?version=${version}`
-        : `/api/public/v2/prompts/${pathSegment(name)}`;
+      const version =
+        typeof args["version"] === "number" && Number.isFinite(args["version"]) ? Math.trunc(args["version"]) : null;
+      const path =
+        version !== null
+          ? `/api/public/v2/prompts/${pathSegment(name)}?version=${version}`
+          : `/api/public/v2/prompts/${pathSegment(name)}`;
       const body = await langfuseGet(base, path, publicKey, secretKey);
       const promptName = typeof body["name"] === "string" ? body["name"] : name;
       const promptVersion = typeof body["version"] === "number" ? body["version"] : 0;
@@ -60,4 +76,3 @@ export async function langfuseExecute(config: JsonObject, tool: string, args: Js
       throw new Error(`langfuse integration has no tool ${tool}`);
   }
 }
-

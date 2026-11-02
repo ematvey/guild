@@ -6,9 +6,7 @@ import { toast } from "sonner";
 import { daemonFs } from "../../../lib/fs-bridge";
 import { listSkills } from "../../../lib/skills";
 import { applyMention, detectMention } from "../../../lib/skill-mention";
-import {
-  BrowserSendStore,
-} from "../../../lib/browser-send-store";
+import { BrowserSendStore } from "../../../lib/browser-send-store";
 import {
   canPersistDraft,
   clearDrafts,
@@ -34,7 +32,6 @@ import { BUILTIN_COMMANDS, composerSkills, mentionCandidates, type ComposerSkill
 import { modalityOf } from "../attachments";
 import { HAS_ENGINE } from "../../../lib/session";
 
-
 export function useComposer({
   email,
   chatId,
@@ -54,7 +51,12 @@ export function useComposer({
   const deliveringRef = useRef(new Set<string>());
   const observedUserIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const storageFailure = (reason?: unknown) => {
     console.error("Browser send storage write failed:", reason);
     if (!storageWarningRef.current && mountedRef.current) {
@@ -64,7 +66,11 @@ export function useComposer({
   };
   const persistCommand = async (command: OutgoingCommand) => {
     if (!mountedRef.current) throw new Error("Chat session closed");
-    try { await fileStore.saveCommand(command); } catch (e) { storageFailure(e); }
+    try {
+      await fileStore.saveCommand(command);
+    } catch (e) {
+      storageFailure(e);
+    }
   };
   const persistFiles = (target: string | null, files: readonly DraftAttachment[]) => {
     void fileStore.saveDraft(target, files).catch(storageFailure);
@@ -77,7 +83,10 @@ export function useComposer({
     mountedRef.current = false;
     clearDrafts(draftStorage);
     clearCommands(localStorage, outgoingScope);
-    void fileStore.clear().catch(() => {}).finally(onSignOut);
+    void fileStore
+      .clear()
+      .catch(() => {})
+      .finally(onSignOut);
   }, [onSignOut, draftStorage, fileStore, outgoingScope]);
 
   const [prompt, setPrompt] = useState("");
@@ -124,7 +133,10 @@ export function useComposer({
     // fetched, so they can never be mentioned.
     const fs = HAS_ENGINE ? daemonFs(rpcCall) : null;
     const local = fs
-      ? fs.scopes().then((scopes) => listSkills(fs, scopes)).catch(() => null)
+      ? fs
+          .scopes()
+          .then((scopes) => listSkills(fs, scopes))
+          .catch(() => null)
       : Promise.resolve(null);
     Promise.all([local, fetchInstalls().catch(() => null)])
       .then(([rows, installs]) => {
@@ -188,12 +200,17 @@ export function useComposer({
     persistFiles(pendingChatRef.current, next);
     renderPending(next);
   };
-  useEffect(() => () => {
-    const urls = new Set<string>();
-    for (const files of pendingDraftsRef.current.values()) for (const a of files) if (a.previewUrl) urls.add(a.previewUrl);
-    for (const command of outgoingRef.current.values()) for (const a of command.attachments) if (a.previewUrl) urls.add(a.previewUrl);
-    for (const url of urls) URL.revokeObjectURL(url);
-  }, []);
+  useEffect(
+    () => () => {
+      const urls = new Set<string>();
+      for (const files of pendingDraftsRef.current.values())
+        for (const a of files) if (a.previewUrl) urls.add(a.previewUrl);
+      for (const command of outgoingRef.current.values())
+        for (const a of command.attachments) if (a.previewUrl) urls.add(a.previewUrl);
+      for (const url of urls) URL.revokeObjectURL(url);
+    },
+    [],
+  );
   const fileInput = useRef<HTMLInputElement | null>(null);
   // Drag-and-drop target state: the whole chat pane accepts attachment
   // drops, with a drop-hint overlay.
@@ -231,43 +248,57 @@ export function useComposer({
   // One account-scoped instance; navigation/edits are resolved through refs.
   useEffect(() => {
     let active = true;
-    void fileStore.restore().then(({ drafts, commands }) => {
-      if (!active || !mountedRef.current) {
-        for (const files of drafts.values()) for (const file of files) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
-        for (const command of commands.values()) for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
-        return;
-      }
-      for (const [target, files] of drafts) pendingDraftsRef.current.set(target, files);
-      pendingRef.current = pendingDraftsRef.current.get(openChatIdRef.current) ?? [];
-      renderPending(pendingRef.current);
-      for (const [id, loaded] of commands) {
-        // The synchronous fallback records the exact submitted body even
-        // when an IndexedDB checkpoint failed; never replace it with an
-        // earlier upload/context snapshot.
-        const existing = outgoingRef.current.get(id);
-        const command = selectRestoredCommand(existing, loaded);
-        if (command !== loaded) for (const file of loaded.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
-        if (observedUserIdsRef.current.has(id)) {
-          void fileStore.forgetCommand(id).catch(storageFailure);
-          forgetCommand(localStorage, outgoingScope, id);
-          for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
-          continue;
+    void fileStore
+      .restore()
+      .then(({ drafts, commands }) => {
+        if (!active || !mountedRef.current) {
+          for (const files of drafts.values())
+            for (const file of files) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+          for (const command of commands.values())
+            for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+          return;
         }
-        outgoingRef.current.set(id, command);
-        // Unfinished sends remain in their retry card. Composer records,
-        // including intentionally emptied drafts, retain their own state.
-      }
-      // Files and text may both have been saved before a send detached its
-      // composer. Keep their relationship so acceptance clears only that draft.
-      for (const command of outgoingRef.current.values()) {
-        const target = command.chatId ?? command.originChatId;
-        const text = target === openChatIdRef.current ? promptRef.current : readDraft(draftStorage, target);
-        if (matchesCommandDraft(command, text, pendingDraftsRef.current.get(target) ?? [])) restoredCommandRef.current.set(target, command.id);
-      }
-      refreshOutgoing(n => n + 1);
-      setFilesReady(true);
-    }).catch(() => { if (active) { storageFailure(); setFilesReady(true); } });
-    return () => { active = false; };
+        for (const [target, files] of drafts) pendingDraftsRef.current.set(target, files);
+        pendingRef.current = pendingDraftsRef.current.get(openChatIdRef.current) ?? [];
+        renderPending(pendingRef.current);
+        for (const [id, loaded] of commands) {
+          // The synchronous fallback records the exact submitted body even
+          // when an IndexedDB checkpoint failed; never replace it with an
+          // earlier upload/context snapshot.
+          const existing = outgoingRef.current.get(id);
+          const command = selectRestoredCommand(existing, loaded);
+          if (command !== loaded)
+            for (const file of loaded.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+          if (observedUserIdsRef.current.has(id)) {
+            void fileStore.forgetCommand(id).catch(storageFailure);
+            forgetCommand(localStorage, outgoingScope, id);
+            for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+            continue;
+          }
+          outgoingRef.current.set(id, command);
+          // Unfinished sends remain in their retry card. Composer records,
+          // including intentionally emptied drafts, retain their own state.
+        }
+        // Files and text may both have been saved before a send detached its
+        // composer. Keep their relationship so acceptance clears only that draft.
+        for (const command of outgoingRef.current.values()) {
+          const target = command.chatId ?? command.originChatId;
+          const text = target === openChatIdRef.current ? promptRef.current : readDraft(draftStorage, target);
+          if (matchesCommandDraft(command, text, pendingDraftsRef.current.get(target) ?? []))
+            restoredCommandRef.current.set(target, command.id);
+        }
+        refreshOutgoing((n) => n + 1);
+        setFilesReady(true);
+      })
+      .catch(() => {
+        if (active) {
+          storageFailure();
+          setFilesReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
     // One restore per file store; the refs and setters it reads live as long.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileStore]);

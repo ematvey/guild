@@ -89,8 +89,12 @@ const inject = (
     ...(payload === undefined ? {} : { payload: payload as object }),
   }) as unknown as Promise<Reply>;
 
-const createSkill = (slug: string, body: string, token = e.memberToken, extra: Record<string, unknown> = {}): Promise<Reply> =>
-  inject("POST", "/api/v1/skills", token, { slug, description: "d", body, ...extra });
+const createSkill = (
+  slug: string,
+  body: string,
+  token = e.memberToken,
+  extra: Record<string, unknown> = {},
+): Promise<Reply> => inject("POST", "/api/v1/skills", token, { slug, description: "d", body, ...extra });
 
 const editSkill = (slug: string, body: string, token = e.memberToken): Promise<Reply> =>
   inject("PUT", `/api/v1/skills/${slug}`, token, { description: "d", body });
@@ -236,27 +240,30 @@ describe("skills api", () => {
     await createSkill("auto-install-skill", "# auto");
     const mine = await inject("GET", "/api/v1/skills/installs", e.memberToken);
     type Installs = { installs: Array<{ slug: string; pinned_version: string | null }> };
-    const myRow = (body: unknown, slug: string) =>
-      (body as Installs).installs.find((i) => i.slug === slug);
+    const myRow = (body: unknown, slug: string) => (body as Installs).installs.find((i) => i.slug === slug);
     expect(myRow(mine.json(), "auto-install-skill")).toMatchObject({ pinned_version: null });
 
     // A second user's unpinned install follows the next publish too.
     await inject("POST", "/api/v1/skills/auto-install-skill/install", e.member2Token, {});
     await editSkill("auto-install-skill", "# auto v2");
-    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"))
-      .toMatchObject({ pinned_version: null });
-    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"))
-      .toMatchObject({ pinned_version: null });
+    expect(
+      myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"),
+    ).toMatchObject({ pinned_version: null });
+    expect(
+      myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"),
+    ).toMatchObject({ pinned_version: null });
 
     // An explicit pin keeps the version across publishes.
     const pinned = await inject("POST", "/api/v1/skills/auto-install-skill/pin", e.member2Token, { version: "v1" });
     expect(pinned.statusCode).toBe(200);
     await editSkill("auto-install-skill", "# auto v3");
-    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"))
-      .toMatchObject({ pinned_version: "v1" });
+    expect(
+      myRow((await inject("GET", "/api/v1/skills/installs", e.member2Token)).json(), "auto-install-skill"),
+    ).toMatchObject({ pinned_version: "v1" });
     // The unpinned publisher still reads the latest.
-    expect(myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"))
-      .toMatchObject({ pinned_version: null });
+    expect(
+      myRow((await inject("GET", "/api/v1/skills/installs", e.memberToken)).json(), "auto-install-skill"),
+    ).toMatchObject({ pinned_version: null });
   });
 
   it("editor save after a version gap publishes max+1, never an overwrite", async () => {
@@ -316,9 +323,7 @@ describe("skills api", () => {
     // another member's list does not include it
     const other = await inject("GET", "/api/v1/skills/installs", e.member2Token);
     expect(
-      (other.json() as { installs: Array<{ slug: string }> }).installs.find(
-        (i) => i.slug === "installs-list-skill",
-      ),
+      (other.json() as { installs: Array<{ slug: string }> }).installs.find((i) => i.slug === "installs-list-skill"),
     ).toBeUndefined();
   });
 
@@ -336,8 +341,12 @@ describe("skills api", () => {
     expect(parsed.my_install.pinned_version).toBe("v1");
     expect(parsed.pin_counts).toEqual([{ version: "v1", count: 1 }]);
 
-    expect((await inject("POST", "/api/v1/skills/pin-skill/pin", e.memberToken, { version: "v99" })).statusCode).toBe(404);
-    expect((await inject("POST", "/api/v1/skills/pin-skill/pin", e.member2Token, { version: "v1" })).statusCode).toBe(404);
+    expect((await inject("POST", "/api/v1/skills/pin-skill/pin", e.memberToken, { version: "v99" })).statusCode).toBe(
+      404,
+    );
+    expect((await inject("POST", "/api/v1/skills/pin-skill/pin", e.member2Token, { version: "v1" })).statusCode).toBe(
+      404,
+    );
   });
 
   it("uninstall removes the record and emits skill.uninstalled", async () => {
@@ -354,13 +363,19 @@ describe("skills api", () => {
 
   it("gate flip by non-owner → 403; the gate then blocks a non-owner editor save", async () => {
     await createSkill("gate-skill", "# gated");
-    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.member2Token, { enabled: true })).statusCode).toBe(403);
-    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.memberToken, { enabled: true })).statusCode).toBe(200);
+    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.member2Token, { enabled: true })).statusCode).toBe(
+      403,
+    );
+    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.memberToken, { enabled: true })).statusCode).toBe(
+      200,
+    );
     expect((await editSkill("gate-skill", "# intruder", e.member2Token)).statusCode).toBe(403);
 
     const detail = await inject("GET", "/api/v1/skills/gate-skill", e.memberToken);
     expect((detail.json() as { maintainer_gated: boolean }).maintainer_gated).toBe(true);
-    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.adminToken, { enabled: false })).statusCode).toBe(200);
+    expect((await inject("POST", "/api/v1/skills/gate-skill/gate", e.adminToken, { enabled: false })).statusCode).toBe(
+      200,
+    );
   });
 
   it("unpublish by non-owner → 403; by owner → catalog excludes it but detail keeps provenance", async () => {
@@ -446,7 +461,9 @@ describe("skills api", () => {
     const kinds = (activity.json() as { events: Array<{ kind: string }> }).events.map((ev) => ev.kind);
     expect(kinds).toContain("registry.forked");
 
-    expect((await createSkill("ghost-fork", "x", e.memberToken, { forked_from: "no-such-skill" })).statusCode).toBe(404);
+    expect((await createSkill("ghost-fork", "x", e.memberToken, { forked_from: "no-such-skill" })).statusCode).toBe(
+      404,
+    );
     expect((await createSkill("dup-skill", "x", e.memberToken, { forked_from: "orig-skill" })).statusCode).toBe(409); // taken
   });
 
@@ -504,9 +521,9 @@ describe("skills api", () => {
     await inject("DELETE", "/api/v1/skills/pull-skill/install", e.memberToken);
     const after = await inject("GET", "/api/v1/skills/sync-payload", e.memberToken);
     expect(after.statusCode).toBe(200);
-    expect(
-      (after.json() as { skills: Array<{ slug: string }> }).skills.some((s) => s.slug === "pull-skill"),
-    ).toBe(false);
+    expect((after.json() as { skills: Array<{ slug: string }> }).skills.some((s) => s.slug === "pull-skill")).toBe(
+      false,
+    );
 
     // Unauthenticated callers are rejected like any other user route.
     const anon = await e.env.app.inject({ method: "GET", url: "/api/v1/skills/sync-payload" });

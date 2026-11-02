@@ -90,7 +90,8 @@ export function refreshSession(): Promise<void> {
 async function doRefresh(bearer: string | null): Promise<void> {
   const base = serverBase();
   const response = await fetch(`${base}/api/v1/auth/refresh`, {
-    method: "POST", headers: { authorization: `Bearer ${bearer}` },
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}` },
     signal: AbortSignal.timeout(10000),
   });
   if (response.status === 401 || response.status === 403) throw new SessionExpiredError("Sign in again to reconnect");
@@ -159,7 +160,6 @@ export function clearToken(): void {
   }
 }
 
-
 // ---- which host is this page -------------------------------------------------
 // The same question `HAS_SHELL` answers, one level deeper: a web page can run
 // as an installed app, and only the installed copy on iOS can receive Web
@@ -214,8 +214,7 @@ export function installOffered(s: InstallSurface): boolean {
  *  installed it: the media query and the navigator flag change only on a
  *  fresh launch, so a re-read is the honest check. */
 export function installSurface(): InstallSurface {
-  const standalone =
-    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
   const displayStandalone =
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(display-mode: standalone)").matches

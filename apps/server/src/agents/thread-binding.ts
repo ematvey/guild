@@ -253,7 +253,12 @@ export class ThreadBinding {
   }
 
   /** Inserts the chat's user thread; null when another one won the race. */
-  private async insertUserThread(agentId: string, userId: string, chatId: string, title: string): Promise<string | null> {
+  private async insertUserThread(
+    agentId: string,
+    userId: string,
+    chatId: string,
+    title: string,
+  ): Promise<string | null> {
     const inserted = await this.pool.query<{ id: string }>(
       `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
        VALUES ($1, $2, $3, $4, $5, false, 'user')

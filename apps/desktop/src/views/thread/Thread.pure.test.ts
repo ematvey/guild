@@ -49,15 +49,19 @@ describe("thread facts", () => {
   const base = { chatId: "chat", chats: null, archivedChats: null, childTree: null };
 
   it("reads the type from the tree and the flags from the lists", () => {
-    expect(threadFacts({
-      ...base,
-      childTree: { type: "subagent", archived: false, deleted: false },
-    })).toEqual({ type: "subagent", archived: false, deleted: false, owned: null });
-    expect(threadFacts({
-      ...base,
-      chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
-      childTree: { type: "user", archived: true, deleted: false },
-    }).archived).toBe(false);
+    expect(
+      threadFacts({
+        ...base,
+        childTree: { type: "subagent", archived: false, deleted: false },
+      }),
+    ).toEqual({ type: "subagent", archived: false, deleted: false, owned: null });
+    expect(
+      threadFacts({
+        ...base,
+        chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
+        childTree: { type: "user", archived: true, deleted: false },
+      }).archived,
+    ).toBe(false);
   });
 
   it("keeps type, archive and deletion independent", () => {
@@ -71,26 +75,34 @@ describe("thread facts", () => {
       chats: [{ id: "chat", type: "user", archived: false, deleted: true }],
     });
     expect(deletedUser).toEqual({ type: "user", archived: false, deleted: true, owned: true });
-    expect(threadFacts({
-      ...base,
-      childTree: { type: "routine", archived: false, deleted: false },
-    }).type).toBe("routine");
+    expect(
+      threadFacts({
+        ...base,
+        childTree: { type: "routine", archived: false, deleted: false },
+      }).type,
+    ).toBe("routine");
   });
 
   it("reads ownership from the lists, then from the tree", () => {
-    expect(threadFacts({
-      ...base,
-      childTree: { type: "user", archived: false, deleted: false, own: false },
-    }).owned).toBe(false);
-    expect(threadFacts({
-      ...base,
-      childTree: { type: "subagent", archived: false, deleted: false, own: true },
-    }).owned).toBe(true);
-    expect(threadFacts({
-      ...base,
-      chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
-      childTree: { type: "user", archived: false, deleted: false, own: false },
-    }).owned).toBe(true);
+    expect(
+      threadFacts({
+        ...base,
+        childTree: { type: "user", archived: false, deleted: false, own: false },
+      }).owned,
+    ).toBe(false);
+    expect(
+      threadFacts({
+        ...base,
+        childTree: { type: "subagent", archived: false, deleted: false, own: true },
+      }).owned,
+    ).toBe(true);
+    expect(
+      threadFacts({
+        ...base,
+        chats: [{ id: "chat", type: "user", archived: false, deleted: false }],
+        childTree: { type: "user", archived: false, deleted: false, own: false },
+      }).owned,
+    ).toBe(true);
     expect(threadFacts(base).owned).toBeNull();
     expect(threadFacts({ ...base, chatId: null }).owned).toBe(true);
   });
@@ -146,32 +158,40 @@ describe("thread access", () => {
   });
 
   it("lets active membership win over a late archived list", () => {
-    expect(threadAccess({
-      ...base,
-      chats: [{ id: "child-chat" }],
-      facts: { ...facts, archived: true },
-    })).toBe("writable");
+    expect(
+      threadAccess({
+        ...base,
+        chats: [{ id: "child-chat" }],
+        facts: { ...facts, archived: true },
+      }),
+    ).toBe("writable");
   });
 
   it("marks a subagent or routine thread read-only even before the lists load", () => {
-    expect(threadAccess({
-      ...base,
-      chats: null,
-      facts: { type: "subagent", archived: false, deleted: false, owned: null },
-    })).toBe("readonly");
-    expect(threadAccess({
-      ...base,
-      chats: null,
-      facts: { type: "routine", archived: false, deleted: false, owned: null },
-    })).toBe("readonly");
+    expect(
+      threadAccess({
+        ...base,
+        chats: null,
+        facts: { type: "subagent", archived: false, deleted: false, owned: null },
+      }),
+    ).toBe("readonly");
+    expect(
+      threadAccess({
+        ...base,
+        chats: null,
+        facts: { type: "routine", archived: false, deleted: false, owned: null },
+      }),
+    ).toBe("readonly");
   });
 
   it("keeps the composer editable for a just-created chat whose row is in flight", () => {
-    expect(threadAccess({
-      ...base,
-      chats: [],
-      justCreated: true,
-    })).toBe("writable");
+    expect(
+      threadAccess({
+        ...base,
+        chats: [],
+        justCreated: true,
+      }),
+    ).toBe("writable");
   });
 
   it("never marks the scratch composer read-only", () => {
@@ -182,7 +202,16 @@ describe("thread access", () => {
 describe("parseChatRoute / chatRoutePath", () => {
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
-    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail, r.newChat);
+    return chatRoutePath(
+      r.chatId,
+      r.projectId,
+      r.overlay,
+      r.skills,
+      r.tab,
+      r.settingsSection,
+      r.settingsDetail,
+      r.newChat,
+    );
   };
 
   it("owns the agents surface addresses without touching chat routes", () => {
@@ -648,7 +677,9 @@ describe("eventsToBlocks", () => {
       path: ".guild/artifacts/chat-1/report.xlsx",
     });
     // the task wire shape spells the discriminator `card`; `kind` also counts
-    expect(artifactCardOf({ meta: { card: { kind: "artifact", id: "a", filename: "f", size_bytes: 1 } } })).not.toBeNull();
+    expect(
+      artifactCardOf({ meta: { card: { kind: "artifact", id: "a", filename: "f", size_bytes: 1 } } }),
+    ).not.toBeNull();
     // string cards (search/fetch/…) and malformed objects are not artifacts
     expect(artifactCardOf({ meta: { card: "web" } })).toBeNull();
     expect(artifactCardOf({ meta: { card: { card: "artifact", filename: "no-id" } } })).toBeNull();
@@ -838,28 +869,63 @@ describe("approval upsert/resolve", () => {
 
 describe("authoritative socket state", () => {
   it("overwrites reflected tokens instead of appending them during sync", () => {
-    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 2, events: [], text: "hello", thinking: "", generating: true };
-    expect(threadStateBlocks(state).filter(b => b.kind === "text").map(b => b.text)).toEqual(["hello"]);
-    expect(threadStateBlocks({ ...state, seq: 3, text: "hello!" }).map(b => b.text)).toEqual(["hello!"]);
+    const state = {
+      type: "thread_state" as const,
+      has_more_events: false,
+      chat_id: "chat-1",
+      seq: 2,
+      events: [],
+      text: "hello",
+      thinking: "",
+      generating: true,
+    };
+    expect(
+      threadStateBlocks(state)
+        .filter((b) => b.kind === "text")
+        .map((b) => b.text),
+    ).toEqual(["hello"]);
+    expect(threadStateBlocks({ ...state, seq: 3, text: "hello!" }).map((b) => b.text)).toEqual(["hello!"]);
   });
   it("renders a cross-tab user echo with no optimistic local send", () => {
-    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab", attachments: [] })], text: "", thinking: "", generating: true };
-    expect(threadStateBlocks(state).map(b => b.text)).toEqual(["other tab"]);
+    const state = {
+      type: "thread_state" as const,
+      has_more_events: false,
+      chat_id: "chat-1",
+      seq: 3,
+      events: [row(1, { type: "user_message", content: "other tab", attachments: [] })],
+      text: "",
+      thinking: "",
+      generating: true,
+    };
+    expect(threadStateBlocks(state).map((b) => b.text)).toEqual(["other tab"]);
   });
   it("keeps the in-flight thinking block's key stable across publishes", () => {
     // The state feed republishes the whole thread (~100ms) while thinking
     // streams; the reasoning block is not a durable event yet, so its key
     // must not change between publishes — a changing key remounts the
     // frame and snaps an expanded block shut mid-click.
-    const state = { type: "thread_state" as const, has_more_events: false, chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go", attachments: [] })], text: "", thinking: "part one", generating: true };
-    const first = threadStateBlocks(state).find(b => b.kind === "reasoning");
-    const second = threadStateBlocks({ ...state, seq: 8, thinking: "part one part two" }).find(b => b.kind === "reasoning");
+    const state = {
+      type: "thread_state" as const,
+      has_more_events: false,
+      chat_id: "chat-1",
+      seq: 7,
+      events: [row(1, { type: "user_message", content: "go", attachments: [] })],
+      text: "",
+      thinking: "part one",
+      generating: true,
+    };
+    const first = threadStateBlocks(state).find((b) => b.kind === "reasoning");
+    const second = threadStateBlocks({ ...state, seq: 8, thinking: "part one part two" }).find(
+      (b) => b.kind === "reasoning",
+    );
     expect(first?.key).toBeTruthy();
     expect(second?.key).toBe(first?.key);
     expect(second?.reasoningText).toBe("part one part two");
   });
   it("replaces a stale generating overlay from the server list", () => {
-    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, working: false, unread: false } });
+    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({
+      "chat-1": { generating: false, working: false, unread: false },
+    });
   });
 });
 
@@ -1007,16 +1073,23 @@ describe("pruneStopping (a stop click lifts when the chat's own generating settl
 describe("remoteMachine (one rule for the chip and the banner)", () => {
   const machines = [{ machine_id: "m1", name: "BOX", connected: true }] as any;
   it("names a remote machine with its presence", () => {
-    expect(remoteMachine({ machineId: "m1", machines, localMachineId: "local" }))
-      .toEqual({ machineId: "m1", online: true, label: "BOX" });
-    expect(remoteMachine({ machineId: "m1", rowLabel: "Row label", machines, localMachineId: undefined })?.label)
-      .toBe("Row label");
+    expect(remoteMachine({ machineId: "m1", machines, localMachineId: "local" })).toEqual({
+      machineId: "m1",
+      online: true,
+      label: "BOX",
+    });
+    expect(remoteMachine({ machineId: "m1", rowLabel: "Row label", machines, localMachineId: undefined })?.label).toBe(
+      "Row label",
+    );
   });
   it("is null for no machine or this client's own engine; presence unknown stays undefined", () => {
     expect(remoteMachine({ machineId: null, machines, localMachineId: "local" })).toBeNull();
     expect(remoteMachine({ machineId: "local", machines, localMachineId: "local" })).toBeNull();
-    expect(remoteMachine({ machineId: "m2", machines, localMachineId: undefined }))
-      .toEqual({ machineId: "m2", online: undefined, label: "m2" });
+    expect(remoteMachine({ machineId: "m2", machines, localMachineId: undefined })).toEqual({
+      machineId: "m2",
+      online: undefined,
+      label: "m2",
+    });
   });
 });
 
@@ -1027,15 +1100,24 @@ describe("offlineMachine (offline bound-machine banner)", () => {
     _connected: boolean | undefined,
     machine_label?: string,
     project_id: string | null = "p1",
-  ) => ({ ...base, machine_id, machine_label, project_id } as any);
+  ) => ({ ...base, machine_id, machine_label, project_id }) as any;
   const machines = (connected: boolean, name = "WORKSTATION", machine_id = "m1") =>
     [{ machine_id, name, connected }] as any;
 
   it("shows the label when the open chat's project-bound machine is offline", () => {
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", "local")).toEqual({ label: "WORKSTATION" });
+    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", "local")).toEqual({
+      label: "WORKSTATION",
+    });
     // no label: fall back to the machine name, then the raw machine id
     expect(offlineMachine([bound("m1", false)], machines(false), "chat-1", "local")).toEqual({ label: "WORKSTATION" });
-    expect(offlineMachine([bound("m1", false)], [{ machine_id: "m1", name: "", connected: false }] as any, "chat-1", "local")).toEqual({ label: "m1" });
+    expect(
+      offlineMachine(
+        [bound("m1", false)],
+        [{ machine_id: "m1", name: "", connected: false }] as any,
+        "chat-1",
+        "local",
+      ),
+    ).toEqual({ label: "m1" });
   });
 
   it("stays hidden for unbound chats, machine-bound-without-project rows, and online/unknown machines", () => {
@@ -1048,8 +1130,12 @@ describe("offlineMachine (offline bound-machine banner)", () => {
   });
 
   it("skips the local machine on desktop, but banners every project binding on web", () => {
-    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", undefined)).toEqual({ label: "SELF" });
+    expect(
+      offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", "local"),
+    ).toBeNull();
+    expect(
+      offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", undefined),
+    ).toEqual({ label: "SELF" });
   });
 });
 
@@ -1062,7 +1148,14 @@ describe("pending send reconciliation", () => {
       sentAt: Date.parse("2026-09-16T00:00:00.000Z"),
     };
     expect(reconcilePendingSend([], [], pending)).toEqual([
-      { kind: "user", text: "still sending", key: "pending-1", pending: true, eventId: "pending-1", ts: expect.any(String) },
+      {
+        kind: "user",
+        text: "still sending",
+        key: "pending-1",
+        pending: true,
+        eventId: "pending-1",
+        ts: expect.any(String),
+      },
     ]);
   });
 
@@ -1072,7 +1165,7 @@ describe("pending send reconciliation", () => {
     const result = reconcilePendingSend(rows, eventsToBlocks(rows), pending);
     expect(result.some((block) => block.pending)).toBe(false);
     const otherTab = [row(2, { type: "user_message", content: "hello", attachments: [] })];
-    expect(reconcilePendingSend(otherTab, eventsToBlocks(otherTab), pending).some(block => block.pending)).toBe(true);
+    expect(reconcilePendingSend(otherTab, eventsToBlocks(otherTab), pending).some((block) => block.pending)).toBe(true);
   });
 });
 
@@ -1162,10 +1255,7 @@ describe("mentionCandidates (slash autocomplete pool)", () => {
       "deploy-check",
       "compactor",
     ]);
-    expect(mentionCandidates(builtins, skills, "comp").map((c) => c.name)).toEqual([
-      "compact",
-      "compactor",
-    ]);
+    expect(mentionCandidates(builtins, skills, "comp").map((c) => c.name)).toEqual(["compact", "compactor"]);
     expect(mentionCandidates(builtins, skills, "c").length).toBe(3); // cap at 6 not hit
   });
 
@@ -1196,7 +1286,9 @@ describe("composerSkills (local + installed org pool, spec §2.3)", () => {
   });
   it("uninstalled org skills never enter (they are not in the installs list)", () => {
     const pool = composerSkills(local, [{ slug: "org-deploy", pinned_version: "v2" }]);
-    expect(pool.some((s) => s.name === "uninstalled-org-skill" || s.org === undefined && s.name.startsWith("uninstalled"))).toBe(false);
+    expect(
+      pool.some((s) => s.name === "uninstalled-org-skill" || (s.org === undefined && s.name.startsWith("uninstalled"))),
+    ).toBe(false);
     expect(pool.filter((s) => s.org)).toHaveLength(1);
   });
   it("works with either half absent", () => {
@@ -1214,8 +1306,11 @@ describe("composerSkills (local + installed org pool, spec §2.3)", () => {
 });
 
 describe("tabPaneLayout (route → sidebar/pane layout)", () => {
-  const route = (tab: ChatRoute["tab"], skills: ChatRoute["skills"] = null, agents: ChatRoute["agents"] = null) =>
-    ({ tab, skills, agents });
+  const route = (tab: ChatRoute["tab"], skills: ChatRoute["skills"] = null, agents: ChatRoute["agents"] = null) => ({
+    tab,
+    skills,
+    agents,
+  });
 
   it("the skills page is a full-page main-pane swap with NO sidebar aside", () => {
     expect(tabPaneLayout(route("chats", { view: "catalog", slug: null, editor: null }), false)).toEqual({
@@ -1262,7 +1357,8 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
       ["/settings/general", "settingsPage"],
       ["/chats", "chat"],
     ];
-    for (const [path, pane] of byPath) expect([path, tabPaneLayout(parseChatRoute(path), true).mainPane]).toEqual([path, pane]);
+    for (const [path, pane] of byPath)
+      expect([path, tabPaneLayout(parseChatRoute(path), true).mainPane]).toEqual([path, pane]);
   });
 });
 
@@ -1276,9 +1372,7 @@ describe("viewEntries (collapsed work runs)", () => {
   const text = (n: number): RenderBlock => ({ kind: "text", text: `text${n}`, key: `x${n}` });
   const user: RenderBlock = { kind: "user", text: "go", key: "u", ts: "2026-10-15T12:00:00.000Z" };
   const shape = (blocks: RenderBlock[]) =>
-    viewEntries(blocks).map((e) =>
-      e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key,
-    );
+    viewEntries(blocks).map((e) => (e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key));
 
   it("collapses a contiguous run into one entry sitting where the run was", () => {
     const blocks = [user, tool(1), tool(2), text(3), tool(4), tool(5), text(6)];
@@ -1328,8 +1422,12 @@ describe("workRunLabel (worked-for entry)", () => {
   ];
 
   it("a completed run under one second still gets a label for its details", () => {
-    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.500Z"), false, false, 0)).toBe("Agent worked");
-    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.000Z"), false, false, 0)).toBe("Agent worked");
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.500Z"), false, false, 0)).toBe(
+      "Agent worked",
+    );
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.000Z"), false, false, 0)).toBe(
+      "Agent worked",
+    );
   });
 
   it("a completed run without stamps still gets a label; longer runs spell the duration", () => {
@@ -1344,9 +1442,9 @@ describe("workRunLabel (worked-for entry)", () => {
 
   it("live states always render, even before any stamp exists", () => {
     expect(workRunLabel(run(undefined, undefined), true, false, 0)).toBe("Agent is working");
-    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", undefined), true, false, Date.parse("2026-10-15T12:00:05.000Z"))).toBe(
-      "Agent is working 5s",
-    );
+    expect(
+      workRunLabel(run("2026-10-15T12:00:00.000Z", undefined), true, false, Date.parse("2026-10-15T12:00:05.000Z")),
+    ).toBe("Agent is working 5s");
     expect(workRunLabel(run(undefined, undefined), true, true, 0)).toBe("Agent is stopping");
   });
 
@@ -1393,7 +1491,6 @@ describe("child thread navigation", () => {
     expect(parseChatRoute(path).chatId).toBe("child-chat");
     expect(parseChatRoute(path).agents).toBeNull();
   });
-
 });
 
 describe("composerAgent", () => {

@@ -11,7 +11,12 @@
 import { ApiError } from "../platform/errors.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { safeFilename } from "../platform/store/attachments.js";
-import { artifactUuid, ToolArtifactStore, toolArtifactObjectKey, type ToolArtifactRow } from "../platform/store/tool-artifacts.js";
+import {
+  artifactUuid,
+  type ToolArtifactStore,
+  toolArtifactObjectKey,
+  type ToolArtifactRow,
+} from "../platform/store/tool-artifacts.js";
 import { isTextual } from "../platform/domain/mime.js";
 
 /** Serialized model-facing content above this size spills into an artifact
@@ -53,7 +58,12 @@ function formatSize(sizeBytes: number): string {
  *  Text mime: one line naming tool/filename/size, then the explicit marker
  *  and the first 2 KiB excerpt. Binary mime: one line with path, size and
  *  mime only. This exact shape is contract for the model-facing history. */
-export function pointerText(toolName: string, spilled: SpilledArtifact, contentType: string, fullText: string | null): string {
+export function pointerText(
+  toolName: string,
+  spilled: SpilledArtifact,
+  contentType: string,
+  fullText: string | null,
+): string {
   const head = `Tool "${toolName}" returned a large result saved as ${spilled.filename} (${formatSize(spilled.size_bytes)} — ${spilled.size_bytes} bytes, ${contentType}).`;
   if (fullText !== null && isTextual(contentType)) {
     const excerpt = [...fullText].slice(0, EXCERPT_BYTES).join("");
@@ -67,7 +77,10 @@ export function pointerText(toolName: string, spilled: SpilledArtifact, contentT
  *  by the artifact card, and the artifact keys are exact contract for the
  *  client/UI lanes. */
 export function artifactMeta(existing: unknown, spilled: SpilledArtifact): Record<string, unknown> {
-  const obj: Record<string, unknown> = typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...(existing as Record<string, unknown>) } : {};
+  const obj: Record<string, unknown> =
+    typeof existing === "object" && existing !== null && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
   obj["card"] = "artifact";
   obj["id"] = spilled.artifact_id;
   obj["filename"] = spilled.filename;
@@ -137,7 +150,17 @@ export async function spillOversizedResult(
   toolName: string,
   raw: string,
 ): Promise<{ spilled: SpilledArtifact; pointer: string }> {
-  const spilled = await spillArtifact(artifacts, objects, orgId, chatId, callId, toolName, `${toolName}_result.txt`, "text/plain; charset=utf-8", Buffer.from(raw, "utf8"));
+  const spilled = await spillArtifact(
+    artifacts,
+    objects,
+    orgId,
+    chatId,
+    callId,
+    toolName,
+    `${toolName}_result.txt`,
+    "text/plain; charset=utf-8",
+    Buffer.from(raw, "utf8"),
+  );
   const pointer = pointerText(toolName, spilled, "text/plain; charset=utf-8", raw);
   return { spilled, pointer };
 }

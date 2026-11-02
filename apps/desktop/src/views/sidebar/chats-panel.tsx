@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
-import { sidebarGrouping } from "../projects/projects";
+import type { sidebarGrouping } from "../projects/projects";
 import { ChatListItem } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
 import {
@@ -80,9 +80,7 @@ export const ChatsPanel = memo(function ChatsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
         <div className="space-y-0.5 pb-2 pt-2">
           {loadingChats &&
-            [0, 1, 2, 3, 4].map((i) => (
-              <SkeletonRows key={i} rows={1} className="[&>div]:h-8 [&>div]:px-2" />
-            ))}
+            [0, 1, 2, 3, 4].map((i) => <SkeletonRows key={i} rows={1} className="[&>div]:h-8 [&>div]:px-2" />)}
           {!loadingChats &&
             grouping.visible.map((c) => (
               <ChatListItem
@@ -93,9 +91,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                 onClick={() => onOpenChat(c.id)}
                 onRename={(title) => onRenameChat?.(c.id, title)}
                 onArchive={() => onArchiveChat?.(c.id)}
-                onDelete={
-                  onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title ?? "" }) : undefined
-                }
+                onDelete={onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title ?? "" }) : undefined}
               />
             ))}
           {!loadingChats && grouping.visible.length === 0 && (
@@ -112,11 +108,7 @@ export const ChatsPanel = memo(function ChatsPanel({
               className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
             >
               <span>Archived</span>
-              {archivedOpen ? (
-                <ChevronUp className="size-4" />
-              ) : (
-                <ChevronDown className="size-4" />
-              )}
+              {archivedOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </button>
             {archivedOpen && (
               <div className="space-y-0.5">
@@ -129,9 +121,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                     onClick={() => onOpenChat(c.id)}
                     archiveLabel="Unarchive"
                     onArchive={onUnarchiveChat ? () => onUnarchiveChat(c.id) : undefined}
-                    onDelete={
-                      onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title ?? "" }) : undefined
-                    }
+                    onDelete={onDeleteChat ? () => setDeleteTarget({ id: c.id, title: c.title ?? "" }) : undefined}
                   />
                 ))}
               </div>
@@ -144,8 +134,7 @@ export const ChatsPanel = memo(function ChatsPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleteTarget?.title || "this thread"}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              The thread leaves your lists and its runs stop. Its transcript is kept.
-              This cannot be undone in the app.
+              The thread leaves your lists and its runs stop. Its transcript is kept. This cannot be undone in the app.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

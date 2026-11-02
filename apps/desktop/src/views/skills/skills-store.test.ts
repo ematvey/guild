@@ -20,7 +20,18 @@ describe("skills store", () => {
     expect(result.current).toBeNull();
     act(() =>
       applySkillCatalog({
-        items: [{ slug: "pdf", description: "", latest_version: "1.0.0", owner: null, maintainer_gated: false, installs: 1, installs_latest: 1, tombstoned: false }],
+        items: [
+          {
+            slug: "pdf",
+            description: "",
+            latest_version: "1.0.0",
+            owner: null,
+            maintainer_gated: false,
+            installs: 1,
+            installs_latest: 1,
+            tombstoned: false,
+          },
+        ],
         installs: [{ slug: "pdf", pinned_version: null, installed_at: "2026-11-01T00:00:00Z" }],
       }),
     );

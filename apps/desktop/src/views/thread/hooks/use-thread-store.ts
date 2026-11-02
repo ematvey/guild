@@ -152,11 +152,7 @@ export function useThreadStore(chatId: string | null) {
     } else {
       clearStateTimer();
     }
-    if (
-      decision.state.pendingChatId !== null &&
-      decision.state.stateReady &&
-      !decision.state.treeReady
-    ) {
+    if (decision.state.pendingChatId !== null && decision.state.stateReady && !decision.state.treeReady) {
       if (treeTimer.current === null) {
         const target = decision.state.pendingChatId;
         treeTimer.current = window.setTimeout(() => {
@@ -172,16 +168,22 @@ export function useThreadStore(chatId: string | null) {
   dispatchNavRef.current = dispatchNav;
 
   /** Drops the pending target when its sync fails. The displayed chat stays. */
-  const cancelPending = useCallback((cid: string) => {
-    if (store.navigation().pendingChatId === cid) dispatchNavRef.current({ type: "cancel" });
-  }, [store]);
+  const cancelPending = useCallback(
+    (cid: string) => {
+      if (store.navigation().pendingChatId === cid) dispatchNavRef.current({ type: "cancel" });
+    },
+    [store],
+  );
 
   /** A ThreadState reached the reducer: the pending target can swap once its
    *  tree is also in. */
-  const onThreadStateApplied = useCallback((cid: string) => {
-    store.markSynced(cid);
-    dispatchNavRef.current({ type: "state", chatId: cid });
-  }, [store]);
+  const onThreadStateApplied = useCallback(
+    (cid: string) => {
+      store.markSynced(cid);
+      dispatchNavRef.current({ type: "state", chatId: cid });
+    },
+    [store],
+  );
 
   /** Loads the page before the displayed view's oldest loaded event. */
   const earlierController = useRef<AbortController | null>(null);
@@ -212,11 +214,14 @@ export function useThreadStore(chatId: string | null) {
       }
     }
   }, [store]);
-  useEffect(() => () => {
-    earlierController.current?.abort();
-    clearTreeTimer();
-    clearStateTimer();
-  }, []);
+  useEffect(
+    () => () => {
+      earlierController.current?.abort();
+      clearTreeTimer();
+      clearStateTimer();
+    },
+    [],
+  );
 
   /** Opens a chat: a cached (synced) view swaps at once, a first visit keeps
    *  the old view until its state and child tree are in. The route chat is
@@ -240,7 +245,7 @@ export function useThreadStore(chatId: string | null) {
   };
 
   const displayedChatId = view.displayedChatId;
-  const childTree = displayedChatId !== null ? childTrees[displayedChatId] ?? null : null;
+  const childTree = displayedChatId !== null ? (childTrees[displayedChatId] ?? null) : null;
 
   return {
     store,

@@ -11,6 +11,7 @@
     "coherence:report": "python3 scripts/coherence/check.py report"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.4",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "typescript": "~5.9.3"

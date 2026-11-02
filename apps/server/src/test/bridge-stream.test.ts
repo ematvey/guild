@@ -17,10 +17,11 @@ function fakeDeps(commands: { id: string; position: number | null }[]): BridgeDe
     threads: {
       latestTurn: async () => 0,
       appendProjectedEntry: async ({ chatId, event }: { chatId: string; event: ThreadEventRow["event"] }) => {
+        seq += 1;
         const row: ThreadEventRow = {
           id: uuidv7(),
           chat_id: chatId,
-          seq: (seq += 1),
+          seq,
           event,
           created_at: "2026-10-04T00:00:00.000000Z",
         };
@@ -39,10 +40,11 @@ function fakeDeps(commands: { id: string; position: number | null }[]): BridgeDe
         return row;
       },
       appendEvent: async (chatId: string, event: ThreadEventRow["event"]) => {
+        seq += 1;
         const row: ThreadEventRow = {
           id: uuidv7(),
           chat_id: chatId,
-          seq: (seq += 1),
+          seq,
           event,
           created_at: "2026-10-04T00:00:00.000000Z",
         };

@@ -20,8 +20,13 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupGatewayStack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_agent_state_test_" });
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
+  stack = await setupGatewayStack(
+    { GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` },
+    { dbPrefix: "guild_agent_state_test_" },
+  );
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   base = `http://127.0.0.1:${port}`;
   await stack.routeModel("GLM-Test-Model");
@@ -38,8 +43,18 @@ const auth = (token: string): Record<string, string> => ({
   "content-type": "application/json",
 });
 
-async function api<T>(token: string, method: "GET" | "POST" | "PATCH", url: string, payload?: Record<string, unknown>): Promise<T> {
-  const res = await stack.env.app.inject({ method, url, headers: auth(token), ...(payload !== undefined ? { payload } : {}) });
+async function api<T>(
+  token: string,
+  method: "GET" | "POST" | "PATCH",
+  url: string,
+  payload?: Record<string, unknown>,
+): Promise<T> {
+  const res = await stack.env.app.inject({
+    method,
+    url,
+    headers: auth(token),
+    ...(payload !== undefined ? { payload } : {}),
+  });
   expect(res.statusCode, res.body).toBe(200);
   return JSON.parse(res.body) as T;
 }
@@ -116,7 +131,9 @@ async function insertRun(agentId: string, userId: string, status: string): Promi
 }
 
 describe("agent and skill state frames", () => {
-  it("paints the agent list and skill catalog on connect, personal agent included", { timeout: TEST_TIMEOUT }, async () => {
+  it("paints the agent list and skill catalog on connect, personal agent included", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const ws = await memberSocket(stack.memberToken);
     try {
       const list = textFrames(ws).find((f) => f.type === "agent_list")!;
@@ -138,9 +155,9 @@ describe("agent and skill state frames", () => {
       await waitFrame(owner, (f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === privateId));
       const shared = await createAgent(stack.memberToken, `shared-${crypto.randomUUID().slice(0, 8)}`, "org");
       await waitFrame(peer, (f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === shared));
-      expect(
-        textFrames(peer).some((f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === privateId)),
-      ).toBe(false);
+      expect(textFrames(peer).some((f) => f.type === "agent_list" && agentsOf(f).some((a) => a.id === privateId))).toBe(
+        false,
+      );
 
       // A run on the private agent reaches its owner only; a run on the
       // shared one reaches both, and a status change follows as a new frame.
@@ -148,16 +165,20 @@ describe("agent and skill state frames", () => {
       await waitFrame(owner, (f) => f.type === "agent_run" && (f.run as { id: string }).id === privateRun);
       const sharedRun = await insertRun(shared, stack.memberId, "running");
       await waitFrame(peer, (f) => f.type === "agent_run" && (f.run as { id: string }).id === sharedRun);
-      await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [sharedRun]);
+      await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [
+        sharedRun,
+      ]);
       const finished = await waitFrame(
         peer,
-        (f) => f.type === "agent_run" && (f.run as { id: string; status: string }).id === sharedRun
-          && (f.run as { status: string }).status === "succeeded",
+        (f) =>
+          f.type === "agent_run" &&
+          (f.run as { id: string; status: string }).id === sharedRun &&
+          (f.run as { status: string }).status === "succeeded",
       );
       expect((finished.run as { finished_at: string | null }).finished_at).not.toBeNull();
-      expect(
-        textFrames(peer).some((f) => f.type === "agent_run" && (f.run as { id: string }).id === privateRun),
-      ).toBe(false);
+      expect(textFrames(peer).some((f) => f.type === "agent_run" && (f.run as { id: string }).id === privateRun)).toBe(
+        false,
+      );
     } finally {
       owner.end();
       peer.end();
@@ -184,11 +205,15 @@ describe("agent and skill state frames", () => {
           start_time: new Date(),
         });
       }
-      await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [runId]);
+      await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [
+        runId,
+      ]);
       const finished = await waitFrame(
         owner,
-        (f) => f.type === "agent_run" && (f.run as { id: string; status: string }).id === runId
-          && (f.run as { status: string }).status === "succeeded",
+        (f) =>
+          f.type === "agent_run" &&
+          (f.run as { id: string; status: string }).id === runId &&
+          (f.run as { status: string }).status === "succeeded",
       );
       expect(finished.run).toMatchObject({ call_count: 3, tool_count: 1 });
     } finally {
@@ -196,41 +221,63 @@ describe("agent and skill state frames", () => {
     }
   });
 
-  it("pushes an agent's routines to its viewers and a thread list to its owner", { timeout: TEST_TIMEOUT }, async () => {
+  it("pushes an agent's routines to its viewers and a thread list to its owner", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const other = await memberToken(`agent-routines-${crypto.randomUUID()}@example.test`);
     const owner = await memberSocket(stack.memberToken);
     const peer = await memberSocket(other.token);
     try {
       const agentId = await createAgent(stack.memberToken, `routines-${crypto.randomUUID().slice(0, 8)}`, "org");
-      const routine = await api<{ routine: { id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/routines`, {
-        name: "Morning digest",
-        kind: "cron",
-        schedule: "0 9 * * 1-5",
-        timezone: "UTC",
-        prompt: "Summarize yesterday.",
-      });
+      const routine = await api<{ routine: { id: string } }>(
+        stack.memberToken,
+        "POST",
+        `/api/v1/agents/${agentId}/routines`,
+        {
+          name: "Morning digest",
+          kind: "cron",
+          schedule: "0 9 * * 1-5",
+          timezone: "UTC",
+          prompt: "Summarize yesterday.",
+        },
+      );
       for (const ws of [owner, peer]) {
         const frame = await waitFrame(
           ws,
-          (f) => f.type === "agent_routines" && f.agent_id === agentId
-            && (f.routines as { id: string }[]).some((r) => r.id === routine.routine.id),
+          (f) =>
+            f.type === "agent_routines" &&
+            f.agent_id === agentId &&
+            (f.routines as { id: string }[]).some((r) => r.id === routine.routine.id),
         );
         expect((frame.routines as { name: string }[])[0]!.name).toBe("Morning digest");
       }
 
-      const thread = await api<{ thread: { id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-        title: "Planning",
+      const thread = await api<{ thread: { id: string } }>(
+        stack.memberToken,
+        "POST",
+        `/api/v1/agents/${agentId}/threads`,
+        {
+          title: "Planning",
+        },
+      );
+      await waitFrame(
+        owner,
+        (f) =>
+          f.type === "agent_threads" &&
+          f.agent_id === agentId &&
+          (f.threads as { id: string }[]).some((t) => t.id === thread.thread.id),
+      );
+      await api(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}/threads/${thread.thread.id}`, {
+        title: "Renamed plan",
       });
       await waitFrame(
         owner,
-        (f) => f.type === "agent_threads" && f.agent_id === agentId
-          && (f.threads as { id: string }[]).some((t) => t.id === thread.thread.id),
-      );
-      await api(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}/threads/${thread.thread.id}`, { title: "Renamed plan" });
-      await waitFrame(
-        owner,
-        (f) => f.type === "agent_threads" && f.agent_id === agentId
-          && (f.threads as { id: string; title: string }[]).some((t) => t.id === thread.thread.id && t.title === "Renamed plan"),
+        (f) =>
+          f.type === "agent_threads" &&
+          f.agent_id === agentId &&
+          (f.threads as { id: string; title: string }[]).some(
+            (t) => t.id === thread.thread.id && t.title === "Renamed plan",
+          ),
       );
       expect(textFrames(peer).some((f) => f.type === "agent_threads" && f.agent_id === agentId)).toBe(false);
     } finally {
@@ -255,7 +302,9 @@ describe("agent and skill state frames", () => {
           ws,
           (f) => f.type === "skill_catalog" && (f.items as { slug: string }[]).some((i) => i.slug === slug),
         );
-        const item = (frame.items as { slug: string; owner: { kind: string; id: string } | null }[]).find((i) => i.slug === slug)!;
+        const item = (frame.items as { slug: string; owner: { kind: string; id: string } | null }[]).find(
+          (i) => i.slug === slug,
+        )!;
         expect(item.owner).toMatchObject({ kind: "user", id: stack.memberId });
       }
       // An install moves the installer's own list; the peer's stays empty.
@@ -263,10 +312,15 @@ describe("agent and skill state frames", () => {
         `INSERT INTO skill_installs (id, org_id, user_id, slug, pinned_version) VALUES (gen_random_uuid(), $1, $2, $3, NULL)`,
         [stack.orgId, stack.memberId, slug],
       );
-      await waitFrame(owner, (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug));
+      await waitFrame(
+        owner,
+        (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug),
+      );
       const peerFrame = await waitFrame(
         peer,
-        (f) => f.type === "skill_catalog" && (f.items as { slug: string; installs: number }[]).some((i) => i.slug === slug && i.installs === 1),
+        (f) =>
+          f.type === "skill_catalog" &&
+          (f.items as { slug: string; installs: number }[]).some((i) => i.slug === slug && i.installs === 1),
       );
       expect((peerFrame.installs as { slug: string }[]).some((i) => i.slug === slug)).toBe(false);
     } finally {
@@ -277,9 +331,14 @@ describe("agent and skill state frames", () => {
 
   it("carries the chat's tree facts in its sync bracket and pushes a rename", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `tree-${crypto.randomUUID().slice(0, 8)}`, "private");
-    const thread = await api<{ thread: { id: string; chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-      title: "Header facts",
-    });
+    const thread = await api<{ thread: { id: string; chat_id: string } }>(
+      stack.memberToken,
+      "POST",
+      `/api/v1/agents/${agentId}/threads`,
+      {
+        title: "Header facts",
+      },
+    );
     const chatId = thread.thread.chat_id;
     const ws = await memberSocket(stack.memberToken);
     try {
@@ -290,12 +349,20 @@ describe("agent and skill state frames", () => {
       const stateIndex = frames.findIndex((f) => f.type === "thread_state" && f.chat_id === chatId);
       expect(treeIndex).toBeGreaterThan(-1);
       expect(treeIndex).toBeLessThan(stateIndex);
-      expect(frames[treeIndex]!.tree).toMatchObject({ chat_id: chatId, type: "user", title: "Header facts", agent_id: agentId });
+      expect(frames[treeIndex]!.tree).toMatchObject({
+        chat_id: chatId,
+        type: "user",
+        title: "Header facts",
+        agent_id: agentId,
+      });
 
-      await api(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}/threads/${thread.thread.id}`, { title: "Renamed header" });
+      await api(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}/threads/${thread.thread.id}`, {
+        title: "Renamed header",
+      });
       await waitFrame(
         ws,
-        (f) => f.type === "chat_tree" && f.chat_id === chatId && (f.tree as { title: string }).title === "Renamed header",
+        (f) =>
+          f.type === "chat_tree" && f.chat_id === chatId && (f.tree as { title: string }).title === "Renamed header",
       );
     } finally {
       ws.end();
@@ -304,9 +371,14 @@ describe("agent and skill state frames", () => {
 
   it("tells the reader whether it owns the chat", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `own-${crypto.randomUUID().slice(0, 8)}`, "private");
-    const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-      title: "Whose chat",
-    });
+    const thread = await api<{ thread: { chat_id: string } }>(
+      stack.memberToken,
+      "POST",
+      `/api/v1/agents/${agentId}/threads`,
+      {
+        title: "Whose chat",
+      },
+    );
     const chatId = thread.thread.chat_id;
     const syncTree = async (token: string): Promise<Frame> => {
       const ws = await memberSocket(token);
@@ -327,9 +399,14 @@ describe("agent and skill state frames", () => {
 
   it("re-pushes the tree of every chat that shows a renamed agent's thread", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `named-${crypto.randomUUID().slice(0, 8)}`, "private");
-    const thread = await api<{ thread: { id: string; chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-      title: "Rename root",
-    });
+    const thread = await api<{ thread: { id: string; chat_id: string } }>(
+      stack.memberToken,
+      "POST",
+      `/api/v1/agents/${agentId}/threads`,
+      {
+        title: "Rename root",
+      },
+    );
     const rootChat = thread.thread.chat_id;
     const childChat = await api<{ id: string }>(stack.memberToken, "POST", "/api/v1/chats", { title: "Rename child" });
     const childThread = crypto.randomUUID();
@@ -349,19 +426,30 @@ describe("agent and skill state frames", () => {
 
       const rootTree = await waitFrame(
         ws,
-        (f) => f.type === "chat_tree" && f.chat_id === rootChat && (f.tree as { agent_name: string }).agent_name === "Renamed agent",
+        (f) =>
+          f.type === "chat_tree" &&
+          f.chat_id === rootChat &&
+          (f.tree as { agent_name: string }).agent_name === "Renamed agent",
       );
       expect(rootTree.tree).toMatchObject({ agent_id: agentId, own: true });
       const subtree = await waitFrame(
         ws,
-        (f) => f.type === "subagent_tree" && f.chat_id === rootChat
-          && (f.nodes as { agent_name: string }[]).length === 2
-          && (f.nodes as { agent_name: string }[]).every((n) => n.agent_name === "Renamed agent"),
+        (f) =>
+          f.type === "subagent_tree" &&
+          f.chat_id === rootChat &&
+          (f.nodes as { agent_name: string }[]).length === 2 &&
+          (f.nodes as { agent_name: string }[]).every((n) => n.agent_name === "Renamed agent"),
       );
-      expect((subtree.nodes as { thread_id: string }[]).map((n) => n.thread_id)).toEqual([thread.thread.id, childThread]);
+      expect((subtree.nodes as { thread_id: string }[]).map((n) => n.thread_id)).toEqual([
+        thread.thread.id,
+        childThread,
+      ]);
       await waitFrame(
         ws,
-        (f) => f.type === "chat_tree" && f.chat_id === childChat.id && (f.tree as { agent_name: string }).agent_name === "Renamed agent",
+        (f) =>
+          f.type === "chat_tree" &&
+          f.chat_id === childChat.id &&
+          (f.tree as { agent_name: string }).agent_name === "Renamed agent",
       );
     } finally {
       ws.end();
@@ -392,7 +480,10 @@ describe("agent and skill state frames", () => {
         `INSERT INTO skill_installs (id, org_id, user_id, slug, pinned_version) VALUES (gen_random_uuid(), $1, $2, $3, NULL)`,
         [stack.orgId, stack.memberId, slug],
       );
-      await waitFrame(owner, (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug));
+      await waitFrame(
+        owner,
+        (f) => f.type === "skill_catalog" && (f.installs as { slug: string }[]).some((i) => i.slug === slug),
+      );
       await new Promise((resolve) => setTimeout(resolve, 600));
       expect(catalogs()).toBe(before + 1);
     } finally {
@@ -420,11 +511,18 @@ describe("agent and skill state frames", () => {
     }
   });
 
-  it("names a child's parent by the parent chat's title and follows its rename", { timeout: TEST_TIMEOUT }, async () => {
+  it("names a child's parent by the parent chat's title and follows its rename", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
     const agentId = await createAgent(stack.memberToken, `parent-${crypto.randomUUID().slice(0, 8)}`, "private");
-    const thread = await api<{ thread: { id: string; chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-      title: "Parent before",
-    });
+    const thread = await api<{ thread: { id: string; chat_id: string } }>(
+      stack.memberToken,
+      "POST",
+      `/api/v1/agents/${agentId}/threads`,
+      {
+        title: "Parent before",
+      },
+    );
     const rootChat = thread.thread.chat_id;
     const childChat = await api<{ id: string }>(stack.memberToken, "POST", "/api/v1/chats", { title: "Child chat" });
     const childThread = crypto.randomUUID();
@@ -447,14 +545,12 @@ describe("agent and skill state frames", () => {
       await api(stack.memberToken, "PATCH", `/api/v1/threads/${rootChat}`, { title: "Parent after" });
       await waitFrame(
         ws,
-        (f) => f.type === "chat_tree" && f.chat_id === childChat.id
-          && (f.tree as { parent: { title: string } | null }).parent?.title === "Parent after",
+        (f) =>
+          f.type === "chat_tree" &&
+          f.chat_id === childChat.id &&
+          (f.tree as { parent: { title: string } | null }).parent?.title === "Parent after",
       );
-      const header = await api<{ title: string }>(
-        stack.memberToken,
-        "GET",
-        `/api/v1/chats/${rootChat}/tree`,
-      );
+      const header = await api<{ title: string }>(stack.memberToken, "GET", `/api/v1/chats/${rootChat}/tree`);
       expect(header.title).toBe("Parent after");
     } finally {
       ws.end();
@@ -463,9 +559,14 @@ describe("agent and skill state frames", () => {
 
   it("refuses stop and close on a chat the caller does not own", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = await createAgent(stack.memberToken, `owned-${crypto.randomUUID().slice(0, 8)}`, "private");
-    const thread = await api<{ thread: { chat_id: string } }>(stack.memberToken, "POST", `/api/v1/agents/${agentId}/threads`, {
-      title: "Owner only",
-    });
+    const thread = await api<{ thread: { chat_id: string } }>(
+      stack.memberToken,
+      "POST",
+      `/api/v1/agents/${agentId}/threads`,
+      {
+        title: "Owner only",
+      },
+    );
     // An admin may read the member's chat but never act on it.
     const read = await stack.env.app.inject({
       method: "GET",

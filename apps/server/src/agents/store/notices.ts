@@ -57,7 +57,14 @@ export class AgentNoticeStore {
          VALUES ($1, $2, $3, $4, $5, $6::jsonb)
          RETURNING *)
        SELECT ${NOTICE_COLUMNS} FROM n`,
-      [uuidv7(), input.org_id, input.agent_id ?? null, input.user_id ?? null, input.kind, jsonbText(input.payload ?? {})],
+      [
+        uuidv7(),
+        input.org_id,
+        input.agent_id ?? null,
+        input.user_id ?? null,
+        input.kind,
+        jsonbText(input.payload ?? {}),
+      ],
     );
     return toNotice(res.rows[0]!);
   }

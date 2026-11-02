@@ -44,15 +44,7 @@ export function agentModelLabel(id: string, models: ModelOption[] | null): strin
 /** The model's display name. `alias` comes with the agent payload, so the
  *  label is correct on first paint; the fetched list is the fallback for
  *  callers that have only an id. */
-export function ModelName({
-  id,
-  alias,
-  className,
-}: {
-  id: string;
-  alias?: string | null;
-  className?: string;
-}) {
+export function ModelName({ id, alias, className }: { id: string; alias?: string | null; className?: string }) {
   const hasAlias = alias !== undefined && alias !== null && alias !== "";
   // The payload carries the label: no catalog request on that path.
   const models = useModelOptions(!hasAlias);

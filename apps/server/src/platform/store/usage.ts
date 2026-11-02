@@ -141,7 +141,9 @@ export async function usageGroupNames(
   group: "user" | "team",
 ): Promise<Map<string, string>> {
   if (group === "user") {
-    const res = await pool.query<{ id: string; email: string }>("SELECT id, email FROM users WHERE org_id = $1", [orgId]);
+    const res = await pool.query<{ id: string; email: string }>("SELECT id, email FROM users WHERE org_id = $1", [
+      orgId,
+    ]);
     return new Map(res.rows.map((u) => [u.id, u.email]));
   }
   const res = await pool.query<{ id: string; name: string }>("SELECT id, name FROM teams WHERE org_id = $1", [orgId]);

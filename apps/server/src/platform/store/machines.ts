@@ -26,10 +26,14 @@ export interface MachineRow {
 const DB_COLUMNS =
   "machine_id, org_id, user_id, label, hardware_fingerprint, os, os_version, " +
   "app_version, last_ip, " +
-  utcText("first_connected_at") + " AS first_connected_at, " +
-  utcText("last_connected_at") + " AS last_connected_at, " +
-  utcText("last_seen_at") + " AS last_seen_at, " +
-  utcText("re_paired_at") + " AS re_paired_at";
+  utcText("first_connected_at") +
+  " AS first_connected_at, " +
+  utcText("last_connected_at") +
+  " AS last_connected_at, " +
+  utcText("last_seen_at") +
+  " AS last_seen_at, " +
+  utcText("re_paired_at") +
+  " AS re_paired_at";
 
 /** Result of a connect-time registration. `adopted_from` is set when the
  *  fingerprint matched an existing row of the same org and that row was
@@ -98,9 +102,7 @@ export class MachineStore {
   /** Tells the feed that the owner's registry rows moved. Runs inside the
    *  writing transaction, so the notify lands with the commit. */
   private async notifyWorkspace(client: Pick<PoolClient, "query">, orgId: string, userId: string): Promise<void> {
-    await client.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: userId }),
-    ]);
+    await client.query("SELECT pg_notify('guild_workspace', $1)", [JSON.stringify({ org_id: orgId, user_id: userId })]);
   }
 
   async upsertConnected(
@@ -193,10 +195,11 @@ export class MachineStore {
           );
           // Registry identity and all durable execution bindings move together.
           for (const table of ["projects", "chats"]) {
-            await client.query(
-              `UPDATE ${table} SET machine_id = $2 WHERE machine_id = $1 AND org_id = $3`,
-              [old.machine_id, machineId, orgId],
-            );
+            await client.query(`UPDATE ${table} SET machine_id = $2 WHERE machine_id = $1 AND org_id = $3`, [
+              old.machine_id,
+              machineId,
+              orgId,
+            ]);
           }
           return { outcome: { row: toRow(rowRes.rows[0]!), adopted_from: old.machine_id }, notify: true };
         }
@@ -249,9 +252,7 @@ export class MachineStore {
   /** Refreshes the liveness timestamp; called off the ping heartbeat on a
    *  30s throttle. */
   async lastSeen(machineId: string): Promise<void> {
-    await this.pool.query("UPDATE machines SET last_seen_at = now() WHERE machine_id = $1", [
-      machineId,
-    ]);
+    await this.pool.query("UPDATE machines SET last_seen_at = now() WHERE machine_id = $1", [machineId]);
   }
 
   /** All registry rows of one user's org that belong to them. */

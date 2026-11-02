@@ -99,9 +99,7 @@ describe("agents route contract", () => {
       tab: "files",
       filePath: "my notes/a?b.md",
     });
-    expect(agentsRoutePath(route!)).toBe(
-      "/agents/a%2Fb/files/my%20notes/a%3Fb.md",
-    );
+    expect(agentsRoutePath(route!)).toBe("/agents/a%2Fb/files/my%20notes/a%3Fb.md");
   });
 
   it("keeps the canonical agent tab URL free of stale sub-page ids", () => {

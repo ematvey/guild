@@ -50,7 +50,13 @@ export const THREAD_STATE_EVENT_LIMIT = 120;
  *  state. `caller` omitted = the org-scoped path (the notify-driven
  *  republish, and the socket's sync bracket, which gates first): no
  *  per-user gate; the payload is org-gated by construction. */
-export async function captureThreadState(chats: ThreadStateReads, pool: DurableQueryable, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
+export async function captureThreadState(
+  chats: ThreadStateReads,
+  pool: DurableQueryable,
+  orgId: string,
+  chatId: string,
+  caller?: UserRow,
+): Promise<ThreadStateCapture> {
   if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
   const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });
   const events = page.rows;

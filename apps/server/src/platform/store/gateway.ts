@@ -71,9 +71,7 @@ export const PROTOCOLS = ["openai", "anthropic"];
 /** Derives the stable slug routes reference from a provider's display
  *  name. */
 export function providerSlug(name: string): string {
-  const slug = [...name.toLowerCase()]
-    .map((c) => (/[a-z0-9]/.test(c) ? c : "-"))
-    .join("");
+  const slug = [...name.toLowerCase()].map((c) => (/[a-z0-9]/.test(c) ? c : "-")).join("");
   const parts = slug.split("-").filter((s) => s !== "");
   return parts.length === 0 ? "provider" : parts.join("-");
 }
@@ -131,19 +129,16 @@ export class GatewayStore {
     );
     if (plaintextKey !== null) {
       const encrypted = encryptSecret(masterKey, plaintextKey);
-      res = await this.pool.query(
-        "UPDATE provider_keys SET encrypted_key = $3 WHERE org_id = $1 AND provider = $2",
-        [orgId, slug, encrypted],
-      );
+      res = await this.pool.query("UPDATE provider_keys SET encrypted_key = $3 WHERE org_id = $1 AND provider = $2", [
+        orgId,
+        slug,
+        encrypted,
+      ]);
     }
     return (res.rowCount ?? 0) > 0;
   }
 
-  async getProvider(
-    orgId: string,
-    slug: string,
-    masterKey: Buffer,
-  ): Promise<ProviderRow | null> {
+  async getProvider(orgId: string, slug: string, masterKey: Buffer): Promise<ProviderRow | null> {
     const res = await this.pool.query<{
       provider: string;
       name: string;
@@ -257,7 +252,22 @@ export class GatewayStore {
               "price_per_mtok_in_usd = $7, price_per_mtok_out_usd = $8, quota_monthly_usd = $9, " +
               "reasoning = $10, context_window = $11, max_output_tokens = $12, temperature = $13, " +
               "modalities = $14 WHERE org_id = $1 AND model = $2",
-            [orgId, originalModel, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+            [
+              orgId,
+              originalModel,
+              model,
+              alias,
+              provider,
+              enabled,
+              priceIn,
+              priceOut,
+              quotaMonthlyUsd,
+              reasoning,
+              contextWindow,
+              maxOutputTokens,
+              temperature,
+              modalities,
+            ],
           );
           if ((res.rowCount ?? 0) === 0) throw ApiError.notFound(`no route for model ${originalModel}`);
         } else {
@@ -272,7 +282,21 @@ export class GatewayStore {
               "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
               "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
               "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
-            [orgId, model, alias, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
+            [
+              orgId,
+              model,
+              alias,
+              provider,
+              enabled,
+              priceIn,
+              priceOut,
+              quotaMonthlyUsd,
+              reasoning,
+              contextWindow,
+              maxOutputTokens,
+              temperature,
+              modalities,
+            ],
           );
         }
         await notifyModels(client, orgId);

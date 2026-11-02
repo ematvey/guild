@@ -88,9 +88,8 @@ function rpcRequest(id: number, method: string, params: JsonObject): JsonObject 
  */
 export async function mcpConnect(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<McpPeer> {
   signal?.throwIfAborted();
-  const bounded = (ms: number) => signal === undefined
-    ? AbortSignal.timeout(ms)
-    : AbortSignal.any([signal, AbortSignal.timeout(ms)]);
+  const bounded = (ms: number) =>
+    signal === undefined ? AbortSignal.timeout(ms) : AbortSignal.any([signal, AbortSignal.timeout(ms)]);
   const baseHeaders: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
@@ -115,18 +114,21 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
     initRes = await fetch(url, {
       method: "POST",
       headers: baseHeaders,
-      body: JSON.stringify(rpcRequest(0, "initialize", {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "guild", version: "0.1.0" },
-      })),
+      body: JSON.stringify(
+        rpcRequest(0, "initialize", {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "guild", version: "0.1.0" },
+        }),
+      ),
       signal: bounded(CONNECT_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
       throw new Error("mcp connect timed out");
     }
-    const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+    const cause =
+      error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
     throw new Error(`mcp handshake failed: ${cause}`);
   }
   if (!initRes.ok) {
@@ -156,7 +158,8 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
       try {
         res = await post(rpcRequest(id, "tools/call", params));
       } catch (error) {
-        const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+        const cause =
+          error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
         throw new Error(`mcp tool call failed: ${cause}`);
       }
       if (!res.ok) {
@@ -168,7 +171,11 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
       const blocks = result["content"];
       const text = Array.isArray(blocks)
         ? blocks
-            .map((b) => (b !== null && typeof b === "object" && (b as JsonObject)["type"] === "text" ? String((b as JsonObject)["text"] ?? "") : null))
+            .map((b) =>
+              b !== null && typeof b === "object" && (b as JsonObject)["type"] === "text"
+                ? String((b as JsonObject)["text"] ?? "")
+                : null,
+            )
             .filter((t): t is string => t !== null)
             .join("\n")
         : "";

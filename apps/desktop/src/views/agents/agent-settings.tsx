@@ -3,14 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Viewer } from "./AgentPage";
-import {
-  Archive,
-  ArchiveRestore,
-  Download,
-  Loader2,
-  MoreHorizontal,
-  Trash2,
-} from "lucide-react";
+import { Archive, ArchiveRestore, Download, Loader2, MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -31,13 +24,7 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { modelLabel } from "../../lib/api/models";
 import {
   archiveAgent,
@@ -52,14 +39,8 @@ import {
   type AgentToolInfo,
   type TeamOption,
 } from "./agents-api";
-import {
-  VISIBILITY_LABEL,
-  type AgentVisibility,
-} from "./agents-route";
-import {
-  Mono,
-  Section,
-} from "./agent-ui";
+import { VISIBILITY_LABEL, type AgentVisibility } from "./agents-route";
+import { Mono, Section } from "./agent-ui";
 import { ModelName, useModelOptions } from "./agent-model";
 
 export function AgentSettings({
@@ -88,8 +69,12 @@ export function AgentSettings({
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    void listMyTeams().then(setTeams).catch(() => setTeams([]));
-    void listAgentTools().then(setCatalog).catch(() => setCatalog([]));
+    void listMyTeams()
+      .then(setTeams)
+      .catch(() => setTeams([]));
+    void listAgentTools()
+      .then(setCatalog)
+      .catch(() => setCatalog([]));
   }, []);
 
   const groups = useMemo(() => groupTools(catalog), [catalog]);
@@ -120,9 +105,7 @@ export function AgentSettings({
     return (
       <div className="space-y-4">
         <Section title="Settings">
-          <p className="text-sm text-muted-foreground">
-            Only the owner or an admin can change this agent.
-          </p>
+          <p className="text-sm text-muted-foreground">Only the owner or an admin can change this agent.</p>
         </Section>
         <ReadOnlyConfig agent={agent} />
       </div>
@@ -164,9 +147,7 @@ export function AgentSettings({
               placeholder="What this agent does and when to spawn it."
               onChange={(e) => setDescription(e.target.value)}
             />
-            <span className="text-xs text-muted-foreground">
-              Other agents read this to decide whom to spawn.
-            </span>
+            <span className="text-xs text-muted-foreground">Other agents read this to decide whom to spawn.</span>
           </label>
         </div>
         <div className="mt-3 space-y-1.5">
@@ -178,18 +159,12 @@ export function AgentSettings({
                 type="button"
                 onClick={() => setVisibility(value)}
                 className={`rounded-lg border px-3 py-2 text-left text-xs outline-none transition-colors ${
-                  visibility === value
-                    ? "border-foreground bg-accent"
-                    : "border-border hover:bg-accent/50"
+                  visibility === value ? "border-foreground bg-accent" : "border-border hover:bg-accent/50"
                 }`}
               >
                 <span className="block font-medium">{VISIBILITY_LABEL[value]}</span>
                 <span className="block text-muted-foreground">
-                  {value === "private"
-                    ? "Only the owner."
-                    : value === "team"
-                      ? "Selected teams."
-                      : "Every member."}
+                  {value === "private" ? "Only the owner." : value === "team" ? "Selected teams." : "Every member."}
                 </span>
               </button>
             ))}
@@ -198,9 +173,7 @@ export function AgentSettings({
             <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
               <p className="text-xs font-medium">Teams</p>
               {teams.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  You are not a member of any team yet.
-                </p>
+                <p className="text-xs text-muted-foreground">You are not a member of any team yet.</p>
               ) : (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {teams.map((team) => {
@@ -215,9 +188,7 @@ export function AgentSettings({
                           checked={checked}
                           onChange={() =>
                             setTeamIds((current) =>
-                              checked
-                                ? current.filter((id) => id !== team.id)
-                                : [...current, team.id],
+                              checked ? current.filter((id) => id !== team.id) : [...current, team.id],
                             )
                           }
                         />
@@ -237,11 +208,7 @@ export function AgentSettings({
         description={toolsMode === "all" ? "All available tools" : `${tools.length} selected`}
         action={
           toolsMode === "selected" && catalog.length > 0 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTools(catalog.map((t) => t.name))}
-            >
+            <Button variant="outline" size="sm" onClick={() => setTools(catalog.map((t) => t.name))}>
               Select all tools
             </Button>
           ) : undefined
@@ -273,15 +240,12 @@ export function AgentSettings({
             />
             <span className="min-w-0">
               <span className="block text-sm font-medium">Choose tools</span>
-              <span className="block text-xs text-muted-foreground">
-                Only the tools selected below.
-              </span>
+              <span className="block text-xs text-muted-foreground">Only the tools selected below.</span>
             </span>
           </label>
         </div>
         <p className="mb-3 text-xs text-muted-foreground">
-          Codemode is always available. Integration tools appear here when the org
-          enables that integration.
+          Codemode is always available. Integration tools appear here when the org enables that integration.
         </p>
         {toolsMode === "all" ? (
           <p className="text-sm text-muted-foreground">
@@ -295,9 +259,7 @@ export function AgentSettings({
           <div className="space-y-3">
             {groups.map((group) => (
               <div key={group.group} className="space-y-1.5">
-                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.group}
-                </p>
+                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{group.group}</p>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {group.tools.map((tool) => {
                     const checked = tools.includes(tool.name);
@@ -321,12 +283,8 @@ export function AgentSettings({
                           }
                         />
                         <span className="min-w-0">
-                          <span className="block text-sm font-medium">
-                            {tool.label || tool.name}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {tool.description}
-                          </span>
+                          <span className="block text-sm font-medium">{tool.label || tool.name}</span>
+                          <span className="block text-xs text-muted-foreground">{tool.description}</span>
                         </span>
                       </label>
                     );
@@ -339,10 +297,7 @@ export function AgentSettings({
         {groups.length === 0 && tools.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {tools.map((tool) => (
-              <span
-                key={tool}
-                className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs"
-              >
+              <span key={tool} className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs">
                 {tool}
               </span>
             ))}
@@ -368,14 +323,8 @@ export function AgentSettings({
         description={`Deleting starts a grace period. The default is 30 days; the org can change it.`}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <AgentActions
-            agent={agent}
-            manage={manage}
-            onDeleted={onDeleted}
-          />
-          <span className="text-xs text-muted-foreground">
-            Archive, restore, export or delete this agent.
-          </span>
+          <AgentActions agent={agent} manage={manage} onDeleted={onDeleted} />
+          <span className="text-xs text-muted-foreground">Archive, restore, export or delete this agent.</span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -427,15 +376,7 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
   );
 }
 
-export function AgentActions({
-  agent,
-  manage,
-  onDeleted,
-}: {
-  agent: Agent;
-  manage: boolean;
-  onDeleted: () => void;
-}) {
+export function AgentActions({ agent, manage, onDeleted }: { agent: Agent; manage: boolean; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -468,7 +409,13 @@ export function AgentActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="pointer-coarse:size-10" aria-label="Agent actions" disabled={busy}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-coarse:size-10"
+          aria-label="Agent actions"
+          disabled={busy}
+        >
           {busy ? <Loader2 className="animate-spin" /> : <MoreHorizontal />}
         </Button>
       </DropdownMenuTrigger>
@@ -491,10 +438,7 @@ export function AgentActions({
               <Download className="size-4" />
               {exporting ? "Preparing export…" : "Export data"}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setConfirmOpen(true)}
-            >
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setConfirmOpen(true)}>
               <Trash2 className="size-4" />
               Delete agent
             </DropdownMenuItem>
@@ -507,10 +451,9 @@ export function AgentActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The agent stops now and disappears from the directory. Its workspace, threads and
-              runs stay recoverable during the organization&apos;s grace period (30 days by
-              default); after that they are purged. Download an export first if you need the
-              definitions and run history.
+              The agent stops now and disappears from the directory. Its workspace, threads and runs stay recoverable
+              during the organization&apos;s grace period (30 days by default); after that they are purged. Download an
+              export first if you need the definitions and run history.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -41,13 +41,7 @@ export function Avatar({
     );
   }
   return (
-    <span
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-full",
-        className,
-        fallbackClassName,
-      )}
-    >
+    <span className={cn("flex shrink-0 items-center justify-center rounded-full", className, fallbackClassName)}>
       {fallback}
     </span>
   );

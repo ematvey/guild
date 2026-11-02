@@ -6,13 +6,7 @@
 // throws the server's ApiError.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  myTeams,
-  skillsGate,
-  skillsInstall,
-  skillsSave,
-  skillsUninstall,
-} from "./skills-api";
+import { myTeams, skillsGate, skillsInstall, skillsSave, skillsUninstall } from "./skills-api";
 import { formatVersion } from "./version";
 import { ApiError } from "../../lib/api/request";
 
@@ -91,11 +85,15 @@ describe("skillsSave (the editor's save target)", () => {
   it("throws a 409 slug_taken as an ApiError with the server message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ error: { code: "slug_taken", message: "a skill with this slug already exists" } }), {
-          status: 409,
-          headers: { "content-type": "application/json" },
-        }),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ error: { code: "slug_taken", message: "a skill with this slug already exists" } }),
+            {
+              status: 409,
+              headers: { "content-type": "application/json" },
+            },
+          ),
       ),
     );
     const error = await skillsSave({

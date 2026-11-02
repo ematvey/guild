@@ -18,8 +18,8 @@ import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
 import { traceEvent } from "./telemetry";
-import { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
-import { ChatSubagentNode, ChatSummary } from "./api/chats";
+import type { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
+import type { ChatSubagentNode, ChatSummary } from "./api/chats";
 import type { Project } from "./api/projects";
 import type { MachineInfo } from "./api/machines";
 import type { ModelOption } from "./api/models";
@@ -274,7 +274,11 @@ export function startSocket(
     pingsTimer = setInterval(() => {
       if (stopped) return;
       if (socket?.readyState === 1) {
-        try { socket.send(serializeClientFrame({ type: "ping" })); } catch { /* closing */ }
+        try {
+          socket.send(serializeClientFrame({ type: "ping" }));
+        } catch {
+          /* closing */
+        }
       }
     }, PING_INTERVAL_MS);
     watchdogTimer = setInterval(() => {
@@ -282,13 +286,23 @@ export function startSocket(
       if (lastFrameAt !== 0 && Date.now() - lastFrameAt > DEAD_AFTER_MS) {
         traceEvent("socket.watchdog_close", { attempt, silentMs: silentMs() });
         // Half-open black hole: force the reconnect path (onclose fires).
-        try { socket.close(); } catch { /* already closing */ }
+        try {
+          socket.close();
+        } catch {
+          /* already closing */
+        }
       }
     }, 2_000);
   };
   const livenessStop = (): void => {
-    if (pingsTimer !== null) { clearInterval(pingsTimer); pingsTimer = null; }
-    if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null; }
+    if (pingsTimer !== null) {
+      clearInterval(pingsTimer);
+      pingsTimer = null;
+    }
+    if (watchdogTimer !== null) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
   };
 
   const sendSync = () => {
@@ -318,7 +332,10 @@ export function startSocket(
     attempt += 1;
     traceEvent("socket.connect_start", { attempt, silentMs: silentMs() });
     try {
-      if (needsRefresh) { await refreshSession(); needsRefresh = false; }
+      if (needsRefresh) {
+        await refreshSession();
+        needsRefresh = false;
+      }
       const ticket = await mintTicket();
       if (stopped) return;
       // `features` names the optional frames this client applies.
@@ -329,7 +346,11 @@ export function startSocket(
       const prior = socket;
       socket = null;
       if (prior !== null) {
-        try { prior.close(); } catch { /* already closing */ }
+        try {
+          prior.close();
+        } catch {
+          /* already closing */
+        }
       }
       const current = openSocket(url, factory);
       socket = current;
@@ -356,20 +377,22 @@ export function startSocket(
             needsRefresh = true;
             traceEvent("socket.auth_required", { attempt });
             current.close();
-            void refreshSession().then(() => {
-              needsRefresh = false;
-              connecting = false;
-              scheduleReconnect();
-            }).catch((error) => {
-              connecting = false;
-              if (error instanceof SessionExpiredError) {
-                stopped = true;
-                opts.onAuthRequired?.();
-              } else {
-                reportError(error, opts);
+            void refreshSession()
+              .then(() => {
+                needsRefresh = false;
+                connecting = false;
                 scheduleReconnect();
-              }
-            });
+              })
+              .catch((error) => {
+                connecting = false;
+                if (error instanceof SessionExpiredError) {
+                  stopped = true;
+                  opts.onAuthRequired?.();
+                } else {
+                  reportError(error, opts);
+                  scheduleReconnect();
+                }
+              });
             return;
           }
           if (message.type === "thread_state") {
@@ -402,7 +425,11 @@ export function startSocket(
         attempt,
         error: (error instanceof Error ? error.message : String(error)).slice(0, 160),
       });
-      if (error instanceof SessionExpiredError) { stopped = true; opts.onAuthRequired?.(); return; }
+      if (error instanceof SessionExpiredError) {
+        stopped = true;
+        opts.onAuthRequired?.();
+        return;
+      }
       reportError(error, opts);
       scheduleReconnect();
     } finally {
@@ -419,7 +446,11 @@ export function startSocket(
   // probed, since an open socket loses no frame.
   const STALE_AFTER_MS = 2 * PING_INTERVAL_MS;
   const probe = (): void => {
-    try { socket?.send(serializeClientFrame({ type: "ping" })); } catch { /* closing */ }
+    try {
+      socket?.send(serializeClientFrame({ type: "ping" }));
+    } catch {
+      /* closing */
+    }
   };
   const wakeCheck = (): void => {
     if (stopped) return;
@@ -427,7 +458,11 @@ export function startSocket(
       if (lastFrameAt === 0 || Date.now() - lastFrameAt > DEAD_AFTER_MS) void connect();
     } else if (Date.now() - lastFrameAt > DEAD_AFTER_MS) {
       traceEvent("socket.wake_close", { attempt, silentMs: silentMs() });
-      try { socket.close(); } catch { /* already closing */ }
+      try {
+        socket.close();
+      } catch {
+        /* already closing */
+      }
     } else if (Date.now() - lastFrameAt > STALE_AFTER_MS) {
       probe();
       sendSync();
@@ -475,4 +510,3 @@ export function startSocket(
     },
   };
 } // shared with the settings window client code
-

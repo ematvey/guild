@@ -67,10 +67,7 @@ export async function getChatApproval(chatId: string): Promise<ChatApprovalMode 
   }
 }
 
-export async function setChatApproval(
-  chatId: string,
-  mode: ChatApprovalMode | "default",
-): Promise<void> {
+export async function setChatApproval(chatId: string, mode: ChatApprovalMode | "default"): Promise<void> {
   await request<unknown>("POST", `${threadPath(chatId)}/approval`, { default: mode });
 }
 
@@ -89,7 +86,10 @@ export interface AssistantPrompt {
 }
 
 export async function getAssistantPrompt(): Promise<AssistantPrompt | null> {
-  const v = await request<{ prompt?: string | null; default?: string } | undefined>("GET", "/api/v1/admin/assistant-prompt");
+  const v = await request<{ prompt?: string | null; default?: string } | undefined>(
+    "GET",
+    "/api/v1/admin/assistant-prompt",
+  );
   return { prompt: v?.prompt ?? null, default: v?.default ?? "" };
 }
 

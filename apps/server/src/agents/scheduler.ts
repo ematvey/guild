@@ -10,7 +10,7 @@ import { withTransaction, type PlatformPool } from "../platform/db.js";
 import { utcText } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
-import { AgentStore } from "./store.js";
+import type { AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { ApiError } from "../platform/errors.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
@@ -156,10 +156,9 @@ export class AgentScheduler {
       try {
         if (routine.kind === "once") {
           await createOccurrence(this.deps.pool, routine.id, routine.next_run_at);
-          await this.deps.pool.query(
-            "UPDATE agent_routines SET next_run_at = NULL, updated_at = now() WHERE id = $1",
-            [routine.id],
-          );
+          await this.deps.pool.query("UPDATE agent_routines SET next_run_at = NULL, updated_at = now() WHERE id = $1", [
+            routine.id,
+          ]);
           continue;
         }
         if (routine.schedule === null) continue;
@@ -340,7 +339,10 @@ export class AgentScheduler {
         // Link the run first: from here the occurrence settles with the run.
         onRunCreated: async (run) => {
           runId = run.id;
-          await this.deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [row.id, run.id]);
+          await this.deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [
+            row.id,
+            run.id,
+          ]);
         },
       });
     } catch (error) {
@@ -403,11 +405,7 @@ export class AgentScheduler {
     });
   }
 
-  private async writeNotice(
-    row: ClaimedOccurrence,
-    kind: string,
-    payload: Record<string, unknown>,
-  ): Promise<void> {
+  private async writeNotice(row: ClaimedOccurrence, kind: string, payload: Record<string, unknown>): Promise<void> {
     await this.deps.store.notices
       .createNotice({
         org_id: row.org_id,
@@ -469,7 +467,10 @@ export async function runRoutineNow(
         summary: routine.name,
       },
       onRunCreated: async (run) => {
-        await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [occurrence.id, run.id]);
+        await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [
+          occurrence.id,
+          run.id,
+        ]);
       },
     });
     return run;

@@ -46,9 +46,7 @@ describe("scheduleLabel", () => {
   });
 
   it("formats a one-shot reminder as a date", () => {
-    const label = scheduleLabel(
-      routine({ kind: "once", schedule: null, run_at: "2026-10-21T09:00:00.000Z" }),
-    );
+    const label = scheduleLabel(routine({ kind: "once", schedule: null, run_at: "2026-10-21T09:00:00.000Z" }));
     expect(label.startsWith("Once on ")).toBe(true);
     expect(label).not.toContain("2026-10-21T");
   });

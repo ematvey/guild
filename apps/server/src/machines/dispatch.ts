@@ -17,7 +17,26 @@
 // ShellExecResult/byte shapes, so they are dropped.
 
 import path from "node:path";
-import { err, ok, ExecutionError, FileError, LineScanner, type BinaryReader, type DirReader, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputInfo, type TextLine, type TextLineReader, type WatchChange, type WatchTarget, type FileWatcher } from "@earendil-works/pi-durable/env";
+import {
+  err,
+  ok,
+  ExecutionError,
+  FileError,
+  LineScanner,
+  type BinaryReader,
+  type DirReader,
+  type ExecutionEnv,
+  type FileInfo,
+  type Result,
+  type ShellExecOptions,
+  type ShellExecResult,
+  type ShellOutputInfo,
+  type TextLine,
+  type TextLineReader,
+  type WatchChange,
+  type WatchTarget,
+  type FileWatcher,
+} from "@earendil-works/pi-durable/env";
 import type { Context } from "@earendil-works/chord";
 import type { MachineRequestFn } from "../hub/index.js";
 
@@ -28,14 +47,17 @@ export type ExecutorKind = "machine" | "server" | null;
  *  production; a test double implements the same members). */
 export interface MachineDispatchHost {
   machineHolder(machineId: string): { conn_id: string; org_id: string } | null;
-  sendMachineToolDispatch(machineId: string, orgId: string, msg: { type: "tool_dispatch"; chat_id: string; call_id: string; name: string; arguments: string; workdir?: string }): boolean;
+  sendMachineToolDispatch(
+    machineId: string,
+    orgId: string,
+    msg: { type: "tool_dispatch"; chat_id: string; call_id: string; name: string; arguments: string; workdir?: string },
+  ): boolean;
   sendMachineToolCancel(machineId: string, orgId: string, connectionId: string, callId: string): boolean;
   /** The control-plane request to a machine's executor socket (the skills
    *  fleet sync push) and the slot liveness the fan-out consults. */
   machineRequest: MachineRequestFn;
   machineOnline(machineId: string): boolean;
 }
-
 
 /** The daemon's guild-core `execute` accepts milliseconds. */
 const DEFAULT_EXECUTE_TIMEOUT_MS = 300_000;
@@ -54,7 +76,6 @@ interface PendingTool {
   settle: (outcome: MachineToolOutcome) => void;
 }
 
-
 export class MachineDispatch {
   /** call_id → pending tool (settle on the machine's tool_result frame,
    *  the dispatch timeout, or the machine slot dropping). */
@@ -67,21 +88,25 @@ export class MachineDispatch {
    *  awaits its result. `offline` = no live slot or a
    *  dead sink; the call id is a fresh correlation id — the daemon echoes
    *  it verbatim. */
-  async dispatch(opts: {
-    machineId: string;
-    orgId: string;
-    chatId: string;
-    name: string;
-    args: Record<string, unknown>;
-    workdir: string | null;
-    timeoutMs: number;
-  }, signal?: AbortSignal): Promise<MachineToolOutcome> {
+  async dispatch(
+    opts: {
+      machineId: string;
+      orgId: string;
+      chatId: string;
+      name: string;
+      args: Record<string, unknown>;
+      workdir: string | null;
+      timeoutMs: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<MachineToolOutcome> {
     signal?.throwIfAborted();
     const holder = this.hub.machineHolder(opts.machineId);
     if (holder === null || holder.org_id !== opts.orgId) {
       return { content: "machine offline", is_error: true, meta: null, images: [] };
     }
-    const callId = `md${Date.now().toString(36)}${(this.seq += 1).toString(36)}`;
+    this.seq += 1;
+    const callId = `md${Date.now().toString(36)}${this.seq.toString(36)}`;
     let settle: PendingTool["settle"];
     const done = new Promise<MachineToolOutcome>((resolve) => {
       settle = resolve;
@@ -112,18 +137,15 @@ export class MachineDispatch {
       signal?.addEventListener("abort", cancel, { once: true });
       if (signal?.aborted) cancel();
       const timeout = new Promise<MachineToolOutcome>((resolve) => {
-        timer = setTimeout(
-          () => {
-            this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
-            resolve({
-              content: `client tool ${opts.name} (${callId}) timed out after ${Math.round(opts.timeoutMs / 1000)}s: no client result arrived`,
-              is_error: true,
-              meta: null,
-              images: [],
-            });
-          },
-          opts.timeoutMs,
-        );
+        timer = setTimeout(() => {
+          this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
+          resolve({
+            content: `client tool ${opts.name} (${callId}) timed out after ${Math.round(opts.timeoutMs / 1000)}s: no client result arrived`,
+            is_error: true,
+            meta: null,
+            images: [],
+          });
+        }, opts.timeoutMs);
         timer.unref?.();
       });
       return await Promise.race([done, timeout]);
@@ -138,7 +160,10 @@ export class MachineDispatch {
    *  inbound path — the ctx.wsToolResult seam). Results from a connection
    *  that no longer holds the machine's slot, or unknown call ids, are
    *  dropped silently. */
-  resolveToolResult(member: { conn_id: string; org_id: string }, frame: { call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] }): boolean {
+  resolveToolResult(
+    member: { conn_id: string; org_id: string },
+    frame: { call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] },
+  ): boolean {
     const pending = this.pending.get(frame.call_id);
     if (!pending) return false;
     if (pending.connectionId !== member.conn_id || pending.orgId !== member.org_id) return false;
@@ -177,7 +202,8 @@ export class MachineDispatch {
       if (pending.connectionId !== connId) continue;
       this.pending.delete(callId);
       pending.settle({
-        content: "Machine connection changed; execution outcome is unknown. Do not retry this action without checking its effects.",
+        content:
+          "Machine connection changed; execution outcome is unknown. Do not retry this action without checking its effects.",
         is_error: true,
         meta: null,
         images: [],
@@ -230,7 +256,7 @@ function rawErrorCode(code: unknown): (typeof FileError.prototype)["code"] {
  *  double-quoted with backslash escapes otherwise. */
 function shellQuote(arg: string): string {
   if (/^[A-Za-z0-9_\-./:=@%+]+$/.test(arg)) return arg;
-  return `"${arg.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"").replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
+  return `"${arg.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
 }
 
 export interface MachineEnvOptions {
@@ -256,15 +282,18 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   private async runTool(name: string, args: Record<string, unknown>, context?: Context): Promise<MachineToolOutcome> {
-    return this.options.dispatch.dispatch({
-      machineId: this.options.machineId,
-      orgId: this.options.orgId,
-      chatId: this.options.chatId,
-      name,
-      args,
-      workdir: this.options.workdir,
-      timeoutMs: this.options.timeoutMs,
-    }, context?.abortSignal);
+    return this.options.dispatch.dispatch(
+      {
+        machineId: this.options.machineId,
+        orgId: this.options.orgId,
+        chatId: this.options.chatId,
+        name,
+        args,
+        workdir: this.options.workdir,
+        timeoutMs: this.options.timeoutMs,
+      },
+      context?.abortSignal,
+    );
   }
 
   async absolutePath(p: string): Promise<Result<string, FileError>> {
@@ -279,7 +308,11 @@ export class MachineExecutionEnv implements ExecutionEnv {
    *  JSON payload. A failure carries `{code, message}`; an engine that
    *  predates the op answers "unknown tool", which fails as
    *  `not_supported` instead of falling back to the lossy `read_file`. */
-  private async rawOp(op: typeof RAW_READ_OP | typeof RAW_STAT_OP, p: string, context: Context): Promise<Result<Record<string, unknown>, FileError>> {
+  private async rawOp(
+    op: typeof RAW_READ_OP | typeof RAW_STAT_OP,
+    p: string,
+    context: Context,
+  ): Promise<Result<Record<string, unknown>, FileError>> {
     const outcome = await this.runTool(op, { path: p }, context);
     let payload: unknown;
     try {
@@ -289,7 +322,11 @@ export class MachineExecutionEnv implements ExecutionEnv {
     }
     if (outcome.is_error) {
       if (/unknown tool/i.test(outcome.content)) {
-        return fileErr("not_supported", `this machine's Guild engine cannot transfer files exactly (${op} missing); update the desktop app`, p);
+        return fileErr(
+          "not_supported",
+          `this machine's Guild engine cannot transfer files exactly (${op} missing); update the desktop app`,
+          p,
+        );
       }
       const failure = (payload ?? {}) as { code?: unknown; message?: unknown };
       const message = typeof failure.message === "string" ? failure.message : outcome.content;
@@ -301,7 +338,10 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(payload as Record<string, unknown>);
   }
 
-  private async readRaw(p: string, context: Context): Promise<Result<{ bytes: Uint8Array; mtimeMs: number }, FileError>> {
+  private async readRaw(
+    p: string,
+    context: Context,
+  ): Promise<Result<{ bytes: Uint8Array; mtimeMs: number }, FileError>> {
     const result = await this.rawOp(RAW_READ_OP, p, context);
     if (!result.ok) return result;
     const data = result.value.data_b64;
@@ -341,7 +381,11 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(reader);
   }
 
-  async readTextLines(p: string, options: { maxLines?: number } | undefined, context: Context): Promise<Result<string[], FileError>> {
+  async readTextLines(
+    p: string,
+    options: { maxLines?: number } | undefined,
+    context: Context,
+  ): Promise<Result<string[], FileError>> {
     const text = await this.readTextFile(p, context);
     if (!text.ok) return text;
     const lines = text.value.split("\n");
@@ -357,11 +401,21 @@ export class MachineExecutionEnv implements ExecutionEnv {
   /** Positional reads over one whole-file `fs.read_raw_v1` transfer (the
    *  machine has no paged op; `noFollow` has no channel in the wire
    *  contract — a final-component symlink is followed). */
-  async openBinaryReader(p: string, _options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
+  async openBinaryReader(
+    p: string,
+    _options: { noFollow?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<BinaryReader, FileError>> {
     const raw = await this.readRaw(p, context);
     if (!raw.ok) return raw;
     const bytes = raw.value.bytes;
-    const info: FileInfo = { name: path.basename(p), path: p, kind: "file", size: bytes.length, mtimeMs: raw.value.mtimeMs };
+    const info: FileInfo = {
+      name: path.basename(p),
+      path: p,
+      kind: "file",
+      size: bytes.length,
+      mtimeMs: raw.value.mtimeMs,
+    };
     const reader: BinaryReader = {
       info: async () => ok(info),
       read: async (offset, length) => {
@@ -385,7 +439,11 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return fileErr("not_supported", "directory readers are not supported over machine dispatch");
   }
 
-  async watch(_targets: readonly WatchTarget[], _onChange: (change: WatchChange) => void, _context: Context): Promise<Result<FileWatcher, FileError>> {
+  async watch(
+    _targets: readonly WatchTarget[],
+    _onChange: (change: WatchChange) => void,
+    _context: Context,
+  ): Promise<Result<FileWatcher, FileError>> {
     return fileErr("not_supported", "watching is not supported over machine dispatch");
   }
 
@@ -459,10 +517,16 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return fileErr("not_supported", "temp files are not supported over machine dispatch");
   }
 
-  async exec(command: string | readonly string[], options: ShellExecOptions | undefined, _context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+  async exec(
+    command: string | readonly string[],
+    options: ShellExecOptions | undefined,
+    _context: Context,
+  ): Promise<Result<ShellExecResult, ExecutionError>> {
     if (_context.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
     const timeoutMs =
-      options?.timeout !== undefined ? Math.min(Math.max(options.timeout * 1000, 1), DEFAULT_EXECUTE_TIMEOUT_MS) : DEFAULT_EXECUTE_TIMEOUT_MS;
+      options?.timeout !== undefined
+        ? Math.min(Math.max(options.timeout * 1000, 1), DEFAULT_EXECUTE_TIMEOUT_MS)
+        : DEFAULT_EXECUTE_TIMEOUT_MS;
     // The wire contract carries one shell command string; an argv array is
     // rendered into that shell's command line (guild tools never use the
     // argv form over machine dispatch).
