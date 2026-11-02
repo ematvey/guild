@@ -459,8 +459,7 @@ The complete list of places:
 
 | File | What it versions |
 |---|---|
-| `Cargo.toml` (`[workspace.package] version`) | workspace crates: `protocol`, `guild-core`, `app-server` |
-| `apps/desktop/src-tauri/Cargo.toml` | the Tauri desktop app (outside the workspace — bumped separately) |
+| `Cargo.toml` (`[workspace.package] version`) | every workspace crate: `protocol`, `guild-core`, `app-server`, and the desktop (`version.workspace = true`) |
 | `apps/desktop/src-tauri/tauri.conf.json` | desktop updater bundle version |
 | `apps/desktop/package.json` | desktop SPA build; the release manifests use it |
 | `apps/server/package.json` | TS server; `GUILD_TS_SERVER_VERSION` reads it → `/api/v1/health` |
