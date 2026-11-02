@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import type { GuildRuntime } from "../../harness/runtime.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
@@ -48,7 +49,7 @@ describe("child result delivery", () => {
     });
     await stack.env.app.listen({ port, host: "127.0.0.1" });
     await stack.routeModel("GLM-Test-Model");
-    store = new AgentStore(stack.env.db);
+    store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db) });
     threads = new ThreadStore(stack.env.db);
     const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     lifecycle = new AgentRunLifecycle({
@@ -123,13 +124,13 @@ describe("child result delivery", () => {
     agentId: string;
     text: string;
   }): Promise<{ threadId: string; runId: string; chatId: string }> {
-    const child = await store.createChildThread(
+    const child = await store.threads.createChildThread(
       args.parentThreadId,
       args.agentId,
       stack.memberId,
       `Child ${args.text}`,
     );
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: args.agentId,
       user_id: stack.memberId,
       thread_id: child.id,
@@ -250,13 +251,13 @@ describe("child result delivery", () => {
 
   it("delivers a user cancel of a child as cancelled/user", async () => {
     const parent = await startBusyParent("Cancel child");
-    const child = await store.createChildThread(
+    const child = await store.threads.createChildThread(
       parent.threadId,
       parent.agentId,
       stack.memberId,
       "Cancelled child",
     );
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: parent.agentId,
       user_id: stack.memberId,
       thread_id: child.id,
@@ -293,19 +294,19 @@ describe("child result delivery", () => {
       userTexts(request.body).some((text) => text.includes("cancelled") && text.includes("user")),
     );
     expect(cancelled.length).toBeGreaterThanOrEqual(1);
-    const done = await store.getRun(run.id);
+    const done = await store.runs.getRun(run.id);
     expect(done.status).toBe("cancelled");
   }, 30_000);
 
   it("drops the result of a closed child", async () => {
     const parent = await startBusyParent("Closed child");
-    const child = await store.createChildThread(
+    const child = await store.threads.createChildThread(
       parent.threadId,
       parent.agentId,
       stack.memberId,
       "Closed child",
     );
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: parent.agentId,
       user_id: stack.memberId,
       thread_id: child.id,
@@ -316,7 +317,7 @@ describe("child result delivery", () => {
       status: "running",
       started_at: new Date().toISOString(),
     });
-    await store.closeSubtree(child.id);
+    await store.tree.closeSubtree(child.id);
     const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     await runtime.deliverChildResult({
       child_thread_id: child.id,

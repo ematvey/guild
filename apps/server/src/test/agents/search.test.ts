@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
-import { chunkThread, search } from "../../agents/search.js";
+import { ChatStore } from "../../platform/store/chats.js";
+import { chunkThread, insertChunks, search } from "../../agents/search.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
@@ -20,7 +21,7 @@ dbDescribe("agent conversation search", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     const orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-search-org')", [orgId]);
     const userId = randomUUID();
@@ -38,7 +39,7 @@ dbDescribe("agent conversation search", () => {
     };
     const agent = await store.create(owner, { name: "Search agent", model: "GLM-Test" });
     agentId = agent.id;
-    threadId = (await store.listThreads(agent.id, owner.id)).threads[0]!.id;
+    threadId = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -67,7 +68,7 @@ dbDescribe("agent conversation search", () => {
 
   it("scopes results to the agent and returns nothing for an empty query", async () => {
     const other = await store.create(owner, { name: "Other agent", model: "GLM-Test" });
-    const otherThread = (await store.listThreads(other.id, owner.id)).threads[0]!.id;
+    const otherThread = (await store.threads.listThreads(other.id, owner.id)).threads[0]!.id;
     await chunkThread(env!.db, {
       threadId: otherThread,
       agentId: other.id,
@@ -80,7 +81,7 @@ dbDescribe("agent conversation search", () => {
 
   it("caps results at 20 and honours a smaller limit", async () => {
     const bulk = await store.create(owner, { name: "Bulk agent", model: "GLM-Test" });
-    const bulkThread = (await store.listThreads(bulk.id, owner.id)).threads[0]!.id;
+    const bulkThread = (await store.threads.listThreads(bulk.id, owner.id)).threads[0]!.id;
     const chunks = Array.from({ length: 25 }, (_, index) => ({
       thread_id: bulkThread,
       agent_id: bulk.id,
@@ -88,7 +89,7 @@ dbDescribe("agent conversation search", () => {
       seq_to: index * 2 + 2,
       text: `User: bulkword uncommonterm${index}\n\nAssistant: reply ${index}`,
     }));
-    await store.insertChunks(chunks);
+    await insertChunks(env!.db, chunks);
     expect(await search(env!.db, { agentId: bulk.id, userId: owner.id, query: "bulkword" })).toHaveLength(20);
     expect(await search(env!.db, { agentId: bulk.id, userId: owner.id, query: "bulkword", limit: 5 })).toHaveLength(5);
   });

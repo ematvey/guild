@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
@@ -28,7 +29,7 @@ dbDescribe("agent run lifecycle", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
     lifecycle = new AgentRunLifecycle({
       pool: env.db,
@@ -51,7 +52,7 @@ dbDescribe("agent run lifecycle", () => {
     };
     const agent = await store.create(owner, { name: "Lifecycle", model: "GLM-Test" });
     agentId = agent.id;
-    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
+    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
     threadId = thread.id;
     chatId = thread.chat_id;
   }, 60_000);
@@ -61,7 +62,7 @@ dbDescribe("agent run lifecycle", () => {
   });
 
   it("completes once with summary, tokens and a search chunk", async () => {
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: agentId,
       thread_id: threadId,
       trigger: "message",
@@ -80,7 +81,7 @@ dbDescribe("agent run lifecycle", () => {
       ),
     );
     await lifecycle.assistantEvent(chatId, row);
-    const done = await store.getRun(run.id);
+    const done = await store.runs.getRun(run.id);
     expect(done.status).toBe("succeeded");
     expect(done.summary).toBe("Bread is baked dough.");
     expect(done.tokens).toBe(12);
@@ -97,7 +98,7 @@ dbDescribe("agent run lifecycle", () => {
     // A second report (the bridge's run_end) must not rewrite the run or
     // duplicate the chunk.
     await lifecycle.runEnd(chatId, null);
-    expect((await store.getRun(run.id)).tokens).toBe(12);
+    expect((await store.runs.getRun(run.id)).tokens).toBe(12);
     const again = await env!.db.query("SELECT id FROM agent_thread_chunks WHERE thread_id = $1", [threadId]);
     expect(again.rows).toHaveLength(1);
   });
@@ -109,7 +110,7 @@ dbDescribe("agent run lifecycle", () => {
       log: pino({ level: "silent" }),
       delivery: { deliver: async (input) => { delivered.push(input); } },
     });
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: agentId,
       thread_id: threadId,
       trigger: "message",
@@ -146,11 +147,11 @@ dbDescribe("agent run lifecycle", () => {
     await withDelivery.assistantEvent(chatId, terminal);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]!.final_text).toBe("The answer is 42.");
-    expect((await store.getRun(run.id)).status).toBe("succeeded");
+    expect((await store.runs.getRun(run.id)).status).toBe("succeeded");
   });
 
   it("marks a run with no text and no send_message silent", async () => {
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: agentId,
       thread_id: threadId,
       trigger: "routine",
@@ -158,7 +159,7 @@ dbDescribe("agent run lifecycle", () => {
       started_at: new Date().toISOString(),
     });
     await lifecycle.runEnd(chatId, null);
-    const done = await store.getRun(run.id);
+    const done = await store.runs.getRun(run.id);
     expect(done.status).toBe("silent");
     expect(done.summary).toBeNull();
   });

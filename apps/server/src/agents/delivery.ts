@@ -180,7 +180,7 @@ export class ChildResultDelivery {
    *  so a later attempt can still deliver it. */
   private async wake(parentRow: ParentThread): Promise<boolean> {
     const { store, threads, runtime, log } = this.deps;
-    const running = await store.runningRunForChat(parentRow.chat_id);
+    const running = await store.runs.runningRunForChat(parentRow.chat_id);
     let runId = running?.id ?? null;
     let opened = false;
     if (runId === null) {
@@ -198,7 +198,7 @@ export class ChildResultDelivery {
       // A concurrent drain took the batch. An idle-parent run we opened has
       // nothing to do, so it must not stay running.
       if (opened) {
-        await store
+        await store.runs
           .updateRun(runId, { status: "skipped", finished_at: new Date().toISOString() })
           .catch(() => {});
       }
@@ -211,7 +211,7 @@ export class ChildResultDelivery {
         log.warn({ err: releaseError, chatId: parentRow.chat_id }, "child result release failed");
       });
       if (opened) {
-        await store
+        await store.runs
           .updateRun(runId, {
             status: "failed",
             error_code: "delivery_failed",

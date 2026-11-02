@@ -22,7 +22,7 @@ dbDescribe("agent workspace resolution", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     chats = new ChatStore(env.db);
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-workspace-org')", [orgId]);
@@ -47,7 +47,7 @@ dbDescribe("agent workspace resolution", () => {
 
   it("routes an agent thread to the shared agent workspace", async () => {
     const agent = await store.create(owner, { name: "Workspace", model: "GLM-Test" });
-    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
+    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
     expect(await agentThreadForChat(env!.db, thread.chat_id)).toEqual({
       thread_id: thread.id,
       agent_id: agent.id,

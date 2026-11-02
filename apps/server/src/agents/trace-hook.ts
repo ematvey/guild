@@ -39,7 +39,7 @@ export function createTraceHook(
       try {
         const chatId = await chatOfConversation(api.conversationId);
         if (chatId === null) return result;
-        const run = await store.runningRunTraceForChat(chatId);
+        const run = await store.runs.runningRunTraceForChat(chatId);
         if (run === null) return result;
         const end = Date.now();
         await trace.recordSpan({

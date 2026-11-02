@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { SPECIALIST_PACK, installSpecialists } from "../../agents/specialists.js";
 import { AGENTS_TEMPLATE } from "../../agents/templates.js";
 import { agentWorkspaceDir } from "../../agents/workspace-config.js";
@@ -73,7 +74,7 @@ describe("specialist pack", () => {
 
   it("creates three org agents with focused tools and a written playbook", async () => {
     const { orgId, owner } = await makeOrg();
-    const store = new AgentStore(stack.env.db, undefined, root);
+    const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), workspaceRoot: root });
     const result = await installSpecialists(
       { store, workspaceRoot: root },
       { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },
@@ -100,7 +101,7 @@ describe("specialist pack", () => {
 
   it("a second install updates in place and leaves notes intact", async () => {
     const { orgId, owner } = await makeOrg();
-    const store = new AgentStore(stack.env.db, undefined, root);
+    const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), workspaceRoot: root });
     await installSpecialists(
       { store, workspaceRoot: root },
       { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },

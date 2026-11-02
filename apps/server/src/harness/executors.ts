@@ -18,7 +18,7 @@ import type { ThreadStore } from "../platform/store/thread.js";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
 import { MachineExecutionEnv, type ExecutorKind, type MachineDispatch } from "../machines/dispatch.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
-import type { AgentStore } from "../agents/store.js";
+import type { AgentRunStore } from "../agents/store.js";
 import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import type { SkillRuntime } from "./skills.js";
 
@@ -30,7 +30,7 @@ export interface ExecutorDeps {
   readonly chats: Pick<ChatStore, "identityOf" | "machineBinding" | "ownerOf">;
   readonly threads: Pick<ThreadStore, "turnAttachmentIds">;
   readonly attachments: Pick<AttachmentStore, "byIds">;
-  readonly agents: Pick<AgentStore, "runningRunForChat">;
+  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat"> };
   readonly objects?: ObjectStore;
   /** The conversation's chat id (null for unmapped conversations). */
   chatOfConversation(conversationId: number): Promise<string | null>;
@@ -211,7 +211,7 @@ export class ConversationExecutors {
   private async materializeAttachmentsForTurn(chatId: string, orgId: string, env: ExecutionEnv): Promise<void> {
     const objects = this.deps.objects;
     if (objects === undefined || this.deps.config.sandbox.mode !== "runner") return;
-    const run = await this.deps.agents.runningRunForChat(chatId).catch(() => null);
+    const run = await this.deps.agents.runs.runningRunForChat(chatId).catch(() => null);
     if (run === null) return;
     if (this.materializedTurns.get(chatId) === run.id) return;
     this.materializedTurns.set(chatId, run.id);
