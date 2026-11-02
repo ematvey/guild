@@ -6,12 +6,17 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import {
   MAX_PENDING_REMINDERS,
   createOccurrence,
+  createRoutine,
+  deleteRoutine,
+  getRoutine,
   nextOccurrence,
   normalizeRoutineSchedule,
   scheduleReminder,
+  updateRoutine,
 } from "../../agents/routines.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
@@ -61,7 +66,7 @@ dbDescribe("routine store", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-routines-org')", [orgId]);
     const id = randomUUID();
@@ -85,7 +90,7 @@ dbDescribe("routine store", () => {
   });
 
   it("creates, updates, disables and deletes a routine with next_run_at", async () => {
-    const routine = await store.createRoutine(agentId, {
+    const routine = await createRoutine(env!.db, agentId, {
     created_by_user_id: owner.id,
       name: "Quarter hour",
       kind: "cron",
@@ -97,22 +102,22 @@ dbDescribe("routine store", () => {
     expect(routine.next_run_at).not.toBeNull();
     expect(routine.enabled).toBe(true);
 
-    const renamed = await store.updateRoutine(agentId, routine.id, { name: "Renamed" });
+    const renamed = await updateRoutine(env!.db, agentId, routine.id, { name: "Renamed" });
     expect(renamed.name).toBe("Renamed");
     expect(renamed.next_run_at).toBe(routine.next_run_at);
 
-    const hourly = await store.updateRoutine(agentId, routine.id, { schedule: "1h" });
+    const hourly = await updateRoutine(env!.db, agentId, routine.id, { schedule: "1h" });
     expect(hourly.schedule).toBe("0 * * * *");
     expect(hourly.next_run_at).not.toBeNull();
 
-    const disabled = await store.updateRoutine(agentId, routine.id, { enabled: false });
+    const disabled = await updateRoutine(env!.db, agentId, routine.id, { enabled: false });
     expect(disabled.enabled).toBe(false);
     expect(disabled.next_run_at).toBeNull();
-    const enabled = await store.updateRoutine(agentId, routine.id, { enabled: true });
+    const enabled = await updateRoutine(env!.db, agentId, routine.id, { enabled: true });
     expect(enabled.next_run_at).not.toBeNull();
 
-    expect((await store.listRoutines(agentId)).map((item) => item.id)).toContain(routine.id);
-    const run = await store.createRun({
+    expect((await store.runs.listRoutines(agentId)).map((item) => item.id)).toContain(routine.id);
+    const run = await store.runs.createRun({
       agent_id: agentId,
       user_id: owner.id,
       routine_id: routine.id,
@@ -120,16 +125,16 @@ dbDescribe("routine store", () => {
       status: "succeeded",
       summary: "Ran the check",
     });
-    const listed = (await store.listRoutines(agentId)).find((item) => item.id === routine.id);
+    const listed = (await store.runs.listRoutines(agentId)).find((item) => item.id === routine.id);
     expect(listed?.last_run?.id).toBe(run.id);
-    expect((await store.getRoutine(agentId, routine.id)).id).toBe(routine.id);
-    await store.deleteRoutine(agentId, routine.id);
-    await expect(store.getRoutine(agentId, routine.id)).rejects.toMatchObject({ status: 404 });
+    expect((await getRoutine(env!.db, agentId, routine.id)).id).toBe(routine.id);
+    await deleteRoutine(env!.db, agentId, routine.id);
+    await expect(getRoutine(env!.db, agentId, routine.id)).rejects.toMatchObject({ status: 404 });
   });
 
   it("creates a once routine whose next run is its run_at", async () => {
     const runAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    const routine = await store.createRoutine(agentId, {
+    const routine = await createRoutine(env!.db, agentId, {
     created_by_user_id: owner.id,
       name: "One shot",
       kind: "once",
@@ -143,7 +148,7 @@ dbDescribe("routine store", () => {
   });
 
   it("creates occurrences idempotently on (routine_id, scheduled_for)", async () => {
-    const routine = await store.createRoutine(agentId, {
+    const routine = await createRoutine(env!.db, agentId, {
     created_by_user_id: owner.id,
       name: "Occurrence",
       kind: "cron",

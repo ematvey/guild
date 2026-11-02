@@ -373,7 +373,7 @@ describe("durable integration contracts", () => {
       pool: stack.env.db,
       log,
       stores: createStores(stack.env.db),
-      agents: new AgentStore(stack.env.db),
+      agents: new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db) }),
       masterKey: () => masterKeyBytes(stack.env.config.masterKeyHex),
       placement: {
         kind: "worker",

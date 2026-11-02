@@ -14,6 +14,8 @@ import { rm } from "node:fs/promises";
 import { agentWorkspaceDir } from "../../agents/workspace-config.js";
 import { AgentFiles } from "../../agents/files.js";
 import { runRoutineNow } from "../../agents/scheduler.js";
+import { createRoutine, deleteRoutine, getRoutine, updateRoutine } from "../../agents/routines.js";
+import { search } from "../../agents/search.js";
 import { resolveIntegrations } from "../../integrations/plugins.js";
 import { toolCurate } from "../../integrations/policy.js";
 import { refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "../../agents/store.js";
@@ -282,7 +284,7 @@ export function registerAgentRoutes(
     // The agent's model must resolve to an enabled gateway route; a missing
     // route fails before a run row is created.
     await gateway.gatewayStore.resolveRoute(agent.org_id, agent.model, gateway.masterKey());
-    const run = await store.createRun({
+    const run = await store.runs.createRun({
       agent_id: agent.id,
       user_id: user.id,
       thread_id: thread.id,
@@ -313,12 +315,12 @@ export function registerAgentRoutes(
         chat,
         false,
       );
-      await store.deriveThreadTitle(agent.id, thread.id, message);
-      await store.touchThread(agent.id, thread.id);
+      await store.threads.deriveThreadTitle(agent.id, thread.id, message);
+      await store.threads.touchThread(agent.id, thread.id);
       return reply.type("application/json").send(ack);
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
-      await store
+      await store.runs
         .updateRun(run.id, {
           status: "failed",
           error_code: "turn_submit_failed",
@@ -402,7 +404,7 @@ export function registerAgentRoutes(
   /** Stops the turns of an agent that just left service (archived or
    *  deleting): its runs are cancelled and each chat they drove is stopped. */
   const stopAgentWork = async (agentId: string): Promise<void> => {
-    for (const chatId of await store.cancelAgentRuns(agentId)) {
+    for (const chatId of await store.lifecycle.cancelAgentRuns(agentId)) {
       if (!chats.runtime.canStopChat(chatId)) continue;
       await chats.runtime.stopChat(chatId).catch((error: unknown) => {
         app.log.warn({ err: error, chatId }, "stopping an agent's turn failed");
@@ -412,20 +414,20 @@ export function registerAgentRoutes(
 
   app.post("/api/v1/agents/:id/archive", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.archive(user, parseUuidParam(req, "id"));
+    const agent = await store.lifecycle.archive(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
     return sendJson(reply, { agent });
   });
 
   app.post("/api/v1/agents/:id/restore", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.restore(user, parseUuidParam(req, "id"));
+    const agent = await store.lifecycle.restore(user, parseUuidParam(req, "id"));
     return sendJson(reply, { agent });
   });
 
   app.delete("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.markDeleted(user, parseUuidParam(req, "id"));
+    const agent = await store.lifecycle.markDeleted(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
     return sendJson(reply, { agent });
   });
@@ -434,7 +436,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "manage");
-    const bundle = await store.export(agent.org_id, agentId);
+    const bundle = await store.lifecycle.export(agent.org_id, agentId);
     return sendJson(reply, { export: bundle });
   });
 
@@ -448,7 +450,7 @@ export function registerAgentRoutes(
     const force = queryParam(req, "force") === "1" && user.role === "admin";
     const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
     if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
-    await store.purge(user, agentId);
+    await store.lifecycle.purge(user, agentId);
     await rm(agentWorkspaceDir(infra.config.agentWorkspaceWriteRoot, agent.org_id, agentId), {
       recursive: true,
       force: true,
@@ -464,8 +466,8 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "use");
     // The caller's default thread exists from their first visit, so the
     // pinned row is always there and a turn never has to create it first.
-    await store.ensureDefaultThread(agentId, user.id);
-    const page = await store.listThreads(agentId, user.id);
+    await store.threads.ensureDefaultThread(agentId, user.id);
+    const page = await store.threads.listThreads(agentId, user.id);
     return sendJson(reply, { threads: page.threads });
   });
 
@@ -476,7 +478,7 @@ export function registerAgentRoutes(
     refuseDeletingAgent(agent);
     const body = jsonBody(req);
     const title = optionalString(body, "title") ?? "";
-    return sendJson(reply, { thread: await store.createThread(agentId, user.id, title) });
+    return sendJson(reply, { thread: await store.threads.createThread(agentId, user.id, title) });
   });
 
   app.get("/api/v1/agents/:id/threads/:threadId", async (req, reply) => {
@@ -484,7 +486,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
-    return sendJson(reply, { thread: await store.getThread(agentId, user.id, threadId) });
+    return sendJson(reply, { thread: await store.threads.getThread(agentId, user.id, threadId) });
   });
 
   app.patch("/api/v1/agents/:id/threads/:threadId", async (req, reply) => {
@@ -493,7 +495,7 @@ export function registerAgentRoutes(
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
     const title = requiredString(jsonBody(req), "title");
-    return sendJson(reply, { thread: await store.renameThread(agentId, user.id, threadId, title) });
+    return sendJson(reply, { thread: await store.threads.renameThread(agentId, user.id, threadId, title) });
   });
 
   app.post("/api/v1/agents/:id/threads/:threadId/turns", async (req, reply) => {
@@ -501,7 +503,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const threadId = parseUuidParam(req, "threadId");
     const { agent } = await store.requireAccess(user, agentId, "use");
-    const thread = await store.getThread(agentId, user.id, threadId);
+    const thread = await store.threads.getThread(agentId, user.id, threadId);
     return agentTurn(req, reply, user, agent, thread);
   });
 
@@ -511,12 +513,12 @@ export function registerAgentRoutes(
     const { agent } = await store.requireAccess(user, agentId, "use");
     const requested = optionalString(jsonBody(req), "thread_id");
     if (requested !== undefined && requested.trim() !== "") {
-      const thread = await store.getThread(agentId, user.id, requested);
+      const thread = await store.threads.getThread(agentId, user.id, requested);
       return agentTurn(req, reply, user, agent, thread);
     }
     // The caller's own default thread: a shared agent never posts into
     // another user's conversation.
-    return agentTurn(req, reply, user, agent, await store.ensureDefaultThread(agentId, user.id));
+    return agentTurn(req, reply, user, agent, await store.threads.ensureDefaultThread(agentId, user.id));
   });
 
   /** The chat header's tree facts, behind the chat's read gate. */
@@ -553,7 +555,7 @@ export function registerAgentRoutes(
       const user = await requireUser(auth, req);
       const chatId = parseUuidParam(req, "id");
       await chats.chats.getOwnChat(user.org_id, chatId, user);
-      const thread = await store.threadByChatId(chatId);
+      const thread = await store.threads.threadByChatId(chatId);
       if (thread === null) throw ApiError.notFound("no such thread");
       // Closing is a child-only act: the root thread is the conversation the
       // caller is having, and stopping its turn is `cancel`.
@@ -568,7 +570,7 @@ export function registerAgentRoutes(
       // A close leaves a row in the parent chat, so the child row stays
       // closed after a reload. A repeat close writes nothing.
       if (result.closed > 0 && thread.parent_thread_id !== null) {
-        const parent = await store.threadById(thread.parent_thread_id);
+        const parent = await store.threads.threadById(thread.parent_thread_id);
         if (parent !== null) {
           await chats.threads.appendEvent(parent.chat_id, {
             type: "child_closed",
@@ -614,7 +616,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    return sendJson(reply, { routines: await store.listRoutines(agentId) });
+    return sendJson(reply, { routines: await store.runs.listRoutines(agentId) });
   });
 
   app.post("/api/v1/agents/:id/routines", async (req, reply) => {
@@ -623,7 +625,7 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "manage");
     const body = jsonBody(req);
     const kind = routineKindField(body) ?? "cron";
-    const routine = await store.createRoutine(agentId, {
+    const routine = await createRoutine(infra.pool, agentId, {
       created_by_user_id: user.id,
       name: requiredString(body, "name"),
       kind,
@@ -640,7 +642,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    return sendJson(reply, { routine: await store.getRoutine(agentId, parseUuidParam(req, "rid")) });
+    return sendJson(reply, { routine: await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid")) });
   });
 
   app.patch("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
@@ -648,7 +650,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "manage");
     const body = jsonBody(req);
-    const routine = await store.updateRoutine(agentId, parseUuidParam(req, "rid"), {
+    const routine = await updateRoutine(infra.pool, agentId, parseUuidParam(req, "rid"), {
       name: optionalString(body, "name"),
       kind: routineKindField(body),
       schedule: optionalString(body, "schedule"),
@@ -664,7 +666,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "manage");
-    await store.deleteRoutine(agentId, parseUuidParam(req, "rid"));
+    await deleteRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
     return sendJson(reply, { deleted: true });
   });
 
@@ -673,7 +675,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "manage");
     requireActiveAgent(agent);
-    const routine = await store.getRoutine(agentId, parseUuidParam(req, "rid"));
+    const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
     const run = await runRoutineNow(
       { pool: infra.pool, store, threads: chats.threads, runtime: chats.runtime },
       agent,
@@ -687,9 +689,9 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
     const routineId = parseUuidParam(req, "rid");
-    await store.getRoutine(agentId, routineId);
+    await getRoutine(infra.pool, agentId, routineId);
     return sendJson(reply, {
-      runs: await store.listRoutineRuns(agentId, routineId, {
+      runs: await store.runs.listRoutineRuns(agentId, routineId, {
         limit: limitParam(req),
         before: queryParam(req, "before"),
       }),
@@ -706,14 +708,14 @@ export function registerAgentRoutes(
       limit: limitParam(req),
       before: queryParam(req, "before"),
     };
-    return sendJson(reply, { runs: await store.listRuns(agentId, filters) });
+    return sendJson(reply, { runs: await store.runs.listRuns(agentId, filters) });
   });
 
   app.get("/api/v1/runs/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const run = await store.getRun(parseUuidParam(req, "id"));
+    const run = await store.runs.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
-    const steps = await store.runSteps(run);
+    const steps = await store.runs.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
     const mapped = steps.map((step) => ({
       kind:
@@ -736,9 +738,9 @@ export function registerAgentRoutes(
 
   app.get("/api/v1/runs/:id/children", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const run = await store.getRun(parseUuidParam(req, "id"));
+    const run = await store.runs.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
-    return sendJson(reply, { children: await store.childRuns(run.id) });
+    return sendJson(reply, { children: await store.runs.childRuns(run.id) });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {
@@ -759,23 +761,23 @@ export function registerAgentRoutes(
     if (filters.agent_id !== undefined && filters.agent_id !== "") {
       await store.requireAccess(user, filters.agent_id, "use");
     }
-    return sendJson(reply, { activity: await store.listActivity(user.org_id, filters, user) });
+    return sendJson(reply, { activity: await store.runs.listActivity(user.org_id, filters, user) });
   });
 
   app.get("/api/v1/inbox", async (req, reply) => {
     const user = await requireUser(auth, req);
-    return sendJson(reply, { notices: await store.listNotices(user.id, user.org_id) });
+    return sendJson(reply, { notices: await store.notices.listNotices(user.id, user.org_id) });
   });
 
   app.post("/api/v1/inbox/:id/read", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const notice = await store.markNoticeRead(user.id, parseUuidParam(req, "id"));
+    const notice = await store.notices.markNoticeRead(user.id, parseUuidParam(req, "id"));
     return sendJson(reply, { notice });
   });
 
   app.post("/api/v1/inbox/:id/unread", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const notice = await store.markNoticeUnread(user.id, parseUuidParam(req, "id"));
+    const notice = await store.notices.markNoticeUnread(user.id, parseUuidParam(req, "id"));
     return sendJson(reply, { notice });
   });
 
@@ -784,6 +786,6 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
     const query = queryParam(req, "q") ?? "";
-    return sendJson(reply, { results: await store.searchThreads(agentId, user.id, query) });
+    return sendJson(reply, { results: await search(infra.pool, { agentId, userId: user.id, query }) });
   });
 }

@@ -12,7 +12,8 @@ import {
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { assistantMessageEvent } from "../platform/domain/thread-events.js";
-import { AgentStore, deriveTitleFromMessage } from "./store.js";
+import { deriveTitleFromMessage, type AgentStore } from "./store.js";
+import { search, type AgentSearchHit } from "./search.js";
 import {
   createRoutine,
   deleteRoutine,
@@ -64,7 +65,7 @@ export async function sendAgentMessage(
   const text = args.text.trim();
   if (text === "") throw new Error("text must not be empty");
   const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
-  const origin = deps.chatId === undefined ? null : await deps.store.threadByChatId(deps.chatId);
+  const origin = deps.chatId === undefined ? null : await deps.store.threads.threadByChatId(deps.chatId);
   // A model that repeats send_message with the same title from one chat
   // within a minute gets the thread it already opened, not a second one. The
   // match is scoped to this agent, this user and this chat of origin, so two
@@ -83,7 +84,7 @@ export async function sendAgentMessage(
       url: `/thread/${existing.rows[0].chat_id}`,
     };
   }
-  const thread = await deps.store.createThread(deps.agent.id, deps.userId, title, "user", {
+  const thread = await deps.store.threads.createThread(deps.agent.id, deps.userId, title, "user", {
     ...(origin === null ? {} : { originThreadId: origin.id }),
   });
   await deps.threads.appendEvent(
@@ -96,10 +97,10 @@ export async function sendAgentMessage(
       deps.agent.model,
     ),
   );
-  await deps.store.touchThread(deps.agent.id, thread.id);
+  await deps.store.threads.touchThread(deps.agent.id, thread.id);
   // One canonical address per thread: its chat.
   const url = `/thread/${thread.chat_id}`;
-  await deps.store.createNotice({
+  await deps.store.notices.createNotice({
     org_id: deps.agent.org_id,
     agent_id: deps.agent.id,
     user_id: deps.userId,
@@ -110,14 +111,14 @@ export async function sendAgentMessage(
 }
 
 export async function searchAgentConversations(
-  store: AgentStore,
+  pool: PlatformPool,
   agentId: string,
   userId: string,
   query: string,
   limit?: number,
-): Promise<Awaited<ReturnType<AgentStore["searchThreads"]>>> {
+): Promise<AgentSearchHit[]> {
   const capped = Math.max(1, Math.min(MAX_SEARCH_RESULTS, Math.floor(limit ?? MAX_SEARCH_RESULTS)));
-  return store.searchThreads(agentId, userId, query, capped);
+  return search(pool, { agentId, userId, query, limit: capped });
 }
 
 export type AgentConversationRead = ThreadReadResult;
@@ -298,7 +299,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         execute: async (args) => {
           const query = args.query.trim();
           if (query === "") return textErr("query must not be empty");
-          const hits = await searchAgentConversations(deps.store, deps.agent.id, deps.userId, query, args.limit);
+          const hits = await searchAgentConversations(deps.pool, deps.agent.id, deps.userId, query, args.limit);
           return { structuredOutput: structured({ hits }) };
         },
       }),
@@ -348,7 +349,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 64 * 1024 },
         execute: async (args) => {
           try {
-            const page = await deps.store.listThreads(deps.agent.id, deps.userId, {
+            const page = await deps.store.threads.listThreads(deps.agent.id, deps.userId, {
               types: [args.type ?? "user"],
               archived: args.archived === true,
               deleted: args.deleted === true,

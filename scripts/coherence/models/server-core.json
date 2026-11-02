@@ -222,14 +222,14 @@
     {
       "id": "agent-run",
       "definition": "One execution of an agent turn, with its status and terminal text.",
-      "canonical": "apps/server/src/agents/store.ts",
+      "canonical": "apps/server/src/agents/store/runs.ts",
       "types": [],
       "aliases": [
         "agent-execution"
       ],
       "representations": [
         {
-          "where": "apps/server/src/agents/store.ts",
+          "where": "apps/server/src/agents/store/runs.ts",
           "role": "db"
         },
         {
@@ -271,7 +271,7 @@
           "role": "domain"
         },
         {
-          "where": "apps/server/src/agents/store.ts",
+          "where": "apps/server/src/agents/store/runs.ts",
           "role": "db"
         }
       ],
@@ -279,7 +279,7 @@
         {
           "from": "domain",
           "to": "db",
-          "at": "apps/server/src/agents/store.ts"
+          "at": "apps/server/src/agents/store/runs.ts"
         }
       ]
     },
@@ -774,8 +774,7 @@
     }
   ],
   "shared_canonical": [
-    "apps/server/src/platform/store/identity.ts",
-    "apps/server/src/agents/store.ts"
+    "apps/server/src/platform/store/identity.ts"
   ],
   "attaches": []
 }

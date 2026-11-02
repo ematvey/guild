@@ -7,7 +7,7 @@
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { uuidv7 } from "../platform/time.js";
-import { refuseDeletingAgent, type AgentStore } from "./store.js";
+import { refuseDeletingAgent, type AgentRunStore, type AgentStore, type AgentTreeStore } from "./store.js";
 import type { Agent } from "./types.js";
 import { agentThreadForChat } from "./workspace.js";
 
@@ -48,17 +48,10 @@ export interface TitleSource {
   firstMessage: string;
 }
 
-type BindingStore = Pick<
-  AgentStore,
-  | "fetchAgent"
-  | "ensurePersonalAgentFor"
-  | "requireAccess"
-  | "childCount"
-  | "createRun"
-  | "updateRun"
-  | "runningRunForThread"
-  | "closeSubtree"
->;
+type BindingStore = Pick<AgentStore, "fetchAgent" | "ensurePersonalAgentFor" | "requireAccess"> & {
+  readonly tree: Pick<AgentTreeStore, "childCount" | "closeSubtree">;
+  readonly runs: Pick<AgentRunStore, "createRun" | "updateRun" | "runningRunForThread">;
+};
 
 export class ThreadBinding {
   constructor(
@@ -136,7 +129,7 @@ export class ThreadBinding {
    *  and deliveries to and from the subtree stop. */
   async closeSubtree(chatId: string): Promise<void> {
     const res = await this.pool.query<{ id: string }>("SELECT id FROM agent_threads WHERE chat_id = $1", [chatId]);
-    if (res.rows[0] !== undefined) await this.store.closeSubtree(res.rows[0].id);
+    if (res.rows[0] !== undefined) await this.store.tree.closeSubtree(res.rows[0].id);
   }
 
   /** The thread's own context; null for a plain thread. */
@@ -181,7 +174,7 @@ export class ThreadBinding {
     );
     const row = res.rows[0];
     if (row === undefined || row.parent_thread_id === null) return undefined;
-    const children = await this.store.childCount(row.thread_id);
+    const children = await this.store.tree.childCount(row.thread_id);
     return {
       parent_name: row.parent_name ?? "another agent",
       depth: Number(row.depth),
@@ -194,10 +187,10 @@ export class ThreadBinding {
    *  the thread while the chat had no live turn is adopted: a second run
    *  would stay open forever. */
   async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
-    const open = await this.store.runningRunForThread(threadId);
+    const open = await this.store.runs.runningRunForThread(threadId);
     if (open !== null) {
       if (open.status === "queued") {
-        await this.store.updateRun(open.id, { status: "running", started_at: new Date().toISOString() });
+        await this.store.runs.updateRun(open.id, { status: "running", started_at: new Date().toISOString() });
       }
       return open.id;
     }
@@ -207,7 +200,7 @@ export class ThreadBinding {
   /** Creates a running message-triggered run on a thread (a chat turn, or a
    *  child result delivered to an idle parent). */
   async beginMessageRun(thread: { id: string; agent_id: string; user_id: string; depth?: number }): Promise<string> {
-    const run = await this.store.createRun({
+    const run = await this.store.runs.createRun({
       agent_id: thread.agent_id,
       user_id: thread.user_id,
       thread_id: thread.id,

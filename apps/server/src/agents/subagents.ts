@@ -150,12 +150,12 @@ async function childThread(
   options: { open?: boolean } = {},
 ): Promise<AgentThread> {
   const rootId = callerThreadId(context);
-  const thread = await context.store.threadById(threadId);
+  const thread = await context.store.threads.threadById(threadId);
   if (thread === null) throw new SubagentError("not_found", "no such thread");
   if (thread.id === rootId) {
     throw new SubagentError("not_descendant", "a thread cannot target itself");
   }
-  const nodes = await context.store.subtree(rootId);
+  const nodes = await context.store.tree.subtree(rootId);
   if (!nodes.some((node) => node.id === thread.id)) {
     throw new SubagentError("not_descendant", "the thread is not in this thread's subtree");
   }
@@ -259,7 +259,7 @@ export async function spawn(
     throw new SubagentError("invalid_name", `name must be at most ${MAX_CHILD_NAME_CHARS} characters`);
   }
   const parentThreadId = callerThreadId(context);
-  const parentThread = await context.store.threadById(parentThreadId);
+  const parentThread = await context.store.threads.threadById(parentThreadId);
   if (parentThread === null) throw new SubagentError("no_parent_thread", "the calling thread is gone");
   if (parentThread.closed_at !== null) throw new SubagentError("closed_thread", "the calling thread is closed");
   if (parentThread.depth >= context.maxDepth) {
@@ -268,7 +268,7 @@ export async function spawn(
       `a child at depth ${parentThread.depth + 1} would exceed the depth limit of ${context.maxDepth}`,
     );
   }
-  const children = await context.store.childCount(parentThreadId);
+  const children = await context.store.tree.childCount(parentThreadId);
   if (children >= context.maxChildrenPerNode) {
     throw new SubagentError(
       "child_limit",
@@ -290,7 +290,7 @@ export async function spawn(
   const userId = context.parentRun.user_id ?? context.requester.id;
   let thread: AgentThread;
   try {
-    thread = await context.store.createChildThread(
+    thread = await context.store.threads.createChildThread(
       parentThreadId,
       target.id,
       userId,
@@ -337,8 +337,8 @@ export async function send(
   // the caller's chat would never receive one.
   const rowThread =
     thread.parent_thread_id === null
-      ? await context.store.threadById(callerThreadId(context))
-      : await context.store.threadById(thread.parent_thread_id);
+      ? await context.store.threads.threadById(callerThreadId(context))
+      : await context.store.threads.threadById(thread.parent_thread_id);
   if (rowThread !== null) {
     await context.threads.appendEvent(rowThread.chat_id, {
       type: "child_spawned",
@@ -394,7 +394,7 @@ export async function read(
 /** Direct children of the calling thread with their latest run status. */
 export async function list(context: SubagentsToolContext): Promise<ChildListEntry[]> {
   const rootId = callerThreadId(context);
-  const children = await context.store.childThreadSummaries(rootId);
+  const children = await context.store.tree.childThreadSummaries(rootId);
   const now = Date.now();
   return children.map((child) => {
     const start = child.started_at === null ? null : Date.parse(child.started_at);
@@ -421,8 +421,8 @@ async function stopSubtree(
   context: Pick<SubagentsToolContext, "store" | "runtime">,
   threadId: string,
 ): Promise<number> {
-  const active = await context.store.activeRunsInSubtree(threadId);
-  const cancelled = await context.store.cancelSubtree(threadId);
+  const active = await context.store.tree.activeRunsInSubtree(threadId);
+  const cancelled = await context.store.tree.cancelSubtree(threadId);
   for (const chatId of new Set(active.map((run) => run.chat_id))) {
     if (!context.runtime.canStopChat(chatId)) continue;
     await context.runtime.stopChat(chatId);
@@ -447,7 +447,7 @@ export async function closeThread(
   threadId: string,
 ): Promise<CloseResult> {
   const cancelled = await stopSubtree(context, threadId);
-  const closed = await context.store.closeSubtree(threadId);
+  const closed = await context.store.tree.closeSubtree(threadId);
   await notifySubagentTree(context.pool, threadId);
   return { thread_id: threadId, closed, cancelled };
 }
@@ -482,7 +482,7 @@ export async function subagentsContextForChat(args: {
   maxDepth: number;
   maxChildrenPerNode: number;
 }): Promise<SubagentsToolContext | null> {
-  const parentRun = await args.store.runningRunForChat(args.chatId);
+  const parentRun = await args.store.runs.runningRunForChat(args.chatId);
   if (parentRun === null) return null;
   const requester = await requesterForChat(args.pool, args.chatId);
   if (requester === null) return null;

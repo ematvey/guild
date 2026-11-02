@@ -161,7 +161,12 @@ export class PlatformContext implements PlatformStores {
     this.skillReads = new SkillReadSink(this.clickhouse);
     this.skillReads.attachPool(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
-    this.agents = new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot);
+    this.agents = new AgentStore({
+      pool: this.pool,
+      chats: stores.chats,
+      trace: this.trace,
+      workspaceRoot: config.agentWorkspaceWriteRoot,
+    });
     // Worker-per-chat mode: the server forks one worker per active chat and
     // holds no harness itself; admission routes over IPC.
     this.supervisor =

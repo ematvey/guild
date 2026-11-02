@@ -111,7 +111,7 @@ export class AgentConflictJournal {
   /** Starts (or returns) the unfinished journal row for the chat's running
    *  run. Called at turn begin and lazily by the tool hook. */
   async beginTurn(chatId: string): Promise<WorkspaceTurnRef | null> {
-    const run = await this.deps.store.runningRunForChat(chatId);
+    const run = await this.deps.store.runs.runningRunForChat(chatId);
     if (run === null || run.thread_id === null) return null;
     const existing = await this.deps.pool.query<TurnRow>(
       `SELECT id, agent_id, thread_id, run_id, started_at, paths

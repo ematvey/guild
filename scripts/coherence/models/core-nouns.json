@@ -210,6 +210,22 @@
         {
           "where": "apps/server/src/platform/http/agents.ts",
           "role": "wire"
+        },
+        {
+          "where": "apps/server/src/agents/store/catalog.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/access.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/lifecycle.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/rows.ts",
+          "role": "db"
         }
       ],
       "translations": [
