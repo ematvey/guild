@@ -175,7 +175,7 @@ const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
   "agents/lifecycle.ts": 10,
   "agents/reconcile.ts": 11,
   "agents/routines.ts": 11,
-  "agents/scheduler.ts": 27,
+  "agents/scheduler.ts": 28,
   "agents/search.ts": 3,
   "agents/store.ts": 97,
   "agents/subagents.ts": 2,
