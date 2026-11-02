@@ -431,6 +431,18 @@
     ]
   },
   {
+    "type": "member_profile",
+    "user": {
+      "id": "0192f5d2-6c1e-7a00-8000-000000000001",
+      "email": "ada@example.org",
+      "org_id": "0192f5d2-6c1e-7a00-8000-000000000002",
+      "role": "admin",
+      "display_name": "Ada",
+      "avatar_url": null,
+      "onboarded": true
+    }
+  },
+  {
     "type": "chat_row",
     "chat": {
       "id": "018f0b7c-0000-7000-8000-000000000010",

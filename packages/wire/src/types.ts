@@ -24,6 +24,7 @@ import type {
   ThreadEventRow,
   ToolCall,
   ToolKind,
+  UserInfo,
 } from "./rest.js";
 
 export type {
@@ -165,6 +166,9 @@ export type ServerFrame =
       web_bundle?: string;
     }
   | { type: "model_list"; models: ModelOption[] }
+  /** The member's own account; sent on connect and whenever its role,
+   *  name, avatar or onboarding flag changes. */
+  | { type: "member_profile"; user: UserInfo }
   | { type: "agent_list"; agents: Agent[] }
   | { type: "agent_run"; run: AgentRun }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }

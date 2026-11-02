@@ -31,6 +31,7 @@ const SERVER_TAG_NAMES = [
   "machine_list",
   "workspace_identity",
   "model_list",
+  "member_profile",
   "agent_list",
   "agent_run",
   "agent_threads",

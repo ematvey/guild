@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { startSocket } from "../../../lib/socket-client";
 import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
 import { applyModelList } from "../../../lib/models-store";
+import { applyMemberProfile } from "../../../lib/profile-store";
 import { applyContextUsage } from "../../../lib/context-usage-store";
 import { applyWorkspaceIdentity } from "../../../lib/workspace-store";
 import type { ChatSummary } from "../../../lib/api/chats";
@@ -215,6 +216,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       onMachineList: applyMachineList,
       onModelList: applyModelList,
+      onMemberProfile: applyMemberProfile,
       onAgentList: applyAgentList,
       onAgentRun: applyAgentRun,
       onAgentThreads: applyAgentThreads,

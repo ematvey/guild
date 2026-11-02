@@ -209,6 +209,12 @@ pub enum WsServerMsg {
     ModelList {
         models: Vec<ModelOption>,
     },
+    /// The member's own account. Sent with every workspace push and
+    /// whenever its role, name, avatar or onboarding flag changes. Daemons
+    /// tag-peek and ignore it.
+    MemberProfile {
+        user: crate::api::UserInfo,
+    },
     /// Every agent the member may see, archived and deleting ones included.
     /// Sent on connect and whenever an agent, a grant or a team membership
     /// changes. Daemons tag-peek and ignore it.
