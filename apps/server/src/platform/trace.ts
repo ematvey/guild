@@ -209,6 +209,8 @@ const TRACE_COLUMNS =
 
 export class TraceStore {
   private ready: Promise<void> | null = null;
+  /** Writes started and not yet settled (they never reject). */
+  private readonly writes = new Set<Promise<void>>();
 
   constructor(
     readonly client: ClickhouseClient,
@@ -290,9 +292,26 @@ export class TraceStore {
     return this.ready;
   }
 
+  /** Resolves once every write started before (or while) it waits has
+   *  landed or been dropped: a fire-and-forget row is readable after it.
+   *  Tests read ClickHouse after it instead of sleeping. */
+  async idle(): Promise<void> {
+    while (this.writes.size > 0) await Promise.all([...this.writes]);
+  }
+
+  private track(write: Promise<void>): Promise<void> {
+    this.writes.add(write);
+    void write.then(() => this.writes.delete(write));
+    return write;
+  }
+
   /** Records one run (or updates it: ReplacingMergeTree keeps the newest
    *  `updated_at` row). Every failure is logged and dropped. */
-  async recordTrace(trace: TraceRecordInput): Promise<void> {
+  recordTrace(trace: TraceRecordInput): Promise<void> {
+    return this.track(this.writeTrace(trace));
+  }
+
+  private async writeTrace(trace: TraceRecordInput): Promise<void> {
     try {
       await this.ensureOnce();
       await this.client.insert("agent_traces", [
@@ -325,7 +344,11 @@ export class TraceStore {
   }
 
   /** Records one span (LLM call, tool call, or synthetic step). */
-  async recordSpan(span: TraceSpanInput): Promise<void> {
+  recordSpan(span: TraceSpanInput): Promise<void> {
+    return this.track(this.writeSpan(span));
+  }
+
+  private async writeSpan(span: TraceSpanInput): Promise<void> {
     try {
       await this.ensureOnce();
       const start = span.start_time;
@@ -414,14 +437,24 @@ export class TraceStore {
    *  request of the same trace is its prefix; otherwise it stores the new
    *  messages and points at its parent (`traceId` is the run id, else the
    *  chat id, else the request id). Failures are logged and dropped. */
-  async recordPayload(
+  recordPayload(
     requestId: string,
     orgId: string,
     kind: "request" | "response",
     body: string,
     traceId: string = requestId,
   ): Promise<void> {
-    if (!this.tracePayloads) return;
+    if (!this.tracePayloads) return Promise.resolve();
+    return this.track(this.writePayload(requestId, orgId, kind, body, traceId));
+  }
+
+  private async writePayload(
+    requestId: string,
+    orgId: string,
+    kind: "request" | "response",
+    body: string,
+    traceId: string,
+  ): Promise<void> {
     try {
       await this.ensureOnce();
       const ts = clickhouseDateTime64(new Date());

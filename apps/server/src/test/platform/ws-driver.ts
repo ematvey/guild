@@ -95,6 +95,24 @@ export class ScriptedClient {
     this.ws.close();
   }
 
+  /** Sends a client `ping` and resolves with the index of its `pong` text
+   *  frame. The server echoes the pong on the socket's one outbound queue,
+   *  so every frame enqueued for this socket before the ping arrived is
+   *  recorded before that index. */
+  async pingBarrier(timeoutMs = 15_000): Promise<number> {
+    const pongs = (): number[] =>
+      this.frames.flatMap((f, index) => (f.kind === "text" && f.data === '{"type":"pong"}' ? [index] : []));
+    const seen = pongs().length;
+    this.send('{"type":"ping"}');
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const index = pongs()[seen];
+      if (index !== undefined) return index;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`pong not received within ${timeoutMs}ms`);
+  }
+
   async until(predicate: (frame: FrameRecord) => boolean, timeoutMs = 15_000): Promise<FrameRecord> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -321,10 +339,12 @@ export async function runScenario(
     s.frames.push(...thief.frames.map((f) => ({ socket: 1, frame: f })));
     s.upgradeFailure = thief.upgradeFailure;
     // The holder keeps the slot and stays connected (no data frames arrive
-    // for it; heartbeat pings continue as usual and don't count).
+    // for it; heartbeat pings continue as usual and don't count). The
+    // rejection was decided before the thief's close; a displacement would
+    // sit on the holder's queue ahead of its pong.
     const before = ws.frames.length;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const disturbed = ws.frames.slice(before).some((f) => f.kind === "closed" || f.kind === "text");
+    const pong = await ws.pingBarrier().catch(() => ws.frames.length);
+    const disturbed = ws.frames.slice(before, pong).some((f) => f.kind === "closed" || f.kind === "text");
     if (disturbed) throw new Error("holder socket was disturbed by the rejected connect");
   }
 
@@ -378,7 +398,6 @@ export async function runScenario(
     const s = step("bad-ticket");
     const bad = new ScriptedClient(base, `ticket=gst_deadbeefdeadbeefdeadbeefdeadbeef`);
     await bad.open().catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 300));
     s.upgradeFailure = bad.upgradeFailure;
   }
 
@@ -388,7 +407,6 @@ export async function runScenario(
     const t = await ticket(base, token);
     const bad = new ScriptedClient(base, `ticket=${t}&machine_id=${opts.machineId}-3`);
     await bad.open().catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 300));
     s.upgradeFailure = bad.upgradeFailure;
   }
 

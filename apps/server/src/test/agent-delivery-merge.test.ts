@@ -5,6 +5,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { waitFor } from "./support/wait.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { InboxDoc } from "@earendil-works/pi-durable";
 import type { GuildRuntime } from "../harness/runtime.js";
@@ -17,13 +18,8 @@ const answer = {
     'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
 };
 
-async function until(probe: () => Promise<boolean>, timeout = 25_000) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("condition did not become true");
+function until(probe: () => Promise<boolean>, timeout = 25_000): Promise<void> {
+  return waitFor(probe, timeout, 50, "condition did not become true");
 }
 
 describe("pending steer content merge", () => {

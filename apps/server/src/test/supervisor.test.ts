@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { armDurableFault } from "../storage/postgres/pg.js";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
+import { partialCommitted } from "./support/durable.js";
 import { waitFor } from "./support/wait.js";
 
 let stack: GatewayStack;
@@ -93,7 +94,7 @@ describe("supervisor reopen", () => {
 
     // Mid-stream: the model call is running and a partial has committed.
     await waitFor(async () => stack.mock.requests.length >= 1);
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await waitFor(() => partialCommitted(stack.env.db, "partial one"), 20_000, 50);
 
     // One failed durable operation seals the session (fail-stop): the
     // supervisor must reopen and resume, and the turn must finish — the
@@ -155,7 +156,7 @@ describe("supervisor reopen", () => {
     expect(sent2.statusCode).toBe(200);
     // Turn 2's model call is the third request; a partial has committed.
     await waitFor(async () => stack.mock.requests.length >= 3);
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await waitFor(() => partialCommitted(stack.env.db, "second partial one"), 20_000, 50);
     armDurableFault(() => new Error("synthetic durable fault 2"));
     await waitFor(async () => {
       if (stack.mock.requests.length < 4) return false;

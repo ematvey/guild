@@ -211,9 +211,11 @@ describe("LiveHub — machine_request correlation", () => {
     // Forged responses from other connections/orgs are ignored.
     hub.resolveMachineResponse({ ...machine, conn_id: uuidv7() }, requestId, true, { forged: true }, null);
     hub.resolveMachineResponse({ ...machine, org_id: uuidv7() }, requestId, true, { forged: true }, null);
-    expect(await Promise.race([pending, new Promise((r) => setTimeout(() => r("still-pending"), 50))])).toBe(
-      "still-pending",
-    );
+    expect(
+      // A settled promise wins the race once its reactions have run; the
+      // macrotask turn runs after every queued microtask.
+      await Promise.race([pending, new Promise((r) => setImmediate(() => r("still-pending")))]),
+    ).toBe("still-pending");
     hub.resolveMachineResponse(machine, requestId, true, { executor: true }, null);
     await expect(pending).resolves.toEqual({ ok: true, value: { executor: true } });
   });

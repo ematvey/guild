@@ -60,18 +60,21 @@ async function rows(table: string, where: string): Promise<Record<string, unknow
   return chClient().query(`SELECT * FROM ${table} WHERE ${where}`);
 }
 
-/** Waits until a ClickHouse count reaches `min` and stops changing. */
+/** The rows matching `where` once at least `min` have landed and every
+ *  trace write in flight at that point has settled (a run mirror starts its
+ *  write only after reading its context, so the count is polled first). */
 async function drainedCount(table: string, where: string, min: number): Promise<Record<string, unknown>[]> {
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  let last = -1;
-  let out: Record<string, unknown>[] = [];
-  for (let i = 0; i < 25; i++) {
-    out = await rows(table, where);
-    if (out.length >= min && out.length === last) return out;
-    last = out.length;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  return out;
+  const trace = stack.env.app.platform.trace;
+  await waitFor(
+    async () => {
+      await trace.idle();
+      return (await rows(table, where)).length >= min;
+    },
+    30_000,
+    50,
+  );
+  await trace.idle();
+  return rows(table, where);
 }
 
 describe("trace sink", () => {
@@ -171,7 +174,6 @@ describe("trace sink", () => {
       // A trace-payloads-off sink records the call but no payload rows.
       const sinkOff = new TraceStore(client, false);
       await sinkOff.recordPayload(String(llm!["request_id"]), stack.orgId, "request", "should not land");
-      await new Promise((resolve) => setTimeout(resolve, 300));
       const payloads = await sink.payloads(stack.orgId, String(llm!["request_id"]));
       expect(payloads).toHaveLength(1);
       expect(payloads[0]?.["body"]).toBe("x");
@@ -325,7 +327,9 @@ describe("gateway emission + activity API", () => {
         },
         payload: { model: "trace-model", messages: [{ role: "user", content: "internal" }] },
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // The non-streaming call records usage and its trace before replying;
+      // idle() also settles any write it left in flight.
+      await stack.env.app.platform.trace.idle();
       const spans = await rows("agent_spans", `org_id = toUUID('${stack.orgId}')`);
       expect(spans.some((span) => span["span_id"] === judgeReqId)).toBe(false);
       const usage = await stack.usageRows();
@@ -386,7 +390,6 @@ describe("gateway emission + activity API", () => {
         duration_ms: 10,
         model: "admin-only-model",
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
 
       const member = await stack.env.app.inject({
         method: "GET",
@@ -457,7 +460,10 @@ describe("run lifecycle mirror", () => {
       expect(createdRows[0]?.["status"]).toBe("running");
       expect(createdRows[0]?.["agent_name"]).toBe("Trace Mirror Agent");
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // The update's row must carry a newer updated_at (ReplacingMergeTree
+      // keeps the newest): let the millisecond clock pass the created row's.
+      const createdAt = Date.now();
+      while (Date.now() <= createdAt) await Promise.resolve();
       await store.runs.updateRun(run.id, {
         status: "succeeded",
         summary: "finished cleanly",

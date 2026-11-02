@@ -57,7 +57,7 @@ const SILENT: FeedLog = { warn: () => {} };
  *  behind the workspace, thread-state, context-usage and agent-state
  *  frames. `pool` serves the agent-tree reads. */
 export interface FeedDeps extends WorkspaceReads, ThreadStateReads, ContextUsageReads, Omit<AgentStateDeps, "hub"> {
-  readonly notify: Pick<NotifyHub, "subscribe">;
+  readonly notify: Pick<NotifyHub, "subscribe" | "barrier">;
   readonly hub: LiveHub;
   readonly pool: PlatformPool;
   readonly chats: WorkspaceReads["chats"] & ThreadStateReads["chats"] & Pick<ChatStore, "identityOf" | "lastEventSeq">;
@@ -137,6 +137,10 @@ export class FeedForwarder implements GenerationStreamSink {
    *  one snapshot in flight per user, so a query started before a write can
    *  never land after the one that carries it). */
   private readonly chains: KeyedChain;
+  /** Notify handlers still reading before they send or enqueue. */
+  private readonly inflight = new Set<Promise<void>>();
+  /** idle() callers waiting for the next view tick to finish. */
+  private tickWaiters: (() => void)[] = [];
 
   constructor(
     ctx: FeedDeps,
@@ -160,7 +164,9 @@ export class FeedForwarder implements GenerationStreamSink {
     this.unsubscribe = off;
     this.viewTimer = setInterval(() => {
       if (++this.ticks % SWEEP_EVERY_TICKS === 0) this.sweep();
-      void this.publishDirtyViews().catch((error: unknown) => this.failed("view_poll", null, error));
+      void this.publishDirtyViews()
+        .catch((error: unknown) => this.failed("view_poll", null, error))
+        .finally(() => this.releaseTickWaiters());
     }, VIEW_POLL_MS);
     this.viewTimer.unref?.();
   }
@@ -169,6 +175,7 @@ export class FeedForwarder implements GenerationStreamSink {
     this.stopped = true;
     this.chains.stop();
     this.agentState.stop();
+    this.releaseTickWaiters();
     if (this.viewTimer !== undefined) clearInterval(this.viewTimer);
     this.unsubscribe?.();
     this.unsubscribe = null;
@@ -199,7 +206,7 @@ export class FeedForwarder implements GenerationStreamSink {
   private readonly handlers: NotifyHandlers = {
     guild_thread_committed: (chatId) => {
       if (this.stopped) return;
-      void this.committed(chatId).catch((error: unknown) => this.failed("guild_thread_committed", chatId, error));
+      this.track("guild_thread_committed", chatId, this.committed(chatId));
     },
     guild_chat_status: (status) => {
       if (this.stopped) return;
@@ -226,25 +233,19 @@ export class FeedForwarder implements GenerationStreamSink {
     },
     guild_workspace_identity: ({ org_id: orgId }) => {
       if (this.stopped) return;
-      void this.pushWorkspaceIdentity(orgId).catch((error: unknown) =>
-        this.failed("guild_workspace_identity", orgId, error),
-      );
+      this.track("guild_workspace_identity", orgId, this.pushWorkspaceIdentity(orgId));
     },
     guild_models: ({ org_id: orgId }) => {
       if (this.stopped) return;
-      void this.pushModelList(orgId).catch((error: unknown) => this.failed("guild_models", orgId, error));
+      this.track("guild_models", orgId, this.pushModelList(orgId));
     },
     guild_events: (event) => {
       if (this.stopped) return;
-      void this.orgEvent(event.org_id, event.event_id).catch((error: unknown) =>
-        this.failed("guild_events", event.org_id, error),
-      );
+      this.track("guild_events", event.org_id, this.orgEvent(event.org_id, event.event_id));
     },
     guild_compaction: (conversationId) => {
       if (this.stopped) return;
-      void this.compaction(conversationId).catch((error: unknown) =>
-        this.failed("guild_compaction", conversationId, error),
-      );
+      this.track("guild_compaction", conversationId, this.compaction(conversationId));
     },
     guild_subagent_tree: (chatId) => {
       if (this.stopped) return;
@@ -256,6 +257,45 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_agent_threads: (payload) => this.agentState.threads(payload),
     guild_skills: (payload) => this.agentState.skills(payload),
   };
+
+  /** Holds one handler's read until it settles; a failure is logged. */
+  private track(channel: string, key: string, work: Promise<void>): void {
+    const settled = work.catch((error: unknown) => this.failed(channel, key, error));
+    this.inflight.add(settled);
+    void settled.then(() => this.inflight.delete(settled));
+  }
+
+  private releaseTickWaiters(): void {
+    const waiters = this.tickWaiters;
+    this.tickWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  /** Resolves once the feed holds no pending push: every NOTIFY committed
+   *  before the call has been handled, and every push those handlers (and
+   *  earlier calls) started has enqueued its frames on the sockets — send
+   *  and workspace chains, agent-state pushes, coalesced bursts and dirty
+   *  views. A socket's own ping then orders a "nothing arrived" check
+   *  behind those frames; tests use the pair instead of sleeping. */
+  async idle(): Promise<void> {
+    if (this.stopped) return;
+    await this.ctx.notify.barrier();
+    while (!this.stopped) {
+      const pending = [...this.inflight, ...this.chatLookups.values()];
+      if (pending.length > 0) {
+        await Promise.allSettled(pending);
+        continue;
+      }
+      if (this.chains.active || this.agentState.pushing()) {
+        await Promise.all([this.chains.idle(), this.agentState.idle()]);
+        continue;
+      }
+      if (this.dirtyChats.size === 0 && !this.publishing && !this.agentState.coalescing()) return;
+      // A dirty view or a coalescing burst waits on a timer: re-check after
+      // the next view tick.
+      await new Promise<void>((resolve) => this.tickWaiters.push(resolve));
+    }
+  }
 
   /** A member socket connected: its agent list and skill catalog. */
   connectMember(orgId: string, userId: string): Promise<void> {

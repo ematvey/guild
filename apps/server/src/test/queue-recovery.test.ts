@@ -2,18 +2,14 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
+import { waitFor } from "./support/wait.js";
 
 const failure = { status: 404, contentType: "application/json", body: '{"detail":"Not Found"}' };
 const answer = {
   body: 'data: {"choices":[{"delta":{"role":"assistant","content":"queued answer"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
 };
-async function until(probe: () => Promise<boolean>, timeout = 25_000) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    if (await probe()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("queued input did not make progress");
+function until(probe: () => Promise<boolean>, timeout = 25_000): Promise<void> {
+  return waitFor(probe, timeout, 50, "queued input did not make progress");
 }
 
 describe.each(["off", "on"])("failed-run queue recovery (worker mode %s)", (mode) => {
