@@ -1,4 +1,4 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, githubApiUrl } from "../shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, excerpt, clampNumber, callVendorApi, githubApiUrl, type JsonRequestErrors } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- github ----------
@@ -37,28 +37,15 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
-async function githubSend(url: string, init: GithubRequestInit): Promise<JsonObject> {
-  let res: Response;
-  try {
-    res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init as RequestInit));
-  } catch (error) {
-    throw new Error(`github unreachable: ${transportCause(error)}`);
-  }
-  const status = res.status;
-  let body: string;
-  try {
-    body = await res.text();
-  } catch {
-    throw new Error("github returned an unreadable body");
-  }
-  if (!(status >= 200 && status < 300)) {
-    throw new Error(githubMapError(status, body));
-  }
-  try {
-    return JSON.parse(body) as JsonObject;
-  } catch {
-    throw new Error("github returned bad json");
-  }
+const GITHUB_ERRORS: JsonRequestErrors = {
+  unreachable: (cause) => `github unreachable: ${cause}`,
+  unreadable: () => "github returned an unreadable body",
+  status: githubMapError,
+  badJson: () => "github returned bad json",
+};
+
+function githubSend(url: string, init: GithubRequestInit): Promise<JsonObject> {
+  return requestJson(url, init, LIST_TIMEOUT_MS, GITHUB_ERRORS);
 }
 
 /** The contents-API path for one file: owner/repo as encoded segments, and
@@ -210,30 +197,11 @@ export async function githubExecute(config: JsonObject, tool: string, args: Json
       if (typeof args["body"] === "string") payload["body"] = args["body"];
       if (Array.isArray(args["labels"])) payload["labels"] = args["labels"];
       const url = `${api}/repos/${pathSegment(owner)}/${pathSegment(repo)}/issues`;
-      let res: Response;
-      try {
-        res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, {
-          method: "POST",
-          headers: { ...githubHeaders(token), "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        }));
-      } catch (error) {
-        throw new Error(`github unreachable: ${transportCause(error)}`);
-      }
-      const status = res.status;
-      let text: string;
-      try {
-        text = await res.text();
-      } catch {
-        throw new Error("github returned an unreadable body");
-      }
-      if (!(status >= 200 && status < 300)) throw new Error(githubMapError(status, text));
-      let body: JsonObject;
-      try {
-        body = JSON.parse(text) as JsonObject;
-      } catch {
-        throw new Error("github returned bad json");
-      }
+      const body = await githubSend(url, {
+        method: "POST",
+        headers: { ...githubHeaders(token), "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
       const number = typeof body["number"] === "number" ? body["number"] : 0;
       const issueUrl = typeof body["html_url"] === "string" ? body["html_url"] : "";
       return {

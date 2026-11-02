@@ -1,4 +1,4 @@
-import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, urlencode, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, atlassianSite } from "../shared.js";
+import { CALL_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, configString, pathSegment, urlencode, requestJson, excerpt, clampNumber, callVendorApi, atlassianSite, type JsonRequestErrors } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- atlassian ----------
@@ -22,29 +22,17 @@ function atlassianCreds(config: JsonObject, secrets: [string, string][]): Atlass
 
 const ATLASSIAN_JIRA_FIELDS = "summary,status,issuetype,assignee,created";
 
-async function atlassianSendJson(url: string, init: RequestInit): Promise<JsonObject> {
-  let res: Response;
-  try {
-    res = await fetch(url, fetchTimeout(CALL_TIMEOUT_MS, init));
-  } catch (error) {
-    throw new Error(`atlassian unreachable: ${transportCause(error)}`);
-  }
-  let body: string;
-  try {
-    body = await res.text();
-  } catch {
-    throw new Error("atlassian body unreadable");
-  }
-  if (!res.ok) {
-    // A short error body helps diagnosis; Atlassian error messages name
-    // the bad JQL/CQL — never credential values.
-    throw new Error(`atlassian returned ${res.status}: ${excerpt(body)}`);
-  }
-  try {
-    return JSON.parse(body) as JsonObject;
-  } catch {
-    throw new Error("atlassian returned bad json");
-  }
+const ATLASSIAN_ERRORS: JsonRequestErrors = {
+  unreachable: (cause) => `atlassian unreachable: ${cause}`,
+  unreadable: () => "atlassian body unreadable",
+  // A short error body helps diagnosis; Atlassian error messages name the
+  // bad JQL/CQL — never credential values.
+  status: (status, body) => `atlassian returned ${status}: ${excerpt(body)}`,
+  badJson: () => "atlassian returned bad json",
+};
+
+function atlassianSendJson(url: string, init: RequestInit): Promise<JsonObject> {
+  return requestJson(url, init, CALL_TIMEOUT_MS, ATLASSIAN_ERRORS);
 }
 
 function atlassianAuth(creds: AtlassianCreds): Record<string, string> {

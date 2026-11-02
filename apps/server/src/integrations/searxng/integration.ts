@@ -1,5 +1,6 @@
 import { searxngBaseUrl } from "../shared.js";
-import { fetchTimeout, probe } from "../probe.js";
+import { PROBE_TIMEOUT_MS, probe } from "../probe.js";
+import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { searxngExecute } from "./execute.js";
@@ -55,7 +56,7 @@ const plugin: IntegrationPlugin = {
     const url = new URL(`${searxngBaseUrl(config)}/search`);
     url.searchParams.set("q", "guild");
     url.searchParams.set("format", "json");
-    await probe(fetch(url, fetchTimeout()), "searxng");
+    await probe(fetch(url, fetchTimeout(PROBE_TIMEOUT_MS)), "searxng");
   },
   execute: searxngExecute,
 };
