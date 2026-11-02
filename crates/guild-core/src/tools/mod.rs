@@ -58,7 +58,6 @@ impl ToolRegistry {
         let mut r = Self::new();
         r.add(Arc::new(fs::ReadFile::default()));
         r.add(Arc::new(fs::WriteFile));
-        r.add(Arc::new(fs::EditFile));
         r.add(Arc::new(shell::RunCommand));
         r
     }
@@ -72,7 +71,6 @@ impl ToolRegistry {
             ..Default::default()
         }));
         r.add(Arc::new(fs::WriteFile));
-        r.add(Arc::new(fs::EditFile));
         r.add(Arc::new(shell::RunCommand));
         r
     }

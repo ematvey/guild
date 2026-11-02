@@ -60,6 +60,20 @@ requires in-GUI binary handling. No session token travels from the GUI.
 The socket/pipe path can be overridden for development with
 `GUILD_DAEMON_SOCKET`.
 
+Pairing: a pairing code (`g1|<server_url>|<secret>`) names the server the
+session token goes to. The pairing screen shows that host before Pair, and
+the engine refuses a plain `http://` server unless its host is loopback
+(`localhost`, `127.0.0.0/8`, `::1` — the local dev stack). A LAN test server
+over plain http needs `GUILD_ALLOW_INSECURE_PAIRING=1` in the engine's
+environment (the app, or the `guild-daemon` unit).
+
+Trace: the engine, the machine link and the desktop's webview-rpc bridge
+write one diagnostic log, `<user cache dir>/guild/guild-trace.log`
+(`~/.cache/guild/` on Linux; owner-only, capped at 1 MiB). It is off by
+default: turn it on in Settings → About (persisted across launches) or with
+`GUILD_DAEMON_TRACE=1` (headless daemons). Lines name methods, ids and
+sizes, never request or response payloads.
+
 ## 2. Web mode + admin sections (product flow)
 
 The same chat frontend runs in two hosts:

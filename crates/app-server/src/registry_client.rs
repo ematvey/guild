@@ -110,21 +110,43 @@ fn stamp_publish_sidecar(
     }
 }
 
+/// A skill's install dir, `<root>/.agents/skills/<slug>`: the root is the
+/// project dir (repo scope, required) or, with `global`, the home skill
+/// scope the fleet sync converges (`fs_bridge::skills_home`). The slug is
+/// validated before it touches a path.
+pub fn skill_dir(
+    project_dir: Option<&Path>,
+    slug: &str,
+    global: bool,
+) -> Result<PathBuf, CloudError> {
+    if !valid_slug(slug) {
+        return Err(CloudError::Request(format!("invalid skill slug {slug:?}")));
+    }
+    let root = if global {
+        crate::fs_bridge::skills_home()
+    } else {
+        project_dir
+            .ok_or_else(|| {
+                CloudError::Request("missing project_dir for a project-scope skill".into())
+            })?
+            .to_path_buf()
+    };
+    Ok(root.join(".agents").join("skills").join(slug))
+}
+
 /// Installs the latest approved version (or a pinned one) of a skill into
 /// the shared `.agents/skills/{slug}/` dir — repo scope by default, the
 /// user's home scope with `global = true` (skills design §4). Writes the
 /// provenance sidecar from the bundle manifest.
 pub async fn install_skill(
     cloud: &CloudClient,
-    project_dir: &Path,
+    project_dir: Option<&Path>,
     slug: &str,
     version: Option<&str>,
     global: bool,
     publisher: &str,
 ) -> Result<crate::registry_client::SkillEntry, CloudError> {
-    if !valid_slug(slug) {
-        return Err(CloudError::Request(format!("invalid skill slug {slug:?}")));
-    }
+    let dest = skill_dir(project_dir, slug, global)?;
     let base = cloud.base_url.trim_end_matches('/');
     let version = match version {
         Some(v) => v.to_string(),
@@ -172,12 +194,6 @@ pub async fn install_skill(
         .bytes()
         .await
         .map_err(|e| CloudError::Request(e.to_string()))?;
-    let dest: PathBuf = if global {
-        let home = dirs::home_dir().ok_or_else(|| CloudError::Request("no home dir".into()))?;
-        home.join(".agents").join("skills").join(slug)
-    } else {
-        project_dir.join(".agents").join("skills").join(slug)
-    };
     let bundle_hash = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
     let publisher = publisher.to_string();
     let manifest = install_bundle(bytes.to_vec(), dest.clone(), move |manifest| {
@@ -275,13 +291,12 @@ pub async fn install_bundle(
 /// Removes a previously installed skill dir. Only dirs whose provenance
 /// sidecar says `source: registry` may be removed — Guild never deletes
 /// plain skill folders it did not install (they may be codex/pi-authored).
-pub fn uninstall_skill(project_dir: &Path, slug: &str, global: bool) -> Result<(), CloudError> {
-    let dest: PathBuf = if global {
-        let home = dirs::home_dir().ok_or_else(|| CloudError::Request("no home dir".into()))?;
-        home.join(".agents").join("skills").join(slug)
-    } else {
-        project_dir.join(".agents").join("skills").join(slug)
-    };
+pub fn uninstall_skill(
+    project_dir: Option<&Path>,
+    slug: &str,
+    global: bool,
+) -> Result<(), CloudError> {
+    let dest = skill_dir(project_dir, slug, global)?;
     if !dest.is_dir() {
         return Err(CloudError::Request(format!("{} is not installed", slug)));
     }

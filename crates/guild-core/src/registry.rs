@@ -191,8 +191,17 @@ fn extract_with_cap(bundle: &[u8], dest: &Path, cap: u64) -> anyhow::Result<Bund
             "duplicate bundle entry: {}",
             path.display()
         );
+        // `is_absolute` alone misses `\foo` (RootDir, no prefix) and `C:foo`
+        // (Prefix, drive-relative) on Windows; a join with either replaces
+        // the destination.
         anyhow::ensure!(
-            !path.is_absolute(),
+            !path.is_absolute()
+                && !path.components().any(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::RootDir | std::path::Component::Prefix(_)
+                    )
+                }),
             "bundle entry is absolute: {}",
             path.display()
         );

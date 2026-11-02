@@ -57,8 +57,7 @@
     "StreamToolStarted": { "$ref": "#/$defs/StreamToolStarted" },
     "StreamToolCompleted": { "$ref": "#/$defs/StreamToolCompleted" },
     "StreamApprovalRequested": { "$ref": "#/$defs/StreamApprovalRequested" },
-    "StreamApprovalResolved": { "$ref": "#/$defs/StreamApprovalResolved" },
-    "MachineContext": { "$ref": "#/$defs/MachineContext" }
+    "StreamApprovalResolved": { "$ref": "#/$defs/StreamApprovalResolved" }
   },
   "additionalProperties": false,
   "$defs": {
@@ -678,20 +677,6 @@
         "call_id": { "type": "string" },
         "approved": { "type": "boolean" },
         "reason": { "type": "string" }
-      }
-    },
-    "MachineContext": {
-      "description": "Executor-owned context returned by the versioned `context.prepare_v1` machine operation. `MachineContext` in ws.rs.",
-      "type": "object",
-      "required": ["instructions", "skills_index", "skill_expansions"],
-      "additionalProperties": false,
-      "properties": {
-        "instructions": {
-          "description": "Always serialized. null when unset.",
-          "type": ["string", "null"]
-        },
-        "skills_index": { "type": "string" },
-        "skill_expansions": { "type": "string" }
       }
     }
   }

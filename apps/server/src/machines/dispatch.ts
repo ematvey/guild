@@ -3,13 +3,16 @@
 // frame (crates/protocol/src/ws.rs ToolDispatch) on the machine's executor
 // socket and the daemon answers a `tool_result` frame.
 //
-// Primitive → daemon mapping (guild-core tool schemas, the machine tool
-// set: read_file/execute/edit_file/write_file):
-//   exec            → `execute`   {command, timeout_ms?}
-//   readBinaryFile  → `read_file` {path}
-//   writeFile       → `write_file` {path, content}
-//   fileInfo/exists → `read_file` probe
-// Everything else is not-supported (the machine tool set has no op for it).
+// Primitive → daemon mapping (the engine's dispatch names, served in
+// crates/app-server/src/machine_link.rs):
+//   exec             → `execute`        {command, timeout_ms?}
+//   read* / open*    → `fs.read_raw_v1` {path} → {size, mtime_ms, data_b64}
+//   writeFile        → `write_file`     {path, content}
+//   fileInfo/exists  → `fs.stat_v1`     {path} → {exists, kind?, size?, mtime_ms?}
+// The raw ops carry exact bytes; the model-facing `read_file` (paged,
+// text-only, capped) is never used for file access. An engine without the
+// raw ops fails reads with `not_supported`. Everything else is
+// not-supported (the machine has no op for it).
 // The machine ToolResult's meta/images have no channel in the
 // ShellExecResult/byte shapes, so they are dropped.
 
@@ -204,6 +207,25 @@ function fileErr(code: (typeof FileError.prototype)["code"], message: string, pa
   return err(new FileError(code, message, path));
 }
 
+const RAW_READ_OP = "fs.read_raw_v1";
+const RAW_STAT_OP = "fs.stat_v1";
+
+/** The FileError code for a raw op failure code (`too_large` is an
+ *  invalid request for this transport). */
+function rawErrorCode(code: unknown): (typeof FileError.prototype)["code"] {
+  switch (code) {
+    case "not_found":
+    case "permission_denied":
+    case "is_directory":
+    case "invalid":
+      return code;
+    case "too_large":
+      return "invalid";
+    default:
+      return "unknown";
+  }
+}
+
 /** Renders one argv element as a shell word: bare when plainly safe,
  *  double-quoted with backslash escapes otherwise. */
 function shellQuote(arg: string): string {
@@ -253,33 +275,66 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(path.join(...parts));
   }
 
-  private async readThrough(path: string, context: Context): Promise<string> {
-    const outcome = await this.runTool("read_file", { path }, context);
-    if (outcome.is_error) {
-      throw new FileError(/no such file|not found/i.test(outcome.content) ? "not_found" : "unknown", outcome.content, path);
+  /** One raw file op (`fs.read_raw_v1` / `fs.stat_v1`) and its decoded
+   *  JSON payload. A failure carries `{code, message}`; an engine that
+   *  predates the op answers "unknown tool", which fails as
+   *  `not_supported` instead of falling back to the lossy `read_file`. */
+  private async rawOp(op: typeof RAW_READ_OP | typeof RAW_STAT_OP, p: string, context: Context): Promise<Result<Record<string, unknown>, FileError>> {
+    const outcome = await this.runTool(op, { path: p }, context);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(outcome.content);
+    } catch {
+      payload = undefined;
     }
-    return outcome.content;
+    if (outcome.is_error) {
+      if (/unknown tool/i.test(outcome.content)) {
+        return fileErr("not_supported", `this machine's Guild engine cannot transfer files exactly (${op} missing); update the desktop app`, p);
+      }
+      const failure = (payload ?? {}) as { code?: unknown; message?: unknown };
+      const message = typeof failure.message === "string" ? failure.message : outcome.content;
+      return fileErr(rawErrorCode(failure.code), message, p);
+    }
+    if (payload === null || typeof payload !== "object") {
+      return fileErr("unknown", `malformed ${op} result`, p);
+    }
+    return ok(payload as Record<string, unknown>);
   }
 
-  async readTextFile(p: string, _context: Context): Promise<Result<string, FileError>> {
+  private async readRaw(p: string, context: Context): Promise<Result<{ bytes: Uint8Array; mtimeMs: number }, FileError>> {
+    const result = await this.rawOp(RAW_READ_OP, p, context);
+    if (!result.ok) return result;
+    const data = result.value.data_b64;
+    if (typeof data !== "string") return fileErr("unknown", `malformed ${RAW_READ_OP} result`, p);
+    const bytes = new Uint8Array(Buffer.from(data, "base64"));
+    const mtime = result.value.mtime_ms;
+    return ok({ bytes, mtimeMs: typeof mtime === "number" ? mtime : 0 });
+  }
+
+  async readTextFile(p: string, context: Context): Promise<Result<string, FileError>> {
+    const raw = await this.readRaw(p, context);
+    if (!raw.ok) return raw;
     try {
-      return ok(await this.readThrough(p, _context));
-    } catch (error) {
-      return err(error instanceof FileError ? error : new FileError("unknown", String(error), p));
+      return ok(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw.value.bytes));
+    } catch {
+      return fileErr("invalid", "file is not valid UTF-8 text", p);
     }
   }
 
   async openTextLineReader(p: string, context: Context): Promise<Result<TextLineReader, FileError>> {
     const text = await this.readTextFile(p, context);
     if (!text.ok) return text;
-    const lines = text.value.split("\n");
+    const lines = text.value === "" ? [] : text.value.split("\n");
+    // A final newline terminates the last line; it does not open another.
+    const endsTerminated = text.value.endsWith("\n");
+    if (endsTerminated) lines.pop();
     let index = 0;
     const reader: TextLineReader = {
       async readLine(): Promise<Result<TextLine | undefined, FileError>> {
         if (index >= lines.length) return ok(undefined);
         const line = lines[index]!;
         index += 1;
-        return ok({ text: line, terminated: index < lines.length || line === "" ? index <= lines.length : false });
+        return ok({ text: line, terminated: index < lines.length || endsTerminated });
       },
       async close(): Promise<void> {},
     };
@@ -294,20 +349,19 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   async readBinaryFile(p: string, context: Context): Promise<Result<Uint8Array, FileError>> {
-    const text = await this.readTextFile(p, context);
-    if (!text.ok) return text;
-    return ok(new TextEncoder().encode(text.value));
+    const raw = await this.readRaw(p, context);
+    if (!raw.ok) return raw;
+    return ok(raw.value.bytes);
   }
 
-  /** Positional reads over the whole-file `read_file` transfer (the machine
-   *  tool set has no paged binary op, so binary content round-trips as
-   *  text, and `noFollow` has no channel in the wire
+  /** Positional reads over one whole-file `fs.read_raw_v1` transfer (the
+   *  machine has no paged op; `noFollow` has no channel in the wire
    *  contract — a final-component symlink is followed). */
   async openBinaryReader(p: string, _options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
-    const text = await this.readTextFile(p, context);
-    if (!text.ok) return text;
-    const bytes = new TextEncoder().encode(text.value);
-    const info: FileInfo = { name: path.basename(p), path: p, kind: "file", size: bytes.length, mtimeMs: 0 };
+    const raw = await this.readRaw(p, context);
+    if (!raw.ok) return raw;
+    const bytes = raw.value.bytes;
+    const info: FileInfo = { name: path.basename(p), path: p, kind: "file", size: bytes.length, mtimeMs: raw.value.mtimeMs };
     const reader: BinaryReader = {
       info: async () => ok(info),
       read: async (offset, length) => {
@@ -361,10 +415,18 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   async fileInfo(p: string, context: Context): Promise<Result<FileInfo, FileError>> {
-    const text = await this.readTextFile(p, context);
-    if (!text.ok) return text;
-    const info: FileInfo = { name: path.basename(p), path: p, kind: "file", size: text.value.length, mtimeMs: 0 };
-    return ok(info);
+    const stat = await this.rawOp(RAW_STAT_OP, p, context);
+    if (!stat.ok) return stat;
+    const { exists, kind, size, mtime_ms } = stat.value;
+    if (exists !== true) return fileErr("not_found", `${p}: no such file or directory`, p);
+    if (kind !== "file" && kind !== "directory") return fileErr("invalid", `${p}: not a regular file or directory`, p);
+    return ok({
+      name: path.basename(p),
+      path: p,
+      kind,
+      size: typeof size === "number" ? size : 0,
+      mtimeMs: typeof mtime_ms === "number" ? mtime_ms : 0,
+    });
   }
 
   async listDir(): Promise<Result<FileInfo[], FileError>> {
@@ -376,10 +438,9 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   async exists(p: string, context: Context): Promise<Result<boolean, FileError>> {
-    const text = await this.readTextFile(p, context);
-    if (text.ok) return ok(true);
-    if (text.error.code === "not_found") return ok(false);
-    return text;
+    const stat = await this.rawOp(RAW_STAT_OP, p, context);
+    if (!stat.ok) return stat;
+    return ok(stat.value.exists === true);
   }
 
   async createDir(): Promise<Result<void, FileError>> {

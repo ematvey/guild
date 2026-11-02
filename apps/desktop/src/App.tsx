@@ -176,6 +176,21 @@ function UpdateToast() {
   );
 }
 
+/** The server a pasted pairing code (`g1|<url>|<secret>`) sends the
+ *  session to, shown before Pair; `insecure` is plain http to a
+ *  non-loopback host, which the engine refuses without its override. */
+function pairingTarget(code: string): { host: string; insecure: boolean } | null {
+  const parts = code.trim().split("|");
+  if (parts.length !== 3 || parts[0] !== "g1") return null;
+  try {
+    const url = new URL(parts[1]!);
+    const loopback = url.hostname === "localhost" || url.hostname === "[::1]" || url.hostname.startsWith("127.");
+    return { host: url.host, insecure: url.protocol === "http:" && !loopback };
+  } catch {
+    return null;
+  }
+}
+
 function DesktopApp() {
   const [role, setRole] = useState<string>("member");
   const [displayName, setDisplayName] = useState<string | null>(null);
@@ -290,6 +305,7 @@ function DesktopApp() {
     setAvatarUrl(me?.avatar_url ?? null);
   };
 
+  const pairTarget = pairingTarget(code);
   const pair = async () => {
     setBusy(true);
     setError(null);
@@ -387,6 +403,13 @@ function DesktopApp() {
                 onKeyDown={(e) => e.key === "Enter" && code.trim() && pair()}
                 autoFocus
               />
+              {pairTarget && (
+                <p className={`text-xs ${pairTarget.insecure ? "text-destructive" : "text-muted-foreground"}`}>
+                  Pairs with <span className="font-medium">{pairTarget.host}</span>
+                  {pairTarget.insecure &&
+                    " over unencrypted http — refused unless GUILD_ALLOW_INSECURE_PAIRING=1. Only pair with a server you trust."}
+                </p>
+              )}
               {error && <p className="text-base text-destructive">{error}</p>}
               <Button onClick={pair} disabled={busy || !code.trim()}>
                 {busy ? "Pairing…" : "Pair"}

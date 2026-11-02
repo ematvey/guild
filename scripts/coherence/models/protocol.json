@@ -9,8 +9,7 @@
       "canonical": "crates/protocol/src/ws.rs",
       "types": [
         "WsClientMsg",
-        "WsServerMsg",
-        "MachineContext"
+        "WsServerMsg"
       ],
       "aliases": [
         "ws_message",

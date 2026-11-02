@@ -9,7 +9,13 @@
 //! `.agents/skills` live there), the Guild config dir, and the user's
 //! shared `~/.agents`. Existence probes additionally walk above the git
 //! root (that is how the root is *found*); reads never do. Write roots:
-//! the config dir and the project folder.
+//! the project folder and, per name, the config dir (settings.json, the
+//! AGENTS files, `skills/`) — never token.json or workspaces.json.
+//!
+//! Trust: the project folder arrives per call from the webview, so these
+//! roots guard against webview logic bugs (a wrong relative path, a
+//! symlink in repo content), not against a hostile caller — a caller that
+//! names `/` as its project reads it.
 
 use anyhow::Context as _;
 use std::path::{Path, PathBuf};
@@ -168,12 +174,16 @@ impl Allowlist {
     /// engine-private: repo content must not be able to read the bearer
     /// through a symlink or a direct model call.
     pub fn can_read(&self, path: &Path) -> bool {
-        if let Some(config) = &self.config_root {
-            if path.starts_with(config) && !config_path_readable(config, path) {
-                return false;
-            }
+        self.config_grants(path) && self.allowed(&self.read, path)
+    }
+
+    /// False for a config-dir path outside the per-name grant; true for
+    /// every path outside the config dir (the root lists decide those).
+    fn config_grants(&self, path: &Path) -> bool {
+        match &self.config_root {
+            Some(config) if path.starts_with(config) => config_path_granted(config, path),
+            _ => true,
         }
-        self.allowed(&self.read, path)
     }
 
     /// Sets the config dir this allowlist was built with; `for_project_with`
@@ -193,19 +203,26 @@ impl Allowlist {
             && self.walk_ancestors.iter().any(|a| path.starts_with(a))
     }
 
+    /// Writes take the same per-name config grant as reads: the webview
+    /// writes settings.json (and may write the context files or the legacy
+    /// skills tree); token.json and workspaces.json are never writable.
     pub fn can_write(&self, path: &Path) -> bool {
-        self.allowed(&self.write, path)
+        self.config_grants(path) && self.allowed(&self.write, path)
     }
 }
 
-/// The model-readable names inside the config dir (the per-name grant;
-/// see `Allowlist::can_read`).
-fn config_path_readable(config: &Path, path: &Path) -> bool {
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string());
-    matches!(
-        name.as_deref(),
-        Some("settings.json") | Some("AGENTS.md") | Some("AGENTS.override.md")
-    ) || path.starts_with(config.join("skills"))
+/// The names granted inside the config dir (see `Allowlist::can_read`):
+/// settings.json, AGENTS.md and AGENTS.override.md directly in it, and
+/// anything under its `skills/` tree.
+fn config_path_granted(config: &Path, path: &Path) -> bool {
+    let direct = path.parent() == Some(config)
+        && path.file_name().is_some_and(|name| {
+            matches!(
+                name.to_str(),
+                Some("settings.json" | "AGENTS.md" | "AGENTS.override.md")
+            )
+        });
+    direct || path.starts_with(config.join("skills"))
 }
 
 /// The allowlist root form: canonicalized when the path exists (symlink
@@ -340,7 +357,9 @@ pub fn read_text_limited_with(
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DirEntry {
     pub name: String,
-    /// dir | file | other
+    /// `dir`, `file`, or `other` (a socket, a device, a dangling link).
+    /// A symlink is classified by its target, so a linked skill dir lists
+    /// as `dir`; whatever is read through it is gated again by the roots.
     pub kind: String,
 }
 
@@ -366,7 +385,11 @@ pub fn list_dir_limited_with(
         .take(limit)
         .flatten()
     {
-        let kind = if entry.path().is_dir() { "dir" } else { "file" };
+        let kind = match std::fs::metadata(entry.path()) {
+            Ok(meta) if meta.is_dir() => "dir",
+            Ok(meta) if meta.is_file() => "file",
+            _ => "other",
+        };
         out.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind: kind.into(),
@@ -552,15 +575,44 @@ mod tests {
         );
         let cfg = tmp.join("config/guild/settings.json");
         write_text_with(&allow, cfg.to_str().unwrap(), "{}").unwrap();
+        // The config dir is writable per name only: the engine-private
+        // session files are not.
+        let cfg_dir = tmp.join("config/guild");
+        let token = touch(&cfg_dir, "token.json", "{\"token\":\"keep\"}");
+        for private in ["token.json", "workspaces.json", "nested/settings.json"] {
+            let path = cfg_dir.join(private);
+            assert!(
+                write_text_with(&allow, path.to_str().unwrap(), "x").is_err(),
+                "{private} was writable"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(&token).unwrap(),
+            "{\"token\":\"keep\"}"
+        );
+        write_text_with(&allow, cfg_dir.join("AGENTS.md").to_str().unwrap(), "# a").unwrap();
+        write_text_with(
+            &allow,
+            cfg_dir.join("skills/x/SKILL.md").to_str().unwrap(),
+            "s",
+        )
+        .unwrap();
 
         // list_dir is sorted and kinds are right.
         touch(&project, "b.txt", "b");
         touch(&project, "a_dir/.keep", "");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(project.join("gone"), project.join("c_dangling")).unwrap();
         let entries = list_dir_with(&allow, project.to_str().unwrap()).unwrap();
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        #[cfg(unix)]
+        assert_eq!(names, vec!["a_dir", "b.txt", "c_dangling", "notes"]);
+        #[cfg(not(unix))]
         assert_eq!(names, vec!["a_dir", "b.txt", "notes"]);
         assert_eq!(entries[0].kind, "dir");
         assert_eq!(entries[1].kind, "file");
+        #[cfg(unix)]
+        assert_eq!(entries[2].kind, "other");
     }
 
     #[cfg(unix)]

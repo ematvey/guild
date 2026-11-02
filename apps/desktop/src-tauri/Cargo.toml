@@ -1,6 +1,6 @@
 [package]
 name = "guild-desktop"
-version = "0.6.49"
+version.workspace = true
 edition = "2021"
 license = "Apache-2.0"
 
@@ -27,5 +27,5 @@ url = "2"
 tokio = { version = "1", features = ["test-util"] }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 winreg = "0.55"

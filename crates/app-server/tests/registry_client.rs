@@ -125,16 +125,23 @@ async fn publish_then_install_roundtrip() {
     // not approved yet → member-style install rejected
     let project = scratch("proj");
     let err =
-        registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "").await;
+        registry_client::install_skill(&cloud, Some(&project), "deploy-check", None, false, "")
+            .await;
     assert!(err.is_err(), "draft must not install");
 
     // approve (the server-side review flow is owned and tested there)
     state.lock().unwrap().review_status = "approved".into();
 
-    let entry =
-        registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "a@b.c")
-            .await
-            .unwrap();
+    let entry = registry_client::install_skill(
+        &cloud,
+        Some(&project),
+        "deploy-check",
+        None,
+        false,
+        "a@b.c",
+    )
+    .await
+    .unwrap();
     assert_eq!(entry.name, "deploy-check");
     assert_eq!(entry.description, "test skill deploy-check");
     let installed = std::fs::read_to_string(&entry.path).unwrap();
@@ -154,7 +161,7 @@ async fn publish_then_install_roundtrip() {
     assert!(dest.join("SKILL.md").is_file());
 
     // uninstall removes the registry-installed dir
-    registry_client::uninstall_skill(&project, "deploy-check", false).unwrap();
+    registry_client::uninstall_skill(Some(&project), "deploy-check", false).unwrap();
     assert!(!dest.exists());
 }
 
@@ -168,7 +175,7 @@ async fn uninstall_refuses_dirs_guild_did_not_install() {
         "---\nname: hand-made\ndescription: authored outside guild\n---\nbody",
     )
     .unwrap();
-    let err = registry_client::uninstall_skill(&project, "hand-made", false);
+    let err = registry_client::uninstall_skill(Some(&project), "hand-made", false);
     assert!(err.is_err(), "no sidecar → refuse");
     assert!(dest.join("SKILL.md").is_file(), "dir must survive");
 
@@ -182,7 +189,7 @@ async fn uninstall_refuses_dirs_guild_did_not_install() {
         },
     )
     .unwrap();
-    assert!(registry_client::uninstall_skill(&project, "hand-made", false).is_err());
+    assert!(registry_client::uninstall_skill(Some(&project), "hand-made", false).is_err());
     assert!(dest.join("SKILL.md").is_file());
 }
 
@@ -241,7 +248,7 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
     state.lock().unwrap().review_status = "approved".into();
     registry_client::install_skill(
         &cloud,
-        &project,
+        Some(&project),
         "upgradable",
         Some("1.0.0"),
         false,
@@ -265,7 +272,7 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
         .unwrap();
     registry_client::install_skill(
         &cloud,
-        &project,
+        Some(&project),
         "upgradable",
         Some("1.1.0"),
         false,
@@ -307,7 +314,8 @@ async fn a_failed_upgrade_extract_leaves_no_staging_dir() {
     let skills = project.join(".agents/skills");
     let dest = make_skill(&skills, "broken");
     let err =
-        registry_client::install_skill(&cloud, &project, "broken", Some("2.0.0"), false, "").await;
+        registry_client::install_skill(&cloud, Some(&project), "broken", Some("2.0.0"), false, "")
+            .await;
     assert!(err.is_err());
     assert!(
         dest.join("SKILL.md").is_file(),

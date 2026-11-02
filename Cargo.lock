@@ -1785,6 +1785,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
  "ed25519-dalek",
@@ -1846,7 +1847,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "url",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "winreg",
 ]
 

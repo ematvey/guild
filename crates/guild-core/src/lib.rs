@@ -4,4 +4,5 @@
 //! engine (app-server).
 
 pub mod registry;
+pub mod sync;
 pub mod tools;

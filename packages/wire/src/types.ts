@@ -215,12 +215,3 @@ export type ClientFrame =
       meta?: Json | null;
       images?: string[];
     };
-
-/** Executor-owned context returned by the versioned `context.prepare_v1`
- *  machine operation. */
-export interface MachineContext {
-  /** Always present. null when unset. */
-  instructions: string | null;
-  skills_index: string;
-  skill_expansions: string;
-}
