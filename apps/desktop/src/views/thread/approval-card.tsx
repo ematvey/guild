@@ -5,6 +5,7 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Frame } from "../frame";
 import { postApproval } from "../../lib/api/approvals";
+import { useTransient } from "../../lib/use-transient";
 import type { ApprovalBlock } from "../../lib/thread-reducer";
 import { toolDisplayName } from "./tool-text";
 
@@ -35,7 +36,9 @@ function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" | 
 /// during the gate's own settle re-enables after 15 s so it can be retried;
 /// retries are idempotent (the endpoint echoes the recorded decision).
 export function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }) {
-  const [acted, setActed] = useState<null | "approved" | "denied">(null);
+  // The optimistic click: it re-enables after 15 s if no answer settles it.
+  const { value: acted, show: showActed, hold: holdActed, clear: clearActed } =
+    useTransient<null | "approved" | "denied">(null, 15_000);
   const [remote, setRemote] = useState<null | { status: "approved" | "denied" | "expired"; reason?: string }>(
     null,
   );
@@ -44,26 +47,22 @@ export function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string |
   const busy = !settled && acted !== null;
   const act = (approved: boolean) => {
     if (acted || settled || !chatId) return;
-    setActed(approved ? "approved" : "denied");
-    const cap = window.setTimeout(() => setActed(null), 15_000);
+    showActed(approved ? "approved" : "denied");
     void postApproval(chatId, a.callId, approved, approved ? undefined : "denied by user")
       .then((r) => {
-        window.clearTimeout(cap);
+        holdActed();
         if (r.settled) {
           setRemote({
             status: r.expired ? "expired" : r.approved ? "approved" : "denied",
             reason: r.reason ?? undefined,
           });
-          setActed(null);
+          clearActed();
         }
         // settled=false: the gate took the decision and is journaling it —
         // the resolved frame (or a reload) lands the pill; keep the
         // optimistic state until then.
       })
-      .catch(() => {
-        window.clearTimeout(cap);
-        setActed(null);
-      });
+      .catch(() => clearActed());
   };
   let prettyArgs = a.args;
   try {

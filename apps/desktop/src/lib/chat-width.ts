@@ -5,7 +5,7 @@
 export const CHAT_WIDTH_KEY = "guild.chatWidth";
 export const CHAT_MIN_W = 480;
 export const CHAT_MAX_W = 1400;
-export const CHAT_DEFAULT_W = 768; // the old max-w-3xl
+export const CHAT_DEFAULT_W = 768; // max-w-3xl
 
 export function clampChatWidth(w: number): number {
   return Math.min(CHAT_MAX_W, Math.max(CHAT_MIN_W, w));

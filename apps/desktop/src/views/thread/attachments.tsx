@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FileText, Film, Image as ImageIcon, Music, X as XIcon } from "lucide-react";
 import { openExternal } from "../../lib/open-external";
+import { formatBytes } from "../../lib/format";
 import { attachmentBlobUrl } from "../../lib/api/chats";
 import type { MessageAttachmentMeta } from "../../lib/thread-events";
 
@@ -13,11 +14,6 @@ export function modalityOf(contentType: string): string {
   return "document";
 }
 
-export function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** Icon for a non-image attachment by modality/type. */
 function AttachmentFileIcon({ att }: { att: MessageAttachmentMeta }) {
@@ -119,7 +115,7 @@ export function AttachmentFileChip({
     <>
       <AttachmentFileIcon att={att} />
       <span className="max-w-56 truncate">{att.filename}</span>
-      <span className="shrink-0 text-muted-foreground">{fmtBytes(att.size_bytes)}</span>
+      <span className="shrink-0 text-muted-foreground">{formatBytes(att.size_bytes)}</span>
       {onRemove && (
         <button
           type="button"

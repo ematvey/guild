@@ -49,7 +49,7 @@ describe("AttachmentFileChip", () => {
   it("renders a download button in a transcript bubble", () => {
     const html = renderToStaticMarkup(<AttachmentFileChip att={att({})} />);
     expect(html).toContain("notes.pdf");
-    expect(html).toContain("2 KB");
+    expect(html).toContain("2.0 KB");
     expect(html).toContain('title="Download"');
   });
 

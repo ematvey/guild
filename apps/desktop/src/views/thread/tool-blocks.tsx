@@ -25,7 +25,7 @@ import {
   type CodemodeCallRow,
   type ToolBlock,
 } from "../../lib/thread-reducer";
-import { fmtBytes } from "./attachments";
+import { formatBytes } from "../../lib/format";
 import { argOf, codemodeDuration, parseSearchResults, safeUrl, toolKind, toolLabel, toolPreview } from "./tool-text";
 
 /// Status pill on tool frames and page cards.
@@ -108,7 +108,7 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
       <span className="max-w-56 truncate font-medium" title={card.filename}>
         {card.filename}
       </span>
-      <span className="shrink-0 text-muted-foreground">{fmtBytes(card.size_bytes)}</span>
+      <span className="shrink-0 text-muted-foreground">{formatBytes(card.size_bytes)}</span>
       {card.content_type !== "application/octet-stream" && (
         <span className="hidden shrink-0 text-muted-foreground/70 sm:inline">{card.content_type}</span>
       )}

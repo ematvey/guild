@@ -19,6 +19,7 @@ import { compact, money, ms, statusLabel, toneOf } from "./activity-format";
 import { JsonView } from "./JsonView";
 import { MessagesView, payloadMessages } from "./MessagesView";
 import { ToneBadge } from "./agent-ui";
+import { useTransientFlag } from "../../lib/use-transient";
 import { Meta, parseObject, SpanIcon } from "./trace-views";
 
 export function SpanDetail({ span, admin }: { span: SpanRow | null; admin: boolean }) {
@@ -250,15 +251,14 @@ export function PayloadValue({ value, empty }: { value: string; empty: string })
 }
 
 export function CopyButton({ value, className }: { value: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flashCopied] = useTransientFlag(1200);
   return (
     <button
       type="button"
       aria-label="Copy value"
       onClick={() => {
         void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1200);
+          flashCopied();
         });
       }}
       className={cn(

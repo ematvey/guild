@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { getApprovalPolicyPrompt, getAssistantPrompt, setApprovalPolicyPrompt, setAssistantPrompt } from "../../../lib/api/approvals";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
+import { useTransientFlag } from "../../../lib/use-transient";
 
 type Loaded = { custom: string | null; fallback: string };
 
@@ -72,11 +73,11 @@ function PromptField({
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, flashSaved, clearSaved] = useTransientFlag(1500);
 
   useEffect(() => {
     setError(null);
-    setSaved(false);
+    clearSaved();
     setLoading(true);
     load()
       .then((r) => {
@@ -96,15 +97,14 @@ function PromptField({
   const persist = async (value: string, markCustom: boolean) => {
     if (saving) return;
     setError(null);
-    setSaved(false);
+    clearSaved();
     setSaving(true);
     try {
       await save(value);
       setPrompt(value);
       setIsCustom(markCustom);
-      setSaved(true);
+      flashSaved();
       toast.success(`${label} saved`);
-      setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
@@ -119,15 +119,14 @@ function PromptField({
   const reset = async () => {
     if (saving) return;
     setError(null);
-    setSaved(false);
+    clearSaved();
     setSaving(true);
     try {
       await save("");
       setPrompt(fallbackText);
       setIsCustom(false);
-      setSaved(true);
+      flashSaved();
       toast.success(`${label} reset`);
-      setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
