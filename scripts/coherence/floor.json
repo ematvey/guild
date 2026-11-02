@@ -7,14 +7,14 @@
     "duplicate_files": 0,
     "translation_gaps": 18,
     "unmodeled_types": 0,
-    "milestone_tags": 22
+    "milestone_tags": 6
   },
   "report": {
-    "files": 428,
-    "loc": 91146,
-    "test_files": 180,
-    "test_loc": 34724,
-    "unmapped_files": 2
+    "files": 451,
+    "loc": 92027,
+    "test_files": 192,
+    "test_loc": 36062,
+    "unmapped_files": 18
   },
   "declared_seams": 11
 }
