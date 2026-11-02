@@ -3,6 +3,8 @@
 //! hello handshake, client-issued shutdown.
 
 #![cfg(unix)]
+use guild_app_server::auth_state::AuthState;
+use guild_app_server::cloud::CloudClient;
 use guild_app_server::daemon::{
     run_daemon_shared, run_daemon_shared_reclaiming, try_connect_at, Pair,
 };
@@ -44,19 +46,17 @@ fn req(id: u64, method: &str, params: Value) -> String {
     serde_json::to_string(&Request::new(id, method, params)).unwrap()
 }
 
-/// attach() no longer spawns anything: with no app hosting the socket it
-/// fails with a clear "start the app" error (single-process spec).
+/// attach() spawns nothing: with no app hosting the socket it fails with a
+/// clear "start the app" error (single-process spec).
 #[test]
 fn attach_fails_cleanly_without_the_app() {
     let _env = ATTACH_LOCK.lock().unwrap();
     let path = temp_socket_attach();
     let _ = std::fs::remove_file(&path);
     std::env::set_var("GUILD_DAEMON_SOCKET", &path);
-    let err = guild_app_server::daemon::attach(std::path::Path::new(env!(
-        "CARGO_BIN_EXE_guild-app-server"
-    )))
-    .err()
-    .expect("nothing hosts the socket");
+    let err = guild_app_server::daemon::attach()
+        .err()
+        .expect("nothing hosts the socket");
     assert!(err.to_string().contains("not running"), "{err}");
     std::env::remove_var("GUILD_DAEMON_SOCKET");
 }
@@ -160,11 +160,22 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     let _ = std::fs::remove_file(&path);
     inert_token_store(path.parent().unwrap());
 
+    // A signed-in session with no machine identity: every connection reads
+    // it, and the machine link stays parked (no identity, no link).
+    let session = EngineState {
+        auth: AuthState::from_parts(
+            Some(CloudClient {
+                base_url: "http://127.0.0.1:1".into(),
+                token: "tok".into(),
+            }),
+            Some("a@b".into()),
+            None,
+            None,
+        ),
+        ..EngineState::default()
+    };
     let dpath = path.clone();
-    let daemon =
-        tokio::spawn(
-            async move { run_daemon_shared(dpath, Shared::new(EngineState::default())).await },
-        );
+    let daemon = tokio::spawn(async move { run_daemon_shared(dpath, Shared::new(session)).await });
 
     // wait for the endpoint to accept
     let mut a = None;
@@ -182,19 +193,17 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     assert_eq!(hello["result"]["protocol"], 1);
     assert!(hello["result"]["version"].is_string());
 
-    // 2. shared state: A mutates, B observes
+    // 2. shared state: both connections see the one engine session
     let mut b = Client::connect(&path);
-    a.call(
-        "agent.policy.set",
-        json!({"tool": "execute", "policy": "allow"}),
-    );
-    let got = b.call("agent.policy.get", json!({}));
-    assert_eq!(got["result"]["overrides"]["execute"], "allow");
+    let from_a = a.call("session.info", json!({}));
+    assert_eq!(from_a["result"]["email"], "a@b");
+    let from_b = b.call("session.info", json!({}));
+    assert_eq!(from_b["result"], from_a["result"]);
 
     // 3. client disconnect leaves the daemon (and B) working
     drop(a);
-    let got = b.call("agent.policy.get", json!({}));
-    assert!(got.get("error").is_none());
+    let got = b.call("session.info", json!({}));
+    assert_eq!(got["result"]["email"], "a@b");
 
     // 4. a second bind on the same endpoint exits quietly (single instance)
     let r = run_daemon_shared(path.clone(), Shared::new(EngineState::default())).await;

@@ -1,10 +1,14 @@
-//! Local daemon (spec §3.3): one engine process per user, survives client
-//! exit, the only route to the cloud server. Line-delimited JSON-RPC over a
-//! per-user local socket. The GUI and CLI verbs attach as clients.
+//! The engine's local socket: line-delimited JSON-RPC over a per-user Unix
+//! socket / named pipe, the entry point for CLI verbs. The desktop app
+//! hosts it in-process (`run_daemon_shared_reclaiming`) with the same
+//! `Shared` its webview dispatches on
+//! (docs/specs/2026-09-13-single-process-desktop.md); `daemon` runs the
+//! same host headless — the optional systemd unit (`daemon install`) or a
+//! manual fallback. Whoever hosts the socket runs the machine link.
 //!
-//! Lifecycle: spawned on first client attach (detached), owns the session
-//! and all agent runs, exits only on `daemon.shutdown` — which a
-//! version-mismatched client invokes on attach.
+//! Nothing spawns a host on demand: a CLI verb with no host running fails.
+//! A host exits (or, in the app, retires its socket) on `daemon.shutdown`,
+//! which a client of a different build invokes on attach.
 
 use crate::jsonrpc_loop::{run_connection, Shared};
 use anyhow::Context as _;
@@ -160,31 +164,6 @@ pub fn shutdown_running() -> bool {
     true
 }
 
-/// Spawn `bin daemon` fully detached: own process group, no inherited stdio,
-/// so it survives the parent's exit.
-pub fn spawn_detached(bin: &Path) -> anyhow::Result<()> {
-    use std::process::{Command, Stdio};
-    let mut cmd = Command::new(bin);
-    cmd.arg("daemon")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-    cmd.spawn().context("spawn daemon")?;
-    Ok(())
-}
-
 /// hello handshake over a fresh pair; a daemon speaking a different wire
 /// protocol is told to shut down and the caller gets an Err (it respawns a
 /// current daemon). The crate version is informational only — the client
@@ -252,22 +231,20 @@ pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Resul
     Ok(Pair(Box::new(rd), wr, raw))
 }
 
-/// Full blocking client flow: connect → (spawn detached + wait) → handshake.
-/// Used by the GUI (via spawn_blocking) and the CLI verbs. Enforces the
-/// build identity: a daemon from a different build is shut down and
-/// replaced by one spawned from this binary.
-pub fn attach(bin: &Path) -> anyhow::Result<Pair> {
-    attach_with(bin, Some(protocol::rpc::BUILD_ID))
+/// Full blocking client flow: connect (with a short retry) → handshake.
+/// Used by the CLI verbs. Enforces the build identity: a host from a
+/// different build is told to shut down, and the attach waits for the app
+/// to host a current socket.
+pub fn attach() -> anyhow::Result<Pair> {
+    attach_with(Some(protocol::rpc::BUILD_ID))
 }
 
 /// `attach` with an explicit build-expectation override (None = accept any
 /// daemon speaking the current protocol — used by tests).
-pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<Pair> {
+pub fn attach_with(expected_build: Option<&str>) -> anyhow::Result<Pair> {
     // No spawn fallback: the single-process app hosts the socket itself; a
     // CLI verb without a running app fails instead of forking a headless
-    // engine (docs/specs/2026-09-13-single-process-desktop.md). `bin` is
-    // unused.
-    let _ = bin;
+    // engine (docs/specs/2026-09-13-single-process-desktop.md).
     for _ in 0..10u8 {
         if let Ok(pair) = try_connect() {
             if let Ok(pair) = handshake_with(pair, expected_build) {
@@ -305,7 +282,7 @@ pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<
     }
     spawn_machine_link(&shared);
     // Every entry point owns a reaper for its host lifetime: without it,
-    // completed agent runs accumulate in Shared.agents until shutdown.
+    // completed chat streams accumulate in Shared.streams until shutdown.
     // host_shared_socket itself stays reaper-free — the reclaiming entry
     // manages a fresh reaper per host cycle instead.
     let reaper = spawn_reaper(&shared);
@@ -444,12 +421,12 @@ fn spawn_machine_link(
     )
 }
 
-/// Reaps finished agent runs so the JoinSet doesn't grow unbounded. One
+/// Reaps finished chat streams so the JoinSet doesn't grow unbounded. One
 /// reaper per host cycle: the caller aborts it with the link/watcher pair
 /// before the next cycle's spawn — a failed host cycle must not leave a
 /// reaper behind.
 fn spawn_reaper(shared: &Shared) -> tokio::task::JoinHandle<()> {
-    let agents = shared.agents.clone();
+    let streams = shared.streams.clone();
     let mut reaper_shutdown = shared.shutdown.subscribe();
     tokio::spawn(async move {
         loop {
@@ -461,7 +438,7 @@ fn spawn_reaper(shared: &Shared) -> tokio::task::JoinHandle<()> {
                     }
                 }
             }
-            let mut guard = agents.lock().await;
+            let mut guard = streams.lock().await;
             while guard.try_join_next().is_some() {}
         }
     })
@@ -820,8 +797,8 @@ mod entry_reaper_tests {
     use super::*;
     use crate::jsonrpc_loop::Shared;
 
-    /// Shared shape for a daemon entry: every completed agent run the
-    /// reaper must drain lands in `agents`.
+    /// Shared shape for a daemon entry: every completed chat stream the
+    /// reaper must drain lands in `streams`.
     type Entry = fn(
         PathBuf,
         Shared,
@@ -839,21 +816,21 @@ mod entry_reaper_tests {
         let daemon = tokio::spawn(entry(path.clone(), shared.clone()));
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-        // Three agent tasks that finish immediately: without a reaper they
+        // Three stream tasks that finish immediately: without a reaper they
         // stay in the JoinSet forever.
         {
-            let mut agents = shared.agents.lock().await;
+            let mut streams = shared.streams.lock().await;
             for _ in 0..3 {
-                agents.spawn(async {});
+                streams.spawn(async {});
             }
         }
         // One reaper cadence (10 s) plus margin.
         tokio::time::sleep(std::time::Duration::from_secs(12)).await;
         {
-            let mut agents = shared.agents.lock().await;
+            let mut streams = shared.streams.lock().await;
             assert!(
-                agents.try_join_next().is_none(),
-                "the daemon entry's reaper drained the completed agent tasks"
+                streams.try_join_next().is_none(),
+                "the daemon entry's reaper drained the completed stream tasks"
             );
         }
         shared.shutdown.send(true).ok();
@@ -862,13 +839,13 @@ mod entry_reaper_tests {
     }
 
     #[tokio::test]
-    async fn the_ordinary_daemon_entry_reaps_completed_agent_tasks() {
+    async fn the_ordinary_daemon_entry_reaps_completed_stream_tasks() {
         drive_entry_reaping(|p, s| Box::pin(async move { run_daemon_shared(p, s).await })).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn the_reclaiming_daemon_entry_reaps_completed_agent_tasks() {
+    async fn the_reclaiming_daemon_entry_reaps_completed_stream_tasks() {
         // This dev box runs a live guild-daemon unit; the reclaiming entry
         // would wait for it to retire forever. The override pins the probe.
         crate::daemon_install::set_unit_active_override(Some(false));

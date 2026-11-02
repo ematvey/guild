@@ -88,10 +88,6 @@
           "role": "ui"
         },
         {
-          "where": "crates/app-server/src/agent_session.rs",
-          "role": "domain"
-        },
-        {
           "where": "apps/server/src/harness/approvals.ts",
           "role": "domain"
         },

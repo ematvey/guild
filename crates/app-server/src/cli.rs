@@ -1,6 +1,7 @@
-//! Headless CLI verbs. All cloud-touching verbs go through the local daemon
-//! (the only session-token route to the server, spec §3.3); `verify` stays
-//! offline. Shared by the guild-app-server and Guild binaries.
+//! Headless CLI verbs. All cloud-touching verbs go through the engine's
+//! local socket (hosted by the running desktop app or a headless `daemon`),
+//! so the hosting engine owns the session; `verify` stays offline. Shared
+//! by the guild-app-server and Guild binaries.
 
 use crate::daemon_client::DaemonClient;
 use anyhow::Context as _;
@@ -17,13 +18,8 @@ pub fn flag(args: &[String], name: &str) -> anyhow::Result<String> {
         .context(format!("{name} needs a value"))
 }
 
-/// The daemon should be a copy of this very binary (single-binary design).
-fn this_bin() -> anyhow::Result<PathBuf> {
-    std::env::current_exe().context("no current exe")
-}
-
 pub fn cmd_login(args: &[String]) -> anyhow::Result<()> {
-    let mut client = DaemonClient::attach(&this_bin()?)?;
+    let mut client = DaemonClient::attach()?;
     let res = match flag(args, "--token").or_else(|_| flag(args, "--code")) {
         // Pairing code (web-issued `g1|<url>|<secret>`): the code carries the
         // server URL itself, so --url is not needed.
@@ -49,7 +45,7 @@ pub fn cmd_login(args: &[String]) -> anyhow::Result<()> {
 pub fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
     let text = args.last().context("missing prompt text")?.clone();
     let model = flag(args, "--model").unwrap_or_else(|_| crate::jsonrpc_loop::DEFAULT_MODEL.into());
-    let mut client = DaemonClient::attach(&this_bin()?)?;
+    let mut client = DaemonClient::attach()?;
     let (res, events) = client.call_until_event(
         "chat.send",
         json!({"text": text, "model": model}),
@@ -78,7 +74,7 @@ pub fn cmd_publish(args: &[String]) -> anyhow::Result<()> {
     let kind = flag(args, "--kind")?;
     let dir = absolute_cli_path(&flag(args, "--dir")?)?;
     let version = flag(args, "--version")?;
-    let mut client = DaemonClient::attach(&this_bin()?)?;
+    let mut client = DaemonClient::attach()?;
     let res = client.call(
         "registry.publish",
         json!({"kind": kind, "dir": dir, "version": version}),
@@ -96,7 +92,7 @@ pub fn cmd_install(args: &[String]) -> anyhow::Result<()> {
     let slug = flag(args, "--slug")?;
     let version = flag(args, "--version").ok();
     let project = absolute_cli_path(&flag(args, "--project").unwrap_or_else(|_| ".".into()))?;
-    let mut client = DaemonClient::attach(&this_bin()?)?;
+    let mut client = DaemonClient::attach()?;
     let res = client.call(
         "registry.install",
         json!({"slug": slug, "version": version, "project_dir": project}),

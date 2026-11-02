@@ -1048,8 +1048,8 @@ pub async fn watch_token_store(
         // every auth transition takes.
         {
             // The in-memory session follows the store too: the daemon built
-            // its engine state's auth at boot, and the unit's CLI / agent.start /
-            // registry.* read it — a re-pair must not leave stale auth.
+            // its engine state's auth at boot, and the unit's CLI verbs
+            // (chat.send, registry.*) read it — a re-pair must not leave stale auth.
             // Memory-only: no persist, and the link send below keeps its
             // dedup. A different principal (sign-out, or another account's
             // login) resets the account-owned execution state like an

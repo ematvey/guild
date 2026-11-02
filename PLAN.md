@@ -12,6 +12,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The engine no longer carries a turn-driving stack (2026-11-02).** Agent
+  turns run in the TS server's durable harness, so the engine's own
+  `agent.start` / `agent.approve` / `agent.policy.*` surface, the approval
+  plumbing behind it (`agent_session.rs` with the approval policy types,
+  `agent_start.rs`), the engine-side MCP client (`mcp.rs`, the `rmcp`
+  dependency), the `models.list` /
+  `machine.info` verbs, `daemon::spawn_detached`, the cloud calls only
+  that path made, and the artifact prefetch paths had no live caller:
+  neither the webview nor the CLI sent those methods. They are deleted.
+  What stays is what something calls: `chat.send` (the CLI's `chat` verb,
+  its stream mapping now in `chat_stream.rs`; the JoinSet that owns its
+  streams is renamed `Shared.streams`), auth/session/workspace verbs,
+  `machine.identify`, `registry.*`, `fs.*`, and the socket lifecycle verbs.
+  `attach()` drops the binary path it ignored.
+
 - **Second review pass: isolation, delivery and lifecycle fixes
   (2026-11-02).** A full architecture review found bugs the earlier pass
   missed; this entry records the rules the fixes set.

@@ -1,7 +1,6 @@
-pub mod agent_session;
-pub mod agent_start;
 pub mod artifacts;
 pub mod auth_state;
+pub mod chat_stream;
 pub mod cli;
 pub mod cloud;
 pub mod daemon;
@@ -14,7 +13,6 @@ pub mod jsonrpc_loop;
 pub mod machine_frames;
 pub mod machine_link;
 pub mod machine_meta;
-pub mod mcp;
 pub mod registry_client;
 pub mod remote_context;
 pub mod session_store;

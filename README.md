@@ -4,8 +4,10 @@ Self-hosted replacement for OpenAI Codex / Claude Cowork at the organization
 level. Orgs own their data and their LLM resources.
 
 - **Desktop client** — Tauri v2 (`apps/desktop`): minimal codex/cowork-style UI.
-- **Local engine** — `guild-app-server` (`crates/app-server`): agent loop,
-  tools, MCP; talks to the UI over stdio JSON-RPC and to the cloud over HTTPS.
+- **Local engine** — `guild-app-server` (`crates/app-server`): runs the
+  tools the server dispatches over the machine link, context prepare, skills
+  sync and the local file bridge; agent turns run server-side. Hosted
+  in-process by the desktop app; CLI verbs reach it over a local socket.
 - **Cloud server** — TypeScript Fastify app (`apps/server`) on
   `@earendil-works/pi-durable`: auth (managed + OIDC), LLM gateway
   (OpenAI-shaped + Anthropic-shaped), chats/turns (durable conversations),
@@ -17,7 +19,7 @@ TS-server rebuild design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`
 
 ```
 crates/protocol     shared types (JSON-RPC + cloud API)
-crates/guild-core   agent loop, tools, provider clients
+crates/guild-core   tools, registry bundle codec
 crates/app-server   local engine binary
 apps/server         TS cloud server (Fastify + pi-durable) + SQL migrations
 apps/desktop        Tauri desktop client (also the web SPA)

@@ -1,12 +1,12 @@
-//! Blocking client for the local daemon — every headless CLI verb goes
-//! through it so the daemon is the only cloud route (spec §3.3).
+//! Blocking client for the engine's local socket — every cloud-touching
+//! CLI verb goes through it, so the hosting engine (the desktop app, or a
+//! headless `daemon`) owns the session.
 
 use crate::daemon::{attach, Pair};
 use anyhow::Context as _;
 use protocol::rpc::Request;
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
 
 pub struct DaemonClient {
     reader: BufReader<Box<dyn std::io::Read + Send>>,
@@ -24,8 +24,8 @@ impl DaemonClient {
         }
     }
 
-    pub fn attach(bin: &Path) -> anyhow::Result<Self> {
-        Ok(Self::from_pair(attach(bin)?))
+    pub fn attach() -> anyhow::Result<Self> {
+        Ok(Self::from_pair(attach()?))
     }
 
     fn write_req(&mut self, id: u64, method: &str, params: &Value) -> anyhow::Result<()> {
@@ -196,7 +196,7 @@ mod tests {
         // own response
         let mut seen = Vec::new();
         let res2 = client
-            .call_streaming("agent.policy.get", json!({}), |ev| seen.push(ev))
+            .call_streaming("session.info", json!({}), |ev| seen.push(ev))
             .unwrap();
         assert_eq!(res2["ok"], true);
         assert_eq!(seen.len(), 1);

@@ -10,11 +10,11 @@
     "unmapped_files": 2
   },
   "report": {
-    "files": 425,
-    "loc": 92649,
-    "test_files": 181,
-    "test_loc": 34930,
-    "milestone_tags": 27
+    "files": 427,
+    "loc": 91102,
+    "test_files": 180,
+    "test_loc": 34868,
+    "milestone_tags": 26
   },
   "declared_seams": 11
 }

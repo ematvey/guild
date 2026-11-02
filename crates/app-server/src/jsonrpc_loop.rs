@@ -1,14 +1,14 @@
-//! JSON-RPC stdio loop — async, so agent runs and approvals proceed
-//! concurrently (spec §3.2, §6). The UI-facing surface of the local engine.
+//! JSON-RPC line loop — the dispatch surface of the local engine, served
+//! to the desktop webview in-process and to CLI verbs over the local socket.
+//! Agent turns run server-side; the engine owns the session, the machine
+//! link (dispatched tools, context prepare, skills sync), and the local file
+//! bridge.
 //!
-//! Methods: `login`, `pair`, `chat.send` (plain chat over the gateway
-//! workflow), `agent.start` (the gateway shim), `agent.approve`,
-//! `machine.identify`, `fs.*` (the file bridge), `session.*`, `models.list`,
-//! `registry.*`, `mcp.*`. Streaming arrives as events.
+//! Methods: `login`, `pair`, `session.*`, `workspace.*`, `machine.identify`,
+//! `chat.send` (plain chat over the gateway workflow, the CLI's `chat`
+//! verb), `registry.*`, `fs.*` (the file bridge), `daemon.hello` /
+//! `daemon.shutdown`. Streaming arrives as events.
 
-use crate::agent_session::Approval;
-use crate::agent_session::ApprovalPolicy;
-use crate::agent_session::PendingApprovals;
 use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
 use crate::machine_link::LinkRegistry;
@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
-/// The model a `chat.send` / `agent.start` uses when neither the request
-/// nor the session names one.
+/// The model a `chat.send` uses when neither the request nor the session
+/// names one.
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 #[derive(Default)]
@@ -36,11 +36,6 @@ pub struct EngineState {
     pub model: String,
     pub chat_id: Option<Uuid>,
     pub project_dir: Option<PathBuf>,
-    pub policy: ApprovalPolicy,
-    pub pending: PendingApprovals,
-    /// An agent turn is in flight; a second agent.start would double-bind
-    /// the session's project.
-    pub agent_running: bool,
     /// Bumped on every principal change (sign-out, account switch): async
     /// turn tasks capture it at start and discard their session writes
     /// when it moved — a response that arrives after a clear must not
@@ -59,17 +54,18 @@ enum Incoming {
     },
 }
 
-/// Engine state shared by every client connection (daemon groundwork):
-/// one engine state, one event fan-out, one agent JoinSet, one shutdown flag.
+/// Engine state shared by every client connection: one engine state, one
+/// event fan-out, one JoinSet of in-flight chat streams, one shutdown flag.
 #[derive(Clone)]
 pub struct Shared {
     pub session: Arc<Mutex<EngineState>>,
-    /// Broadcast channel for protocol events (agent.*, chat.*). Every
+    /// Broadcast channel for protocol events (chat.*). Every
     /// connected client receives every event. Capacity 256.
     pub events: tokio::sync::broadcast::Sender<Value>,
-    /// Agent runs owned by the daemon (outlive any single client).
-    /// tokio Mutex because we hold the guard across `.await` while draining.
-    pub agents: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
+    /// In-flight `chat.send` streams, owned by the engine (they outlive
+    /// the requesting connection). tokio Mutex because we hold the guard
+    /// across `.await` while draining.
+    pub streams: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     /// Path→artifact-id index shared by every run of this engine process
     /// (tool artifacts: touch-time lookups hit what prefetch learned).
     pub artifacts: Arc<ArtifactIndex>,
@@ -93,7 +89,7 @@ impl Shared {
         Self {
             session: Arc::new(Mutex::new(session)),
             events,
-            agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+            streams: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
             links: LinkRegistry::new(),
@@ -170,7 +166,7 @@ where
     // buffered to the writer.
     let mut event_rx = shared.events.subscribe();
     // tokio Mutex: the guard is held across .await here.
-    while shared.agents.lock().await.join_next().await.is_some() {}
+    while shared.streams.lock().await.join_next().await.is_some() {}
     drain_events(&mut event_rx, &mut writer);
     let session = match Arc::try_unwrap(shared.session) {
         Ok(m) => m.into_inner().expect("session lock"),
@@ -238,11 +234,11 @@ where
 
     // Per-connection ordered queue: requests that read or change the
     // session run one after another in arrival order (a login lands before
-    // the chat.send that follows it). Long phases — a chat's stream, an
-    // agent run — are spawned by their handlers, so the queue only waits
+    // the chat.send that follows it). Long phases — a chat's stream — are
+    // spawned by their handlers, so the queue only waits
     // for each request's session-touching part. The select loop below never
     // awaits a handler: events keep flowing and out-of-band requests
-    // (approvals, hello, shutdown) answer at once.
+    // (hello, shutdown) answer at once.
     let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<Request>();
     let ordered = {
         let shared = shared.clone();
@@ -314,7 +310,7 @@ where
 /// ordered queue: none of them waits on the session order, and each must
 /// answer while a queued request (a login, a chat's prelude) is in flight.
 fn is_out_of_band(method: &str) -> bool {
-    matches!(method, "agent.approve" | "daemon.hello" | "daemon.shutdown")
+    matches!(method, "daemon.hello" | "daemon.shutdown")
 }
 
 /// The event a client receives when its subscriber fell behind the
@@ -352,23 +348,6 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "login" => login_task(shared.clone(), req, out_tx).await,
         "pair" => pair_task(shared.clone(), req, out_tx).await,
         "chat.send" => chat_send_task(shared.clone(), req, out_tx).await,
-        "machine.info" => {
-            // Hostname label sent during machine registration; the id is
-            // generated webview-side (stable per app install).
-            let name = std::env::var("COMPUTERNAME")
-                .ok()
-                .or_else(|| {
-                    std::fs::read_to_string("/etc/hostname")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                })
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "guild-machine".to_string());
-            let _ = out_tx.send(response_value(
-                req.id,
-                Ok(Response::ok(req.id, serde_json::json!({ "name": name }))),
-            ));
-        }
         "session.info" => {
             let s = shared.session.guard();
             let result = match s.auth.cloud() {
@@ -399,39 +378,6 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "machine.identify" => {
             tokio::spawn(machine_identify(shared.clone(), req, out_tx));
         }
-        "models.list" => {
-            let session = shared.session.clone();
-            let out_tx = out_tx.clone();
-            tokio::spawn(async move {
-                let result = async {
-                    let cloud = session
-                        .lock()
-                        .unwrap()
-                        .auth
-                        .cloud()
-                        .cloned()
-                        .context("not logged in — call login first")?;
-                    let models = cloud.list_models().await?;
-                    Ok(Response::ok(
-                        req.id,
-                        serde_json::json!({ "models": models }),
-                    ))
-                };
-                let _ = out_tx.send(response_value(req.id, result.await));
-            });
-        }
-        "agent.start" => {
-            let _ = shared
-                .agents
-                .lock()
-                .await
-                .spawn(agent_start_task(shared.clone(), req, out_tx));
-        }
-        "agent.approve" => {
-            tokio::spawn(agent_approve(shared.session.clone(), req, out_tx));
-        }
-        "agent.policy.set" => policy_set(shared.session.clone(), req, out_tx),
-        "agent.policy.get" => policy_get(shared.session.clone(), req, out_tx),
         "daemon.hello" => {
             // Version + protocol handshake for daemon clients (wire method
             // exists before any client uses it). `pid` lets the GUI's
@@ -565,16 +511,13 @@ fn auth_change_with_store(
 /// not leak into a new principal (or the signed-out state): a retained chat
 /// id would send the next user's turns into the old chat under the new
 /// credential — authz failures at best, another member's conversation at
-/// worst. In-flight agent runs keep their own cloud client and fail on their
-/// revoked bearer; the epoch bump makes their late writes stale and the
-/// cleared flags let the new principal start fresh.
+/// worst. In-flight requests keep their own cloud client and fail on their
+/// revoked bearer; the epoch bump makes their late writes stale.
 pub(crate) fn reset_if_principal_changed(s: &mut EngineState, previous: Option<(String, String)>) {
     if principal_of(s) != previous {
         s.chat_id = None;
         s.project_dir = None;
         s.model = String::new();
-        s.pending = PendingApprovals::default();
-        s.agent_running = false;
         s.epoch = s.epoch.wrapping_add(1);
     }
 }
@@ -781,19 +724,8 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-/// Releases the agent-run flag for a finished run — but only when the
-/// session still belongs to the principal/run that started it (the epoch
-/// is captured at start and bumped by every sign-out/account switch). A
-/// stale run's completion must not clear a NEW principal's in-flight run.
-fn finish_agent_run(shared: &Shared, epoch: u64) {
-    let mut s = shared.session.guard();
-    if s.epoch == epoch {
-        s.agent_running = false;
-    }
-}
-
 /// The effective model for a `chat.send`: an explicit `params.model`
-/// overrides the session's current model (same as agent.start); without
+/// overrides the session's current model; without
 /// one, the session model stands, falling back to the default.
 fn resolve_chat_model(session_model: &str) -> String {
     if session_model.is_empty() {
@@ -847,7 +779,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
         }
     };
     let events = shared.events.clone();
-    shared.agents.lock().await.spawn(async move {
+    shared.streams.lock().await.spawn(async move {
         // History lives in the server's thread journal; the client sends
         // only the new user message.
         let result = async {
@@ -855,7 +787,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 .chat_stream(chat_id, &model, &[Message::user(text)])
                 .await?;
             let (message_id, cost_usd, tokens_in, tokens_out) =
-                crate::agent_start::drive_chat(events, stream).await?;
+                crate::chat_stream::drive_chat(events, stream).await?;
             Ok(Response::ok(
                 req.id,
                 json!({"chat_id": chat_id, "message_id": message_id, "cost_usd": cost_usd, "tokens_in": tokens_in, "tokens_out": tokens_out}),
@@ -864,270 +796,6 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
         .await;
         let _ = out_tx.send(response_value(req.id, result));
     });
-}
-
-/// Starts an agent turn in the background: the shim (agent_start.rs) —
-/// validates params, binds the machine-bound project, and drives the same
-/// durable gateway workflow the GUI uses; progress streams as agent.*
-/// events mapped from the workflow's frames. Acks once the chat is bound;
-/// failures before the ack are RPC errors, failures during the run arrive
-/// as agent.error events.
-async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    // 1. Engine state under the lock; context assembly and all HTTP after.
-    let (cloud, project_dir, model, prompt, machine_id, epoch) = match (|| {
-        let mut s = shared.session.guard();
-        let cloud = s
-            .auth
-            .cloud()
-            .cloned()
-            .context("not logged in — call login first")?;
-        let machine_id = s
-            .auth
-            .machine_id()
-            .context(
-                "no machine identity reported — call machine.identify first (the workflow dispatches tools to this machine's executor link)",
-            )?
-            .to_string();
-        if let Some(d) = req.params["project_dir"].as_str() {
-            s.project_dir = Some(PathBuf::from(d));
-        }
-        let project_dir = s
-            .project_dir
-            .clone()
-            .context("missing project_dir — pass it in agent.start params")?;
-        if let Some(m) = req.params["model"].as_str() {
-            s.model = m.to_string();
-        }
-        if s.model.is_empty() {
-            s.model = DEFAULT_MODEL.into();
-        }
-        anyhow::ensure!(
-            !s.agent_running,
-            "an agent run is already in progress for this session"
-        );
-        let prompt = param(&req, "prompt")?.to_string();
-        // Set only after every param check: an early error return must not
-        // wedge the session flag (every later start would report "already
-        // in progress" until restart).
-        s.agent_running = true;
-        Ok((
-            cloud,
-            project_dir,
-            s.model.clone(),
-            prompt,
-            machine_id,
-            s.epoch,
-        ))
-    })() {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = out_tx.send(response_value(req.id, Err(e)));
-            return;
-        }
-    };
-
-    // Caller-assembled context (the client owns discovery — the webview
-    // via lib/turn-context.ts, an engine client via its own assembly over the
-    // fs.* bridge): the shim forwards it into the additive request fields.
-    let skills_index = req.params["skills_index"].as_str().map(str::to_string);
-    let agents_md = req.params["agents_md"].as_str().map(str::to_string);
-
-    // 2. The workflow dispatches tools to the machine the project is bound
-    //    to — it must be this daemon's own executor link. Then chat
-    //    attach/create. Failures here are RPC errors (nothing acked yet).
-    let bound = async {
-        let project =
-            crate::agent_start::ensure_project(&cloud, &project_dir.to_string_lossy(), &machine_id)
-                .await?;
-        // Every session read/write after an await is guarded by the epoch
-        // captured at start: a sign-out/account switch meanwhile means this
-        // start belongs to the previous account — it neither consumes nor
-        // installs a chat in the new account's session.
-        let chat_id = {
-            let s = shared.session.guard();
-            anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
-            s.chat_id
-        };
-        let chat_id = match chat_id {
-            Some(c) => c,
-            None => {
-                let c = cloud.create_chat(Some("agent")).await?;
-                let mut s = shared.session.guard();
-                anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
-                *s.chat_id.get_or_insert(c)
-            }
-        };
-        Ok::<_, anyhow::Error>((project, chat_id))
-    };
-    let (project, chat_id) = match bound.await {
-        Ok(v) => v,
-        Err(e) => {
-            finish_agent_run(&shared, epoch);
-            let _ = out_tx.send(response_value(
-                req.id,
-                Err(anyhow::anyhow!("agent start failed: {e:#}")),
-            ));
-            return;
-        }
-    };
-
-    // Rebuild the artifact path→id index from the thread log and prefetch
-    // every artifact missing on disk, in the background.
-    crate::artifacts::spawn_thread_sync_prefetch(
-        cloud.clone(),
-        shared.artifacts.clone(),
-        project_dir.clone(),
-        chat_id,
-    );
-
-    // 3. Ack before the run: progress arrives as events, run failures as
-    //    agent.error.
-    let _ = out_tx.send(response_value(
-        req.id,
-        Ok(Response::ok(
-            req.id,
-            serde_json::json!({"started": true, "chat_id": chat_id}),
-        )),
-    ));
-
-    let (policy, pending) = {
-        let s = shared.session.guard();
-        (s.policy.clone(), s.pending.clone())
-    };
-    let streamed = cloud
-        .stream_completion(protocol::api::ChatCompletionRequest {
-            server_workspace: None,
-            send_mode: None,
-            user_message_id: None,
-            chat_id,
-            model,
-            messages: vec![Message::user(prompt)],
-            // The workflow declares the client tools from the project's
-            // machine binding; the daemon's link answers the dispatches.
-            tools: None,
-            system: None,
-            client_tools: true,
-            attachment_ids: Vec::new(),
-            project_id: Some(project.id),
-            skills_index,
-            agents_md,
-        })
-        .await;
-    let run = match streamed {
-        Ok(stream) => {
-            crate::agent_start::drive(
-                cloud.clone(),
-                chat_id,
-                policy,
-                pending,
-                shared.events.clone(),
-                stream,
-            )
-            .await
-        }
-        Err(e) => Err(e),
-    };
-    finish_agent_run(&shared, epoch);
-    if let Err(e) = run {
-        // Surface model/policy/stream failures so the client unblocks
-        // instead of waiting for agent.done forever.
-        let _ = shared.events.send(
-            serde_json::to_value(protocol::rpc::Event::new(
-                "agent.error",
-                serde_json::json!({ "message": e.to_string() }),
-            ))
-            .unwrap_or(Value::Null),
-        );
-    }
-}
-
-/// Resolves a pending approval. Polls briefly so an approve that races the
-/// registration (UI sends immediately after the event) still lands.
-async fn agent_approve(
-    session: Arc<Mutex<EngineState>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
-    let request_id = match param(&req, "request_id") {
-        Ok(r) => r.to_string(),
-        Err(e) => {
-            let _ = out_tx.send(response_value(req.id, Err(e)));
-            return;
-        }
-    };
-    let decision = match param(&req, "decision") {
-        Ok("approve") => crate::agent_session::ApprovalDecision::Approve,
-        Ok("deny") => crate::agent_session::ApprovalDecision::Deny {
-            reason: req.params["reason"]
-                .as_str()
-                .unwrap_or("denied")
-                .to_string(),
-        },
-        Ok(other) => {
-            let _ = out_tx.send(response_value(
-                req.id,
-                Err(anyhow::anyhow!("unknown decision {other}")),
-            ));
-            return;
-        }
-        Err(e) => {
-            let _ = out_tx.send(response_value(req.id, Err(e)));
-            return;
-        }
-    };
-    let mut sender = None;
-    for _ in 0..100 {
-        sender = session
-            .lock()
-            .unwrap()
-            .pending
-            .lock()
-            .unwrap()
-            .remove(&request_id);
-        if sender.is_some() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let result = match sender {
-        Some(tx) => match tx.send(decision) {
-            Ok(()) => Ok(Response::ok(req.id, json!({}))),
-            Err(_) => Err(anyhow::anyhow!("approval already resolved")),
-        },
-        None => Err(anyhow::anyhow!("no such pending approval: {request_id}")),
-    };
-    let _ = out_tx.send(response_value(req.id, result));
-}
-
-fn policy_set(
-    session: Arc<Mutex<EngineState>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
-    let result = (|| {
-        let tool = param(&req, "tool")?.to_string();
-        let policy: Approval = serde_json::from_value(req.params["policy"].clone())
-            .context("policy must be allow|ask|never")?;
-        session
-            .lock()
-            .unwrap()
-            .policy
-            .overrides
-            .insert(tool, policy);
-        Ok(Response::ok(req.id, json!({})))
-    })();
-    let _ = out_tx.send(response_value(req.id, result));
-}
-
-fn policy_get(
-    session: Arc<Mutex<EngineState>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
-    let policy = session.guard().policy.clone();
-    let _ = out_tx.send(
-        serde_json::to_value(Response::ok(req.id, serde_json::to_value(&policy).unwrap())).unwrap(),
-    );
 }
 
 async fn registry_publish(
@@ -1523,7 +1191,7 @@ mod machine_link_tests {
     }
 
     /// `chat.send --model X` applies even when the session already has a
-    /// model — the explicit request wins (agent.start semantics), and a
+    /// model — the explicit request wins, and a
     /// send without a model keeps the session's standing model.
     #[test]
     fn chat_send_model_applies_over_an_existing_session_model() {
@@ -1559,7 +1227,6 @@ mod machine_link_tests {
             s.chat_id = Some(Uuid::now_v7());
             s.project_dir = Some(std::path::PathBuf::from("/tmp/a"));
             s.model = "m".into();
-            s.agent_running = true;
         }
 
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
@@ -1570,7 +1237,6 @@ mod machine_link_tests {
             assert!(s.chat_id.is_none());
             assert!(s.project_dir.is_none());
             assert!(s.model.is_empty());
-            assert!(!s.agent_running);
         }
 
         // Logging back in as a DIFFERENT account starts clean too.
@@ -1611,61 +1277,8 @@ mod machine_link_tests {
 }
 
 #[cfg(test)]
-mod agent_start_tests {
+mod session_epoch_tests {
     use super::*;
-
-    #[tokio::test]
-    async fn missing_prompt_does_not_wedge_the_session_flag() {
-        // Logged in with a machine identity so the closure reaches the
-        // agent_running guard and the prompt check (EngineState::default fails
-        // earlier, at the login gate, which would make this vacuous).
-        let session = EngineState {
-            auth: crate::auth_state::AuthState::from_parts(
-                Some(CloudClient {
-                    base_url: "http://srv".into(),
-                    token: "tok".into(),
-                }),
-                Some("a@b".into()),
-                Some("mid".into()),
-                None,
-            ),
-            ..Default::default()
-        };
-        let shared = Shared::new(session);
-        let req = |id: u64| Request {
-            jsonrpc: "2.0".into(),
-            id,
-            protocol: protocol::rpc::PROTOCOL_VERSION,
-            method: "agent.start".into(),
-            params: serde_json::json!({ "project_dir": "/tmp/x" }),
-        };
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-        agent_start_task(shared.clone(), req(1), out_tx.clone()).await;
-        let first = out_rx.recv().await.unwrap();
-        let msg = first["error"]["message"].as_str().unwrap_or_default();
-        assert!(
-            msg.contains("missing prompt"),
-            "the start must fail at the prompt check, not earlier: {first}"
-        );
-        assert!(
-            !first["error"]["message"]
-                .as_str()
-                .unwrap_or("")
-                .contains("already in progress"),
-            "the flag must not wedge: {first}"
-        );
-        assert!(!shared.session.guard().agent_running);
-
-        // The next start reaches the real validation path (not logged in
-        // here) instead of the false "already in progress".
-        agent_start_task(shared.clone(), req(2), out_tx).await;
-        let second = out_rx.recv().await.unwrap();
-        let msg = second["error"]["message"].as_str().unwrap_or_default();
-        assert!(
-            !msg.contains("already in progress"),
-            "session wedged by the failed start: {second}"
-        );
-    }
 
     /// The verifier's interleaving against the REAL caller: a chat.send
     /// whose create_chat response is withheld across a session.clear (or a
@@ -1796,96 +1409,6 @@ mod agent_start_tests {
             seen[hello].1 < std::time::Duration::from_secs(2),
             "hello waited for the login: {seen:?}"
         );
-    }
-
-    /// An account switch while agent.start's project lookup is withheld:
-    /// the start belongs to the previous account, so it neither creates nor
-    /// installs a chat into the new account's session (the epoch captured at
-    /// start is the guard — never a re-read after the await).
-    #[tokio::test]
-    async fn an_account_switch_during_the_project_lookup_installs_nothing() {
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/api/v1/projects"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"projects": [{
-                        "id": Uuid::now_v7(),
-                        "name": "x",
-                        "folder": "/tmp/x",
-                        "machine_id": "mid",
-                        "machine_label": null,
-                        "created_at": "2026-01-01T00:00:00Z"
-                    }]}))
-                    .set_delay(std::time::Duration::from_millis(800)),
-            )
-            .mount(&server)
-            .await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/api/v1/chats"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "id": Uuid::now_v7(),
-                    "org_id": Uuid::now_v7(),
-                    "user_id": Uuid::now_v7(),
-                    "created_at": "2026-01-01T00:00:00Z"
-                })),
-            )
-            .mount(&server)
-            .await;
-        let session = EngineState {
-            auth: crate::auth_state::AuthState::from_parts(
-                Some(CloudClient {
-                    base_url: server.uri(),
-                    token: "tok-a".into(),
-                }),
-                Some("a@b".into()),
-                Some("mid".into()),
-                None,
-            ),
-            ..Default::default()
-        };
-        let shared = Shared::new(session);
-        let req = Request {
-            jsonrpc: "2.0".into(),
-            id: 1,
-            protocol: protocol::rpc::PROTOCOL_VERSION,
-            method: "agent.start".into(),
-            params: serde_json::json!({ "project_dir": "/tmp/x", "prompt": "hi" }),
-        };
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-        let task = tokio::spawn(agent_start_task(shared.clone(), req, out_tx));
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        // A → B while the lookup is parked.
-        auth_change_with_store(
-            &shared,
-            AuthChange::Login {
-                base_url: server.uri(),
-                token: "tok-b".into(),
-                email: "b@b".into(),
-            },
-            None,
-        )
-        .unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(5), task)
-            .await
-            .unwrap()
-            .unwrap();
-        let reply = out_rx.recv().await.unwrap();
-        assert!(reply["error"].is_object(), "the stale start fails: {reply}");
-        assert!(
-            shared.session.guard().chat_id.is_none(),
-            "A's chat must not be installed into B's session"
-        );
-        let created = server
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/api/v1/chats")
-            .count();
-        assert_eq!(created, 0, "no chat is created for the stale start");
     }
 
     /// A login whose token.json write fails still changes the in-memory

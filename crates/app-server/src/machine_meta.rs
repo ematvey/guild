@@ -98,8 +98,8 @@ pub fn machine_meta() -> MachineMeta {
     }
 }
 
-/// Hostname label reported at connect (same sources as the machine.info
-/// RPC): COMPUTERNAME on Windows, /etc/hostname elsewhere.
+/// Hostname label reported at connect: COMPUTERNAME on Windows,
+/// /etc/hostname elsewhere.
 pub fn hostname_label() -> String {
     std::env::var("COMPUTERNAME")
         .ok()

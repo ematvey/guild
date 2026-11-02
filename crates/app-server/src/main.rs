@@ -1,13 +1,15 @@
-//! guild-app-server — the local engine (spec §3.2).
+//! guild-app-server — the local engine (spec §3.2) as a standalone binary.
+//! The shipped desktop app links the same library and runs the engine
+//! in-process (docs/specs/2026-09-13-single-process-desktop.md); this
+//! binary is the dev/test and headless-host surface.
 //!
-//! - No args: JSON-RPC loop on stdio (dev/test surface; the shipped app
-//!   uses the daemon).
-//! - `daemon`: the per-user daemon — shared engine, survives client exit,
-//!   the only session-token route to the cloud server.
+//! - No args: JSON-RPC loop on stdio (dev/test surface).
+//! - `daemon`: host the engine's local socket headless — the same engine
+//!   and dispatch surface the app hosts in-process.
 //! - `daemon install [--linger]` / `status` / `uninstall`: manage the
-//!   daemon as a systemd user unit (Linux) — supervised boot persistence.
-//! - `login --url U --email E --password P`: headless login via the daemon.
-//! - `chat --model M "text"`: headless chat round-trip via the daemon.
+//!   headless host as a systemd user unit (Linux).
+//! - `login --url U --email E --password P`: login via the socket host.
+//! - `chat --model M "text"`: chat round-trip via the socket host.
 
 use guild_app_server::{cli, jsonrpc_loop};
 

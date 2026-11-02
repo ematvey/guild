@@ -6,7 +6,7 @@
   "concepts": [
     {
       "id": "daemon",
-      "definition": "The per-user engine process that owns sessions and agent runs across client exits.",
+      "definition": "The engine's local socket host: the desktop app in-process, or a headless `daemon`, serving CLI verbs on one shared engine session.",
       "canonical": "crates/app-server/src/daemon.rs",
       "types": [
         "Pair"
@@ -74,32 +74,6 @@
           "from": "domain",
           "to": "wire",
           "at": "crates/app-server/src/machine_frames.rs"
-        }
-      ]
-    },
-    {
-      "id": "agent-session",
-      "definition": "One running agent turn inside the local engine, with its model, tools and history.",
-      "canonical": "crates/app-server/src/agent_session.rs",
-      "types": [],
-      "aliases": [
-        "engine-turn"
-      ],
-      "representations": [
-        {
-          "where": "crates/app-server/src/agent_session.rs",
-          "role": "domain"
-        },
-        {
-          "where": "crates/app-server/src/agent_start.rs",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "wire",
-          "to": "domain",
-          "at": "crates/app-server/src/agent_start.rs"
         }
       ]
     },
@@ -236,35 +210,6 @@
       ]
     },
     {
-      "id": "mcp-server",
-      "definition": "An external MCP server the engine starts and whose tools it exposes.",
-      "canonical": "crates/app-server/src/mcp.rs",
-      "types": [
-        "McpFile",
-        "McpHandle",
-        "McpServerConfig",
-        "McpTool"
-      ],
-      "aliases": [],
-      "representations": [
-        {
-          "where": "crates/app-server/src/mcp.rs",
-          "role": "domain"
-        },
-        {
-          "where": "apps/server/src/platform/domain/mcp.ts",
-          "role": "wire"
-        }
-      ],
-      "translations": [
-        {
-          "from": "domain",
-          "to": "wire",
-          "at": "apps/server/src/platform/domain/mcp.ts"
-        }
-      ]
-    },
-    {
       "id": "exec-policy",
       "definition": "The static rule set that decides whether a shell command may run, matched before any approval gate.",
       "canonical": "apps/server/src/execpolicy/matcher.ts",
@@ -316,6 +261,10 @@
       "reason": "infrastructure"
     },
     {
+      "where": "crates/app-server/src/chat_stream.rs",
+      "reason": "infrastructure"
+    },
+    {
       "where": "crates/app-server/src/dtrace.rs",
       "reason": "infrastructure"
     },
@@ -325,10 +274,6 @@
     },
     {
       "where": "crates/app-server/src/remote_context.rs",
-      "reason": "infrastructure"
-    },
-    {
-      "where": "crates/app-server/src/mcp.rs",
       "reason": "infrastructure"
     },
     {
@@ -431,11 +376,6 @@
     {
       "where": "crates/app-server/tests/machine_link_reconnect.rs",
       "concept": "machine-link",
-      "role": "wire"
-    },
-    {
-      "where": "crates/app-server/tests/mcp_skills.rs",
-      "concept": "mcp-server",
       "role": "wire"
     },
     {

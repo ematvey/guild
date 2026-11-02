@@ -168,11 +168,15 @@ mutate ⇒ persist ⇒ publish; the RPC verbs are thin over it. The webview
 holds its own session token for direct HTTP; the backend uses its stored
 credentials for the machine socket.
 
-**SRS-18 — Engine entry points ride the gateway.**
-`agent.start` and `chat.send` drive the durable gateway workflow
-(`crates/app-server/src/agent_start.rs`, `drive` / `drive_chat`) and map its `StreamEvent`s onto the
-engine protocol's `agent.*` events; approvals ride the approvals HTTP
-endpoint through the journal. No second completion loop exists.
+**SRS-18 — Agent turns run server-side.**
+The TS server's durable harness drives every agent turn; the engine never
+runs a model loop. The engine's part is executing the tools the server
+dispatches over the machine link, context prepare, skills sync, and the
+`fs.*` file bridge. Its one completion entry point is the CLI's
+`chat.send`: a plain (tool-less) completion over the durable gateway
+workflow, its `StreamEvent`s mapped onto `chat.delta` / `chat.done`
+(`crates/app-server/src/chat_stream.rs`). No second completion loop
+exists.
 
 ## 5. Machine registry + WS transport
 
@@ -393,18 +397,16 @@ handshake in `daemon.hello`). Dispatch table in
 `crates/app-server/src/jsonrpc_loop.rs`:
 
 - Auth/session: `login`, `pair`, `session.info`, `session.clear`, 
-  `machine.identify`, `machine.info`, `models.list`.
-- Chat/agent: `chat.send`, `agent.start`, `agent.approve`, 
-  `agent.policy.set`, `agent.policy.get`.
+  `workspace.list`, `workspace.switch`, `machine.identify`.
+- Chat: `chat.send` (the CLI's `chat` verb).
 - Registry: `registry.publish`, `registry.install`, `registry.uninstall`.
 - File bridge: `fs.scopes`, `fs.read_text`, `fs.list_dir`, `fs.exists`, 
   `fs.write_text`.
 - Lifecycle (CLI handshake): `daemon.hello`, `daemon.shutdown`.
 
 Unknown methods return a standard RPC error. Server-push events ride the
-same connection (`agent.text`, `agent.tool_call`, `agent.tool_result`, 
-`agent.approval_request`, `agent.done`, `agent.error` — the mapping in
-`crates/app-server/src/agent_start.rs::map_frame`).
+same connection (`chat.delta`, `chat.done` — the mapping in
+`crates/app-server/src/chat_stream.rs`).
 
 ## 10. Tool artifacts
 
