@@ -11,28 +11,16 @@
 //! local folder browsing, the daemon trace toggle, and the updater.
 
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
+use guild_app_server::sync::LockExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
-
-/// Poison-tolerant locking: every value guarded here (caches, rpc result
-/// maps, the pending update) stays valid if a holder panicked, so a panic in
-/// one command must not cascade into every later lock.
-trait LockExt<T> {
-    fn guard(&self) -> MutexGuard<'_, T>;
-}
-
-impl<T> LockExt<T> for Mutex<T> {
-    fn guard(&self) -> MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
 
 /// Client-side IPC trace: one line per rpc step into the per-user cache dir
 /// (`dirs::cache_dir()/guild/`, owner-only, size-capped), so a wedge can be
@@ -911,7 +899,12 @@ async fn boot_engine(app: AppHandle) {
     )
     .await
     {
-        Ok(r) => r.unwrap_or_else(|_| Default::default()),
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => {
+            eprintln!("setup: session restore failed: {error:#}; starting signed out");
+            ipc_trace("session_restore_failed", &format!("{error:#}"));
+            Default::default()
+        }
         Err(_) => {
             eprintln!("setup: session restore timed out; starting without a validated session");
             Default::default()

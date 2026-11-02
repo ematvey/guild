@@ -12,6 +12,7 @@ use crate::agent_session::PendingApprovals;
 use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
 use crate::machine_link::LinkRegistry;
+use crate::sync::LockExt;
 use anyhow::Context as _;
 use guild_core::tools::artifacts::ArtifactIndex;
 use protocol::api::Message;
@@ -105,7 +106,7 @@ impl Shared {
     /// reported its machine identity. Called after every auth transition
     /// (inside `AuthState::transition`) and at boot.
     pub fn publish_machine_link(&self) {
-        self.session.lock().unwrap().auth.publish(&self.links);
+        self.session.guard().auth.publish(&self.links);
     }
 }
 
@@ -369,7 +370,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             ));
         }
         "session.info" => {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             let result = match s.auth.cloud() {
                 Some(cloud) => Ok(Response::ok(
                     req.id,
@@ -549,7 +550,7 @@ fn auth_change_with_store(
     change: AuthChange,
     store: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let mut s = shared.session.lock().unwrap();
+    let mut s = shared.session.guard();
     let previous = principal_of(&s);
     // The in-memory transition applies even when persistence fails, so the
     // account-state reset runs before the persistence error propagates.
@@ -617,7 +618,7 @@ async fn machine_identify_with_store(
 async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let target = optional_param(&req, "base_url").map(|b| crate::session_store::normalize_base(&b));
     let cloud = {
-        let s = shared.session.lock().unwrap();
+        let s = shared.session.guard();
         match target.as_deref() {
             Some(base) => s.auth.cloud_of(base).cloned(),
             None => s.auth.cloud().cloned(),
@@ -645,7 +646,7 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
 
 /// Every live workspace plus the active pointer (the switcher's data).
 fn workspace_list(shared: &Shared, req_id: u64) -> anyhow::Result<Response> {
-    let s = shared.session.lock().unwrap();
+    let s = shared.session.guard();
     let (active, rows) = s.auth.workspaces();
     Ok(Response::ok(
         req_id,
@@ -664,7 +665,7 @@ async fn workspace_switch(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     let result = (|| -> anyhow::Result<Response> {
         let base_url = param(&req, "base_url")?.to_string();
         auth_change(&shared, AuthChange::Switch { base_url })?;
-        let s = shared.session.lock().unwrap();
+        let s = shared.session.guard();
         let cloud = s.auth.cloud().context("switch left no active session")?;
         Ok(Response::ok(
             req.id,
@@ -729,7 +730,7 @@ async fn adopt_login_with_identity(
         .cloned();
     if let Some(cloud) = cloud {
         if let Ok((name, logo)) = cloud.org_settings().await {
-            let mut session = shared.session.lock().unwrap();
+            let mut session = shared.session.guard();
             session
                 .auth
                 .apply_org_identity(&base_url, name, logo, store.as_deref());
@@ -785,7 +786,7 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
 /// is captured at start and bumped by every sign-out/account switch). A
 /// stale run's completion must not clear a NEW principal's in-flight run.
 fn finish_agent_run(shared: &Shared, epoch: u64) {
-    let mut s = shared.session.lock().unwrap();
+    let mut s = shared.session.guard();
     if s.epoch == epoch {
         s.agent_running = false;
     }
@@ -809,7 +810,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
     let prelude = async {
         let text = param(&req, "text")?.to_string();
         let (cloud, existing_chat, model, epoch) = {
-            let mut s = shared.session.lock().unwrap();
+            let mut s = shared.session.guard();
             let cloud = s
                 .auth
                 .cloud()
@@ -828,7 +829,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 // Principal/epoch guard: a create_chat response released
                 // after a sign-out or account switch must not restore the
                 // old account's chat id on the new (or signed-out) session.
-                let mut s = shared.session.lock().unwrap();
+                let mut s = shared.session.guard();
                 if s.epoch == epoch && s.chat_id.is_none() {
                     s.chat_id = Some(c);
                 }
@@ -874,7 +875,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     // 1. Engine state under the lock; context assembly and all HTTP after.
     let (cloud, project_dir, model, prompt, machine_id, epoch) = match (|| {
-        let mut s = shared.session.lock().unwrap();
+        let mut s = shared.session.guard();
         let cloud = s
             .auth
             .cloud()
@@ -943,7 +944,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         // start belongs to the previous account — it neither consumes nor
         // installs a chat in the new account's session.
         let chat_id = {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
             s.chat_id
         };
@@ -951,7 +952,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             Some(c) => c,
             None => {
                 let c = cloud.create_chat(Some("agent")).await?;
-                let mut s = shared.session.lock().unwrap();
+                let mut s = shared.session.guard();
                 anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
                 *s.chat_id.get_or_insert(c)
             }
@@ -990,7 +991,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     ));
 
     let (policy, pending) = {
-        let s = shared.session.lock().unwrap();
+        let s = shared.session.guard();
         (s.policy.clone(), s.pending.clone())
     };
     let streamed = cloud
@@ -1123,7 +1124,7 @@ fn policy_get(
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
-    let policy = session.lock().unwrap().policy.clone();
+    let policy = session.guard().policy.clone();
     let _ = out_tx.send(
         serde_json::to_value(Response::ok(req.id, serde_json::to_value(&policy).unwrap())).unwrap(),
     );
@@ -1171,7 +1172,7 @@ async fn registry_install(
         let slug = param(&req, "slug")?.to_string();
         let version = req.params["version"].as_str().map(String::from);
         if let Some(d) = req.params["project_dir"].as_str() {
-            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
+            session.guard().project_dir = Some(PathBuf::from(d));
         }
         let project_dir = session
             .lock()
@@ -1215,7 +1216,7 @@ async fn registry_uninstall(
     let result = async {
         let slug = param(&req, "slug")?.to_string();
         if let Some(d) = req.params["project_dir"].as_str() {
-            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
+            session.guard().project_dir = Some(PathBuf::from(d));
         }
         let project_dir = session
             .lock()
@@ -1304,10 +1305,7 @@ mod machine_link_tests {
         let resp = out_rx.recv().await.unwrap();
         assert_eq!(resp["result"]["ok"], serde_json::json!(true));
         // The session carries the identity.
-        assert_eq!(
-            shared.session.lock().unwrap().auth.machine_id(),
-            Some("machine-1")
-        );
+        assert_eq!(shared.session.guard().auth.machine_id(), Some("machine-1"));
         // The link config was published from the session's cloud + identity,
         // with a generated client id and the hostname label.
         let cfg = link_rx.borrow_and_update().clone().expect("link published");
@@ -1362,7 +1360,7 @@ mod machine_link_tests {
             assert_eq!(stored.token, token);
             assert_eq!(
                 cfg.machine_id,
-                shared.session.lock().unwrap().auth.machine_id().unwrap()
+                shared.session.guard().auth.machine_id().unwrap()
             );
             if token == "first" {
                 let before = cfg.machine_id.clone();
@@ -1480,10 +1478,7 @@ mod machine_link_tests {
         let _ = out_rx.recv().await.unwrap();
 
         // Identity is remembered (a later login adopts it)…
-        assert_eq!(
-            shared.session.lock().unwrap().auth.machine_id(),
-            Some("machine-3")
-        );
+        assert_eq!(shared.session.guard().auth.machine_id(), Some("machine-3"));
         // …but no link config is published without a session.
         assert!(link_rx.borrow_and_update().is_none());
     }
@@ -1560,7 +1555,7 @@ mod machine_link_tests {
     async fn sign_out_and_account_switch_reset_account_owned_session_state() {
         let shared = logged_in_shared();
         {
-            let mut s = shared.session.lock().unwrap();
+            let mut s = shared.session.guard();
             s.chat_id = Some(Uuid::now_v7());
             s.project_dir = Some(std::path::PathBuf::from("/tmp/a"));
             s.model = "m".into();
@@ -1571,7 +1566,7 @@ mod machine_link_tests {
         session_clear(shared.clone(), identify_req(6, ""), out_tx).await;
         let _ = out_rx.recv().await.unwrap();
         {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             assert!(s.chat_id.is_none());
             assert!(s.project_dir.is_none());
             assert!(s.model.is_empty());
@@ -1589,7 +1584,7 @@ mod machine_link_tests {
         )
         .await
         .unwrap();
-        let s = shared.session.lock().unwrap();
+        let s = shared.session.guard();
         assert!(s.chat_id.is_none());
         assert!(s.project_dir.is_none());
     }
@@ -1600,7 +1595,7 @@ mod machine_link_tests {
     async fn relogin_of_the_same_principal_keeps_session_state() {
         let shared = logged_in_shared();
         let chat = Uuid::now_v7();
-        shared.session.lock().unwrap().chat_id = Some(chat);
+        shared.session.guard().chat_id = Some(chat);
         adopt_login_with_identity(
             &shared,
             "http://srv".into(),
@@ -1611,7 +1606,7 @@ mod machine_link_tests {
         )
         .await
         .unwrap();
-        assert_eq!(shared.session.lock().unwrap().chat_id, Some(chat));
+        assert_eq!(shared.session.guard().chat_id, Some(chat));
     }
 }
 
@@ -1659,7 +1654,7 @@ mod agent_start_tests {
                 .contains("already in progress"),
             "the flag must not wedge: {first}"
         );
-        assert!(!shared.session.lock().unwrap().agent_running);
+        assert!(!shared.session.guard().agent_running);
 
         // The next start reaches the real validation path (not logged in
         // here) instead of the false "already in progress".
@@ -1720,14 +1715,14 @@ mod agent_start_tests {
         session_clear(shared.clone(), clear, clear_tx).await;
         let _ = clear_rx.recv().await.unwrap();
         {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             assert!(s.chat_id.is_none());
             assert!(s.auth.cloud().is_none(), "signed out");
         }
         // The old response is released: the stale write must be discarded.
         tokio::time::sleep(std::time::Duration::from_millis(900)).await;
         {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             assert!(
                 s.chat_id.is_none(),
                 "the released create_chat response restored the old chat id"
@@ -1880,7 +1875,7 @@ mod agent_start_tests {
         let reply = out_rx.recv().await.unwrap();
         assert!(reply["error"].is_object(), "the stale start fails: {reply}");
         assert!(
-            shared.session.lock().unwrap().chat_id.is_none(),
+            shared.session.guard().chat_id.is_none(),
             "A's chat must not be installed into B's session"
         );
         let created = server
@@ -1924,7 +1919,7 @@ mod agent_start_tests {
         let bad = blocker.join("token.json");
         assert!(auth_change_with_store(&shared, login(), Some(bad)).is_err());
         {
-            let s = shared.session.lock().unwrap();
+            let s = shared.session.guard();
             assert_eq!(s.auth.email(), Some("b@b"));
             assert!(s.chat_id.is_none(), "A's chat survived the switch");
             assert!(s.model.is_empty());

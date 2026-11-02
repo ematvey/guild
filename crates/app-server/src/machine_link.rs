@@ -15,6 +15,7 @@ use crate::jsonrpc_loop::Shared;
 use crate::machine_frames::{classify_server_frame, ServerFrame};
 use crate::machine_meta::{hostname_label, machine_meta, MachineMeta};
 use crate::session_store;
+use crate::sync::LockExt;
 use futures::{SinkExt, StreamExt};
 use protocol::ws::WsClientMsg;
 use serde::Deserialize;
@@ -785,13 +786,13 @@ impl LinkRegistry {
     /// sender is dropped, which ends a supervisor still reading it.
     pub fn spawn_feed(&self) -> tokio::sync::mpsc::UnboundedReceiver<String> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let channels = self.channels.lock().unwrap();
+        let channels = self.channels.guard();
         for (key, entry) in channels.iter() {
             if entry.tx.borrow().is_some() {
                 let _ = tx.send(key.clone());
             }
         }
-        *self.spawns.lock().unwrap() = tx;
+        *self.spawns.guard() = tx;
         rx
     }
 
@@ -802,7 +803,7 @@ impl LinkRegistry {
     pub fn publish(&self, base_url: &str, cfg: Option<MachineLinkConfig>) {
         let key = session_store::normalize_base(base_url);
         let tx = {
-            let mut map = self.channels.lock().unwrap();
+            let mut map = self.channels.guard();
             map.entry(key.clone())
                 .or_insert_with(|| {
                     let (tx, rx) = watch::channel(None);
@@ -813,7 +814,7 @@ impl LinkRegistry {
         };
         let _ = tx.send(cfg);
         if tx.borrow().is_some() {
-            let _ = self.spawns.lock().unwrap().send(key);
+            let _ = self.spawns.guard().send(key);
         }
     }
 
@@ -834,7 +835,7 @@ impl LinkRegistry {
     /// channel makes a parked link task exit.
     pub fn drop_link(&self, base_url: &str) {
         let key = session_store::normalize_base(base_url);
-        let sender = self.channels.lock().unwrap().remove(&key);
+        let sender = self.channels.guard().remove(&key);
         if let Some(entry) = sender {
             let _ = entry.tx.send(None);
         }
@@ -849,7 +850,7 @@ impl LinkRegistry {
     ) -> watch::Receiver<Option<MachineLinkConfig>> {
         let key = session_store::normalize_base(base_url);
         let tx = {
-            let mut map = self.channels.lock().unwrap();
+            let mut map = self.channels.guard();
             map.entry(key)
                 .or_insert_with(|| {
                     let (tx, rx) = watch::channel(None);
@@ -1053,7 +1054,7 @@ pub async fn watch_token_store(
             // dedup. A different principal (sign-out, or another account's
             // login) resets the account-owned execution state like an
             // in-process transition.
-            let mut s = session.lock().unwrap();
+            let mut s = session.guard();
             let previous = crate::jsonrpc_loop::principal_of(&s);
             match stored {
                 Some(stored) => {
@@ -1239,7 +1240,7 @@ mod tests {
                             if slug != "demo-skill" || version != "v2" {
                                 return (axum::http::StatusCode::NOT_FOUND, Vec::new());
                             }
-                            (axum::http::StatusCode::OK, sync_bundle.lock().unwrap().clone())
+                            (axum::http::StatusCode::OK, sync_bundle.guard().clone())
                         },
                     )
                 },
@@ -1256,7 +1257,7 @@ mod tests {
                                 .unwrap()
                                 .take()
                                 .expect("one machine connection");
-                            let resp_tx = resp_tx.lock().unwrap().take().unwrap();
+                            let resp_tx = resp_tx.guard().take().unwrap();
                             let (mut tx, mut rx) = socket.split();
                             // The machine identifies itself in the URL query;
                             // the link sends nothing until it must answer —
@@ -1531,7 +1532,7 @@ mod tests {
             .route(
                 "/api/v1/skills/sync-payload",
                 axum::routing::get(move |headers: axum::http::HeaderMap| {
-                    let payload = payload_route.lock().unwrap().clone();
+                    let payload = payload_route.guard().clone();
                     async move {
                         if headers
                             .get(axum::http::header::AUTHORIZATION)
@@ -1562,10 +1563,7 @@ mod tests {
                         if slug != "demo-skill" || version != "v2" {
                             return (axum::http::StatusCode::NOT_FOUND, Vec::new());
                         }
-                        (
-                            axum::http::StatusCode::OK,
-                            bundle_route.lock().unwrap().clone(),
-                        )
+                        (axum::http::StatusCode::OK, bundle_route.guard().clone())
                     },
                 ),
             );
@@ -1594,7 +1592,7 @@ mod tests {
         );
 
         // The empty payload (every pin gone) converges the pulled dir away.
-        *payload.lock().unwrap() = serde_json::json!({"skills": []});
+        *payload.guard() = serde_json::json!({"skills": []});
         let summary = pull_skills_at(&cloud, &skills_home).await.unwrap();
         assert_eq!(summary["removed"], serde_json::json!(["demo-skill"]));
         assert!(!skill_dir.exists());
@@ -2117,7 +2115,7 @@ mod tests {
         session_store::save(&path, &store("t2")).unwrap();
         assert_eq!(next(&mut rx).await.unwrap().token, "t2");
         assert_eq!(
-            session.lock().unwrap().auth.cloud().unwrap().token,
+            session.guard().auth.cloud().unwrap().token,
             "t2",
             "EngineState.auth follows the reloaded store"
         );
@@ -2132,7 +2130,7 @@ mod tests {
         assert_eq!(next(&mut rx).await, None);
         // The in-memory session followed every store change and the
         // sign-out cleared it.
-        assert!(session.lock().unwrap().auth.cloud().is_none());
+        assert!(session.guard().auth.cloud().is_none());
         shutdown_tx.send(true).ok();
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2177,7 +2175,7 @@ mod tests {
             .unwrap()
             .unwrap();
         {
-            let s = session.lock().unwrap();
+            let s = session.guard();
             assert!(s.chat_id.is_some(), "same principal keeps its chat");
             assert_eq!(s.epoch, 0);
         }
@@ -2187,7 +2185,7 @@ mod tests {
             .unwrap()
             .unwrap();
         {
-            let s = session.lock().unwrap();
+            let s = session.guard();
             assert_eq!(s.auth.email(), Some("b@b"));
             assert!(s.chat_id.is_none(), "A's chat survived the external switch");
             assert!(s.model.is_empty());
