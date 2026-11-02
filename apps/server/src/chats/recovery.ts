@@ -3,7 +3,7 @@
 // coherence:seam owner=@maintainer until=2027-01-31 reason="durable log and platform tables retire at different times"
 
 import type { ConversationId, SubmissionRecord } from "@earendil-works/pi-durable";
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool } from "../platform/db.js";
 
 /** Incremental platform reconciliation, independent of bounded live events. */
 export class ConversationRecovery {
@@ -25,9 +25,7 @@ export class ConversationRecovery {
 
   async acknowledge(chatId: string, records: readonly SubmissionRecord[]): Promise<void> {
     if (!records.length) return;
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       for (const record of records) {
         await client.query(
           `INSERT INTO chat_submission_projections(submission_id,chat_id,status,entry_id,answer_id)
@@ -49,13 +47,7 @@ export class ConversationRecovery {
             THEN GREATEST(chat_reconciliation_cursors.submission_id,EXCLUDED.submission_id) ELSE EXCLUDED.submission_id END`,
         [chatId, records[0]!.conversationId, last],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async failures(

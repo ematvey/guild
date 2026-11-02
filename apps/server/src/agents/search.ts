@@ -2,7 +2,7 @@
 // searchable rows and query them with Postgres FTS. Scope is enforced in SQL
 // by agent_id; callers pass the agent whose threads may match.
 
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool } from "../platform/db.js";
 import { uuidv7 } from "../platform/time.js";
 
 /** One chunk row to insert. `text` is indexed as-is with the `simple`
@@ -42,9 +42,7 @@ const CHUNK_TARGET_CHARS = 2000;
 /** Inserts chunks with their tsvector computed by Postgres. */
 export async function insertChunks(pool: PlatformPool, chunks: AgentChunkInput[]): Promise<void> {
   if (chunks.length === 0) return;
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  await withTransaction(pool, async (client) => {
     for (const chunk of chunks) {
       await client.query(
         `INSERT INTO agent_thread_chunks (id, thread_id, agent_id, seq_from, seq_to, ts, text, tsv)
@@ -60,13 +58,7 @@ export async function insertChunks(pool: PlatformPool, chunks: AgentChunkInput[]
         ],
       );
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

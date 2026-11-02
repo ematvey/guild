@@ -67,7 +67,6 @@ function stringField(payload: Record<string, unknown>, name: string): string | n
 }
 
 export class AgentStateFeed {
-  private agentStore: AgentStore | null = null;
   private readonly chains = new Map<string, Promise<void>>();
   private readonly bursts = new Map<string, { first: number; timer: NodeJS.Timeout }>();
   private stopped = false;
@@ -77,11 +76,9 @@ export class AgentStateFeed {
     private readonly failed: Failed,
   ) {}
 
-  /** The agent reads, built on first use: a feed that never sees an agent
-   *  channel needs no store. */
+  /** The agent reads: the runtime's agent store. */
   private get store(): AgentStore {
-    this.agentStore ??= new AgentStore(this.ctx.pool, this.ctx.trace, this.ctx.config.agentWorkspaceWriteRoot);
-    return this.agentStore;
+    return this.ctx.runtime.agents;
   }
 
   stop(): void {

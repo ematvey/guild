@@ -1,14 +1,6 @@
-// Hub seam — the in-process machine/member socket registry and dispatch API.
-// The WS-backed implementation is `LiveHub` with `SocketSink`; the harness
-// and dispatch code depend on the interface, not the transport.
-//
-// One Node process owns the hub.
-
-export interface Member {
-  userId: string;
-  connId: string;
-  clientId: string;
-}
+// The in-process machine/member socket registry (`LiveHub`, one per Node
+// process), its socket sink and wire protocol, and the machine-request
+// types the dispatch code shares.
 
 export interface MachineRequestError {
   kind: "offline" | "timeout" | "socket_limit" | "send_failed" | "rejected";
@@ -27,24 +19,6 @@ export type MachineRequestFn = (
   payload: unknown,
   timeoutMs: number,
 ) => Promise<{ ok: true; value: unknown } | { ok: false; error: MachineRequestError }>;
-
-export interface Hub {
-  registerMember(member: Member): { ok: true } | { ok: false; error: "socket_limit" };
-  unregisterMember(userId: string, connId: string): void;
-
-  registerMachine(
-    machineId: string,
-    orgId: string,
-    userId: string,
-    connId: string,
-    meta: { label?: string; appVersion?: string },
-  ): Promise<{ ok: true } | { ok: false; error: "socket_limit" | "displaced" }>;
-  unregisterMachine(machineId: string, connId: string): void;
-
-  machineRequest: MachineRequestFn;
-  machineOnline(machineId: string): boolean;
-  machineLabel(machineId: string): string | undefined;
-}
 
 export { LiveHub } from "./live.js";
 export type { LiveMember, MachineRegistration, MachineRejected, MachineRequestResult } from "./live.js";

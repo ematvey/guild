@@ -4,7 +4,7 @@
 // here so routes and the runtime share one authorization path.
 
 import { ApiError } from "../platform/errors.js";
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool } from "../platform/db.js";
 import { jsonbText } from "../platform/domain/text.js";
 import { isUuid, pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
 import { ChatStore } from "../platform/store/chats.js";
@@ -408,47 +408,43 @@ export class AgentStore {
    *  row in one transaction. The owner is the caller. */
   async create(user: UserRow, input: CreateAgentInput): Promise<Agent> {
     const id = uuidv7();
-    const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      await client.query(
-        `INSERT INTO agents (id, org_id, owner_user_id, name, description, model, tools, tools_mode, visibility, resources)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)`,
-        [
-          id,
-          user.org_id,
-          user.id,
-          input.name,
-          input.description ?? "",
-          input.model,
-          jsonbText(input.tools ?? DEFAULT_AGENT_TOOLS),
-          input.tools_mode ?? "selected",
-          input.visibility ?? "private",
-          jsonbText(
-            input.resources === undefined || Object.keys(input.resources).length === 0
-              ? DEFAULT_AGENT_RESOURCES
-              : input.resources,
-          ),
-        ],
-      );
-      if (input.team_ids !== undefined && input.team_ids.length > 0) {
-        await this.replaceTeamGrants(client, user.org_id, id, input.team_ids);
-      }
-      const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
-      await client.query(
-        `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type, is_default)
-         VALUES ($1, $2, $3, $4, 'Main thread', false, 'user', true)`,
-        [uuidv7(), id, user.id, chat.id],
-      );
-      await client.query("COMMIT");
+      await withTransaction(this.pool, async (client) => {
+        await client.query(
+          `INSERT INTO agents (id, org_id, owner_user_id, name, description, model, tools, tools_mode, visibility, resources)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)`,
+          [
+            id,
+            user.org_id,
+            user.id,
+            input.name,
+            input.description ?? "",
+            input.model,
+            jsonbText(input.tools ?? DEFAULT_AGENT_TOOLS),
+            input.tools_mode ?? "selected",
+            input.visibility ?? "private",
+            jsonbText(
+              input.resources === undefined || Object.keys(input.resources).length === 0
+                ? DEFAULT_AGENT_RESOURCES
+                : input.resources,
+            ),
+          ],
+        );
+        if (input.team_ids !== undefined && input.team_ids.length > 0) {
+          await this.replaceTeamGrants(client, user.org_id, id, input.team_ids);
+        }
+        const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
+        await client.query(
+          `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type, is_default)
+           VALUES ($1, $2, $3, $4, 'Main thread', false, 'user', true)`,
+          [uuidv7(), id, user.id, chat.id],
+        );
+      });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
       if ((error as { code?: string }).code === "23505") {
         throw ApiError.conflict("name_taken", "you already have an agent with this name");
       }
       throw error;
-    } finally {
-      client.release();
     }
     const agent = await this.fetchById(user.org_id, id);
     if (agent === null) throw ApiError.internal("agent insert lost its row");
@@ -752,9 +748,7 @@ export class AgentStore {
   /** Phase two without an access check: the deletion sweeper and the
    *  owner-initiated purge route both land here. */
   async purgeById(orgId: string, agentId: string): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       const chats = await client.query<{ chat_id: string }>(
         "SELECT chat_id FROM agent_threads WHERE agent_id = $1",
         [agentId],
@@ -763,13 +757,7 @@ export class AgentStore {
       for (const row of chats.rows) {
         await client.query("DELETE FROM chats WHERE id = $1", [row.chat_id]);
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** Agents whose grace period elapsed; the scheduler purges them. */
@@ -866,9 +854,7 @@ export class AgentStore {
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       const chat = await this.chats.createChatOn(
         client,
         agent.org_id,
@@ -882,13 +868,7 @@ export class AgentStore {
          VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8)`,
         [id, agentId, userId, chat.id, title, type, options.isDefault === true, options.originThreadId ?? null],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
     return this.fetchThread(agentId, userId, id);
   }
 
@@ -906,9 +886,7 @@ export class AgentStore {
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       const parent = await client.query<{ depth: number; closed_at: Date | null }>(
         "SELECT depth, closed_at FROM agent_threads WHERE id = $1 FOR UPDATE",
         [parentThreadId],
@@ -937,13 +915,7 @@ export class AgentStore {
          VALUES ($1, $2, $3, $4, $5, $8, 'subagent', $6, $7)`,
         [id, agentId, userId, chat.id, title, parentThreadId, Number(parentRow.depth) + 1, titleLocked],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
     return this.fetchThread(agentId, userId, id);
   }
 
@@ -1060,9 +1032,7 @@ export class AgentStore {
 
   /** Renames a thread and locks the title against regeneration. */
   async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       const res = await client.query<{ chat_id: string }>(
         `UPDATE agent_threads SET title = $4, title_locked = true
          WHERE agent_id = $1 AND user_id = $2 AND id = $3 RETURNING chat_id`,
@@ -1071,13 +1041,7 @@ export class AgentStore {
       const row = res.rows[0];
       if (row === undefined) throw ApiError.notFound("no such thread");
       await client.query("UPDATE chats SET title = $2 WHERE id = $1", [row.chat_id, title]);
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
     return this.fetchThread(agentId, userId, threadId);
   }
 
@@ -1095,9 +1059,7 @@ export class AgentStore {
   async deriveThreadTitle(agentId: string, threadId: string, message: string): Promise<void> {
     const title = deriveTitleFromMessage(message);
     if (title === "") return;
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTransaction(this.pool, async (client) => {
       const res = await client.query<{ chat_id: string }>(
         `UPDATE agent_threads SET title = $3
          WHERE agent_id = $1 AND id = $2 AND title = '' AND title_locked = false
@@ -1108,13 +1070,7 @@ export class AgentStore {
       if (row !== undefined) {
         await client.query("UPDATE chats SET title = $2 WHERE id = $1", [row.chat_id, title]);
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async fetchThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {

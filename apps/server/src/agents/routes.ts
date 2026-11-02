@@ -15,7 +15,7 @@ import { AgentFiles } from "./files.js";
 import { runRoutineNow } from "./scheduler.js";
 import { resolveIntegrations } from "../platform/integrations/plugins.js";
 import { toolCurate } from "../platform/integrations/policy.js";
-import { AgentStore, refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
+import { refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
 import { cancelThread, closeThread } from "./subagents.js";
 import { chatSubagentNodes, chatTreeFacts } from "./tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
@@ -229,7 +229,7 @@ export function registerAgentRoutes(
   gateway: GatewayCtx,
   objects: ObjectStore,
 ): void {
-  const store = new AgentStore(infra.pool, infra.trace, infra.config.agentWorkspaceWriteRoot);
+  const store = chats.runtime.agents;
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
 
   /** The built-in tool catalog the creation/settings forms offer. Integration

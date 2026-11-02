@@ -36,7 +36,6 @@ import { TurnCommandStore } from "./store/turn_commands.js";
 import { ToolArtifactStore } from "./store/toolArtifacts.js";
 import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
-import { AgentStore } from "../agents/store.js";
 import { AgentScheduler } from "../agents/scheduler.js";
 import { ForkSupervisor } from "../worker/supervisor.js";
 import { NotifyHub } from "./notify.js";
@@ -93,8 +92,7 @@ export class PlatformContext {
   readonly userMcp: UserMcpStore;
   readonly push: PushStore;
   readonly pushNotifier: PushNotifier;
-  /** The machine/member socket registry. Harness tests inject fakes typed
-   *  against the `Hub` seam interface in hub/index.ts. */
+  /** The machine/member socket registry. */
   readonly hub: LiveHub;
   /** The per-hub tool-dispatch registry (machines/dispatch.ts; one per
    *  process, hub-owned lifetime). */
@@ -213,7 +211,7 @@ export class PlatformContext {
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
     this.scheduler = new AgentScheduler({
       pool: this.pool,
-      store: new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot),
+      store: this.runtime.agents,
       threads: this.threads,
       runtime: this.runtime,
       log,

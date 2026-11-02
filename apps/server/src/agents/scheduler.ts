@@ -6,7 +6,7 @@
 
 import { rm } from "node:fs/promises";
 import type { Logger } from "pino";
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool } from "../platform/db.js";
 import { uuidv7 } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
@@ -193,10 +193,8 @@ export class AgentScheduler {
    *  skipped. Rows are locked with SKIP LOCKED so a second process can work
    *  on other routines. */
   async claimDue(now: Date = this.now()): Promise<ClaimedOccurrence[]> {
-    const client = await this.deps.pool.connect();
-    let claimed: ClaimedOccurrence[] = [];
-    try {
-      await client.query("BEGIN");
+    const claimed: ClaimedOccurrence[] = [];
+    await withTransaction(this.deps.pool, async (client) => {
       const res = await client.query<ClaimedOccurrence>(
         `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
                 r.name AS routine_name, r.prompt, r.kind,
@@ -239,13 +237,7 @@ export class AgentScheduler {
           claimed.push({ ...latest, attempts: latest.attempts + 1 });
         }
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
     for (const occurrence of claimed) await this.launch(occurrence, now);
     return claimed;
   }

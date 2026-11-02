@@ -167,7 +167,9 @@ export class GuildRuntime {
   private readonly registry: Registry;
   private readonly threads: ThreadStore;
   private readonly chats: ChatStore;
-  private readonly agents: AgentStore;
+  /** The process's one agent store: routes, the scheduler and the agent
+   *  feed read through it. */
+  readonly agents: AgentStore;
   private readonly conflicts: AgentConflictJournal;
   private readonly agentRuns: AgentRunLifecycle;
   private readonly childDelivery: ChildResultDelivery;
