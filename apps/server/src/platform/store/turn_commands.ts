@@ -5,6 +5,7 @@
 // flips running/completed from run_start/run_end — no outbox pump, the
 // admission is synchronous and durable).
 
+import { submissionRequestId } from "../../storage/postgres/queries.js";
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText, jsonValue } from "../domain/text.js";
@@ -211,13 +212,14 @@ export class TurnCommandStore {
     });
   }
 
-  /** Request identity is durable before the HTTP acknowledgement updates invocation_id. */
+  /** The chat's command a submission's request id names. Request identity
+   *  is durable before the HTTP acknowledgement updates invocation_id. */
   async forSubmission(chatId: string, submissionId: number): Promise<TurnCommand[]> {
+    const requestId = await submissionRequestId(this.pool, submissionId);
+    if (requestId === null) return [];
     const result = await this.pool.query<TurnCommand>(
-      `SELECT tc.* FROM turn_commands tc
-      JOIN submissions s ON s.id=$2 AND s.request_id::jsonb #>> '{}' = tc.id::text
-      WHERE tc.chat_id=$1`,
-      [chatId, submissionId],
+      "SELECT tc.* FROM turn_commands tc WHERE tc.chat_id=$1 AND tc.id::text=$2",
+      [chatId, requestId],
     );
     return result.rows;
   }

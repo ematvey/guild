@@ -2,8 +2,8 @@
 // gate, and the acting-identity override rule.
 
 import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
-import type { JsonObject } from "../../integrations/shared.js";
-import { classRank, isToolClass } from "../domain/tool-class.js";
+import type { JsonObject } from "./shared.js";
+import { classRank, isToolClass } from "../platform/domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
 export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";

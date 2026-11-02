@@ -1,98 +1,88 @@
 // The composition root. It builds the per-process Postgres pool, object
-// store, ClickHouse usage sink, typed store facades and the services above
-// them (runtime, hub, feed, scheduler, push) once, then hands each route
-// group a narrow slice from platform/route-contexts.ts. It sits above every
-// layer, so platform/ never imports the services it wires.
+// store, ClickHouse sinks, typed store facades and the services above them
+// (runtime, hub, feed, scheduler, push) once, then hands each route group a
+// narrow slice from platform/route-contexts.ts. It sits above every layer,
+// so platform/ never imports the services it wires. `start()` is the one
+// bootstrap: every migration, the boot repairs, then the runtime.
 
-import { timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { createPlatformPool, type PlatformPool } from "./platform/db.js";
+import { applyPlatformMigrations } from "./platform/migrations.js";
 import { ObjectStore } from "./platform/s3.js";
-import { pendingWorkQuery } from "./platform/store/work.js";
-import { IdentityStore } from "./platform/store/identity.js";
-import { PairingStore } from "./platform/store/pairing.js";
-import { EventStore } from "./platform/store/events.js";
-import { AttachmentStore } from "./platform/store/attachments.js";
-import { OrgStore } from "./platform/store/orgs.js";
-import { OidcStore } from "./platform/store/oidc.js";
-import { ApiKeyStore } from "./platform/store/api_keys.js";
-import { GatewayStore } from "./platform/store/gateway.js";
-import { MachineStore } from "./platform/store/machines.js";
-import { RegistryStore } from "./platform/store/registry.js";
-import { SkillStore } from "./platform/store/skills.js";
-import { ReleaseStore } from "./platform/store/releases.js";
-import { ProjectStore } from "./platform/store/projects.js";
-import { TeamStore } from "./platform/store/teams.js";
-import { OrgKvStore, KvStore } from "./platform/store/org_kv.js";
-import { IntegrationStore, IntegrationSecretStore } from "./platform/store/integrations.js";
-import { UserMcpStore } from "./platform/store/userMcp.js";
-import { PushStore } from "./platform/store/push.js";
+import { createStores, type PlatformStores } from "./platform/stores.js";
+import { pendingWorkQuery, seedRecoveryBoundary } from "./storage/postgres/queries.js";
+import { applyPostgresMigrations } from "./storage/postgres/index.js";
+import { SharedPoolDatabase } from "./chats/durable-mapping.js";
+import { syncSeams } from "./chats/ws-sync.js";
 import { PushNotifier } from "./push/notifier.js";
 import { webPushSender } from "./push/sender.js";
 import { pushSubject, vapidKeys, type VapidKeys } from "./push/vapid.js";
 import { LiveHub } from "./hub/live.js";
 import { TicketStore } from "./hub/tickets.js";
-import { ChatStore } from "./platform/store/chats.js";
-import { ThreadStore } from "./platform/store/thread.js";
-import { TurnCommandStore } from "./platform/store/turn_commands.js";
-import { ToolArtifactStore } from "./platform/store/toolArtifacts.js";
+import { FeedForwarder } from "./hub/feed.js";
 import { machineDispatch, type MachineDispatch } from "./machines/dispatch.js";
-import { GuildRuntime } from "./harness/runtime.js";
+import { GuildRuntime, type TurnPlacement } from "./harness/runtime.js";
+import { AgentStore } from "./agents/store.js";
 import { AgentScheduler } from "./agents/scheduler.js";
 import { ForkSupervisor } from "./worker/supervisor.js";
 import { NotifyHub } from "./platform/notify.js";
-import { FeedForwarder } from "./hub/feed.js";
 import { ClickhouseClient } from "./platform/clickhouse.js";
 import { SkillReadSink } from "./platform/skillReads.js";
 import { UsageSink } from "./platform/usage.js";
 import { TraceStore } from "./platform/trace.js";
-import { ApiError } from "./platform/errors.js";
+import { masterKeyBytes } from "./platform/crypto.js";
+import { gatewayCredential } from "./platform/http/auth.js";
 import type { GatewayCredential } from "./platform/llm-gateway.js";
-import type { ChatsCtx } from "./platform/route-contexts.js";
-import type { Logger } from "pino";
+import type { SocketSeams } from "./platform/route-contexts.js";
+import pino, { type Logger } from "pino";
 
-// Fixed identities for the config-minted internal gateway key (spec
-// decision 7). Usage rows for internal calls stay distinct through them:
-// the synthetic caller id belongs to no user row, so per-user breakdowns
-// show it separately (unknown ids keep the raw value in the UI). The
-// constants are pinned (sha256("guild-internal-caller")/
-// sha256("guild-internal-key"), formatted as UUIDs).
-const INTERNAL_CALLER_UUID = "084e9c72-8c73-636b-f784-132bbeaf766e";
-const INTERNAL_KEY_UUID = "bf14cf48-bd7d-5fb6-6c0f-9047919fb0d8";
-
-/** Byte-wise comparison with no early exit; unequal lengths are unequal. */
-function constantTimeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  return left.length === right.length && timingSafeEqual(left, right);
+/** Every schema step, in order: the platform migrations (which create the
+ *  chat ↔ conversation mapping), the durable storage migrations, then the
+ *  legacy task boundary the task-failure projection reads. Idempotent. */
+export async function migrateSchema(pool: PlatformPool, log: Logger): Promise<void> {
+  await applyPlatformMigrations(pool, { log });
+  await applyPostgresMigrations(new SharedPoolDatabase(pool));
+  await seedRecoveryBoundary(pool);
 }
 
-export class PlatformContext {
+/** The ClickHouse client the usage, trace and skill-read sinks share. */
+export function clickhouseClient(config: Config): ClickhouseClient {
+  return new ClickhouseClient({
+    url: config.clickhouseUrl,
+    database: config.clickhouseDatabase,
+    user: config.clickhouseUser,
+    password: config.clickhousePassword,
+  });
+}
+
+export class PlatformContext implements PlatformStores {
   readonly pool: PlatformPool;
   readonly objects: ObjectStore;
-  readonly identity: IdentityStore;
-  readonly pairing: PairingStore;
-  readonly events: EventStore;
-  readonly attachments: AttachmentStore;
-  readonly orgs: OrgStore;
-  readonly oidc: OidcStore;
-  readonly apiKeys: ApiKeyStore;
-  readonly gatewayStore: GatewayStore;
-  readonly machines: MachineStore;
-  /** Registry, releases, projects, teams, admin settings, integration
-   *  config rows. */
-  readonly registry: RegistryStore;
-  readonly skills: SkillStore;
-  readonly releases: ReleaseStore;
-  readonly projects: ProjectStore;
-  readonly teams: TeamStore;
-  readonly orgKv: OrgKvStore;
-  readonly kv: KvStore;
-  readonly integrations: IntegrationStore;
-  readonly integrationSecrets: IntegrationSecretStore;
-  /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
-  readonly userMcp: UserMcpStore;
-  readonly push: PushStore;
+  readonly identity: PlatformStores["identity"];
+  readonly pairing: PlatformStores["pairing"];
+  readonly events: PlatformStores["events"];
+  readonly attachments: PlatformStores["attachments"];
+  readonly orgs: PlatformStores["orgs"];
+  readonly oidc: PlatformStores["oidc"];
+  readonly apiKeys: PlatformStores["apiKeys"];
+  readonly gatewayStore: PlatformStores["gatewayStore"];
+  readonly machines: PlatformStores["machines"];
+  readonly registry: PlatformStores["registry"];
+  readonly skills: PlatformStores["skills"];
+  readonly releases: PlatformStores["releases"];
+  readonly projects: PlatformStores["projects"];
+  readonly teams: PlatformStores["teams"];
+  readonly orgKv: PlatformStores["orgKv"];
+  readonly kv: PlatformStores["kv"];
+  readonly integrations: PlatformStores["integrations"];
+  readonly integrationSecrets: PlatformStores["integrationSecrets"];
+  readonly userMcp: PlatformStores["userMcp"];
+  readonly push: PlatformStores["push"];
+  readonly chats: PlatformStores["chats"];
+  readonly threads: PlatformStores["threads"];
+  readonly turnCommands: PlatformStores["turnCommands"];
+  readonly toolArtifacts: PlatformStores["toolArtifacts"];
+  readonly conversations: PlatformStores["conversations"];
   readonly pushNotifier: PushNotifier;
   /** The machine/member socket registry. */
   readonly hub: LiveHub;
@@ -108,112 +98,106 @@ export class PlatformContext {
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
   readonly clickhouse: ClickhouseClient;
-  /** The chat-side stores and the agent runtime (the harness is owned by
-   *  this process; it starts lazily — durable migrations run idempotently
-   *  on first use and at server startup). */
-  readonly chats: ChatStore;
-  readonly threads: ThreadStore;
-  readonly turnCommands: TurnCommandStore;
-  /** The tool-artifact spill store. */
-  readonly toolArtifacts: ToolArtifactStore;
-  /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
-   *  guild_events) — one dedicated connection shared by all subscribers. */
+  /** Postgres LISTEN hub — one dedicated connection shared by all
+   *  subscribers. */
   readonly notify: NotifyHub;
+  /** The process's one agent store: routes, the runtime, the scheduler and
+   *  the agent feed read through it. */
+  readonly agents: AgentStore;
   readonly runtime: GuildRuntime;
   /** The routine scheduler loop (started after the runtime opens). */
   readonly scheduler: AgentScheduler;
   /** Worker-per-chat: the fork supervisor (undefined when worker mode is
    *  off). The runtime routes admission through it and closes it. */
   readonly supervisor: ForkSupervisor | undefined;
-  /** The member-socket feed forwarder: notify fan-in →
-   *  ThreadState views, LiveFrame generation streams, ChatStatus, org
-   *  events, presence-driven ThreadList — all to the chat owner's sinks. */
+  /** The member-socket feed forwarder: notify fan-in → thread views, live
+   *  generation frames, chat status, org events and workspace lists, to the
+   *  chat owner's sinks. */
   readonly feed: FeedForwarder;
-
-  /** Socket seams wired at startup (all optional, no-op when unset):
-   *  - wsSync: the chats lane's state-sync capture, called inside the socket
-   *    reader's sync bracket (SyncBegin … SyncDone).
-   *  - wsSubagentTree: the chat's thread subtree, sent inside the same
-   *    bracket.
-   *  - wsToolResult: the dispatch lane's tool-result completion (owns_pending_tool
-   *    + turn completion).
-   *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
-   *    machine connect.
-   *  - wsLog: trace sink for the socket supervisor (the server log). */
-  wsSync?: ChatsCtx["wsSync"];
-  wsSubagentTree?: ChatsCtx["wsSubagentTree"];
-  wsToolResult?: ChatsCtx["wsToolResult"];
-  wsMachineReconcile?: ChatsCtx["wsMachineReconcile"];
-  wsLog?: ChatsCtx["wsLog"];
+  /** The member socket's seams into the lanes: the sync bracket's capture
+   *  and subtree, the dispatch lane's tool-result completion and connect
+   *  sweep, and the socket supervisor's log. */
+  readonly sockets: SocketSeams;
+  private readonly secretsKey: Buffer;
 
   constructor(
     readonly config: Config,
-    log: Logger = { warn() {}, error() {}, info() {} } as never,
+    private readonly log: Logger = pino({ level: "silent" }),
   ) {
+    this.secretsKey = masterKeyBytes(config.masterKeyHex);
     this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
     this.objects = new ObjectStore(config);
-    this.identity = new IdentityStore(this.pool, (orgId, kind, payload) =>
-      this.events.emit(orgId, kind, payload));
-    this.pairing = new PairingStore(this.pool);
-    this.events = new EventStore(this.pool);
-    this.attachments = new AttachmentStore(this.pool);
-    this.orgs = new OrgStore(this.pool);
-    this.oidc = new OidcStore(this.pool);
-    this.apiKeys = new ApiKeyStore(this.pool);
-    this.gatewayStore = new GatewayStore(this.pool);
-    this.machines = new MachineStore(this.pool);
-    this.registry = new RegistryStore(this.pool);
-    this.skills = new SkillStore(this.pool);
-    this.releases = new ReleaseStore(this.pool);
-    this.projects = new ProjectStore(this.pool);
-    this.teams = new TeamStore(this.pool);
-    this.orgKv = new OrgKvStore(this.pool);
-    this.kv = new KvStore(this.pool);
-    this.integrations = new IntegrationStore(this.pool);
-    this.integrationSecrets = new IntegrationSecretStore(this.pool);
-    this.userMcp = new UserMcpStore(this.pool);
-    this.push = new PushStore(this.pool);
+    const stores = createStores(this.pool);
+    this.identity = stores.identity;
+    this.pairing = stores.pairing;
+    this.events = stores.events;
+    this.attachments = stores.attachments;
+    this.orgs = stores.orgs;
+    this.oidc = stores.oidc;
+    this.apiKeys = stores.apiKeys;
+    this.gatewayStore = stores.gatewayStore;
+    this.machines = stores.machines;
+    this.registry = stores.registry;
+    this.skills = stores.skills;
+    this.releases = stores.releases;
+    this.projects = stores.projects;
+    this.teams = stores.teams;
+    this.orgKv = stores.orgKv;
+    this.kv = stores.kv;
+    this.integrations = stores.integrations;
+    this.integrationSecrets = stores.integrationSecrets;
+    this.userMcp = stores.userMcp;
+    this.push = stores.push;
+    this.chats = stores.chats;
+    this.threads = stores.threads;
+    this.turnCommands = stores.turnCommands;
+    this.toolArtifacts = stores.toolArtifacts;
+    this.conversations = stores.conversations;
     this.pushNotifier = new PushNotifier({
       store: this.push,
       lastEventSeq: (chatId) => this.chats.lastEventSeq(chatId),
       readSeq: (userId, chatId) => this.chats.readSeq(userId, chatId),
       sender: async () => webPushSender(await this.pushKeys(), pushSubject(this.config)),
-      log: (message) => log.warn?.(message),
+      log: (message) => log.warn(message),
     });
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
-    this.clickhouse = this.createClickhouse();
+    this.clickhouse = clickhouseClient(config);
     this.usage = new UsageSink(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
     this.skillReads = new SkillReadSink(this.clickhouse);
     this.skillReads.attachPool(this.pool);
-    this.chats = new ChatStore(this.pool);
-    this.threads = new ThreadStore(this.pool);
-    this.turnCommands = new TurnCommandStore(this.pool);
-    this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
+    this.agents = new AgentStore(this.pool, this.trace, config.agentWorkspaceWriteRoot);
     // Worker-per-chat mode: the server forks one worker per active chat and
-    // holds no harness itself; admission routes over IPC (worker mode is
-    // flag-gated: GUILD_WORKER_MODE=on).
+    // holds no harness itself; admission routes over IPC.
     this.supervisor =
       config.workerMode === "on"
-        ? new ForkSupervisor(
-            config,
-            log,
-            pendingWorkQuery(this.pool),
-            // Workers proxy machine-tool dispatch to the hub-backed
-            // registry (this.machineDispatch resolves lazily at call time
-            // — the runtime below is not constructed yet here).
-            (call, signal) => this.machineDispatch.dispatch(call, signal),
+        ? new ForkSupervisor(config, log, pendingWorkQuery(this.pool), (call, signal) =>
+            this.machineDispatch.dispatch(call, signal),
           )
         : undefined;
-    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
+    const placement: TurnPlacement =
+      this.supervisor === undefined ? { kind: "in-process" } : { kind: "workers", supervisor: this.supervisor };
+    this.runtime = new GuildRuntime({
+      config,
+      pool: this.pool,
+      log,
+      stores,
+      agents: this.agents,
+      masterKey: () => this.masterKey(),
+      placement,
+      objects: this.objects,
+      hub: this.hub,
+      skillReads: this.skillReads,
+      trace: this.trace,
+    });
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
     this.scheduler = new AgentScheduler({
       pool: this.pool,
-      store: this.runtime.agents,
+      store: this.agents,
       threads: this.threads,
       runtime: this.runtime,
       log,
@@ -225,28 +209,82 @@ export class PlatformContext {
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
     // Presence flips ride the member socket: the sidebar dot and the
     // machine list move live instead of holding a registry snapshot.
-    this.hub.onMachineStatus = (machineId, userId, orgId, online) => this.feed.machineStatus(machineId, userId, orgId, online);
-    // The dispatch lane's tool-result completion + connect sweep (the
-    // ws.ts seams; no-op until a test/lane sets richer behavior).
-    this.wsToolResult = async ({ member, frame }) => {
-      this.machineDispatch.resolveToolResult(member, frame);
+    this.hub.onMachineStatus = (machineId, userId, orgId, online) =>
+      this.feed.machineStatus(machineId, userId, orgId, online);
+    this.sockets = {
+      ...syncSeams({
+        pool: this.pool,
+        chats: this.chats,
+        threads: this.threads,
+        runtime: this.runtime,
+        gatewayStore: this.gatewayStore,
+      }),
+      toolResult: async ({ member, frame }) => {
+        this.machineDispatch.resolveToolResult(member, frame);
+      },
+      machineReconcile: async (machineId, connId) => {
+        this.machineDispatch.reconcileMachine(machineId, connId);
+      },
+      log: (message) => log.info({ ws: message }, "ws"),
     };
-    this.wsMachineReconcile = async (machineId, connId) => {
-      this.machineDispatch.reconcileMachine(machineId, connId);
-    };
-    this.feed = new FeedForwarder(this, log);
+    this.feed = new FeedForwarder(
+      {
+        config,
+        notify: this.notify,
+        hub: this.hub,
+        pool: this.pool,
+        chats: this.chats,
+        threads: this.threads,
+        conversations: this.conversations,
+        events: this.events,
+        projects: this.projects,
+        orgs: this.orgs,
+        orgKv: this.orgKv,
+        gatewayStore: this.gatewayStore,
+        machines: this.machines,
+        runtime: this.runtime,
+        agents: this.agents,
+        identity: this.identity,
+        skills: this.skills,
+        trace: this.trace,
+      },
+      log,
+    );
     this.feed.start();
     this.runtime.setStreamSink(this.feed);
   }
 
+  /** The 32-byte secrets key (GUILD_MASTER_KEY_HEX, checked at build). */
   masterKey(): Buffer {
-    const key = Buffer.from(this.config.masterKeyHex, "hex");
-    if (key.length !== 32) throw new Error("GUILD_MASTER_KEY_HEX must decode to 32 bytes");
-    return key;
+    return this.secretsKey;
   }
 
   pushKeys(): Promise<VapidKeys> {
     return vapidKeys(this.kv);
+  }
+
+  /** Resolves a gateway bearer token to the credential the LLM gateway
+   *  endpoints meter against (platform/http/auth.ts). */
+  gatewayCredential(req: { headers: Record<string, unknown> }): Promise<GatewayCredential> {
+    return gatewayCredential(this, req);
+  }
+
+  /** The bootstrap: every migration, the boot repairs (a send interrupted
+   *  by the previous shutdown left its chat flagged as generating; the
+   *  journal decides the truth), the skill_reads table, then the runtime
+   *  and the routine loop (a no-op when the scheduler flag is off). */
+  async start(): Promise<void> {
+    await migrateSchema(this.pool, this.log);
+    await this.chats.reconcileAllGenerating();
+    // ClickHouse being down must not block startup: reads degrade to zero
+    // and writes are dropped until it recovers.
+    try {
+      await this.skillReads.ensureOnce();
+    } catch (error) {
+      this.log.warn({ err: error }, "skill_reads table ensure failed");
+    }
+    await this.runtime.start();
+    this.scheduler.start();
   }
 
   /** A turn ended for a chat: the notifier decides, after its grace period,
@@ -254,7 +292,10 @@ export class PlatformContext {
   private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
     const owner = await this.chats.ownerOf(chatId);
     if (owner === null) return;
-    const chat = await this.chats.getChatInOrg(owner.org_id, chatId).catch(() => null);
+    const chat = await this.chats.getChatInOrg(owner.org_id, chatId).catch((error: unknown) => {
+      this.log.warn({ err: error, chatId }, "push title read failed");
+      return null;
+    });
     void this.pushNotifier.turnEnded({
       orgId: owner.org_id,
       userId: owner.user_id,
@@ -264,64 +305,8 @@ export class PlatformContext {
     });
   }
 
-  private createClickhouse(): ClickhouseClient {
-    return new ClickhouseClient({
-      url: this.config.clickhouseUrl,
-      database: this.config.clickhouseDatabase,
-      user: this.config.clickhouseUser,
-      password: this.config.clickhousePassword,
-    });
-  }
-
-  /** Resolves a gateway bearer token (gk_… key or the config-minted
-   *  internal key) to the credential the LLM gateway endpoints meter
-   *  against. The internal key never exists as a row: it is org-scoped via
-   *  the x-guild-org-id request header the harness sends, with optional
-   *  x-guild-user-id / x-guild-session-id attribution overrides. */
-  async gatewayCredential(req: {
-    headers: Record<string, unknown>;
-  }): Promise<GatewayCredential> {
-    const header = req.headers["authorization"];
-    const bearer = typeof header === "string" && header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
-    const xApiKey = typeof req.headers["x-api-key"] === "string" ? (req.headers["x-api-key"] as string) : null;
-    const token = [bearer, xApiKey].find((t) => t !== null && t !== "") ?? null;
-    if (token === null) throw ApiError.unauthorized("missing api key");
-    const row = await this.apiKeys.authenticate(token);
-    if (row !== null) {
-      // Usage belongs to the key's owner when user-minted, else to the
-      // admin who created the org key.
-      return {
-        orgId: row.org_id,
-        userId: row.user_id ?? row.created_by,
-        sessionId: row.id,
-        internal: false,
-      };
-    }
-    if (this.config.internalKey !== null && constantTimeEquals(token, this.config.internalKey)) {
-      const headerOr = (name: string): string | null => {
-        const value = req.headers[name];
-        return typeof value === "string" && value !== "" ? value : null;
-      };
-      const orgId = headerOr("x-guild-org-id");
-      if (orgId === null) {
-        throw new ApiError(400, "invalid_request", "internal key requires the x-guild-org-id header");
-      }
-      return {
-        orgId,
-        userId: headerOr("x-guild-user-id") ?? INTERNAL_CALLER_UUID,
-        sessionId: headerOr("x-guild-session-id") ?? INTERNAL_KEY_UUID,
-        internal: true,
-      };
-    }
-    throw ApiError.unauthorized("invalid api key");
-  }
-
-  /** Starts the routine loop after the runtime is open. A no-op when the
-   *  scheduler flag is off. */
-  startScheduler(): void {
-    this.scheduler.start();
-  }
-
+  /** Closes everything the constructor opened, in dependency order. Safe
+   *  after a failed start. */
   async close(): Promise<void> {
     this.scheduler.stop();
     this.feed.stop();

@@ -8,17 +8,17 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam, optionalJsonBody } from "./error.js";
-import { INTEGRATIONS, integrationByName } from "../integration-catalog.js";
+import { INTEGRATIONS, integrationByName } from "../../integrations/loader.js";
 import { isToolClass, manifestToolClass, toolClassOf } from "../domain/tool-class.js";
-import { mcpConnect } from "../integrations/mcp.js";
+import { mcpConnect } from "../../integrations/mcp.js";
 import {
   envelopeHeaders,
   manifestSecretNames,
   namespacedTool,
   registryManifest,
   registryManifestIfApproved,
-} from "../integrations/plugins.js";
-import { toolCurate } from "../integrations/policy.js";
+} from "../../integrations/plugins.js";
+import { toolCurate } from "../../integrations/policy.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
 import { DEFAULT_PERSONA } from "../../harness/extension.js";
 import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org_kv.js";

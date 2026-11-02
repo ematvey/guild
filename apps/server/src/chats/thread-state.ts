@@ -5,11 +5,22 @@
 // `has_more_events` always present.
 
 import type { ThreadEventRow } from "../platform/domain/thread-events.js";
-import type { ChatsCtx } from "../platform/route-contexts.js";
-import type { PlatformPool } from "../platform/db.js";
+import type { ChatStore } from "../platform/store/chats.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import type { LiveBuffers } from "./bridge.js";
+import type { DurableQueryable } from "../storage/postgres/queries.js";
+import { compactionInFlight } from "./compaction.js";
 import { serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
 import { ApiError } from "../platform/errors.js";
 import type { UserRow } from "../platform/store/identity.js";
+
+/** The reads one capture takes: the chat gate and project, the event page
+ *  and watermark, and the turn's unpersisted buffers. */
+export interface ThreadStateReads {
+  readonly chats: Pick<ChatStore, "getChat" | "projectOf" | "generatingOf">;
+  readonly threads: Pick<ThreadStore, "listEventPage" | "watermark">;
+  readonly runtime: { liveBuffers(chatId: string): LiveBuffers };
+}
 
 export interface ThreadStateCapture {
   chatId: string;
@@ -35,20 +46,18 @@ export const THREAD_STATE_EVENT_LIMIT = 120;
 
 /** One atomic capture: history + the unpersisted model buffers + the chat
  *  status, with the watermark reserved AFTER the event read (seq is always
- *  newer than every row it carries). `caller` omitted = the notify-driven
- *  org-scoped republish path — no per-user gate; the payload is org-gated
- *  by construction). */
-export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
+ *  newer than every row it carries). `pool` reads the durable compaction
+ *  state. `caller` omitted = the org-scoped path (the notify-driven
+ *  republish, and the socket's sync bracket, which gates first): no
+ *  per-user gate; the payload is org-gated by construction. */
+export async function captureThreadState(chats: ThreadStateReads, pool: DurableQueryable, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
   if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
   const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });
   const events = page.rows;
   const seq = await chats.threads.watermark();
   const buffers = chats.runtime.liveBuffers(chatId);
-  const generatingRow = await pool.query<{ generating: boolean }>(
-    "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
-    [chatId, orgId],
-  );
-  if (generatingRow.rows.length === 0) throw ApiError.notFound("chat not found");
+  const generating = await chats.chats.generatingOf(orgId, chatId);
+  if (generating === null) throw ApiError.notFound("chat not found");
   const project = await chats.chats.projectOf(orgId, chatId);
   const compacting = await compactionInFlight(pool, chatId);
   return {
@@ -57,42 +66,13 @@ export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, or
     events,
     text: buffers.text,
     thinking: buffers.thinking,
-    generating: generatingRow.rows[0]!.generating,
+    generating,
     projectId: project?.id,
     projectName: project?.name,
     projectMachineLabel: project?.label ?? undefined,
     hasMoreEvents: page.hasMore,
     compacting,
   };
-}
-
-/** Whether a compaction of the chat's conversation is in flight: its task
- *  is not terminal yet, or the summary it produced is a queued write that
- *  waits for the running turn to end. Every other outcome (a summary, no
- *  summary, a failure) reads false. The only writes a conversation queues
- *  are compaction summaries. Records are JSON text and parse here, never as
- *  jsonb. */
-async function compactionInFlight(pool: PlatformPool, chatId: string): Promise<boolean> {
-  const res = await pool.query<{ running: boolean; queued: string[] }>(
-    "SELECT EXISTS (" +
-      "SELECT 1 FROM tasks t JOIN chat_conversations c ON c.conversation_id = t.conversation_id " +
-      "WHERE c.chat_id = $1 AND t.kind = '\"pi.compaction\"' AND t.status <> 'terminal'" +
-      ") AS running, ARRAY(" +
-      "SELECT s.record FROM submissions s JOIN chat_conversations c ON c.conversation_id = s.conversation_id " +
-      "WHERE c.chat_id = $1 AND s.status = 'queued'" +
-      ") AS queued",
-    [chatId],
-  );
-  const row = res.rows[0];
-  if (row === undefined) return false;
-  if (row.running) return true;
-  return row.queued.some((record) => {
-    try {
-      return (JSON.parse(record) as { type?: unknown }).type === "write";
-    } catch {
-      return false;
-    }
-  });
 }
 
 /** Byte-exact ThreadState frame (`{"type":"thread_state",…}`). */

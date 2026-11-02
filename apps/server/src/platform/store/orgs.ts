@@ -13,6 +13,12 @@ export interface OrgSettings {
 export class OrgStore {
   constructor(readonly pool: PlatformPool) {}
 
+  /** Every org's id. */
+  async listIds(): Promise<string[]> {
+    const res = await this.pool.query<{ id: string }>("SELECT id FROM orgs");
+    return res.rows.map((row) => row.id);
+  }
+
   async get(orgId: string): Promise<OrgSettings> {
     const res = await this.pool.query<{ name: string; logo_url: string | null }>(
       "SELECT name, logo_url FROM orgs WHERE id = $1",
@@ -42,9 +48,9 @@ export class OrgStore {
 
 /** Tells the feed that an org's identity frame moved (a rename, a logo, or
  *  the telemetry switch): every member socket of the org repaints it. The
- *  one place that knows the `guild_org` payload shape. */
+ *  one place that knows the `guild_workspace_identity` payload shape. */
 export async function notifyOrgIdentity(pool: PlatformPool, orgId: string): Promise<void> {
-  await pool.query("SELECT pg_notify('guild_org', $1)", [
+  await pool.query("SELECT pg_notify('guild_workspace_identity', $1)", [
     JSON.stringify({ org_id: orgId }),
   ]);
 }

@@ -2,7 +2,8 @@
 // group. PlatformContext (the composition root, built once in app.ts)
 // satisfies every slice structurally; a route file typed to a slice can
 // reach only that slice's collaborators, so layering is enforced by the
-// compiler instead of convention.
+// compiler instead of convention. This is the HTTP-facing contract: it
+// names service types (type-only imports) and constructs nothing.
 //
 //   Infra      — process-level infrastructure, frozen and shared by reference
 //   IdentityCtx — identity/org/auth-facing stores plus what auth needs
@@ -91,8 +92,10 @@ export interface IdentityCtx {
 /** The chats lane: chat/thread stores, the turn-command journal, the agent
  *  runtime, the live hub (member/machine sockets), the notify fan-in, the
  *  feed forwarder, the machine registry and its tool dispatch, and the
- *  socket seams the lanes wire at startup. */
+ *  socket seams. */
 export interface ChatsCtx {
+  /** Durable journal reads (compaction state, context usage). */
+  readonly pool: PlatformPool;
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
@@ -104,20 +107,37 @@ export interface ChatsCtx {
   readonly machineDispatch: MachineDispatch;
   readonly machines: MachineStore;
   readonly wsTickets: TicketStore;
+  /** The member socket's seams into the lanes. */
+  readonly sockets: SocketSeams;
+}
+
+/** A machine's `tool_result` frame as the socket reader parsed it. */
+export interface ToolResultFrame {
+  type: "tool_result";
+  chat_id: string;
+  call_id: string;
+  content: string;
+  is_error: boolean;
+  meta: unknown;
+  images: string[];
+}
+
+/** The socket supervisor's seams into the lanes, built with the composition
+ *  root. Fields are assignable so a test can wrap one. */
+export interface SocketSeams {
   /** The chats lane's state-sync capture, called inside the socket reader's
    *  sync bracket (SyncBegin … SyncDone). */
-  wsSync?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg | null>;
-  /** The chat's thread subtree and header facts, sent inside the same sync
-   *  bracket so a (re)connect never waits for a poll to show the running
-   *  tree or the child thread header. */
-  wsSubagentTree?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg[]>;
-  /** The dispatch lane's tool-result completion (owns_pending_tool + turn
-   *  completion). */
-  wsToolResult?: (args: { member: LiveMember; user: UserRow; frame: { type: "tool_result"; chat_id: string; call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] } }) => Promise<void>;
+  sync: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg>;
+  /** The chat's thread subtree, header facts and context usage, sent inside
+   *  the same sync bracket so a (re)connect never waits for a poll to show
+   *  the running tree or the child thread header. */
+  subagentTree: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg[]>;
+  /** The dispatch lane's tool-result completion. */
+  toolResult: (args: { member: LiveMember; user: UserRow; frame: ToolResultFrame }) => Promise<void>;
   /** The dispatch lane's uncertain-execution sweep at machine connect. */
-  wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
+  machineReconcile: (machineId: string, connId: string) => Promise<void>;
   /** Trace sink for the socket supervisor (the server log). */
-  wsLog?: (message: string) => void;
+  log: (message: string) => void;
 }
 
 /** The gateway/registry lane: the provider route table, the registry and

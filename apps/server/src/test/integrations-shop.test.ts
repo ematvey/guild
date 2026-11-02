@@ -6,8 +6,8 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { INTEGRATIONS, integrationByName } from "../platform/integration-catalog.js";
-import { resolveIntegrations } from "../platform/integrations/plugins.js";
+import { INTEGRATIONS, integrationByName } from "../integrations/loader.js";
+import { resolveIntegrations } from "../integrations/plugins.js";
 import { grafanaExecute } from "../integrations/grafana/execute.js";
 
 const SECRETS: [string, string][] = [["token", "glsa_test"]];

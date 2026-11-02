@@ -10,8 +10,6 @@ import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { isUuid, pgTimestampToRfc3339, utcText, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
-import type { EntryRecord } from "@earendil-works/pi-durable";
-import { calculateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
 export interface ChildResultRecord extends ThreadEventRow {
   event: Extract<ThreadEvent, { type: "child_result" }>;
@@ -76,36 +74,6 @@ async function recordedDecision(client: PoolClient, chatId: string, callId: stri
 
 export class ThreadStore {
   constructor(private readonly pool: PlatformPool) {}
-
-  /** Latest measured context, including the answer and cached input. A head
-   *  change (reset/compaction) invalidates measurements of the old prefix.
-   *  Read immutable entries directly so this works without starting a worker. */
-  async contextUsage(orgId: string, chatId: string): Promise<{ tokens: number; model: string } | null> {
-    // Records are JSON text and may carry characters JSONB rejects, so the
-    // filter uses the `kind` column and the parse happens here.
-    const result = await this.pool.query<{ record: string }>(
-      `SELECT e.record FROM entries e
-       JOIN chat_conversations cc ON cc.conversation_id = e.conversation_id
-       JOIN chats c ON c.id = cc.chat_id
-       WHERE c.org_id = $1 AND c.id = $2
-         AND e.id > COALESCE((SELECT h.id FROM entries h
-           WHERE h.conversation_id = e.conversation_id AND h.head IS NOT NULL ORDER BY h.id DESC LIMIT 1), 0)
-         AND e.kind = 'pi.assistant'
-       ORDER BY e.id DESC LIMIT 50`,
-      [orgId, chatId],
-    );
-    const row = result.rows.find((candidate) => {
-      const entry = JSON.parse(candidate.record) as EntryRecord;
-      const message = entry.model?.find(m => m.role === "assistant");
-      return message !== undefined && message.stopReason !== "error" && message.stopReason !== "aborted";
-    });
-    if (!row) return null;
-    const entry = JSON.parse(row.record) as EntryRecord;
-    const message = entry.model?.find(m => m.role === "assistant");
-    if (!message || message.role !== "assistant") return null;
-    const tokens = calculateContextTokens(message.usage);
-    return Number.isFinite(tokens) && tokens > 0 ? { tokens, model: message.model } : null;
-  }
 
   /** Appends one event: uuid v7 id, `seq` from the BIGSERIAL (global write
    *  order). `id` supplied = idempotent re-append: the first version wins
@@ -388,6 +356,47 @@ export class ThreadStore {
     if (res.rowCount === 0) return;
     await this.watermark();
     await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
+  }
+
+  /** The attachment ids of one run's turn: the user message nearest the
+   *  run's start (written just before or just after the run row, so the
+   *  nearest one in time is this turn's message even when later messages
+   *  are already queued) plus the child results the run consumes. */
+  async turnAttachmentIds(chatId: string, runId: string, startedAt: string): Promise<string[]> {
+    const messages = await this.pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM thread_events
+       WHERE chat_id = $1 AND type = 'user_message'
+       ORDER BY abs(extract(epoch FROM (created_at - $2::timestamptz))) ASC, seq DESC
+       LIMIT 1`,
+      [chatId, startedAt],
+    );
+    const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM thread_events
+       WHERE chat_id = $1 AND type = 'child_result'
+         AND (consumed_by_run_id IS NULL OR consumed_by_run_id = $2)`,
+      [chatId, runId],
+    );
+    const ids = new Set<string>();
+    for (const row of [...messages.rows, ...deliveries.rows]) {
+      const list = Array.isArray(row.payload.attachments) ? row.payload.attachments : [];
+      for (const item of list) {
+        if (typeof item === "string") ids.add(item);
+        else if (item !== null && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
+          ids.add((item as { id: string }).id);
+        }
+      }
+    }
+    return [...ids];
+  }
+
+  /** The type of the chat's newest durable event; undefined for an empty
+   *  log. */
+  async lastEventType(chatId: string): Promise<string | undefined> {
+    const res = await this.pool.query<{ type: string }>(
+      "SELECT type FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
+      [chatId],
+    );
+    return res.rows[0]?.type;
   }
 
   /** Reserves a watermark in the same order space as the durable rows

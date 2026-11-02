@@ -16,6 +16,11 @@ export class ApiError extends Error {
     super(message);
   }
 
+  /** The `/api/v1` envelope body. */
+  envelope(): { error: { code: string; message: string } } {
+    return { error: { code: this.code, message: this.message } };
+  }
+
   static badRequest(message: string): ApiError {
     return new ApiError(400, "bad_request", message);
   }

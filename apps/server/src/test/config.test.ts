@@ -37,6 +37,10 @@ describe("loadConfig", () => {
       execPolicyRulesPath: null,
       tracePayloads: true,
       workerMode: "off",
+      workerLimit: 16,
+      workerIdleMs: 300_000,
+      bunBin: null,
+      sandboxRoot: "/tmp/guild-sandboxes",
       agentsScheduler: false,
       agentMaxDepth: 3,
       agentMaxChildrenPerNode: 16,
@@ -47,7 +51,7 @@ describe("loadConfig", () => {
 
   it("refuses a numeric setting that is not a positive integer", () => {
     const base = { GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" };
-    for (const name of ["GUILD_POOL_MAX", "GUILD_APPROVAL_TIMEOUT_MS", "GUILD_CLIENT_TOOL_TIMEOUT_MS", "GUILD_RETRY_BASE_DELAY_MS"]) {
+    for (const name of ["GUILD_POOL_MAX", "GUILD_APPROVAL_TIMEOUT_MS", "GUILD_CLIENT_TOOL_TIMEOUT_MS", "GUILD_RETRY_BASE_DELAY_MS", "GUILD_WORKER_LIMIT", "GUILD_WORKER_IDLE_MS"]) {
       for (const value of ["abc", "0", "-5", "2.5"]) {
         expect(() => loadConfig({ ...base, [name]: value }), `${name}=${value}`).toThrow(name);
       }

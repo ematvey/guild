@@ -6,7 +6,7 @@
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { agentWorkSql } from "../platform/store/work.js";
+import { agentWorkSql } from "../storage/postgres/queries.js";
 import { pgTimestampToRfc3339, utcText } from "../platform/time.js";
 import { notifySubagentTree } from "./tree.js";
 

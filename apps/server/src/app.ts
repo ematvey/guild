@@ -4,16 +4,16 @@
 // /api/v1 not-found envelope.
 
 import { createRequire } from "node:module";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyBaseLogger } from "fastify";
 import pino from "pino";
 import type { Config } from "./config.js";
 import { PlatformContext } from "./composition.js";
 import { registerPlatformRoutes } from "./platform/http/register.js";
-import { attachWsUpgrade } from "./http/ws.js";
-import { wireWsSync } from "./chats/ws-sync.js";
-import { registerWebRoutes } from "./http/web.js";
+import { attachWsUpgrade } from "./platform/http/ws.js";
+import { registerWebRoutes } from "./platform/http/web.js";
 import { registerFaroRoute } from "./platform/http/faro.js";
-import { registerCors } from "./http/cors.js";
+import { registerCors } from "./platform/http/cors.js";
+import { ApiError } from "./platform/errors.js";
 
 const require = createRequire(import.meta.url);
 
@@ -45,8 +45,11 @@ export async function buildApp(config: Config) {
     base: { version: GUILD_TS_SERVER_VERSION },
   });
 
+  // The app is typed with Fastify's base logger, the type every route
+  // module takes; the pino instance satisfies it.
+  const appLogger: FastifyBaseLogger = logger;
   const app = Fastify({
-    loggerInstance: logger,
+    loggerInstance: appLogger,
     bodyLimit: BODY_LIMIT_BYTES,
   });
 
@@ -54,15 +57,21 @@ export async function buildApp(config: Config) {
   // Test/diagnostic surface (buildApp's consumers read the wiring).
   app.decorate("platform", platform);
 
-  // Bootstrap the agent runtime (decision 9: one owning process): applies
-  // the durable_* migrations + the chat-conversation mapping idempotently
-  // and opens the harness. Turn submission paths reuse it (lazy no-op).
-  await platform.runtime.start();
-  platform.startScheduler();
+  // Bootstrap: every migration (platform, durable, chat mapping), then the
+  // agent runtime opens its harness. A failed start closes what the
+  // composition root opened (pool, LISTEN hub, feed, workers).
+  try {
+    await platform.start();
+  } catch (error) {
+    await platform.close().catch((closeError: unknown) => {
+      logger.warn({ err: closeError }, "close after failed start failed");
+    });
+    throw error;
+  }
 
   // CORS: preflights answered before routing, ACAO rides for the
   // allow-listed webview origins.
-  registerCors(app as unknown as Parameters<typeof registerCors>[0]);
+  registerCors(app);
 
   // Health: {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
@@ -73,29 +82,23 @@ export async function buildApp(config: Config) {
   // Platform routes (auth, org, events, attachments, OIDC, gateway, chats,
   // hub, registry, integrations, …), registered in encapsulated plugins so
   // the error envelope and content parsers stay scoped.
-  await registerPlatformRoutes(app as unknown as FastifyInstance, platform);
+  await registerPlatformRoutes(app, platform);
 
   // The /api/v1/ws upgrade listener (the ws-ticket and machine-registry HTTP
   // routes are registered inside the platform plugin, see register.ts). It
   // is the server's ONLY 'upgrade' handler.
-  platform.wsLog = (message) => logger.info({ ws: message }, "ws");
   attachWsUpgrade(app.server, platform, platform);
-
-  // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
-  wireWsSync(platform);
 
   // The web UI (SPA fallback from the dist on disk) as an onRequest hook —
   // it short-circuits for non-API GET/HEAD paths; everything it skips flows
   // to the native routes or the not-found handler. And the Faro telemetry
   // ingest (unauthenticated, fire-and-forget).
-  registerWebRoutes(app as unknown as FastifyInstance, config);
-  registerFaroRoute(app as unknown as FastifyInstance, platform.config);
+  registerWebRoutes(app, config);
+  registerFaroRoute(app, platform.config);
 
   // Unmatched routes answer the not-found envelope.
   app.setNotFoundHandler(async (_req, reply) => {
-    void reply.status(404).type("application/json").send(
-      JSON.stringify({ error: { code: "not_found", message: "no such route" } }),
-    );
+    void reply.status(404).type("application/json").send(JSON.stringify(ApiError.notFound("no such route").envelope()));
     return reply;
   });
 

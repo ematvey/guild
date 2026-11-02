@@ -23,8 +23,8 @@ import { registerChatsRoutes } from "./chats.js";
 import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
-import { registerMachineRoutes } from "../../http/machines.js";
-import { registerWsRoutes } from "../../http/ws.js";
+import { registerMachineRoutes } from "./machines.js";
+import { registerWsRoutes } from "./ws.js";
 import { registerRegistryRoutes } from "./registry.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerReleaseRoutes } from "./releases.js";
@@ -58,7 +58,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
       done(null, body);
     });
 
-    registerAuthRoutes(scope, auth, ctx.pool);
+    registerAuthRoutes(scope, auth);
     registerOrgRoutes(scope, auth, ctx.objects);
     registerEventRoutes(scope, auth);
     registerAttachmentRoutes(scope, auth, infra, chats.chats);

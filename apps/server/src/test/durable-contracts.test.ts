@@ -1,9 +1,10 @@
 import { ConversationRecovery } from "../chats/recovery.js";
-import { pendingWorkQuery } from "../platform/store/work.js";
+import { pendingWorkQuery } from "../storage/postgres/queries.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import pg from "pg";
 import { ConversationDirectory } from "../harness/conversation-directory.js";
+import { ConversationMapStore } from "../platform/store/conversations.js";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels, Type } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -26,6 +27,10 @@ import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import { UserMcpRuntime } from "../harness/userMcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { ChatStore } from "../platform/store/chats.js";
+import { OrgKvStore } from "../platform/store/org_kv.js";
+import { createStores } from "../platform/stores.js";
+import { masterKeyBytes } from "../platform/crypto.js";
+import { AgentStore } from "../agents/store.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { approvalDecisionEvent, assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { PostgresDurableStorage } from "../storage/postgres/storage.js";
@@ -75,7 +80,7 @@ describe("durable integration contracts", () => {
     const pool = new pg.Pool({ connectionString: stack.env.config.databaseUrl, max: 2, connectionTimeoutMillis: 1500 });
     const h = await Harness.open(await PostgresDurableStorage.open(new SharedPoolDatabase(pool)), { registry: createRegistry(), models: createModels() }, context);
     try {
-      const directory = new ConversationDirectory(pool);
+      const directory = new ConversationDirectory(new ConversationMapStore(pool));
       const ids = await Promise.all(Array.from({ length: 4 }, () => chat()));
       const conversations = await Promise.all(ids.map((id) => directory.ensure(id, async () =>
         (await h.createConversation({ ownership: { kind: "ownerless" } }, context)).id,
@@ -363,17 +368,27 @@ describe("durable integration contracts", () => {
       context,
     );
     const id = await chat();
-    const worker = new GuildRuntime(
-      stack.env.config,
-      stack.env.db,
+    const worker = new GuildRuntime({
+      config: stack.env.config,
+      pool: stack.env.db,
       log,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { chatId: id },
-    );
+      stores: createStores(stack.env.db),
+      agents: new AgentStore(stack.env.db),
+      masterKey: () => masterKeyBytes(stack.env.config.masterKeyHex),
+      placement: {
+        kind: "worker",
+        chatId: id,
+        dispatch: { dispatch: async () => ({ content: "unused", is_error: true, meta: null, images: [] }) },
+        remote: {
+          submit: async () => {
+            throw new Error("unused");
+          },
+          deliverSteer: async () => {
+            throw new Error("unused");
+          },
+        },
+      },
+    });
     try {
       await worker.start();
       expect((await storage.task(tid as never, context))?.state.status).toBe("running");
@@ -411,9 +426,9 @@ describe("durable integration contracts", () => {
       (user as unknown as { resolveSnapshot: () => Promise<unknown> }).resolveSnapshot = async () => base;
       await (
         runtime as unknown as {
-          provisionTurnTools: (c: Conversation, id: string, org: string) => Promise<void>;
+          turnTools: { provision: (c: Conversation, id: string, org: string) => Promise<void> };
         }
-      ).provisionTurnTools(c, id, stack.orgId);
+      ).turnTools.provision(c, id, stack.orgId);
       let agent = await c.agent(context);
       const direct = agent.tools.map((t) => t.name);
       expect(direct).toContain("codemode");
@@ -430,9 +445,9 @@ describe("durable integration contracts", () => {
       });
       await (
         runtime as unknown as {
-          provisionTurnTools: (c: Conversation, id: string, org: string) => Promise<void>;
+          turnTools: { provision: (c: Conversation, id: string, org: string) => Promise<void> };
         }
-      ).provisionTurnTools(c, id, stack.orgId);
+      ).turnTools.provision(c, id, stack.orgId);
       agent = await c.agent(context);
       expect(agent.callable.map((t) => t.name)).not.toContain("mcp7_fixture_echo");
       expect(agent.callable.map((t) => t.name)).toContain("thread_history");
@@ -454,6 +469,8 @@ describe("durable integration contracts", () => {
       const gate = createApprovalGate({
         pool: stack.env.db,
         threads,
+        chats: new ChatStore(stack.env.db),
+        orgKv: new OrgKvStore(stack.env.db),
         log,
         execPolicy: {} as never,
         approvalTimeoutMs: 60_000,
@@ -549,6 +566,8 @@ describe("durable integration contracts", () => {
       const gate = createApprovalGate({
         pool: stack.env.db,
         threads,
+        chats: new ChatStore(stack.env.db),
+        orgKv: new OrgKvStore(stack.env.db),
         log,
         execPolicy: {} as never,
         approvalTimeoutMs: 60_000,
