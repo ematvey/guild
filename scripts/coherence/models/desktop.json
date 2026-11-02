@@ -357,6 +357,10 @@
     {
       "where": "apps/desktop/src/lib/session-reset.ts",
       "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/lib/timeout.ts",
+      "reason": "infrastructure"
     }
   ],
   "attaches": []

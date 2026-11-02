@@ -26,6 +26,7 @@ import type { Agent } from "../../agents/agents-api";
 import type { Project } from "../../../lib/api/projects";
 import type { RoutePatch } from "../route";
 import { HAS_ENGINE } from "../../../lib/session";
+import { withTimeout } from "../../../lib/timeout";
 
 
 export interface OutgoingDeps {
@@ -226,12 +227,7 @@ export function useOutgoing(deps: OutgoingDeps) {
         },
         prepare: async (text, folder) => {
           if (!mountedRef.current) throw new Error("Chat session closed");
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          try {
-            return await Promise.race([prepareTurn(text, folder), new Promise<null>(resolve => {
-              timer = setTimeout(() => resolve(null), 10_000);
-            })]);
-          } finally { if (timer) clearTimeout(timer); }
+          return withTimeout(prepareTurn(text, folder), 10_000, () => null);
         },
         submit: async (cid, id, body) => {
           if (!mountedRef.current) throw new Error("Chat session closed");

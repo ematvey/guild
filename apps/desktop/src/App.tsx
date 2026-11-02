@@ -11,6 +11,7 @@ import { Input } from "@guild/ui/components/input";
 import { HAS_ENGINE, HAS_SHELL, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
 import { request } from "./lib/api/request";
+import { timeoutAfter } from "./lib/timeout";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { ThemeProvider } from "./theme";
@@ -19,20 +20,6 @@ import { ThemedToaster } from "@guild/ui/components/toaster";
 
 const BAKED_URL: string =
   (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
-
-/// Bound any invoke: a wedged layer below us (daemon, IPC) must surface as
-/// an actionable error in the UI, never as an eternal spinner. The invoke
-/// itself keeps running in the background; the timer only gives up on it.
-function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const loser = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  // The losing side must not surface an unhandled rejection when the race
-  // settles the other way, and the timer must not keep the event loop alive.
-  loser.catch(() => {});
-  return Promise.race([p, loser]).finally(() => clearTimeout(timer));
-}
 
 function defaultServerUrl(): string {
   try {
@@ -238,7 +225,7 @@ function DesktopApp() {
     let cancelled = false;
     (async () => {
       try {
-        await bounded(invoke("start_engine"), 30_000, "attach timed out");
+        await timeoutAfter(invoke("start_engine"), 30_000, "attach timed out");
         const res = await rpcCall("session.info", {}, 20_000);
         if (cancelled) return;
         if (res?.result?.email) await afterAuth(res.result.email);
@@ -293,7 +280,7 @@ function DesktopApp() {
     // splash forever — fall back to the bare-email member profile.
     let me: Awaited<ReturnType<typeof apiMe>> = null;
     try {
-      me = await bounded(apiMe(), 10_000, "profile lookup timed out");
+      me = await timeoutAfter(apiMe(), 10_000, "profile lookup timed out");
     } catch {
       /* fall back to member / bare email below */
     }
@@ -307,7 +294,7 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await bounded(invoke("start_engine"), 30_000,
+      await timeoutAfter(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
       const res = await rpcCall("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
@@ -328,7 +315,7 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await bounded(invoke("start_engine"), 30_000,
+      await timeoutAfter(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
       const res = await rpcCall("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
@@ -352,7 +339,7 @@ function DesktopApp() {
     // unreachable we still sign the webview out — the stale token.json
     // cannot survive a 401 on the next restore.
     try {
-      await bounded(invoke("start_engine"), 30_000, "attach timed out");
+      await timeoutAfter(invoke("start_engine"), 30_000, "attach timed out");
       await rpcCall("session.clear", {}, 20_000);
     } catch {
       /* engine unreachable — local sign-out only */
