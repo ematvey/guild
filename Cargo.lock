@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "guild-app-server"
-version = "0.6.48"
+version = "0.6.49"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "guild-core"
-version = "0.6.48"
+version = "0.6.49"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "guild-desktop"
-version = "0.6.48"
+version = "0.6.49"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -3433,7 +3433,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.6.48"
+version = "0.6.49"
 dependencies = [
  "chrono",
  "serde",
