@@ -3,9 +3,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { NotifyHub } from "../platform/notify.js";
 import { TEST_ADMIN_URL } from "./platform/harness.js";
 
-async function until(cond: () => boolean, timeoutMs = 10_000): Promise<void> {
+async function until(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!cond()) {
+  while (!(await cond())) {
     if (Date.now() > deadline) throw new Error("condition not met in time");
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
@@ -36,8 +36,8 @@ describe("NotifyHub", () => {
       },
     );
     const marker = `first-${Date.now()}`;
-    await until(() => {
-      void admin.query("SELECT pg_notify('guild_org', $1)", [marker]);
+    await until(async () => {
+      await admin.query("SELECT pg_notify('guild_org', $1)", [marker]);
       return payloads.includes(marker);
     });
     expect(reconnects).toBe(0);
@@ -50,8 +50,8 @@ describe("NotifyHub", () => {
     await until(() => reconnects === 1);
 
     const after = `second-${Date.now()}`;
-    await until(() => {
-      void admin.query("SELECT pg_notify('guild_org', $1)", [after]);
+    await until(async () => {
+      await admin.query("SELECT pg_notify('guild_org', $1)", [after]);
       return payloads.includes(after);
     });
   });

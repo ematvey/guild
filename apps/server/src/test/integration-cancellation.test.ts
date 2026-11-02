@@ -57,10 +57,14 @@ const server = createServer(async (req, res) => {
 });
 let base: string;
 beforeAll(async () => {
+  // The user MCP runtime re-checks the SSRF guard on every connect; the
+  // fixture server listens on loopback.
+  process.env.GUILD_MCP_ALLOW_PRIVATE = "1";
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 afterAll(async () => {
+  delete process.env.GUILD_MCP_ALLOW_PRIVATE;
   server.closeAllConnections();
   await new Promise<void>((r) => server.close(() => r()));
 });
