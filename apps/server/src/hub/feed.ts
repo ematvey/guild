@@ -123,7 +123,7 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Subscribes the notify fan-out and starts the poll timers. */
   start(): void {
     if (this.unsubscribe !== null || this.stopped) return;
-    const off = this.ctx.notify.subscribe(this.onNotify);
+    const off = this.ctx.notify.subscribe(this.onNotify, this.resync);
     this.unsubscribe = off;
     this.viewTimer = setInterval(() => {
       if (++this.ticks % SWEEP_EVERY_TICKS === 0) this.sweep();
@@ -139,6 +139,24 @@ export class FeedForwarder implements GenerationStreamSink {
     this.unsubscribe?.();
     this.unsubscribe = null;
   }
+
+  /** The LISTEN connection came back: every NOTIFY sent while it was down
+   *  is lost. Each connected user's workspace, agent lists and skill
+   *  catalog are re-pushed (each socket receives only what differs from
+   *  what it holds), and every chat a socket shows re-captures its view and
+   *  subtree; the captures compare against the last value sent. */
+  private resync = (): void => {
+    if (this.stopped) return;
+    for (const { userId, orgId } of this.ctx.hub.memberUsers()) {
+      void this.pushWorkspace(orgId, userId, ALL_PARTS);
+      void this.agentState.connect(orgId, userId).catch((error: unknown) => this.failed("resync", null, error));
+      for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
+        if (typeof sink.view !== "string") continue;
+        this.markDirty(sink.view);
+        this.subagentTree(sink.view);
+      }
+    }
+  };
 
   // -- notify fan-in ------------------------------------------------------------
 

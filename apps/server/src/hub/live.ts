@@ -377,6 +377,16 @@ export class LiveHub {
     return users;
   }
 
+  /** Returns every user with a browser socket open, with their org. */
+  memberUsers(): { userId: string; orgId: string }[] {
+    const users: { userId: string; orgId: string }[] = [];
+    for (const [userId, perUser] of this.members) {
+      const first = perUser.values().next().value;
+      if (first !== undefined) users.push({ userId, orgId: first.org_id });
+    }
+    return users;
+  }
+
   /** Returns browser sockets of one user (no machine sockets: presence
    *  frames are for the UI, not the executor). */
   memberSinksOfUser(userId: string): SocketSink[] {

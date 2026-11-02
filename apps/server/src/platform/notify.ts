@@ -8,6 +8,10 @@ import type { Logger } from "pino";
 
 export type NotifyHandler = (channel: string, payload: string) => void;
 
+/** Called after the LISTEN client reconnected: every NOTIFY sent while it
+ *  was down is lost, so a subscriber re-reads the state it pushes. */
+export type ReconnectHandler = () => void;
+
 /** The channels the stores NOTIFY. */
 export const NOTIFY_CHANNELS = [
   "guild_thread_committed",
@@ -29,6 +33,9 @@ export class NotifyHub {
   private client: pg.Client | undefined;
   private connecting: Promise<void> | undefined;
   private readonly handlers = new Set<NotifyHandler>();
+  private readonly reconnectHandlers = new Set<ReconnectHandler>();
+  /** True once a LISTEN client has been up: a later connect is a reconnect. */
+  private listened = false;
   private closed = false;
 
   constructor(
@@ -36,11 +43,13 @@ export class NotifyHub {
     private readonly log: Logger = { warn() {}, error() {}, info() {} } as never,
   ) {}
 
-  subscribe(handler: NotifyHandler): () => void {
+  subscribe(handler: NotifyHandler, onReconnect?: ReconnectHandler): () => void {
     this.handlers.add(handler);
+    if (onReconnect !== undefined) this.reconnectHandlers.add(onReconnect);
     void this.ensureListening();
     return () => {
       this.handlers.delete(handler);
+      if (onReconnect !== undefined) this.reconnectHandlers.delete(onReconnect);
     };
   }
 
@@ -76,6 +85,11 @@ export class NotifyHub {
           for (const channel of NOTIFY_CHANNELS) await client.query(`LISTEN ${channel}`);
           this.client = client;
           backoffMs = 250;
+          if (this.listened) {
+            this.log.info("notify connection restored; subscribers resync");
+            for (const handler of this.reconnectHandlers) handler();
+          }
+          this.listened = true;
           return;
         } catch (error) {
           await client.end().catch(() => {});
