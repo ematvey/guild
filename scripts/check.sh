@@ -50,11 +50,10 @@ check_windows() { ./scripts/check-windows.sh; }
 check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }
 # Vitest strips types without checking them; this is the only place tsc
-# sees the TypeScript trees. packages/ui has no tsconfig of its own and is
-# checked through the desktop, which imports it.
+# sees the TypeScript trees.
 check_typecheck() {
   rc=0
-  for project in apps/server apps/desktop packages/wire; do
+  for project in apps/server apps/desktop packages/wire packages/ui; do
     echo "== tsc $project"
     npx tsc -p "$project/tsconfig.json" --noEmit || rc=1
   done

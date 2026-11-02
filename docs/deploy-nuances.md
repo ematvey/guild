@@ -143,9 +143,13 @@ head"` to inspect the served bundle directly.
 
 | Stage | Base | Does |
 |---|---|---|
-| `build` | node:22 | `npm ci --workspace apps/server` + `tsc` (dist compiled at build time) |
+| `build` | node:22 | `npm ci --workspace apps/server` (dependencies, assets, migrations; no compile) |
 | `webui` | node:22 | `npm ci --workspace apps/desktop` + `vite build` (chat SPA, needs `packages/ui/src` + `packages/wire/src`) |
-| runtime | node:22-slim | production `node_modules` + the server dist + the SPA dist + the static exec-policy rules; `node dist/index.js` |
+| runtime | node:22-slim + Bun | production `node_modules` + the server sources + the SPA dist + the static exec-policy rules + migrations; `bun src/index.ts` |
+
+`Dockerfile.sandbox` is the one image that compiles server code: its build
+stage runs `npm run build --workspace apps/server` (`tsc`) and copies only
+the sandbox agent's emitted files.
 
 Notes:
 
@@ -368,8 +372,6 @@ isolated config file (`GUILD_CONFIG_ENV`).
     (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
     deps: zig + cargo-zigbuild, macOS SDK at `$SDKROOT`, mingw-w64, makensis,
     llvm, linuxdeploy, libdmg-hfsplus, hfsprogs, 7z.
-  - `scripts/release-desktop.sh` — portable tar.gz/zip builds for
-    linux/mac/windows (zigbuild), not installer-format.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
     VITE_DEFAULT_SERVER_URL=https://guild.example.com scripts/release-clients.sh`.
   - Running the release script from a systemd transient unit needs an explicit

@@ -235,11 +235,10 @@ fails when `CI` is set.
 
 | Script | Publishes |
 |---|---|
-| `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) — **the only script needed** |
-| `scripts/release-desktop.sh` | (superseded) separate desktop-only artifacts |
+| `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) |
 
-Both are idempotent: they delete and replace existing artifacts of the same
-version/platform, verify sha256 server-side, and abort on any mismatch.
+It is idempotent: it deletes and replaces existing artifacts of the same
+version/platform, verifies sha256 server-side, and aborts on any mismatch.
 
 ## Desktop auto-updater (v0.3.0+)
 

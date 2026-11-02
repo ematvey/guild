@@ -4,7 +4,6 @@
   "version": "0.6.49",
   "type": "module",
   "description": "Guild cloud server (TypeScript, on pi-durable).",
-  "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",

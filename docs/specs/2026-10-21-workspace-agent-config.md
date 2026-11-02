@@ -79,5 +79,7 @@ for compatibility with the directory list.
 ## Migration
 
 Existing agents get the templates on their next turn or on the re-init
-run: `scripts/agents-reinit.mjs --org <orgId>` seeds missing files and
-keeps everything else. It never overwrites a file the agent has edited.
+run. Seeding on a turn creates only missing files and never overwrites a
+file the agent has edited. `scripts/agents-reinit.ts --org <orgId>` is the
+deliberate reset: it deletes each agent's `AGENTS.md` and seeds it fresh
+from the template, leaving every other file alone.
