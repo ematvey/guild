@@ -6,6 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { installRow, sourceBadge, toggleDisabled, uninstallSkill, type LocalSkillRow } from "./LocalSkills";
+import type { BridgeRpc } from "../../lib/fs-bridge";
 import { panelTabs } from "./SkillsPanel";
 import type { SkillInstall } from "./skills-api";
 
@@ -108,7 +109,7 @@ describe("panelTabs (the HAS_ENGINE fixture)", () => {
 });
 
 describe("uninstallSkill (server-first, local cleanup second)", () => {
-  type Rpc = (method: string, params: any, timeoutMs?: number) => Promise<any>;
+  type Rpc = BridgeRpc;
   const okFetch = () =>
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
 
