@@ -7,14 +7,14 @@
 //! The shell holds no server connection of its own: the machine (executor)
 //! role rides the engine's machine link, and all display state reaches the
 //! webview over the webview's own member WebSocket. The shell's webview
-//! surface is the engine rpc bridge (submit + poll, allowlisted methods),
+//! surface is the engine rpc bridge (submit + pushed reply event, allowlisted methods),
 //! local folder browsing, the engine trace toggle, and the updater.
 
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
 use guild_app_server::sync::LockExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,78 +54,62 @@ impl Default for EngineState {
     }
 }
 
+/// Hands one finished JSON-RPC envelope to the webview.
+pub type Deliver = Box<dyn Fn(Value) + Send + Sync>;
+
+/// The Tauri event that carries each finished engine reply to the main
+/// window. The webview listens once and routes replies to callers by `id`.
+pub const RPC_EVENT: &str = "engine-rpc";
+
 pub struct Engine {
     /// Client→engine write half (std pipe writer; sync writes are fine —
     /// the dispatch loop reads on its own thread).
     writer: Mutex<std::io::PipeWriter>,
-    /// Completed JSON-RPC envelopes, drained by `rpc_poll`: the webview never
-    /// holds a long-lived invoke open (Windows WebView2 can silently lose
-    /// those).
-    results: Mutex<HashMap<u64, Value>>,
-    /// Submit timestamps of requests still waiting for their response: the
-    /// poll-timeout sweep and the engine-exit failure path act on these only.
-    submitted: Mutex<HashMap<u64, std::time::Instant>>,
+    /// Ids of requests still waiting for their response: the timeout and
+    /// the engine-exit failure path act on these only.
+    submitted: Mutex<HashSet<u64>>,
+    /// Pushes each finished envelope to the webview as it is ready. The
+    /// webview never holds a long-lived invoke open (Windows WebView2 can
+    /// silently lose those).
+    deliver: Deliver,
 }
 
 impl Engine {
-    fn new(writer: std::io::PipeWriter) -> Self {
+    fn new(writer: std::io::PipeWriter, deliver: Deliver) -> Self {
         Self {
             writer: Mutex::new(writer),
-            results: Mutex::new(HashMap::new()),
-            submitted: Mutex::new(HashMap::new()),
+            submitted: Mutex::new(HashSet::new()),
+            deliver,
         }
     }
 
     /// Records a request as in flight.
     fn submit(&self, id: u64) {
-        self.submitted.guard().insert(id, std::time::Instant::now());
+        self.submitted.guard().insert(id);
     }
 
     /// A response arrived: the request is no longer in flight, and its
-    /// envelope waits for the next poll.
+    /// envelope goes to the webview.
     fn complete(&self, id: u64, value: Value) {
         self.submitted.guard().remove(&id);
-        self.results.guard().insert(id, value);
+        (self.deliver)(value);
     }
 
     /// Fails every request still in flight with `message`.
     fn fail_in_flight(&self, message: &str) {
-        let ids: Vec<u64> = self.submitted.guard().drain().map(|(id, _)| id).collect();
-        let mut results = self.results.guard();
+        let ids: Vec<u64> = self.submitted.guard().drain().collect();
         for id in ids {
-            results.insert(
-                id,
-                serde_json::json!({"id": id, "error": {"message": message}}),
-            );
+            (self.deliver)(serde_json::json!({"id": id, "error": {"message": message}}));
         }
     }
 
-    /// Fails the in-flight requests submitted longer than `timeout` ago.
-    fn expire(&self, now: std::time::Instant, timeout: Duration) {
-        let stale: Vec<u64> = {
-            let mut submitted = self.submitted.guard();
-            let stale: Vec<u64> = submitted
-                .iter()
-                .filter(|(_, at)| now.duration_since(**at) > timeout)
-                .map(|(id, _)| *id)
-                .collect();
-            for id in &stale {
-                submitted.remove(id);
-            }
-            stale
-        };
-        let mut results = self.results.guard();
-        for id in stale {
+    /// Fails request `id` with a timeout if it is still in flight.
+    fn expire(&self, id: u64) {
+        let in_flight = self.submitted.guard().remove(&id);
+        if in_flight {
             guild_app_server::trace!("ipc rpc-timeout id={id}");
-            results.entry(id).or_insert_with(
-                || serde_json::json!({"id": id, "error": {"message": "engine timed out"}}),
-            );
+            (self.deliver)(serde_json::json!({"id": id, "error": {"message": "engine timed out"}}));
         }
-    }
-
-    /// Takes every completed envelope.
-    fn drain(&self) -> Vec<Value> {
-        self.results.guard().drain().map(|(_, v)| v).collect()
     }
 }
 
@@ -150,7 +134,7 @@ const WEBVIEW_RPC_METHODS: &[&str] = &[
     "fs.write_text",
 ];
 
-/// How long a request may stay in flight before `rpc_poll` fails it.
+/// How long a request may stay in flight before the bridge fails it.
 const RPC_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn webview_rpc_allowed(method: &str) -> bool {
@@ -167,12 +151,22 @@ pub fn parse_response(line: &str) -> Option<(u64, Value)> {
     Some((v.get("id")?.as_u64()?, v))
 }
 
+/// The production sink: each finished envelope is emitted as `RPC_EVENT`
+/// to the main window only.
+fn emit_to_main(app: AppHandle) -> Deliver {
+    Box::new(move |value| {
+        if let Err(e) = app.emit_to("main", RPC_EVENT, value) {
+            guild_app_server::trace!("ipc emit-fail err={e}");
+        }
+    })
+}
+
 /// Builds the in-process engine: two unidirectional std pipes carry the
 /// JSON-RPC line protocol between the webview-facing commands and the same
 /// `run_connection` dispatch the CLI socket serves — one dispatch surface,
 /// one session, two transports. Starts the dispatch loop and the response
 /// reader.
-fn build_engine(shared: &Shared) -> anyhow::Result<Arc<Engine>> {
+fn build_engine(shared: &Shared, deliver: Deliver) -> anyhow::Result<Arc<Engine>> {
     let (rd_in, wr_in) = std::io::pipe()?; // client → engine
     let (rd_out, wr_out) = std::io::pipe()?; // engine → client
     {
@@ -184,7 +178,7 @@ fn build_engine(shared: &Shared) -> anyhow::Result<Arc<Engine>> {
             let _ = rt.block_on(run_connection(&shared, rd_in, wr_out));
         });
     }
-    let engine = Arc::new(Engine::new(wr_in));
+    let engine = Arc::new(Engine::new(wr_in, deliver));
     start_engine_reader(engine.clone(), rd_out);
     Ok(engine)
 }
@@ -350,7 +344,10 @@ pub mod commands {
     /// session restore (bounded by setup), and rebuilds the engine after a
     /// write failure dropped it.
     #[tauri::command]
-    pub async fn start_engine(state: State<'_, EngineState>) -> Result<(), String> {
+    pub async fn start_engine(
+        app: AppHandle,
+        state: State<'_, EngineState>,
+    ) -> Result<(), String> {
         let shared = state
             .shared
             .subscribe()
@@ -361,7 +358,7 @@ pub mod commands {
             .ok_or_else(|| "engine not initialized".to_string())?;
         let mut cell = state.cell.guard();
         if cell.is_none() {
-            *cell = Some(build_engine(&shared).map_err(|e| e.to_string())?);
+            *cell = Some(build_engine(&shared, emit_to_main(app)).map_err(|e| e.to_string())?);
         }
         Ok(())
     }
@@ -592,7 +589,8 @@ pub mod commands {
     }
 
     /// Submit an rpc without waiting for its response: returns the request id
-    /// immediately. Results are collected by rpc_poll. This keeps every webview
+    /// immediately. The reply arrives as an `RPC_EVENT` emitted to the main
+    /// window, or as a timeout error after `RPC_TIMEOUT`. This keeps every webview
     /// invoke sub-millisecond — Windows WebView2 can silently lose long-lived
     /// invoke responses, and a pair/login must not depend on that path.
     /// Only `WEBVIEW_RPC_METHODS` are forwarded.
@@ -627,19 +625,11 @@ pub mod commands {
         }
         drop(w);
         guild_app_server::trace!("ipc write-ok id={id}");
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(RPC_TIMEOUT).await;
+            engine.expire(id);
+        });
         Ok(id)
-    }
-
-    /// Drain completed rpc envelopes (and inject timeouts for requests still
-    /// in flight after 120s). Returns full JSON-RPC envelopes; clients route
-    /// by the `id` field.
-    #[tauri::command]
-    pub async fn rpc_poll(state: State<'_, EngineState>) -> Result<Vec<Value>, String> {
-        let Some(engine) = state.cell.guard().clone() else {
-            return Ok(vec![]);
-        };
-        engine.expire(std::time::Instant::now(), RPC_TIMEOUT);
-        Ok(engine.drain())
     }
 
     /// Version of the pending downloaded update, if any (UI queries on mount
@@ -871,7 +861,7 @@ async fn boot_engine(app: AppHandle) {
     }
 
     let state: State<EngineState> = app.state();
-    match build_engine(&shared) {
+    match build_engine(&shared, emit_to_main(app.clone())) {
         Ok(engine) => *state.cell.guard() = Some(engine),
         // start_engine retries the build from the published Shared.
         Err(e) => eprintln!("setup: engine build failed: {e}"),
@@ -905,7 +895,6 @@ pub fn run() {
             check_update_now,
             commands::start_engine,
             commands::rpc_submit,
-            commands::rpc_poll,
             commands::list_wsl_distros,
             commands::wsl_home,
             commands::wsl_pretty_name,
@@ -1049,53 +1038,52 @@ mod tests {
         }
     }
 
-    fn test_engine() -> Engine {
+    /// An engine whose deliveries land in the returned list.
+    fn test_engine() -> (Engine, Arc<Mutex<Vec<Value>>>) {
         let (_rd, wr) = std::io::pipe().unwrap();
-        Engine::new(wr)
+        let delivered = Arc::new(Mutex::new(Vec::new()));
+        let sink = delivered.clone();
+        let engine = Engine::new(wr, Box::new(move |v| sink.guard().push(v)));
+        (engine, delivered)
     }
 
     #[test]
-    fn a_response_ends_the_request_in_flight() {
-        let engine = test_engine();
+    fn a_response_is_delivered_once_and_ends_the_request() {
+        let (engine, delivered) = test_engine();
         engine.submit(7);
         engine.complete(7, serde_json::json!({"id": 7, "result": {"ok": true}}));
         assert!(engine.submitted.guard().is_empty());
-        // Neither the timeout sweep nor engine exit rewrites a finished rpc.
-        engine.expire(
-            std::time::Instant::now() + Duration::from_secs(600),
-            RPC_TIMEOUT,
-        );
+        // Neither the timeout nor engine exit rewrites a finished rpc.
+        engine.expire(7);
         engine.fail_in_flight("engine dropped the request");
-        let drained = engine.drain();
-        assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0]["result"]["ok"], true);
+        let delivered = delivered.guard();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0]["result"]["ok"], true);
     }
 
     #[test]
     fn requests_without_a_response_time_out_or_fail_on_engine_exit() {
-        let engine = test_engine();
+        let (engine, delivered) = test_engine();
         engine.submit(1);
         engine.submit(2);
-        engine.expire(std::time::Instant::now(), RPC_TIMEOUT);
-        assert!(engine.drain().is_empty(), "fresh requests are not expired");
-        engine.expire(
-            std::time::Instant::now() + RPC_TIMEOUT + Duration::from_secs(1),
-            RPC_TIMEOUT,
-        );
         engine.submit(3);
+        engine.expire(1);
+        engine.expire(2);
+        engine.expire(2);
         engine.fail_in_flight("engine dropped the request");
-        let mut drained = engine.drain();
-        drained.sort_by_key(|v| v["id"].as_u64());
-        let messages: Vec<&str> = drained
+        engine.fail_in_flight("engine dropped the request");
+        let mut delivered = delivered.guard().clone();
+        delivered.sort_by_key(|v| v["id"].as_u64());
+        let messages: Vec<(u64, &str)> = delivered
             .iter()
-            .map(|v| v["error"]["message"].as_str().unwrap())
+            .map(|v| (v["id"].as_u64().unwrap(), v["error"]["message"].as_str().unwrap()))
             .collect();
         assert_eq!(
             messages,
             [
-                "engine timed out",
-                "engine timed out",
-                "engine dropped the request"
+                (1, "engine timed out"),
+                (2, "engine timed out"),
+                (3, "engine dropped the request")
             ]
         );
     }

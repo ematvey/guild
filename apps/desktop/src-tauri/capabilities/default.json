@@ -14,7 +14,6 @@
     "allow-check-update-now",
     "allow-start-engine",
     "allow-rpc-submit",
-    "allow-rpc-poll",
     "allow-list-wsl-distros",
     "allow-wsl-home",
     "allow-wsl-pretty-name",
