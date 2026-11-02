@@ -344,10 +344,7 @@ pub mod commands {
     /// session restore (bounded by setup), and rebuilds the engine after a
     /// write failure dropped it.
     #[tauri::command]
-    pub async fn start_engine(
-        app: AppHandle,
-        state: State<'_, EngineState>,
-    ) -> Result<(), String> {
+    pub async fn start_engine(app: AppHandle, state: State<'_, EngineState>) -> Result<(), String> {
         let shared = state
             .shared
             .subscribe()
@@ -1076,7 +1073,12 @@ mod tests {
         delivered.sort_by_key(|v| v["id"].as_u64());
         let messages: Vec<(u64, &str)> = delivered
             .iter()
-            .map(|v| (v["id"].as_u64().unwrap(), v["error"]["message"].as_str().unwrap()))
+            .map(|v| {
+                (
+                    v["id"].as_u64().unwrap(),
+                    v["error"]["message"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             messages,
