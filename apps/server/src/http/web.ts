@@ -100,7 +100,7 @@ function mimeGuess(path: string): string {
 const SECURITY_HEADERS: Record<string, string> = {
   "content-security-policy": [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: http: https:",
     "font-src 'self' data:",
