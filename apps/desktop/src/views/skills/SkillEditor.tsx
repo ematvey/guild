@@ -222,9 +222,13 @@ export interface SkillEditorProps {
   onBack: () => void;
   /** Success: navigate to the saved skill's detail page. */
   onSaved: (slug: string) => void;
+  /** The bundle file being edited (route state); SKILL.md when none. */
+  file?: string;
+  /** `replace` when the shown file is gone (deleted), not a step back. */
+  onSelectFile?: (path: string, options?: { replace?: boolean }) => void;
 }
 
-export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
+export function SkillEditor({ mode, slug, onBack, onSaved, file = "SKILL.md", onSelectFile }: SkillEditorProps) {
   const [form, setForm] = useState<EditorForm>({
     slug: "",
     description: "",
@@ -234,7 +238,8 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   });
   const [teams, setTeams] = useState<EditorTeam[] | null>(null);
   const [pane, setPane] = useState<EditorPane>("write");
-  const [selectedPath, setSelectedPath] = useState("SKILL.md");
+  const selectedPath = file;
+  const setSelectedPath = (path: string, options?: { replace?: boolean }) => onSelectFile?.(path, options);
   const [newPath, setNewPath] = useState("");
   const [addingFile, setAddingFile] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -339,8 +344,8 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
 
   const deleteFile = () => {
     if (currentPath === "SKILL.md") return;
-    setForm((f) => ({ ...f, files: f.files.filter((file) => file.path !== currentPath) }));
-    setSelectedPath("SKILL.md");
+    setForm((f) => ({ ...f, files: f.files.filter((entry) => entry.path !== currentPath) }));
+    setSelectedPath("SKILL.md", { replace: true });
   };
 
   if (loadFailed === null) {
@@ -468,7 +473,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
               className="max-h-[55vh] overflow-y-auto rounded-lg border border-border bg-card p-1.5"
               aria-label="Bundle files"
             >
-              <FileTree nodes={tree} selected={currentPath} onSelect={setSelectedPath} />
+              <FileTree nodes={tree} selected={currentPath} onSelect={(path) => setSelectedPath(path)} />
             </div>
             {addingFile ? (
               <div className="flex flex-col gap-1">

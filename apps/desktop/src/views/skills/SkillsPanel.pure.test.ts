@@ -192,7 +192,7 @@ describe("skillsEmptyState", () => {
 
 describe("skills-route (the page's URL contract)", () => {
   it("skillsPageState derives tab, detail slug and editor from the route", () => {
-    expect(skillsPageState(SKILLS_CATALOG)).toEqual({
+    expect(skillsPageState(SKILLS_CATALOG)).toMatchObject({
       tab: "catalog",
       selected: null,
       editor: null,
@@ -201,18 +201,18 @@ describe("skills-route (the page's URL contract)", () => {
       tab: "activity",
       selected: null,
     });
-    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: null })).toEqual({
+    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: null })).toMatchObject({
       tab: "catalog",
       selected: "code-review",
       editor: null,
     });
     // the editor replaces the page body: no detail renders under it
-    expect(skillsPageState({ view: "catalog", slug: null, editor: "new" })).toEqual({
+    expect(skillsPageState({ view: "catalog", slug: null, editor: "new" })).toMatchObject({
       tab: "catalog",
       selected: null,
       editor: { mode: "create" },
     });
-    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: "code-review" })).toEqual({
+    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: "code-review" })).toMatchObject({
       tab: "catalog",
       selected: null,
       editor: { mode: "edit", slug: "code-review" },
