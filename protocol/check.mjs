@@ -77,6 +77,14 @@ async function main() {
   // Compatibility first: a break against a shipped client is the finding
   // that matters most, and fixtures edited to match it would hide nothing.
   const compat = compatibility(schemas);
+  if (compat.missing !== undefined) {
+    // Without a baseline nothing holds the schemas to what installed clients
+    // read. Locally that is a warning; in CI it is a failure.
+    const line = '!'.repeat(72);
+    console.warn(`${line}\nprotocol: WARNING: ${compat.missing}; the compatibility check did NOT run\n${line}`);
+    if (process.env.CI) fail('CI is set and the compatibility baseline is missing');
+    compat.note = `compatibility check skipped: ${compat.missing}`;
+  }
   if (compat.problems.length > 0) {
     for (const item of compat.problems) console.error(item);
     fail(`${compat.problems.length} change(s) break a client shipped as ${compat.tag}`);
@@ -205,16 +213,43 @@ async function main() {
   }
   // Every named object or union is compared, not only the fixture roots: a
   // type can reach the wire inside another root and have no fixture of its
-  // own (a frame's nested row or payload struct).
+  // own (a frame's nested row or payload struct). A definition without a
+  // declaration of the same name fails unless UNDECLARED_DEFS_ALLOW names it;
+  // a scalar alias (`Uuid`, `DateTime`) is compared with its TypeScript alias.
+  // A named variant of a tagged union that TypeScript declares is compared
+  // as that union's member, so it needs no declaration of its own.
+  const unionVariants = new Set();
+  for (const [schemaName, schema] of schemas) {
+    for (const [root, def] of Object.entries(schema.$defs ?? {})) {
+      if (def.oneOf === undefined || declarations.get(root)?.kind !== 'union') continue;
+      for (const variant of def.oneOf) {
+        if (variant.$ref === undefined || variantTag(resolveVariant(schema, variant)) === null) continue;
+        const { owner, name } = resolveRef(schema, variant.$ref);
+        const ownerName = [...schemas].find(([, s]) => s === owner)?.[0];
+        unionVariants.add(`${ownerName}.${name}`);
+      }
+    }
+  }
   for (const [schemaName, schema] of schemas) {
     for (const [root, def] of Object.entries(schema.$defs ?? {})) {
       const name = `${schemaName}.${root}`;
       if (compared.has(name)) continue;
       const declaration = declarations.get(root);
-      if (declaration === undefined) continue;
+      if (declaration === undefined) {
+        if (!UNDECLARED_DEFS_ALLOW.has(name) && !unionVariants.has(name)) {
+          typeProblems.push(`missing TypeScript declaration: ${name}`);
+        }
+        continue;
+      }
       const shaped = def.oneOf !== undefined || def.enum !== undefined || def.properties !== undefined;
-      if (!shaped) continue;
-      compareRoot(name, schema, def, declaration, typeProblems);
+      if (shaped) compareRoot(name, schema, def, declaration, typeProblems);
+      else compareShapes(name, schemaShape(schema, def, name, typeProblems), tsShape(aliasNodes.get(root), name, typeProblems), typeProblems);
+    }
+  }
+  for (const name of UNDECLARED_DEFS_ALLOW.keys()) {
+    const [schemaName, root] = name.split('.');
+    if (declarations.has(root) || schemas.get(schemaName)?.$defs?.[root] === undefined) {
+      typeProblems.push(`UNDECLARED_DEFS_ALLOW lists ${name}, which no longer needs an exception`);
     }
   }
   if (typeProblems.length > 0) {
@@ -374,11 +409,74 @@ function compareProps(name, schema, def, tsProps, problems) {
 }
 
 // ---------------------------------------------------------------------------
-// Scalar type conformance. Each side reduces a property's type to a set of
-// categories: string, number, boolean, null, array, object (an inline map or
-// struct) and ref (a named object or tagged union). `any` (Json, unknown)
-// matches everything. An enum is a string.
+// Type conformance. Each side reduces a property's type to a shape: a union of
+// primitives (string, number, boolean, null), named types (a `$ref` to an
+// object, a union or a structured alias on the schema side; a reference to a
+// declared interface, union or structured alias on the TypeScript side),
+// arrays (with their element shape), inline objects (with their properties,
+// compared recursively) and maps (with their value shape). `any` (Json,
+// unknown, an empty schema) matches everything. A named enum is a string whose
+// name must match when both sides name it.
+//
+// Named types are compared by name: the schema's `$defs` name against the
+// TypeScript type name, through REF_ALIASES where the two names differ.
 // ---------------------------------------------------------------------------
+
+// Schema `$defs` name -> TypeScript name, where the TypeScript side calls the
+// same type something else.
+const REF_ALIASES = new Map([]);
+
+// TypeScript type references that are not declared in packages/wire and are
+// read as `any` (name -> reason).
+const UNRESOLVED_TS_ALLOW = new Map([]);
+
+// `$defs` entries with no TypeScript declaration of the same name
+// (`schema.Def` -> reason).
+const UNDECLARED_DEFS_ALLOW = new Map([
+  ['rest.DateTime', 'an RFC 3339 timestamp; TypeScript carries it as a plain `string`, and the shape check inlines it as one'],
+]);
+
+// Known schema/TypeScript drift the gate tolerates until the two sides are
+// reconciled (problem location -> reason). Every entry is a real mismatch.
+const KNOWN_DRIFT = new Map([]);
+
+const ANY = Object.freeze({ any: true });
+
+function emptyShape() {
+  return { any: false, prims: new Set(), refs: new Set(), enums: new Set(), arrays: [], objects: [], maps: [] };
+}
+
+// Fold `shape` into `into`; false when `shape` is `any` (the union is then any).
+function merge(into, shape) {
+  if (shape.any) return false;
+  for (const p of shape.prims) into.prims.add(p);
+  for (const r of shape.refs) into.refs.add(r);
+  for (const e of shape.enums) into.enums.add(e);
+  into.arrays.push(...shape.arrays);
+  into.objects.push(...shape.objects);
+  into.maps.push(...shape.maps);
+  return true;
+}
+
+function primOf(value) {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'boolean') return 'boolean';
+  return 'any';
+}
+
+// A named type whose shape is only primitives is inlined where it is
+// referenced: `Uuid` is a string on both sides, whatever either side calls it.
+function onlyPrims(shape) {
+  return (
+    !shape.any &&
+    shape.refs.size === 0 &&
+    shape.arrays.length === 0 &&
+    shape.objects.length === 0 &&
+    shape.maps.length === 0
+  );
+}
 
 function resolveRef(schema, ref) {
   const [file, pointer] = ref.split('#');
@@ -387,83 +485,179 @@ function resolveRef(schema, ref) {
   return { owner, name, def: owner?.$defs?.[name] };
 }
 
-function schemaCategories(schema, prop, depth = 0) {
-  const out = new Set();
-  if (prop === undefined || depth > 8) return new Set(['any']);
+function schemaShape(schema, prop, where, problems, depth = 0) {
+  if (prop === undefined || prop === true || depth > 16) return ANY;
+  const out = emptyShape();
+  let constrained = false;
   if (prop.$ref !== undefined) {
-    const { owner, def } = resolveRef(schema, prop.$ref);
-    if (def === undefined) return new Set(['any']);
-    if (def.oneOf !== undefined || def.properties !== undefined) out.add('ref');
-    else for (const c of schemaCategories(owner, def, depth + 1)) out.add(c);
-  }
-  if (typeof prop.const === 'string') out.add('string');
-  if (prop.type !== undefined) {
-    for (const t of [prop.type].flat()) {
-      if (t === 'integer' || t === 'number') out.add('number');
-      else out.add(t);
+    constrained = true;
+    const { owner, name, def } = resolveRef(schema, prop.$ref);
+    if (def === undefined) {
+      problems.push(`${where}: unresolved $ref ${prop.$ref}`);
+      return ANY;
+    }
+    if (def.oneOf !== undefined || def.properties !== undefined) out.refs.add(name);
+    else if (def.enum !== undefined) {
+      out.enums.add(name);
+      for (const v of def.enum) out.prims.add(primOf(v));
+    } else {
+      const inner = schemaShape(owner, def, where, problems, depth + 1);
+      if (inner.any) return ANY;
+      if (onlyPrims(inner)) merge(out, inner);
+      else out.refs.add(name);
     }
   }
-  for (const variant of [...(prop.oneOf ?? []), ...(prop.anyOf ?? [])]) {
-    for (const c of schemaCategories(schema, variant, depth + 1)) out.add(c);
+  if (prop.const !== undefined) {
+    constrained = true;
+    out.prims.add(primOf(prop.const));
   }
-  if (out.size === 0) out.add('any');
-  return out;
+  if (Array.isArray(prop.enum)) {
+    constrained = true;
+    for (const v of prop.enum) out.prims.add(primOf(v));
+  }
+  if (prop.type !== undefined) {
+    constrained = true;
+    for (const t of [prop.type].flat()) {
+      if (t === 'integer' || t === 'number') out.prims.add('number');
+      else if (t === 'array') out.arrays.push(schemaShape(schema, prop.items, `${where}[]`, problems, depth + 1));
+      else if (t === 'object') {
+        if (prop.properties !== undefined) out.objects.push({ schema, def: prop });
+        else if (typeof prop.additionalProperties === 'object') {
+          out.maps.push(schemaShape(schema, prop.additionalProperties, `${where}{}`, problems, depth + 1));
+        } else out.maps.push(ANY);
+      } else out.prims.add(t);
+    }
+  }
+  const variants = [...(prop.oneOf ?? []), ...(prop.anyOf ?? [])];
+  if (variants.length > 0) {
+    constrained = true;
+    for (const variant of variants) {
+      if (!merge(out, schemaShape(schema, variant, where, problems, depth + 1))) return ANY;
+    }
+  }
+  if (out.prims.has('any')) return ANY;
+  return constrained ? out : ANY;
 }
 
-function tsCategories(node, depth = 0) {
-  const out = new Set();
-  if (node === undefined || depth > 8) return new Set(['any']);
-  const add = (set) => { for (const c of set) out.add(c); };
+function tsShape(node, where, problems, depth = 0) {
+  if (node === undefined || depth > 16) return ANY;
+  const out = emptyShape();
   switch (node.kind) {
-    case ts.SyntaxKind.StringKeyword: out.add('string'); break;
-    case ts.SyntaxKind.NumberKeyword: out.add('number'); break;
-    case ts.SyntaxKind.BooleanKeyword: out.add('boolean'); break;
-    case ts.SyntaxKind.NullKeyword: out.add('null'); break;
-    case ts.SyntaxKind.UndefinedKeyword: break;
+    case ts.SyntaxKind.StringKeyword: out.prims.add('string'); return out;
+    case ts.SyntaxKind.NumberKeyword: out.prims.add('number'); return out;
+    case ts.SyntaxKind.BooleanKeyword: out.prims.add('boolean'); return out;
+    case ts.SyntaxKind.NullKeyword: out.prims.add('null'); return out;
+    case ts.SyntaxKind.UndefinedKeyword: return out;
     case ts.SyntaxKind.UnknownKeyword:
-    case ts.SyntaxKind.AnyKeyword: out.add('any'); break;
+    case ts.SyntaxKind.AnyKeyword: return ANY;
     case ts.SyntaxKind.ArrayType:
-    case ts.SyntaxKind.TupleType: out.add('array'); break;
-    case ts.SyntaxKind.TypeLiteral: out.add('object'); break;
-    case ts.SyntaxKind.ParenthesizedType: add(tsCategories(node.type, depth + 1)); break;
-    case ts.SyntaxKind.UnionType: for (const m of node.types) add(tsCategories(m, depth + 1)); break;
+      out.arrays.push(tsShape(node.elementType, `${where}[]`, problems, depth + 1));
+      return out;
+    case ts.SyntaxKind.TupleType:
+      out.arrays.push(ANY);
+      return out;
+    case ts.SyntaxKind.TypeLiteral: {
+      const index = node.members.find((m) => ts.isIndexSignatureDeclaration(m));
+      if (index !== undefined && node.members.length === 1) {
+        out.maps.push(tsShape(index.type, `${where}{}`, problems, depth + 1));
+      } else out.objects.push({ props: propsOf(node.getSourceFile(), node.members) });
+      return out;
+    }
+    case ts.SyntaxKind.ParenthesizedType: return tsShape(node.type, where, problems, depth + 1);
+    case ts.SyntaxKind.UnionType:
+      for (const m of node.types) if (!merge(out, tsShape(m, where, problems, depth + 1))) return ANY;
+      return out;
     case ts.SyntaxKind.LiteralType: {
       const lit = node.literal;
-      if (lit.kind === ts.SyntaxKind.NullKeyword) out.add('null');
-      else if (ts.isStringLiteral(lit)) out.add('string');
-      else if (ts.isNumericLiteral(lit)) out.add('number');
-      else if (lit.kind === ts.SyntaxKind.TrueKeyword || lit.kind === ts.SyntaxKind.FalseKeyword) out.add('boolean');
-      else out.add('any');
-      break;
+      if (lit.kind === ts.SyntaxKind.NullKeyword) out.prims.add('null');
+      else if (ts.isStringLiteral(lit)) out.prims.add('string');
+      else if (ts.isNumericLiteral(lit)) out.prims.add('number');
+      else if (lit.kind === ts.SyntaxKind.TrueKeyword || lit.kind === ts.SyntaxKind.FalseKeyword) out.prims.add('boolean');
+      else return ANY;
+      return out;
     }
     case ts.SyntaxKind.TypeReference: {
       const name = node.typeName.getText();
-      if (name === 'Array' || name === 'ReadonlyArray') out.add('array');
-      else if (name === 'Record') out.add('object');
-      else {
-        const declaration = declarationsByName.get(name);
-        if (declaration?.kind === 'strings') out.add('string');
-        else if (declaration?.kind === 'object' || declaration?.kind === 'union') out.add('ref');
-        else if (aliasNodes.has(name)) add(tsCategories(aliasNodes.get(name), depth + 1));
-        else out.add('any');
+      const args = node.typeArguments ?? [];
+      if (name === 'Array' || name === 'ReadonlyArray') {
+        out.arrays.push(tsShape(args[0], `${where}[]`, problems, depth + 1));
+        return out;
       }
-      break;
+      if (name === 'Record') {
+        out.maps.push(tsShape(args[1], `${where}{}`, problems, depth + 1));
+        return out;
+      }
+      const declaration = declarationsByName.get(name);
+      if (declaration?.kind === 'strings') {
+        out.enums.add(name);
+        out.prims.add('string');
+        return out;
+      }
+      if (declaration?.kind === 'object' || declaration?.kind === 'union') {
+        out.refs.add(name);
+        return out;
+      }
+      if (aliasNodes.has(name)) {
+        const inner = tsShape(aliasNodes.get(name), where, problems, depth + 1);
+        if (inner.any || onlyPrims(inner)) return inner;
+        out.refs.add(name);
+        return out;
+      }
+      if (!UNRESOLVED_TS_ALLOW.has(name)) {
+        problems.push(`${where}: TypeScript type ${name} is not declared in packages/wire`);
+      }
+      return ANY;
     }
-    default: out.add('any');
+    default:
+      problems.push(`${where}: unsupported TypeScript type node ${ts.SyntaxKind[node.kind]}`);
+      return ANY;
   }
-  return out;
+}
+
+function describe(shape) {
+  if (shape.any) return 'any';
+  const parts = [...shape.prims].sort();
+  for (const e of [...shape.enums].sort()) parts.push(`enum ${e}`);
+  for (const r of [...shape.refs].sort()) parts.push(r);
+  for (const a of shape.arrays) parts.push(`${describe(a)}[]`);
+  for (const _ of shape.objects) parts.push('{…}');
+  for (const m of shape.maps) parts.push(`map<${describe(m)}>`);
+  return parts.join(' | ') || 'never';
 }
 
 let typedProperties = 0;
 
-function compareTypes(name, schema, prop, typeNode, problems) {
-  const want = schemaCategories(schema, prop);
-  const have = tsCategories(typeNode);
-  if (want.has('any') || have.has('any')) return;
+// Compare a schema shape with a TypeScript shape; one problem per mismatch.
+function compareShapes(where, want, have, problems) {
+  if (want.any || have.any) return;
   typedProperties += 1;
-  const a = [...want].sort().join('|');
-  const b = [...have].sort().join('|');
-  if (a !== b) problems.push(`${name}: TypeScript type is ${b}, the schema is ${a}`);
+  const report = (message) => {
+    if (!KNOWN_DRIFT.has(where)) problems.push(`${where}: ${message}`);
+  };
+  const types = `TypeScript type is ${describe(have)}, the schema is ${describe(want)}`;
+  const prims = (s) => [...s.prims].sort().join('|');
+  if (prims(want) !== prims(have)) return report(types);
+  if (want.enums.size > 0 && have.enums.size > 0) {
+    const named = [...want.enums].map((n) => REF_ALIASES.get(n) ?? n).sort().join('|');
+    const tsNamed = [...have.enums].sort().join('|');
+    if (named !== tsNamed) report(`TypeScript enum is ${tsNamed}, the schema is ${named}`);
+  }
+  const refs = [...want.refs].map((n) => REF_ALIASES.get(n) ?? n).sort().join('|');
+  const tsRefs = [...have.refs].sort().join('|');
+  if (refs !== tsRefs) return report(types);
+  if (want.arrays.length !== have.arrays.length) return report(types);
+  if (want.maps.length !== have.maps.length) return report(types);
+  if (want.objects.length !== have.objects.length) return report(types);
+  if (want.arrays.length === 1) compareShapes(`${where}[]`, want.arrays[0], have.arrays[0], problems);
+  if (want.maps.length === 1) compareShapes(`${where}{}`, want.maps[0], have.maps[0], problems);
+  if (want.objects.length === 1) {
+    const { schema, def } = want.objects[0];
+    compareProps(where, schema, def, have.objects[0].props, problems);
+  }
+}
+
+function compareTypes(name, schema, prop, typeNode, problems) {
+  compareShapes(name, schemaShape(schema, prop, name, problems), tsShape(typeNode, name, problems), problems);
 }
 
 // ---------------------------------------------------------------------------
@@ -497,9 +691,22 @@ function compatibility(current) {
       .split('\n')
       .find((t) => t.trim() !== '');
   } catch {
-    return { problems: [], note: 'not a git checkout; compatibility check skipped' };
+    return { problems: [], missing: 'not a git checkout' };
   }
-  if (tag === undefined) return { problems: [], note: 'no client-v* tag; compatibility check skipped' };
+  if (tag === undefined) {
+    let shallow = false;
+    try {
+      shallow = runGit(['rev-parse', '--is-shallow-repository']).trim() === 'true';
+    } catch {
+      // Not answerable; the plain message stands.
+    }
+    return {
+      problems: [],
+      missing: shallow
+        ? 'no client-v* tag in this shallow clone (git fetch --unshallow --tags)'
+        : 'no client-v* tag (git fetch --tags)',
+    };
+  }
 
   const old = new Map();
   for (const name of COMPAT_SCHEMAS) {

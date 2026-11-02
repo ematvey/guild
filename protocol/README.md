@@ -25,9 +25,9 @@ sides are tested against the fixtures here.
 - `fixtures/<schema>.<Root>.json` — one example per variant of `$defs.<Root>`
   in `<schema>.schema.json`. Each file is a JSON array.
 - `check.mjs` — validates every fixture against its schema, requires a
-  fixture for every variant of a tagged union, compares every named
-  object and union with its TypeScript declaration, and compares the
-  schemas with the last shipped client's (see below).
+  fixture for every variant of a tagged union, compares every `$defs`
+  entry with its TypeScript declaration, and compares the schemas with the
+  last shipped client's (see below).
 
 Each file has a root index: an object whose properties are the `$defs`
 names. A payload is validated against a `$defs` entry, never against the
@@ -35,14 +35,48 @@ root. The index exists so a schema viewer, which draws the root, can list
 every type. The check fails when the index and `$defs` disagree.
 
 The fixtures are the executable form of the schema. The Rust suite
-deserializes every one of them and re-serializes it back to the same JSON;
-the TypeScript suite parses them. A field renamed on one side fails that
-side's test. `check.mjs` reads the TypeScript declarations with the compiler
-and fails when a fixture root has no declaration, when a property name
-differs, when a required field is optional on one side and required on
-the other, or when a property's scalar type differs (string, number,
-boolean, null, array, inline object, named type; `Json`/`unknown` match
-anything).
+(`crates/protocol/tests/fixtures.rs`) deserializes every one of them and
+re-serializes it back to the same JSON; the TypeScript suite parses them. A
+field renamed on one side fails that side's test.
+
+`check.mjs` reads the TypeScript declarations in `packages/wire/src` with the
+compiler and compares them with every `$defs` entry, not only the fixture
+roots. It fails when:
+
+- a definition has no TypeScript declaration of the same name. A named
+  variant of a tagged union is compared as a member of that union's
+  declaration; any other exception is listed, with its reason, in
+  `UNDECLARED_DEFS_ALLOW`;
+- a union's variants, an enum's values, or an object's property names
+  differ, or a property is required on one side and optional on the other;
+- a property's type differs. Each side's type is reduced to a shape —
+  primitives, named types, arrays with their element shape, inline objects
+  with their properties (compared recursively) and maps with their value
+  shape. A named type is compared by name: the schema's `$defs` name against
+  the TypeScript type name, so `Chat[]` against `Project[]` fails.
+  `REF_ALIASES` maps a schema name to a TypeScript name where the two
+  differ. An alias of a primitive (`Uuid`, `DateTime`) is inlined on both
+  sides. `Json`/`unknown`/an empty schema match anything;
+- a TypeScript type reference is not declared in `packages/wire` (listed
+  exceptions: `UNRESOLVED_TS_ALLOW`), or a `$ref` does not resolve.
+
+`KNOWN_DRIFT` lists, with reasons, mismatches the gate tolerates until the
+two sides are reconciled.
+
+What is not checked:
+
+- **Rust against the schema, beyond the fixtures.** Nothing reads the Rust
+  types statically; the fixture round trip is the only Rust check. Sixteen
+  `WsServerMsg` variants carry `serde_json::Value` payloads: fifteen display
+  frames the engine does not read (the thread, project, machine, agent,
+  skill and chat-tree lists, `thread_events`, `thread_state`, `org_event`,
+  `subagent_tree`, `agent_run`, `chat_row`), and `machine_request`, whose
+  payload the engine decodes per `op`. For those frames Rust checks only the
+  tag and the outer fields; their payload shape is held by the schema, the
+  fixtures and the TypeScript comparison alone.
+- **Formats and value constraints** (`format: uuid`, `minimum`, patterns)
+  against TypeScript: TypeScript has no such types.
+- **Tuples**: a TypeScript tuple is read as an array of anything.
 
 ## Older clients keep working
 
@@ -61,8 +95,15 @@ newest such tag and fails on a change that client cannot survive:
 
 Adding an optional request property, a new response property, a new
 variant or a new enum value passes. `rpc.schema.json` is not compared: the
-UI and the engine ship in one binary. With no `client-v*` tag the
-comparison is skipped.
+UI and the engine ship in one binary.
+
+With no `client-v*` tag reachable (a fresh or shallow clone, or no git
+checkout) the comparison does not run: the check prints a loud warning and
+passes, and fails when the `CI` environment variable is set. Fetch the tags
+(`git fetch --tags`, or `--unshallow --tags` on a shallow clone) before
+trusting a pass. `scripts/release-clients.sh` runs the check before it
+builds and pushes the new tag to `origin`, so the baseline is the commit a
+shipped client was built from.
 
 ## Presence is the contract
 
