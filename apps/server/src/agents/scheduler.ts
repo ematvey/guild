@@ -18,6 +18,8 @@ import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines
 
 export const SCHEDULER_TICK_MS = 15_000;
 export const MAX_OCCURRENCE_ATTEMPTS = 3;
+/** How long a claim with no linked run belongs to its claimer. */
+const CLAIM_LEASE_SECONDS = 120;
 export const RETRY_DELAYS_MS = [30_000, 60_000, 300_000] as const;
 export const MAX_CONSECUTIVE_FAILURES = 10;
 
@@ -229,7 +231,7 @@ export class AgentScheduler {
         }
         const updated = await client.query(
           `UPDATE agent_routine_occurrences
-           SET status = 'claimed', attempts = attempts + 1
+           SET status = 'claimed', attempts = attempts + 1, claimed_at = now()
            WHERE id = $1 AND status = 'pending'`,
           [latest.id],
         );
@@ -250,7 +252,9 @@ export class AgentScheduler {
 
   /** Settles claimed occurrences whose run reached a terminal status. A
    *  failed run either returns to pending (bounded retries) or becomes a
-   *  failed occurrence with an owner notice. */
+   *  failed occurrence with an owner notice. A claim with no run returns to
+   *  pending only once its lease has passed: before that its claimer may
+   *  still be launching it, in this process or another. */
   async reconcileClaimed(): Promise<void> {
     const res = await this.deps.pool.query<ClaimedOccurrence>(
       `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
@@ -268,8 +272,9 @@ export class AgentScheduler {
       if (row.run_id === null || row.run_status === null) {
         await this.deps.pool.query(
           `UPDATE agent_routine_occurrences SET status = 'pending'
-           WHERE id = $1 AND status = 'claimed'`,
-          [row.id],
+           WHERE id = $1 AND status = 'claimed'
+             AND (claimed_at IS NULL OR claimed_at < now() - $2::interval)`,
+          [row.id, `${CLAIM_LEASE_SECONDS} seconds`],
         );
         continue;
       }
@@ -338,11 +343,12 @@ export class AgentScheduler {
         summary: row.routine_name,
       });
       runId = run.id;
-      await this.deps.threads.appendEvent(thread.chat_id, userMessageEvent(row.prompt));
+      // Link the run first: from here the occurrence settles with the run.
       await this.deps.pool.query(
         "UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1",
         [row.id, run.id],
       );
+      await this.deps.threads.appendEvent(thread.chat_id, userMessageEvent(row.prompt));
       await this.deps.runtime.submitTurn(thread.chat_id, row.org_id, {
         orgId: row.org_id,
         requestId: uuidv7(),
@@ -440,7 +446,7 @@ export async function runRoutineNow(
   }
   await deps.pool.query(
     `UPDATE agent_routine_occurrences
-     SET status = 'claimed', attempts = attempts + 1
+     SET status = 'claimed', attempts = attempts + 1, claimed_at = now()
      WHERE id = $1 AND status = 'pending'`,
     [occurrence.id],
   );

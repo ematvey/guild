@@ -180,6 +180,26 @@ dbDescribe("agent scheduler", () => {
     expect(notices.some((notice) => notice.kind === "routine_failed" && notice.agent_id === agent.id)).toBe(true);
   });
 
+  it("leaves a fresh claim with no run to its claimer, and reclaims it after the lease", async () => {
+    scheduler = makeScheduler();
+    const routine = await makeRoutine("Lease");
+    const occurrence = await createOccurrence(env!.db, routine.id, new Date());
+    // Another process claimed it and has not linked its run yet.
+    await env!.db.query(
+      "UPDATE agent_routine_occurrences SET status = 'claimed', attempts = 1, claimed_at = now() WHERE id = $1",
+      [occurrence.id],
+    );
+    await scheduler.reconcileClaimed();
+    expect((await store.listOccurrences(routine.id))[0]!.status).toBe("claimed");
+    // The claimer died: past the lease the claim returns to pending.
+    await env!.db.query(
+      "UPDATE agent_routine_occurrences SET claimed_at = now() - interval '1 hour' WHERE id = $1",
+      [occurrence.id],
+    );
+    await scheduler.reconcileClaimed();
+    expect((await store.listOccurrences(routine.id))[0]!.status).toBe("pending");
+  });
+
   it("auto-disables after ten consecutive failed occurrences", async () => {
     scheduler = makeScheduler();
     const routine = await makeRoutine("Auto disable");
