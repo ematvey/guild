@@ -45,6 +45,20 @@ import { clampSkillsRoute, parseSkillsRoute, skillsRoutePath, type SkillsRoute }
 import { canonicalSettings } from "../settings/section-nav";
 import { DEFAULT_USAGE, parseUsageQuery, usageQueryString, type UsageQuery } from "../settings/usage-route";
 
+export { type AuthFragment, consumeAuthFragment, parseAuthFragment } from "./auth-fragment";
+
+/** The one place the app writes the address bar: a new history entry, or a
+ *  rewrite of the current one (a normalising redirect, a consumed callback
+ *  fragment — nothing the reader can go back to). */
+export function writeAddress(
+  url: string,
+  options?: { replace?: boolean },
+  history: Pick<History, "pushState" | "replaceState"> = window.history,
+): void {
+  if (options?.replace) history.replaceState(null, "", url);
+  else history.pushState(null, "", url);
+}
+
 export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | { kind: "install" } | null;
 export interface ChatRoute {
   chatId: string | null;

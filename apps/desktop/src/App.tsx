@@ -1,9 +1,10 @@
-import { beginOidcLogin, consumeOidcLogin } from "./lib/oidc-login";
+import { beginOidcLogin } from "./lib/oidc-login";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import Thread from "./views/thread/Thread";
+import { consumeAuthFragment, writeAddress } from "./views/thread/route";
 import { InstallPrompt } from "./views/onboarding";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
@@ -507,10 +508,10 @@ function AppInner() {
     // web mode: same-origin auth
     // An OIDC callback lands here as #oidc_token=…&email=…; adopt the
     // session and strip the fragment so the token never lingers in the URL.
-    if (window.location.hash.startsWith("#oidc_token=")) {
-      const token = consumeOidcLogin(window.location.hash);
-      history.replaceState(null, "", window.location.pathname + window.location.search);
-      if (token) setToken(token);
+    const callback = consumeAuthFragment(window.location);
+    if (callback) {
+      writeAddress(callback.canonicalUrl, { replace: true });
+      if (callback.token) setToken(callback.token);
     }
     apiMe()
       .then((u) => {
