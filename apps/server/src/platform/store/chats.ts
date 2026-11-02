@@ -12,7 +12,7 @@ import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { UserRow } from "./identity.js";
-import type { AgentThreadType } from "../../agents/types.js";
+import type { AgentThreadType } from "../domain/thread-type.js";
 
 export interface ChatRow {
   id: string;

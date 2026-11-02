@@ -1,13 +1,13 @@
 // Persistent agent rows and wire shapes (docs/specs/2026-10-18-persistent-agents.md).
 // These names are the contract the agents lanes share; keep them stable.
 
+import type { AgentThreadType } from "../platform/domain/thread-type.js";
+
+export type { AgentThreadType };
 export type AgentVisibility = "private" | "team" | "org";
 export type AgentRole = "owner" | "editor" | "user" | "viewer";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
-/** What a thread is. The user's own conversations are `user` threads; a
- *  spawned node is `subagent`; a scheduled run's transcript is `routine`.
- *  The default thread is a user thread with `is_default` set. */
-export type AgentThreadType = "user" | "subagent" | "routine";
+
 export type AgentRunStatus =
   | "queued"
   | "running"

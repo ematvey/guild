@@ -1,6 +1,7 @@
 // Architecture layer test: enforces the one-directional dependency graph
 //
-//   platform/http/* → services (harness/*, chats/*, hub/*, machines/*,
+//   platform/http/* → services (agents, chats, execpolicy, harness, hub,
+//                      integrations, machines, push, sandbox, worker,
 //                      platform/notify) → DAL (platform/store/*)
 //                      → infra (platform/db, platform/crypto, platform/time)
 //
@@ -17,7 +18,18 @@ const SRC = fileURLToPath(new URL("..", import.meta.url));
 
 /** Relative-to-src prefixes a DAL file may never import (segment-exact:
  *  `platform/http` does not match `platform/httpx`). */
-const BANNED_FOR_DAL = ["platform/http", "hub", "harness", "machines", "chats"];
+const BANNED_FOR_DAL = [
+  "platform/http",
+  "agents",
+  "chats",
+  "harness",
+  "hub",
+  "integrations",
+  "machines",
+  "push",
+  "sandbox",
+  "worker",
+];
 /** The HTTP layer + fastify are off limits for the service folders. */
 const BANNED_FOR_SERVICES = ["platform/http", "fastify"];
 
@@ -85,7 +97,18 @@ describe("arch layers", () => {
     }
   });
 
-  for (const dir of ["harness", "chats", "hub", "machines"]) {
+  for (const dir of [
+    "agents",
+    "chats",
+    "execpolicy",
+    "harness",
+    "hub",
+    "integrations",
+    "machines",
+    "push",
+    "sandbox",
+    "worker",
+  ]) {
     it(`service folder ${dir}/ imports no fastify or platform/http`, () => {
       expect(violations(path.join(SRC, dir), BANNED_FOR_SERVICES)).toEqual([]);
     });

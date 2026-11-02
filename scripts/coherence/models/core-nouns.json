@@ -212,7 +212,7 @@
           "role": "db"
         },
         {
-          "where": "apps/server/src/agents/routes.ts",
+          "where": "apps/server/src/platform/http/agents.ts",
           "role": "wire"
         }
       ],
@@ -225,7 +225,7 @@
         {
           "from": "db",
           "to": "wire",
-          "at": "apps/server/src/agents/routes.ts"
+          "at": "apps/server/src/platform/http/agents.ts"
         }
       ]
     },

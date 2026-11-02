@@ -4,22 +4,22 @@
 // touches a store.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../platform/route-contexts.js";
-import { ApiError, sortedJson } from "../platform/errors.js";
-import { parseUuidParam, queryParam, requireUser } from "../platform/http/error.js";
-import { submitTurn } from "../chats/submit-turn.js";
-import type { ObjectStore } from "../platform/s3.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { parseUuidParam, queryParam, requireUser } from "./error.js";
+import { submitTurn } from "../../chats/submit-turn.js";
+import type { ObjectStore } from "../s3.js";
 import { rm } from "node:fs/promises";
-import { agentWorkspaceDir } from "./workspace-config.js";
-import { AgentFiles } from "./files.js";
-import { runRoutineNow } from "./scheduler.js";
-import { resolveIntegrations } from "../platform/integrations/plugins.js";
-import { toolCurate } from "../platform/integrations/policy.js";
-import { refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "./store.js";
-import { cancelThread, closeThread } from "./subagents.js";
-import { chatSubagentNodes, chatTreeFacts } from "./tree.js";
-import { MAX_AGENT_DESCRIPTION_CHARS } from "./types.js";
-import { installSpecialists } from "./specialists.js";
+import { agentWorkspaceDir } from "../../agents/workspace-config.js";
+import { AgentFiles } from "../../agents/files.js";
+import { runRoutineNow } from "../../agents/scheduler.js";
+import { resolveIntegrations } from "../integrations/plugins.js";
+import { toolCurate } from "../integrations/policy.js";
+import { refuseDeletingAgent, type ActivityFilters, type RunFilters, type UpdateAgentInput } from "../../agents/store.js";
+import { cancelThread, closeThread } from "../../agents/subagents.js";
+import { chatSubagentNodes, chatTreeFacts } from "../../agents/tree.js";
+import { MAX_AGENT_DESCRIPTION_CHARS } from "../../agents/types.js";
+import { installSpecialists } from "../../agents/specialists.js";
 import type {
   Agent,
   AgentRoutineKind,
@@ -29,7 +29,7 @@ import type {
   AgentToolName,
   AgentTrigger,
   AgentVisibility,
-} from "./types.js";
+} from "../../agents/types.js";
 
 
 /** Built-in agent tools, in form order. Names match the runtime's tool

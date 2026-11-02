@@ -100,7 +100,7 @@ curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/runs -H "authorizatio
 ```
 
 `GET`/`PATCH`/`DELETE /api/v1/agents/:id/routines/:rid` read, change and
-remove one routine (`routes.ts` in `apps/server/src/agents`).
+remove one routine (`apps/server/src/platform/http/agents.ts`).
 
 ## Public OpenAI-compatible endpoint
 

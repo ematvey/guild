@@ -33,7 +33,7 @@ import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
 import { registerIntegrationToolRoutes } from "./integration_tools.js";
 import { registerUserMcpRoutes } from "./user_mcp.js";
-import { registerAgentRoutes } from "../../agents/routes.js";
+import { registerAgentRoutes } from "./agents.js";
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
   // Composition glue: the full context is sliced here and each route group

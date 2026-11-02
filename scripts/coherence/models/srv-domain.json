@@ -38,6 +38,10 @@
         {
           "where": "apps/server/src/agents/tree.ts",
           "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/domain/thread-type.ts",
+          "role": "domain"
         }
       ],
       "translations": [
