@@ -1,8 +1,12 @@
-import { ApiError } from "../platform/errors.js";
+// Admission primitives: a chat's turn admissions run one at a time and a
+// stop cancels the ones still waiting; first-touch acquisitions coalesce.
 
-export class AdmissionCancelled extends ApiError {
+/** A turn admission a stop cancelled before it reached the conversation.
+ *  The HTTP layer answers it 409 `cancelled`. */
+export class AdmissionCancelled extends Error {
   constructor() {
-    super(409, "cancelled", "message admission cancelled");
+    super("message admission cancelled");
+    this.name = "AdmissionCancelled";
   }
 }
 

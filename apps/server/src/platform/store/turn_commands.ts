@@ -49,7 +49,7 @@ export class TurnCommandStore {
       row.chat_id !== chat ||
       !deepEq(row.request, jsonValue(request))
     ) {
-      throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
+      throw ApiError.conflict("command_id_conflict", "message ID was already used for a different command");
     }
     return row;
   }
@@ -107,7 +107,7 @@ export class TurnCommandStore {
       if (!chatRow.rows[0]) throw ApiError.notFound("no such chat");
       const current = chatRow.rows[0];
       if (current.archived_at !== null) {
-        throw new ApiError(409, "chat_archived", "chat is archived — unarchive it to send");
+        throw ApiError.conflict("chat_archived", "chat is archived — unarchive it to send");
       }
       const payloadObj = payload as Record<string, unknown>;
       if ((request as Record<string, unknown>)["project_id"] === undefined) {
@@ -127,7 +127,7 @@ export class TurnCommandStore {
       // The stored row holds the sanitized form, so a retry compares against
       // that form. A NUL must not turn a valid retry into a conflict.
       if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, jsonValue(request))) {
-        throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
+        throw ApiError.conflict("command_id_conflict", "message ID was already used for a different command");
       }
       if (inserted.rowCount === 1) {
         if (binding) {
@@ -154,7 +154,7 @@ export class TurnCommandStore {
           [id, chat, eventPayload],
         );
         if (eventRes.rowCount !== 1) {
-          throw new ApiError(409, "command_id_conflict", "message ID already identifies a thread event");
+          throw ApiError.conflict("command_id_conflict", "message ID already identifies a thread event");
         }
         await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chat]);
       }

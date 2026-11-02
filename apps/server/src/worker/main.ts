@@ -10,7 +10,7 @@ import { ObjectStore } from "../platform/s3.js";
 import { createPlatformPool } from "../platform/db.js";
 import { createStores } from "../platform/stores.js";
 import { masterKeyBytes } from "../platform/crypto.js";
-import { ClickhouseClient } from "../platform/clickhouse.js";
+import { clickhouseFromConfig } from "../platform/clickhouse.js";
 import { TraceStore } from "../platform/trace.js";
 import { AgentStore } from "../agents/store.js";
 import { GuildRuntime, type SubmitTurnInput } from "../harness/runtime.js";
@@ -74,15 +74,7 @@ function rejectRemote(error: Error): void {
 
 // The worker owns its chat's run lifecycle and tool calls, so it writes the
 // same traces and spans the server does (the gateway writes the LLM spans).
-const trace = new TraceStore(
-  new ClickhouseClient({
-    url: config.clickhouseUrl,
-    database: config.clickhouseDatabase,
-    user: config.clickhouseUser,
-    password: config.clickhousePassword,
-  }),
-  config.tracePayloads,
-);
+const trace = new TraceStore(clickhouseFromConfig(config), config.tracePayloads);
 const runtime = new GuildRuntime({
   config,
   pool,

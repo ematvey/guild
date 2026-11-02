@@ -3,6 +3,7 @@
 // session's org; member scope is the session's user id. No org id from the
 // client is ever trusted. Payload bodies are admin-only.
 
+import { canReadOwned, ownerScope } from "../domain/access.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { queryParam, requireUser } from "./error.js";
@@ -171,9 +172,6 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
   /** Admins see the org; members see their own traces and calls. */
   const viewer = async (req: FastifyRequest) => requireUser(ctx, req);
 
-  const scopedUserId = (user: { role: string; id: string }): string | undefined =>
-    user.role === "admin" ? undefined : user.id;
-
   app.get("/api/v1/activity/traces", async (req) => {
     const user = await viewer(req);
     const window = windowOf(req);
@@ -188,7 +186,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     try {
       const res = await infra.trace.traces({
         orgId: user.org_id,
-        userId: scopedUserId(user),
+        userId: ownerScope(user),
         from: window.from,
         to: window.to,
         ...(agent === undefined ? {} : { agentId: agent }),
@@ -226,7 +224,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     }
     if (result.trace === null) throw ApiError.notFound("no such trace");
     const owner = result.trace["user_id"];
-    if (user.role !== "admin" && owner !== user.id) throw ApiError.notFound("no such trace");
+    if (!canReadOwned(user, owner)) throw ApiError.notFound("no such trace");
     return JSON.stringify({
       trace: renderTrace(result.trace),
       spans: result.spans.map(renderSpan),
@@ -253,7 +251,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     try {
       const res = await infra.trace.spans({
         orgId: user.org_id,
-        userId: scopedUserId(user),
+        userId: ownerScope(user),
         from: window.from,
         to: window.to,
         ...(spanType === undefined || spanType === "" ? {} : { spanType }),
@@ -289,7 +287,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     try {
       const res = await infra.trace.sessions({
         orgId: user.org_id,
-        userId: scopedUserId(user),
+        userId: ownerScope(user),
         from: window.from,
         to: window.to,
         limit: limitOf(req),
@@ -315,7 +313,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     try {
       result = await infra.trace.summary({
         orgId: user.org_id,
-        userId: scopedUserId(user),
+        userId: ownerScope(user),
         from: window.from,
         to: window.to,
       });
