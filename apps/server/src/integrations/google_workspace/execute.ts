@@ -1,5 +1,5 @@
 import { createHash, createSign } from "node:crypto";
-import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, fetchTimeout, transportCause, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "../shared.js";
+import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, API_MAX_CHARS, secret, configString, urlencode, requestJson, fetchJson, clampNumber, callVendorApi, googleApiBase, googleTokenUrl } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- google_workspace ----------
@@ -73,26 +73,24 @@ async function googleAccessToken(config: JsonObject, secrets: [string, string][]
   } catch (error) {
     throw new Error(`service account jwt signing failed: ${(error as Error).message}`);
   }
-  let res: Response;
-  try {
-    res = await fetch(tokenUrl, fetchTimeout(CALL_TIMEOUT_MS, {
+  const body = await requestJson(
+    tokenUrl,
+    {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
         assertion,
       }).toString(),
-    }));
-  } catch (error) {
-    throw new Error(`google token endpoint unreachable: ${transportCause(error)}`);
-  }
-  if (!res.ok) throw new Error(`google token endpoint returned ${res.status}`);
-  let body: JsonObject;
-  try {
-    body = (await res.json()) as JsonObject;
-  } catch (error) {
-    throw new Error(`google token endpoint returned bad json: ${(error as Error).message}`);
-  }
+    },
+    CALL_TIMEOUT_MS,
+    {
+      unreachable: (cause) => `google token endpoint unreachable: ${cause}`,
+      unreadable: (cause) => `google token endpoint returned bad json: ${cause}`,
+      status: (status) => `google token endpoint returned ${status}`,
+      badJson: (_text, error) => `google token endpoint returned bad json: ${error.message}`,
+    },
+  );
   const token = body["access_token"];
   if (typeof token !== "string") throw new Error("google token response missing access_token");
   // Clamp: a nonsensical expires_in must not poison the cache.

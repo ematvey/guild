@@ -174,27 +174,93 @@ export function excerpt(text: string, max = MAX_BODY_SNIPPET): string {
   return [...text].slice(0, max).join("");
 }
 
-export async function fetchJson(url: string, init: RequestInit, api: string, timeoutMs = CALL_TIMEOUT_MS): Promise<JsonObject> {
+/** Largest vendor response body read into memory. A JSON body past it is an
+ *  error; a text body is cut there. */
+export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/** Reads a response body as UTF-8, at most `maxBytes`. A longer body is cut
+ *  there, the rest is cancelled unread, and `truncated` is set. */
+export async function readBodyCapped(
+  res: Response,
+  maxBytes = MAX_RESPONSE_BYTES,
+): Promise<{ text: string; truncated: boolean }> {
+  if (res.body === null) return { text: "", truncated: false };
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (size + value.byteLength > maxBytes) {
+        chunks.push(value.subarray(0, maxBytes - size));
+        size = maxBytes;
+        truncated = true;
+        break;
+      }
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    if (truncated) await reader.cancel().catch(() => {});
+    else reader.releaseLock();
+  }
+  return { text: new TextDecoder().decode(Buffer.concat(chunks)), truncated };
+}
+
+/** The error text one vendor gives each failure of a JSON request. */
+export interface JsonRequestErrors {
+  unreachable(cause: string): string;
+  unreadable(cause: string): string;
+  status(status: number, body: string): string;
+  badJson(body: string, error: Error): string;
+}
+
+/** The default wording: `<api> unreachable`, `<api> returned <status>: …`. */
+export function jsonErrors(api: string): JsonRequestErrors {
+  return {
+    unreachable: (cause) => `${api} unreachable: ${cause}`,
+    unreadable: (cause) => `${api} returned unreadable body: ${cause}`,
+    status: (status, body) => `${api} returned ${status}: ${excerpt(body)}`,
+    badJson: (_body, error) => `${api} returned bad json: ${error.message}`,
+  };
+}
+
+/** One JSON request: the timeout and call signal, a bounded body read, and
+ *  the vendor's wording for each failure. `emptyBody` is what an empty 2xx
+ *  body parses as (absent: an empty body is bad json). */
+export async function requestJson(
+  url: string | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  errors: JsonRequestErrors,
+  options: { emptyBody?: JsonObject } = {},
+): Promise<JsonObject> {
   let res: Response;
   try {
     res = await fetch(url, fetchTimeout(timeoutMs, init));
   } catch (error) {
-    throw new Error(`${api} unreachable: ${transportCause(error)}`);
+    throw new Error(errors.unreachable(transportCause(error)));
   }
-  let text: string;
+  let body: { text: string; truncated: boolean };
   try {
-    text = await res.text();
+    body = await readBodyCapped(res);
   } catch (error) {
-    throw new Error(`${api} returned unreadable body: ${transportCause(error)}`);
+    throw new Error(errors.unreadable(transportCause(error)));
   }
-  if (!res.ok) {
-    throw new Error(`${api} returned ${res.status}: ${excerpt(text)}`);
-  }
+  if (!res.ok) throw new Error(errors.status(res.status, body.text));
+  if (body.truncated) throw new Error(errors.unreadable(`body exceeds ${MAX_RESPONSE_BYTES} bytes`));
+  if (body.text === "" && options.emptyBody !== undefined) return options.emptyBody;
   try {
-    return JSON.parse(text) as JsonObject;
+    return JSON.parse(body.text) as JsonObject;
   } catch (error) {
-    throw new Error(`${api} returned bad json: ${(error as Error).message}`);
+    throw new Error(errors.badJson(body.text, error as Error));
   }
+}
+
+export async function fetchJson(url: string, init: RequestInit, api: string, timeoutMs = CALL_TIMEOUT_MS): Promise<JsonObject> {
+  return requestJson(url, init, timeoutMs, jsonErrors(api));
 }
 
 export function clampNumber(args: JsonObject, name: string, dflt: number, cap: number): number {
@@ -254,7 +320,9 @@ export async function callVendorApi(base: string, auth: ApiAuth, args: JsonObjec
   }
   let text: string;
   try {
-    text = await res.text();
+    // A UTF-8 character is at most four bytes: this cap never cuts text the
+    // char truncation below would keep.
+    ({ text } = await readBodyCapped(res, Math.min(MAX_RESPONSE_BYTES, maxChars * 4 + 4)));
   } catch (error) {
     throw new Error(`api body unreadable: ${transportCause(error)}`);
   }

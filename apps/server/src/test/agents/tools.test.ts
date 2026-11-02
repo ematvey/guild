@@ -87,6 +87,22 @@ dbDescribe("agent conversation tools", () => {
     expect(delivered.type).toBe("user");
   });
 
+  it("send_message dedupes per user: two users of one agent get their own threads", async () => {
+    const secondId = randomUUID();
+    await env!.db.query(
+      `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
+       VALUES ($1, $2, 'agents-tools-second@example.test', '', 'member', 'managed')`,
+      [secondId, orgId],
+    );
+    const args = { text: "Shared status update.", title: "Status update" };
+    const first = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: owner.id }, args);
+    const second = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: secondId }, args);
+    expect(second.thread_id).not.toBe(first.thread_id);
+    expect((await store.getThread(agent.id, secondId, second.thread_id)).title).toBe("Status update");
+    const repeat = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: owner.id }, args);
+    expect(repeat.thread_id).toBe(first.thread_id);
+  });
+
   it("registers the routine management tools", () => {
     const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
     const names = tools.map((tool) => tool.name);

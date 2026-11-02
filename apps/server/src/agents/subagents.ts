@@ -10,10 +10,9 @@ import {
 } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { uuidv7 } from "../platform/time.js";
 import { ChildLimitReached, type AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { userMessageEvent } from "../platform/domain/thread-events.js";
+import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
 import { readThreadTranscript } from "./thread-read.js";
 import { notifySubagentTree } from "./tree.js";
 import type { Agent, AgentRun, AgentThread } from "./types.js";
@@ -35,7 +34,7 @@ export interface SubagentsRuntime {
   /** Stops the chat's in-flight turn. */
   stopChat(chatId: string): Promise<void>;
   /** True when this process can stop that chat's turn. A worker owns one
-   *  chat; another chat needs the remoteStop IPC that does not exist yet. */
+   *  chat and cannot stop a turn in any other. */
   canStopChat(chatId: string): boolean;
 }
 
@@ -214,6 +213,39 @@ export interface CloseResult {
   cancelled: number;
 }
 
+/** Starts one delegated run in a child thread as the run's user, who must
+ *  still be able to use the target agent. Refusals and submit failures
+ *  surface as tool errors. */
+async function startDelegatedRun(
+  context: SubagentsToolContext,
+  thread: AgentThread,
+  agentId: string,
+  content: string,
+  failureCode: string,
+): Promise<{ run: AgentRun; agent: Agent }> {
+  try {
+    return await startThreadRun(context, {
+      agentId,
+      thread,
+      requester: context.requester,
+      content,
+      failureCode,
+      recordStack: true,
+      run: {
+        user_id: context.parentRun.user_id ?? context.requester.id,
+        parent_run_id: context.parentRun.id,
+        delegate_agent_id: agentId,
+        depth: thread.depth,
+        trigger: "delegation",
+      },
+    });
+  } catch (error) {
+    if (error instanceof ThreadRunRefused) throw new SubagentError(error.code, error.message);
+    if (error instanceof ThreadRunSubmitFailed) throw new SubagentError("submit_failed", error.message);
+    throw error;
+  }
+}
+
 /** Creates the child thread and its first run, posts the task turn, and
  *  returns immediately. It never waits for the child and copies no files. */
 export async function spawn(
@@ -270,38 +302,7 @@ export async function spawn(
     if (error instanceof ChildLimitReached) throw new SubagentError("child_limit", error.message);
     throw error;
   }
-  const childRun = await context.store.createRun({
-    agent_id: target.id,
-    user_id: userId,
-    thread_id: thread.id,
-    parent_run_id: context.parentRun.id,
-    delegate_agent_id: target.id,
-    depth: thread.depth,
-    trigger: "delegation",
-    status: "running",
-    started_at: new Date().toISOString(),
-  });
-  try {
-    await context.threads.appendEvent(thread.chat_id, userMessageEvent(task));
-    await context.runtime.submitTurn(thread.chat_id, target.org_id, {
-      orgId: target.org_id,
-      requestId: uuidv7(),
-      content: task,
-      images: [],
-      model: target.model,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await context.store
-      .updateRun(childRun.id, {
-        status: "failed",
-        error_code: "spawn_submit_failed",
-        error_message: error instanceof Error && error.stack ? `${message}\n${error.stack}` : message,
-        finished_at: new Date().toISOString(),
-      })
-      .catch(() => {});
-    throw new SubagentError("submit_failed", message);
-  }
+  const { run: childRun } = await startDelegatedRun(context, thread, target.id, task, "spawn_submit_failed");
   await context.threads.appendEvent(parentThread.chat_id, {
     type: "child_spawned",
     thread_id: thread.id,
@@ -330,40 +331,7 @@ export async function send(
   const text = args.text.trim();
   if (text === "") throw new SubagentError("invalid_text", "text must not be empty");
   const thread = await childThread(context, args.thread_id, { open: true });
-  const target = await context.store.fetchAgent(thread.agent_id);
-  const userId = context.parentRun.user_id ?? context.requester.id;
-  const run = await context.store.createRun({
-    agent_id: target.id,
-    user_id: userId,
-    thread_id: thread.id,
-    parent_run_id: context.parentRun.id,
-    delegate_agent_id: target.id,
-    depth: thread.depth,
-    trigger: "delegation",
-    status: "running",
-    started_at: new Date().toISOString(),
-  });
-  try {
-    await context.threads.appendEvent(thread.chat_id, userMessageEvent(text));
-    await context.runtime.submitTurn(thread.chat_id, target.org_id, {
-      orgId: target.org_id,
-      requestId: uuidv7(),
-      content: text,
-      images: [],
-      model: target.model,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await context.store
-      .updateRun(run.id, {
-        status: "failed",
-        error_code: "send_submit_failed",
-        error_message: error instanceof Error && error.stack ? `${message}\n${error.stack}` : message,
-        finished_at: new Date().toISOString(),
-      })
-      .catch(() => {});
-    throw new SubagentError("submit_failed", message);
-  }
+  const { run, agent: target } = await startDelegatedRun(context, thread, thread.agent_id, text, "send_submit_failed");
   // The row lives in the child's own parent chat, whichever ancestor sent
   // the message: the child's result is delivered there, so a row written in
   // the caller's chat would never receive one.

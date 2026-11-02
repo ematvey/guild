@@ -1,27 +1,23 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, SCRAPE_EXCERPT_CHARS, MAP_LINK_LIMIT, secretOrNull, fetchTimeout, transportCause, excerpt, clampNumber, truncateWithMarker, firecrawlBaseUrl } from "../shared.js";
+import { FETCH_TIMEOUT_MS, MAX_BODY_CHARS, SCRAPE_EXCERPT_CHARS, MAP_LINK_LIMIT, secretOrNull, requestJson, excerpt, clampNumber, truncateWithMarker, firecrawlBaseUrl } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
+import { assertPublicFetchTarget } from "../fetch-target.js";
 
 // ---------- firecrawl ----------
 
 async function firecrawlPost(base: string, path: string, body: JsonObject, key: string | null): Promise<JsonObject> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (key !== null) headers["authorization"] = `Bearer ${key}`;
-  let res: Response;
-  try {
-    res = await fetch(`${base}${path}`, fetchTimeout(FETCH_TIMEOUT_MS, { method: "POST", headers, body: JSON.stringify(body) }));
-  } catch (error) {
-    throw new Error(`firecrawl unreachable: ${transportCause(error)}`);
-  }
-  const text = await res.text().catch(() => "");
-  if (!res.ok) {
-    throw new Error(`firecrawl returned ${res.status}: ${excerpt(text)}`);
-  }
-  let parsed: JsonObject;
-  try {
-    parsed = JSON.parse(text) as JsonObject;
-  } catch {
-    throw new Error("firecrawl returned bad json");
-  }
+  const parsed = await requestJson(
+    `${base}${path}`,
+    { method: "POST", headers, body: JSON.stringify(body) },
+    FETCH_TIMEOUT_MS,
+    {
+      unreachable: (cause) => `firecrawl unreachable: ${cause}`,
+      unreadable: () => "firecrawl returned bad json",
+      status: (status, text) => `firecrawl returned ${status}: ${excerpt(text)}`,
+      badJson: () => "firecrawl returned bad json",
+    },
+  );
   if (parsed["success"] === false) {
     throw new Error(`firecrawl error: ${typeof parsed["error"] === "string" ? parsed["error"] : "unknown error"}`);
   }
@@ -35,6 +31,7 @@ export async function firecrawlExecute(config: JsonObject, tool: string, args: J
     case "web_fetch": {
       const url = args["url"];
       if (typeof url !== "string") throw new Error("web_fetch requires url");
+      await assertPublicFetchTarget(url);
       const maxChars = clampNumber(args, "max_chars", MAX_BODY_CHARS, MAX_BODY_CHARS);
       const resp = await firecrawlPost(base, "/v1/scrape", { url, formats: ["markdown"] }, key);
       const data = (resp["data"] ?? {}) as JsonObject;
@@ -85,6 +82,7 @@ export async function firecrawlExecute(config: JsonObject, tool: string, args: J
     case "map": {
       const url = args["url"];
       if (typeof url !== "string") throw new Error("map requires url");
+      await assertPublicFetchTarget(url);
       const resp = await firecrawlPost(base, "/v1/map", { url }, key);
       const links = Array.isArray(resp["links"]) ? resp["links"] : [];
       let out = "";

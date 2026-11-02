@@ -3,7 +3,7 @@
 // datasource: a wrong region is a wrong answer, so the tool reports the
 // datasource it used.
 
-import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, clampNumber, excerpt, fetchTimeout, transportCause, truncateWithMarker } from "../shared.js";
+import { CALL_TIMEOUT_MS, MAX_BODY_CHARS, clampNumber, excerpt, requestJson, truncateWithMarker } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 function grafanaBase(config: JsonObject): string {
@@ -37,22 +37,18 @@ async function grafanaJson(
     accept: "application/json",
   };
   if (init.body !== undefined) headers["content-type"] = "application/json";
-  let res: Response;
-  try {
-    res = await fetch(url, fetchTimeout(CALL_TIMEOUT_MS, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } }));
-  } catch (error) {
-    throw new Error(`grafana unreachable: ${transportCause(error)}`);
-  }
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`grafana ${res.status} on ${path}: ${excerpt(text, 300)}`);
-  }
-  if (text === "") return {};
-  try {
-    return JSON.parse(text) as JsonObject;
-  } catch {
-    throw new Error(`grafana returned a non-JSON body on ${path}: ${excerpt(text, 200)}`);
-  }
+  return requestJson(
+    url,
+    { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } },
+    CALL_TIMEOUT_MS,
+    {
+      unreachable: (cause) => `grafana unreachable: ${cause}`,
+      unreadable: (cause) => `grafana unreachable: ${cause}`,
+      status: (status, text) => `grafana ${status} on ${path}: ${excerpt(text, 300)}`,
+      badJson: (text) => `grafana returned a non-JSON body on ${path}: ${excerpt(text, 200)}`,
+    },
+    { emptyBody: {} },
+  );
 }
 
 /** Resolves a datasource reference — a uid or a name — to its uid and type. */

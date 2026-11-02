@@ -1,4 +1,4 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, clampNumber, callVendorApi, hubspotBaseUrl } from "../shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, clampNumber, callVendorApi, hubspotBaseUrl, type JsonRequestErrors } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- hubspot ----------
@@ -31,27 +31,27 @@ function hubspotSearchLine(index: number, object: string, hit: JsonObject): stri
   return `${index + 1}. id=${id} ${values.join(" ")}`;
 }
 
+const HUBSPOT_ERRORS: JsonRequestErrors = {
+  unreachable: (cause) => `hubspot unreachable: ${cause}`,
+  unreadable: () => "hubspot returned bad json",
+  status: (status) => `hubspot returned ${status}`,
+  badJson: () => "hubspot returned bad json",
+};
+
 async function hubspotSearch(object: string, base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
   const query = args["query"];
   if (typeof query !== "string") throw new Error("search requires query");
   const limit = clampNumber(args, "limit", 10, 100);
-  let res: Response;
-  try {
-    res = await fetch(`${base}/crm/v3/objects/${object}/search`, fetchTimeout(LIST_TIMEOUT_MS, {
+  const parsed = await requestJson(
+    `${base}/crm/v3/objects/${object}/search`,
+    {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ query, limit, properties: hubspotDisplayProps(object) }),
-    }));
-  } catch (error) {
-    throw new Error(`hubspot unreachable: ${transportCause(error)}`);
-  }
-  if (!res.ok) throw new Error(`hubspot returned ${res.status}`);
-  let parsed: JsonObject;
-  try {
-    parsed = (await res.json()) as JsonObject;
-  } catch {
-    throw new Error("hubspot returned bad json");
-  }
+    },
+    LIST_TIMEOUT_MS,
+    HUBSPOT_ERRORS,
+  );
   const hits = Array.isArray(parsed["results"]) ? (parsed["results"] as JsonObject[]) : [];
   let content = "";
   const results: JsonObject[] = [];
@@ -74,23 +74,16 @@ async function hubspotUpdateDeal(base: string, token: string, args: JsonObject):
   if (props === null || typeof props !== "object" || Array.isArray(props) || Object.keys(props).length === 0) {
     throw new Error("update_deal requires a non-empty properties object");
   }
-  let res: Response;
-  try {
-    res = await fetch(`${base}/crm/v3/objects/deals/${pathSegment(id)}`, fetchTimeout(LIST_TIMEOUT_MS, {
+  const parsed = await requestJson(
+    `${base}/crm/v3/objects/deals/${pathSegment(id)}`,
+    {
       method: "PATCH",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ properties: props }),
-    }));
-  } catch (error) {
-    throw new Error(`hubspot unreachable: ${transportCause(error)}`);
-  }
-  if (!res.ok) throw new Error(`hubspot returned ${res.status}`);
-  let parsed: JsonObject;
-  try {
-    parsed = (await res.json()) as JsonObject;
-  } catch {
-    throw new Error("hubspot returned bad json");
-  }
+    },
+    LIST_TIMEOUT_MS,
+    HUBSPOT_ERRORS,
+  );
   const updatedId = typeof parsed["id"] === "string" ? parsed["id"] : id;
   const fields = Object.keys(props);
   return {

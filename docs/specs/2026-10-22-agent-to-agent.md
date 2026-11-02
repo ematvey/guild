@@ -1,12 +1,16 @@
 # Agent-to-agent — design
 
-Status: decisions settling; no code yet.
+Status: implemented. The tree tools live in `apps/server/src/agents/subagents.ts`
+(`spawn`, `send`, `read_thread`, `list`, `cancel`, `close`, `list_agents`),
+runs start through `agents/thread-run.ts`, child results are delivered by
+`agents/delivery.ts`, and `send_file` is `agents/send-file.ts`.
 
 Extends `2026-10-21-unified-threads.md` (the thread model) and replaces the
 delegation section of `2026-10-18-persistent-agents.md` (decisions 17–19).
 
-This doc is written before code. It records the decisions reached in review,
-with the code each one replaces. Open items are listed at the end.
+It records the decisions reached in review, with the code each one replaced.
+The `delegation.ts` citations name the module this design removed; that file
+no longer exists. Open items are listed at the end.
 
 ## End state
 
@@ -257,7 +261,9 @@ Object key follows the existing shape: `attachments/<org>/<id>/<filename>`
 | `list()` | list children with status, depth and elapsed time |
 | `cancel(thread_id)` | stop in-flight turns in the subtree, keep the nodes |
 | `close(thread_id)` | cancel the subtree, archive it, stop deliveries |
+| `list_agents()` | the agents the run's user may spawn (decision 33) |
 | `send_file(path, as?)` | attach a file to this turn's response |
+| `set_description(text)` | rewrite the calling agent's own description (decision 32) |
 
 Removed: `delegate`, `release_artifacts`.
 

@@ -3,7 +3,6 @@
 // row onto the assistant event.
 
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Type } from "typebox";
 import {
@@ -15,7 +14,9 @@ import { attachmentObjectKey, safeFilename, type AttachmentStore } from "../plat
 import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
 import type { Agent, AgentRun } from "./types.js";
-import { resolveAgentReadPath } from "./files.js";
+import { normalizeRelativePath } from "./files.js";
+import { agentWorkspaceDir } from "./workspace-config.js";
+import { readWorkspaceFile, WorkspaceFsError } from "./workspace-fs.js";
 import { contentTypeOf } from "../platform/domain/mime.js";
 import { structured } from "../harness/tool-schema.js";
 
@@ -46,14 +47,19 @@ export class SendFileError extends Error {}
  *  row. A failed upload throws here, inside the tool call, before the turn
  *  ends. */
 export async function sendFile(context: SendFileContext, args: { path: string; as?: string }): Promise<SendFileResult> {
-  const { abs, rel } = await resolveAgentReadPath(context.workspaceRoot, context.agent.org_id, context.agent.id, args.path);
+  const rel = normalizeRelativePath(args.path);
   if (rel === "") throw new SendFileError("path must name a file");
-  const stats = await lstat(abs).catch(() => null);
-  if (stats === null || !stats.isFile() || stats.isSymbolicLink()) throw new SendFileError("not a regular file");
-  if (Number(stats.size) > MAX_SEND_BYTES) throw new SendFileError("file is larger than 64 MiB");
   const filename = safeFilename((args.as ?? path.basename(rel)).trim());
   if (filename === null) throw new SendFileError("bad filename");
-  const bytes = await readFile(abs);
+  const root = agentWorkspaceDir(context.workspaceRoot, context.agent.org_id, context.agent.id);
+  const { bytes } = await readWorkspaceFile(root, rel, { maxBytes: MAX_SEND_BYTES, overflow: "refuse" }).catch(
+    (error: unknown) => {
+      if (!(error instanceof WorkspaceFsError)) throw error;
+      if (error.reason === "too_large") throw new SendFileError("file is larger than 64 MiB");
+      if (error.reason === "not_file") throw new SendFileError("not a regular file");
+      throw new SendFileError(error.message);
+    },
+  );
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const contentType = contentTypeOf(filename);
   const id = uuidv7();

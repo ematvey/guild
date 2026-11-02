@@ -1,5 +1,6 @@
 import { firecrawlBaseUrl, secretOrNull, FIRECRAWL_DEFAULT_BASE_URL } from "../shared.js";
-import { fetchTimeout } from "../probe.js";
+import { PROBE_TIMEOUT_MS } from "../probe.js";
+import { fetchTimeout, readBodyCapped } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { firecrawlExecute } from "./execute.js";
@@ -92,11 +93,11 @@ const plugin: IntegrationPlugin = {
     const headers: Record<string, string> = {};
     const key = secretOrNull(secrets, "api_key");
     if (key !== null) headers["authorization"] = `Bearer ${key}`;
-    const res = await fetch(base + "/", fetchTimeout({ headers })).catch((error: unknown) => {
+    const res = await fetch(base + "/", fetchTimeout(PROBE_TIMEOUT_MS, { headers })).catch((error: unknown) => {
       const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new Error(`firecrawl unreachable: ${cause}`);
     });
-    const body = await res.text().catch(() => "");
+    const body = await readBodyCapped(res, 64 * 1024).then((read) => read.text, () => "");
     if (!res.ok) throw new Error(`firecrawl rejected the connection (${res.status} ${res.statusText})`);
     if (!body.includes("Firecrawl API")) {
       throw new Error("firecrawl: unexpected response at / (not a Firecrawl API?)");

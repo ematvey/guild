@@ -413,6 +413,26 @@ dbDescribe("subagent tree tools", () => {
     });
   });
 
+  it("send refuses a child whose agent is being deleted and opens no run", async () => {
+    const doomed = await store.create(owner, { name: "Doomed child", model: "GLM-Test", visibility: "org" });
+    const thread = await store.createThread(parentAgent.id, owner.id, "Send to deleting");
+    const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
+    const fake = fakeRuntime();
+    const context = await contextFor({ thread, run: parentRun, fake });
+    const child = await spawn(context, { agent: doomed.id, task: "start" });
+    await env!.db.query("UPDATE agents SET status = 'deleting' WHERE id = $1", [doomed.id]);
+    const submittedBefore = fake.submitted.length;
+    await expect(send(context, { thread_id: child.thread_id, text: "next" })).rejects.toMatchObject({
+      code: "agent_deleting",
+    });
+    expect(fake.submitted.length).toBe(submittedBefore);
+    const runs = await env!.db.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM agent_runs WHERE thread_id = $1",
+      [child.thread_id],
+    );
+    expect(runs.rows[0]!.n).toBe(1);
+  });
+
   it("read returns a bounded excerpt of a descendant thread", async () => {
     const thread = await store.createThread(parentAgent.id, owner.id, "Read");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });

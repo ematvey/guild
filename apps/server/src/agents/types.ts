@@ -5,7 +5,13 @@ import type { AgentThreadType } from "../platform/domain/thread-type.js";
 
 export type { AgentThreadType };
 export type AgentVisibility = "private" | "team" | "org";
-export type AgentRole = "owner" | "editor" | "user" | "viewer";
+/** An agent access role: `owner` manages and uses (the agent's owner and
+ *  org admins), `user` uses (a direct or team grant). Grant rows store
+ *  `user`; any other stored role grants nothing. */
+export type AgentRole = "owner" | "user";
+
+/** The one role a grant row confers. */
+export const GRANT_ROLE = "user" satisfies AgentRole;
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 
 export type AgentRunStatus =
@@ -48,6 +54,10 @@ export type AgentToolName =
   | "delete_routine"
   | "subagents"
   | "send_file";
+
+/** One entry of an agent's tool allowlist: a built-in tool, or an
+ *  integration/MCP tool name the runtime resolves at turn time. */
+export type AgentToolRef = AgentToolName | (string & {});
 
 /** Every tool an agent can be given. `tools_mode = 'all'` means this set,
  *  plus every integration tool the org enables (resolved at turn time, so a
@@ -93,7 +103,7 @@ export interface Agent {
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;
-  tools: AgentToolName[];
+  tools: AgentToolRef[];
   /** `all` follows the org's enabled tools; `selected` uses `tools`. */
   tools_mode: AgentToolsMode;
   visibility: AgentVisibility;
