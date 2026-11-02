@@ -114,7 +114,7 @@
     {
       "id": "turn-command",
       "definition": "A queued instruction about a running turn: stop, steer or withdraw.",
-      "canonical": "apps/server/src/platform/store/turn_commands.ts",
+      "canonical": "apps/server/src/platform/store/turn-commands.ts",
       "types": [
         "TurnCommand"
       ],
@@ -123,7 +123,7 @@
       ],
       "representations": [
         {
-          "where": "apps/server/src/platform/store/turn_commands.ts",
+          "where": "apps/server/src/platform/store/turn-commands.ts",
           "role": "db"
         },
         {
@@ -199,19 +199,23 @@
           "role": "db"
         },
         {
-          "where": "apps/server/src/platform/http/integration_tools.ts",
+          "where": "apps/server/src/platform/http/integration-tools.ts",
           "role": "wire"
         },
         {
           "where": "apps/desktop/src/views/settings/sections/integration-config.tsx",
           "role": "ui"
+        },
+        {
+          "where": "apps/server/src/integrations/admin.ts",
+          "role": "db"
         }
       ],
       "translations": [
         {
           "from": "db",
           "to": "wire",
-          "at": "apps/server/src/platform/http/integration_tools.ts"
+          "at": "apps/server/src/platform/http/integration-tools.ts"
         }
       ]
     },
@@ -295,6 +299,10 @@
         {
           "where": "apps/server/src/sandbox/client.ts",
           "role": "db"
+        },
+        {
+          "where": "apps/server/src/harness/executors.ts",
+          "role": "domain"
         }
       ],
       "translations": [
@@ -366,7 +374,7 @@
     {
       "id": "tool-artifact",
       "definition": "A saved large tool output, addressed by id and filename.",
-      "canonical": "apps/server/src/platform/store/toolArtifacts.ts",
+      "canonical": "apps/server/src/platform/store/tool-artifacts.ts",
       "types": [
         "ToolArtifactRow"
       ],
@@ -375,7 +383,7 @@
       ],
       "representations": [
         {
-          "where": "apps/server/src/platform/store/toolArtifacts.ts",
+          "where": "apps/server/src/platform/store/tool-artifacts.ts",
           "role": "db"
         },
         {
@@ -484,7 +492,7 @@
     {
       "id": "api-key",
       "definition": "An org-scoped bearer key for the OpenAI-compatible gateway.",
-      "canonical": "apps/server/src/platform/store/api_keys.ts",
+      "canonical": "apps/server/src/platform/store/api-keys.ts",
       "types": [
         "ApiKeyRow",
         "NewApiKey"
@@ -494,11 +502,11 @@
       ],
       "representations": [
         {
-          "where": "apps/server/src/platform/store/api_keys.ts",
+          "where": "apps/server/src/platform/store/api-keys.ts",
           "role": "db"
         },
         {
-          "where": "apps/server/src/platform/http/api_keys.ts",
+          "where": "apps/server/src/platform/http/api-keys.ts",
           "role": "wire"
         }
       ],
@@ -506,7 +514,7 @@
         {
           "from": "db",
           "to": "wire",
-          "at": "apps/server/src/platform/http/api_keys.ts"
+          "at": "apps/server/src/platform/http/api-keys.ts"
         }
       ]
     },
@@ -543,6 +551,10 @@
         {
           "where": "apps/desktop/src/lib/models-store.ts",
           "role": "ui"
+        },
+        {
+          "where": "apps/server/src/harness/org-models.ts",
+          "role": "db"
         }
       ],
       "translations": [
@@ -622,7 +634,7 @@
     {
       "id": "user-mcp-server",
       "definition": "A user-configured MCP server whose tools join the turn.",
-      "canonical": "apps/server/src/platform/store/userMcp.ts",
+      "canonical": "apps/server/src/platform/store/user-mcp.ts",
       "types": [
         "UserMcpRow",
         "UserMcpHeaderPreview"
@@ -630,19 +642,19 @@
       "aliases": [],
       "representations": [
         {
-          "where": "apps/server/src/platform/store/userMcp.ts",
+          "where": "apps/server/src/platform/store/user-mcp.ts",
           "role": "db"
         },
         {
-          "where": "apps/server/src/platform/http/user_mcp.ts",
+          "where": "apps/server/src/platform/http/user-mcp.ts",
           "role": "wire"
         },
         {
-          "where": "apps/server/src/harness/userMcp.ts",
+          "where": "apps/server/src/harness/user-mcp.ts",
           "role": "domain"
         },
         {
-          "where": "apps/server/src/platform/integrations/mcp-url.ts",
+          "where": "apps/server/src/integrations/mcp-url.ts",
           "role": "domain"
         }
       ],
@@ -650,7 +662,7 @@
         {
           "from": "db",
           "to": "domain",
-          "at": "apps/server/src/harness/userMcp.ts"
+          "at": "apps/server/src/harness/user-mcp.ts"
         }
       ]
     }
@@ -709,19 +721,19 @@
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/platform/integration-catalog.ts",
+      "where": "apps/server/src/integrations/loader.ts",
       "reason": "types-only"
     },
     {
-      "where": "apps/server/src/http/cors.ts",
+      "where": "apps/server/src/platform/http/cors.ts",
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/http/web.ts",
+      "where": "apps/server/src/platform/http/web.ts",
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/http/ws.ts",
+      "where": "apps/server/src/platform/http/ws.ts",
       "reason": "infrastructure"
     },
     {

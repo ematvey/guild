@@ -23,7 +23,7 @@ import type { Logger } from "pino";
 import { mcpConnect } from "../integrations/mcp.js";
 import { validateUrl } from "../integrations/mcp-url.js";
 import type { JsonObject } from "../integrations/shared.js";
-import type { UserMcpStore } from "../platform/store/userMcp.js";
+import type { UserMcpStore } from "../platform/store/user-mcp.js";
 import type { TurnPreparation } from "./integrations.js";
 
 interface ResolvedTool {

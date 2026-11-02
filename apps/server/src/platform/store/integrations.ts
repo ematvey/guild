@@ -8,7 +8,7 @@ import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
-/** IntegrationRow declaration order (serde). */
+/** An integration row, fields in wire order. */
 export interface IntegrationRow {
   id: string;
   org_id: string;

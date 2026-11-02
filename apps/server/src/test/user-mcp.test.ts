@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { startMcpFixtureServer } from "./fixtures/mcp-server.mjs";
 import { setupM2Stack, TEST_PASSWORD, type M2Stack } from "./platform/m2-harness.js";
-import { UserMcpStore } from "../platform/store/userMcp.js";
+import { UserMcpStore } from "../platform/store/user-mcp.js";
 import { encryptSecret, masterKeyBytes } from "../platform/crypto.js";
 import { waitFor } from "./support/wait.js";
 

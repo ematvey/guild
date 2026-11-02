@@ -7,7 +7,7 @@ import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireUser, sendJson } from "./error.js";
-import { toolArtifactObjectKey } from "../store/toolArtifacts.js";
+import { toolArtifactObjectKey } from "../store/tool-artifacts.js";
 import type { UserRow } from "../store/identity.js";
 
 export function registerToolArtifactRoutes(

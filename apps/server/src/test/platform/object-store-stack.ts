@@ -2,7 +2,7 @@
 // every migration applied (`guild_<prefix>_test_*`), a fresh rustfs bucket,
 // and the app built against both.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { dropTestDatabase } from "../support/postgres.js";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";

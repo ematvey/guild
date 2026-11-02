@@ -36,7 +36,7 @@
           "role": "db"
         },
         {
-          "where": "apps/server/src/http/machines.ts",
+          "where": "apps/server/src/platform/http/machines.ts",
           "role": "wire"
         }
       ],
@@ -49,7 +49,7 @@
         {
           "from": "db",
           "to": "wire",
-          "at": "apps/server/src/http/machines.ts"
+          "at": "apps/server/src/platform/http/machines.ts"
         },
         {
           "from": "wire",
@@ -169,7 +169,7 @@
         {
           "from": "db",
           "to": "domain",
-          "at": "apps/server/src/platform/skillReads.ts"
+          "at": "apps/server/src/platform/skill-reads.ts"
         },
         {
           "from": "db",
@@ -419,6 +419,10 @@
         },
         {
           "where": "apps/server/src/chats/chat-wire.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/server/src/chats/compaction.ts",
           "role": "wire"
         }
       ],

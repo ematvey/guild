@@ -28,7 +28,7 @@ import type { Extension } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
-import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
 import { callPlugin } from "../integrations/execute.js";

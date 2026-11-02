@@ -22,7 +22,7 @@ import { CONFIG_FILES, agentWorkspaceDir, readAgentConfig, seedAgentWorkspace, t
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
-import type { UserMcpRuntime } from "./userMcp.js";
+import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
 import { composeAgentInstructions } from "./instructions.js";

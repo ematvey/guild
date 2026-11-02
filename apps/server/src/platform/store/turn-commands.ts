@@ -311,7 +311,7 @@ export class TurnCommandStore {
   }
 }
 
-/** serde_json::Value equality: structural, object keys unordered. */
+/** JSON value equality: structural, object keys unordered. */
 function deepEq(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;

@@ -8,7 +8,7 @@ import type { MachineRow, MachineStore } from "../platform/store/machines.js";
 import type { ProjectRow, ProjectStore } from "../platform/store/projects.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { OrgStore } from "../platform/store/orgs.js";
-import type { OrgKvStore } from "../platform/store/org_kv.js";
+import type { OrgKvStore } from "../platform/store/org-kv.js";
 import type { GatewayStore } from "../platform/store/gateway.js";
 import type { Chat, MachineInfo } from "@guild/wire/rest";
 import type { ModelOption } from "@guild/wire/types";

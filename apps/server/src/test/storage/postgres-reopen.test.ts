@@ -5,7 +5,7 @@ import type { ConversationId, DocumentId, EntryId, Seq, SubmissionId, Storage, T
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { PgPoolDatabase, PostgresDurableStorage } from "../../storage/postgres/index.js";
-import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../../storage/postgres/test-support.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../support/postgres.js";
 
 const context = BACKGROUND_CONTEXT;
 

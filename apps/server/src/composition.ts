@@ -28,7 +28,7 @@ import { ForkSupervisor } from "./worker/supervisor.js";
 import { NotifyHub } from "./platform/notify.js";
 import { clickhouseFromConfig, type ClickhouseClient } from "./platform/clickhouse.js";
 import { reportMalformedEventRows } from "./hub/protocol.js";
-import { SkillReadSink } from "./platform/skillReads.js";
+import { SkillReadSink } from "./platform/skill-reads.js";
 import { UsageSink } from "./platform/usage.js";
 import { TraceStore } from "./platform/trace.js";
 import { masterKeyBytes } from "./platform/crypto.js";

@@ -137,7 +137,7 @@
           "role": "db"
         },
         {
-          "where": "apps/server/src/platform/store/toolArtifacts.ts",
+          "where": "apps/server/src/platform/store/tool-artifacts.ts",
           "role": "wire"
         }
       ],
@@ -145,7 +145,7 @@
         {
           "from": "domain",
           "to": "wire",
-          "at": "apps/server/src/platform/store/toolArtifacts.ts"
+          "at": "apps/server/src/platform/store/tool-artifacts.ts"
         }
       ]
     },

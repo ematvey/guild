@@ -9,6 +9,10 @@ export interface ConversationLifetime {
 
 /** Owns exactly one scheduler lifetime, including unsuccessful initialization. */
 export class ConversationHost {
+  /** `onDisposeError` hears each teardown step that failed; teardown goes
+   *  on regardless. */
+  constructor(private readonly onDisposeError: (step: string, error: unknown) => void = () => {}) {}
+
   private active?: ConversationLifetime;
   private candidate?: ConversationLifetime;
   private opening?: Promise<void>;
@@ -56,12 +60,13 @@ export class ConversationHost {
 
   private async dispose(value?: ConversationLifetime): Promise<void> {
     if (!value) return;
+    const report = (step: string) => (error: unknown) => this.onDisposeError(step, error);
     // Close the scheduler first: a projection callback waiting on its Session
     // must settle before joining its watch.
-    await value.harness.close(BACKGROUND_CONTEXT).catch(() => {});
-    await Promise.all([...value.watches.values()].map((watch) => watch.stop().catch(() => {})));
+    await value.harness.close(BACKGROUND_CONTEXT).catch(report("harness close"));
+    await Promise.all([...value.watches.values()].map((watch) => watch.stop().catch(report("watch stop"))));
     value.watches.clear();
-    await value.storage.close(BACKGROUND_CONTEXT).catch(() => {});
+    await value.storage.close(BACKGROUND_CONTEXT).catch(report("storage close"));
   }
 
   async close(): Promise<void> {

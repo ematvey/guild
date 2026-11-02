@@ -180,7 +180,9 @@ export class PostgresDurableStorage implements Storage {
   private closing: Promise<void> | undefined;
   private readonly acknowledgedReceipts = new Set<string>();
   private receiptCleanup: Promise<void> | undefined;
-  private readonly stats = { commits: 0, lockWaitMs: 0, commitMs: 0, receiptDeletes: 0 };
+  /** Counters the harness logs when the storage lifetime closes. A failed
+   *  receipt cleanup keeps its keys for the next one and counts here. */
+  private readonly stats = { commits: 0, lockWaitMs: 0, commitMs: 0, receiptDeletes: 0, receiptDeleteFailures: 0 };
 
   diagnostics() {
     return { ...this.stats, acknowledgedReceipts: this.acknowledgedReceipts.size };
@@ -196,7 +198,9 @@ export class PostgresDurableStorage implements Storage {
         keys.forEach((key) => this.acknowledgedReceipts.delete(key));
         this.stats.receiptDeletes += keys.length;
       })
-      .catch(() => {});
+      .catch(() => {
+        this.stats.receiptDeleteFailures += 1;
+      });
     this.receiptCleanup = operation;
     await operation;
     this.receiptCleanup = undefined;

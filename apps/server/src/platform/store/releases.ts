@@ -51,7 +51,7 @@ const ROW_COLUMNS =
   "id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, " +
   utcText("created_at") + " AS created_at";
 
-/** Struct-serialized shape (serde declaration order) for the wire. */
+/** The wire shape, fields in wire order. */
 function row(r: Record<string, unknown>): ReleaseRow {
   return {
     id: r.id as string,

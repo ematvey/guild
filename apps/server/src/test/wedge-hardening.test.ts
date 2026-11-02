@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "../harness/models.js";
-import { TurnCommandStore } from "../platform/store/turn_commands.js";
+import { TurnCommandStore } from "../platform/store/turn-commands.js";
 
 const route = (model: string): GuildRouteInfo => ({
   model,

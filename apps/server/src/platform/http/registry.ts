@@ -236,8 +236,7 @@ export function registerRegistryRoutes(
 
 /** Install path for v2 MCP plugin bundles: creates a disabled `integrations`
  *  row carrying the mcp/auth/tool_policy config (skipped when the row
- *  already exists). Trigger routines are no longer created — routines are
- *  dropped (2026-10-04 decision). */
+ *  already exists). */
 async function installMcpPlugin(
   gateway: GatewayCtx,
   reply: FastifyReply,

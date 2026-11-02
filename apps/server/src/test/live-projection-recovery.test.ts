@@ -3,7 +3,7 @@ import type { DocumentId, StorageWrite } from "@earendil-works/pi-durable";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
-import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "./support/postgres.js";
 
 let database: DisposableDatabase;
 let pool: pg.Pool;

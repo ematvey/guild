@@ -3,7 +3,7 @@
 // from here, so neither constructs a store of its own.
 
 import type { PlatformPool } from "./db.js";
-import { ApiKeyStore } from "./store/api_keys.js";
+import { ApiKeyStore } from "./store/api-keys.js";
 import { AttachmentStore } from "./store/attachments.js";
 import { ChatStore } from "./store/chats.js";
 import { ConversationMapStore } from "./store/conversations.js";
@@ -13,7 +13,7 @@ import { IdentityStore } from "./store/identity.js";
 import { IntegrationSecretStore, IntegrationStore } from "./store/integrations.js";
 import { MachineStore } from "./store/machines.js";
 import { OidcStore } from "./store/oidc.js";
-import { KvStore, OrgKvStore } from "./store/org_kv.js";
+import { KvStore, OrgKvStore } from "./store/org-kv.js";
 import { OrgStore } from "./store/orgs.js";
 import { PairingStore } from "./store/pairing.js";
 import { ProjectStore } from "./store/projects.js";
@@ -23,9 +23,9 @@ import { ReleaseStore } from "./store/releases.js";
 import { SkillStore } from "./store/skills.js";
 import { TeamStore } from "./store/teams.js";
 import { ThreadStore } from "./store/thread.js";
-import { ToolArtifactStore } from "./store/toolArtifacts.js";
-import { TurnCommandStore } from "./store/turn_commands.js";
-import { UserMcpStore } from "./store/userMcp.js";
+import { ToolArtifactStore } from "./store/tool-artifacts.js";
+import { TurnCommandStore } from "./store/turn-commands.js";
+import { UserMcpStore } from "./store/user-mcp.js";
 
 export interface PlatformStores {
   readonly identity: IdentityStore;

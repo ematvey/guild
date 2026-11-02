@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { ClickhouseClient } from "../../platform/clickhouse.js";
-import { SkillReadSink, SkillReadEvent } from "../../platform/skillReads.js";
+import { SkillReadSink, SkillReadEvent } from "../../platform/skill-reads.js";
 import type { PlatformPool } from "../../platform/db.js";
 
 interface FakeClient {
