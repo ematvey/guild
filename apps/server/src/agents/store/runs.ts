@@ -16,8 +16,8 @@ import type {
   AgentRunStep,
   AgentTrigger,
 } from "../types.js";
-import { listRoutines } from "../routines.js";
-import { notifySubagentTree } from "../tree.js";
+import { listRoutines } from "./routines.js";
+import { notifySubagentTree } from "./tree.js";
 import { visiblePredicate } from "./access.js";
 import { RUN_COLUMNS, toRun } from "./rows.js";
 

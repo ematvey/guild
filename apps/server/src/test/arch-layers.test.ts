@@ -5,7 +5,7 @@
 //     → services (agents, chats, execpolicy, harness, hub, integrations,
 //                 machines, push, sandbox, worker)
 //     → DAL (platform/store/*, platform/domain/*, platform/provider/*, the
-//            platform root modules)
+//            platform root modules, and the agents lane's agents/store/*)
 //     → durable storage (storage/postgres) and infra (platform/db, …)
 //
 // No layer imports the composition root (worker/main.ts is the worker
@@ -13,9 +13,11 @@
 // imports nothing upward; the service folders import no HTTP layer and no
 // fastify. platform/route-contexts.ts is the HTTP-facing contract the route
 // groups are typed to: it names service types (type-only) and constructs
-// nothing, so it sits outside the DAL. Durable tables are read through
-// storage/postgres/queries.ts, a leaf module the DAL may import; SQL against
-// platform tables lives in the DAL (the allowlist below shrinks to empty).
+// nothing, so it sits outside the DAL. agents/store/* is the agents lane's
+// data access: it holds to the DAL rules and may import only its siblings
+// and the lane's types (agents/types.ts). Durable tables are read through
+// storage/postgres/queries.ts, a leaf module the DAL may import; every SQL
+// statement against a platform table lives in the DAL.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -70,13 +72,22 @@ const BANNED_FOR_DAL = [
  *  the service folders. */
 const BANNED_FOR_SERVICES = ["platform/http", "fastify", ...COMPOSITION_ROOT];
 
-/** DAL files: the store facades, the domain and provider modules, and the
- *  platform root modules except the HTTP-facing route contexts. */
+/** The agents lane's data access, inside the agents service folder. */
+const AGENTS_DAL = "agents/store";
+
+/** The agents-folder module the agents DAL may import: the lane's row and
+ *  wire types. */
+const AGENTS_TYPES = "agents/types.ts";
+
+/** DAL files: the store facades, the domain and provider modules, the
+ *  platform root modules except the HTTP-facing route contexts, and the
+ *  agents lane's store modules. */
 function dalFiles(): string[] {
   const files = [
     ...tsFiles(path.join(SRC, "platform", "store")),
     ...tsFiles(path.join(SRC, "platform", "domain")),
     ...tsFiles(path.join(SRC, "platform", "provider")),
+    ...tsFiles(path.join(SRC, AGENTS_DAL)),
   ];
   for (const entry of readdirSync(path.join(SRC, "platform"))) {
     const full = path.join(SRC, "platform", entry);
@@ -163,34 +174,6 @@ function sqlHits(code: string, tables: readonly string[]): number {
   return [...code.matchAll(pattern)].length;
 }
 
-/** Files outside the DAL that still run SQL against platform tables, with
- *  their statement counts. Moving a site into a store lowers its count;
- *  the entry goes when it reaches zero. A new site fails the suite. The
- *  agents lane keeps its own data access beside its services (AgentStore
- *  with its agents/store modules, and the run, tree and delivery reads);
- *  it moves into platform/store as a unit. */
-const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
-  "agents/conflict.ts": 10,
-  "agents/delivery.ts": 11,
-  "agents/lifecycle.ts": 10,
-  "agents/reconcile.ts": 11,
-  "agents/routines.ts": 11,
-  "agents/scheduler.ts": 28,
-  "agents/search.ts": 3,
-  "agents/store/access.ts": 10,
-  "agents/store/catalog.ts": 16,
-  "agents/store/lifecycle.ts": 9,
-  "agents/store/notices.ts": 3,
-  "agents/store/rows.ts": 7,
-  "agents/store/runs.ts": 20,
-  "agents/store/subtree.ts": 12,
-  "agents/store/threads.ts": 16,
-  "agents/thread-binding.ts": 15,
-  "agents/thread-read.ts": 1,
-  "agents/tree.ts": 16,
-  "agents/workspace.ts": 2,
-};
-
 describe("arch layers", () => {
   it("every top-level src entry belongs to a layer", () => {
     const unknown = readdirSync(SRC).filter((entry) => TOP_LEVEL[entry] === undefined);
@@ -198,7 +181,15 @@ describe("arch layers", () => {
   });
 
   it("DAL imports nothing upward", () => {
-    expect(violations(dalFiles(), BANNED_FOR_DAL, [DURABLE_QUERIES])).toEqual([]);
+    const agentsDal = tsFiles(path.join(SRC, AGENTS_DAL)).map((file) =>
+      path.relative(SRC, file).split(path.sep).join("/"),
+    );
+    expect(violations(dalFiles(), BANNED_FOR_DAL, [DURABLE_QUERIES, AGENTS_TYPES, ...agentsDal])).toEqual([]);
+  });
+
+  it("the agents DAL types module imports only the DAL", () => {
+    const file = path.join(SRC, AGENTS_TYPES);
+    expect(violations([file], BANNED_FOR_DAL)).toEqual([]);
   });
 
   it("the durable read surface is a leaf", () => {
@@ -239,16 +230,16 @@ describe("arch layers", () => {
     expect(found.sort()).toEqual([]);
   });
 
-  it("platform-table SQL lives in the DAL (shrinking allowlist)", () => {
+  it("platform-table SQL lives only in the DAL", () => {
     const tables = platformTables();
     const dal = new Set(dalFiles().map((file) => path.relative(SRC, file).split(path.sep).join("/")));
-    const found: Record<string, number> = {};
+    const found: string[] = [];
     for (const file of tsFiles(SRC)) {
       const rel = path.relative(SRC, file).split(path.sep).join("/");
       if (dal.has(rel) || rel.startsWith("storage/") || rel.startsWith("test/")) continue;
       const hits = sqlHits(readFileSync(file, "utf8"), tables);
-      if (hits > 0) found[rel] = hits;
+      if (hits > 0) found.push(`${rel}: ${hits}`);
     }
-    expect(found).toEqual(PLATFORM_SQL_ALLOWLIST);
+    expect(found.sort()).toEqual([]);
   });
 });

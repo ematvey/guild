@@ -7,9 +7,8 @@
 import { rm } from "node:fs/promises";
 import type { Logger } from "pino";
 import { withTransaction, type PlatformPool } from "../platform/db.js";
-import { utcText } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
-import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
+import type { Agent, AgentRoutine, AgentRun } from "./types.js";
 import type { AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { ApiError } from "../platform/errors.js";
@@ -17,6 +16,24 @@ import { agentWorkspaceDir } from "./workspace-config.js";
 import { IdentityStore, type UserRow } from "../platform/store/identity.js";
 import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
+import {
+  type ClaimedOccurrence,
+  claimedOccurrences,
+  claimOccurrence,
+  completeClaim,
+  deleteOtherPending,
+  disableRoutine,
+  dueRoutines,
+  failClaim,
+  linkOccurrenceRun,
+  lockDuePending,
+  recentOccurrenceStatuses,
+  releaseExpiredClaim,
+  retireOnceRoutine,
+  retryClaim,
+  setNextRunAt,
+  skipOlderPending,
+} from "./store/occurrences.js";
 
 export const SCHEDULER_TICK_MS = 15_000;
 export const MAX_OCCURRENCE_ATTEMPTS = 3;
@@ -38,34 +55,6 @@ export interface AgentSchedulerDeps {
   now?: () => Date;
   /** Read-write workspace root; the deletion sweep removes agent dirs. */
   workspaceRoot?: string;
-}
-
-interface DueRoutine {
-  id: string;
-  agent_id: string;
-  kind: AgentRoutineKind;
-  schedule: string | null;
-  timezone: string;
-  next_run_at: string;
-}
-
-interface ClaimedOccurrence {
-  id: string;
-  routine_id: string;
-  agent_id: string;
-  org_id: string;
-  owner_user_id: string;
-  created_by_user_id: string | null;
-  model: string;
-  routine_name: string;
-  prompt: string;
-  kind: AgentRoutineKind;
-  scheduled_for: string;
-  attempts: number;
-  run_id: string | null;
-  run_status: string | null;
-  run_error: string | null;
-  run_finished_at: string | null;
 }
 
 function errorText(error: unknown): string {
@@ -143,22 +132,12 @@ export class AgentScheduler {
    *  due, then advances next_run_at. A long gap is bounded; if it exceeds
    *  the materialization cap only the latest missed instant is inserted. */
   async materializeDue(now: Date = this.now()): Promise<void> {
-    const res = await this.deps.pool.query<DueRoutine>(
-      `SELECT r.id, r.agent_id, r.kind, r.schedule, r.timezone,
-              ${utcText("r.next_run_at")} AS next_run_at
-       FROM agent_routines r
-       JOIN agents a ON a.id = r.agent_id
-       WHERE r.enabled AND r.next_run_at IS NOT NULL AND r.next_run_at <= $1::timestamptz
-         AND a.status = 'active'`,
-      [now.toISOString()],
-    );
-    for (const routine of res.rows) {
+    const due = await dueRoutines(this.deps.pool, now.toISOString());
+    for (const routine of due) {
       try {
         if (routine.kind === "once") {
           await createOccurrence(this.deps.pool, routine.id, routine.next_run_at);
-          await this.deps.pool.query("UPDATE agent_routines SET next_run_at = NULL, updated_at = now() WHERE id = $1", [
-            routine.id,
-          ]);
+          await setNextRunAt(this.deps.pool, routine.id, null);
           continue;
         }
         if (routine.schedule === null) continue;
@@ -177,10 +156,7 @@ export class AgentScheduler {
             await createOccurrence(this.deps.pool, routine.id, scheduled);
           }
         }
-        await this.deps.pool.query(
-          "UPDATE agent_routines SET next_run_at = $2::timestamptz, updated_at = now() WHERE id = $1",
-          [routine.id, cursor.toISOString()],
-        );
+        await setNextRunAt(this.deps.pool, routine.id, cursor.toISOString());
       } catch (error) {
         this.deps.log.warn({ err: error, routineId: routine.id }, "routine materialization failed");
       }
@@ -193,24 +169,9 @@ export class AgentScheduler {
   async claimDue(now: Date = this.now()): Promise<ClaimedOccurrence[]> {
     const claimed: ClaimedOccurrence[] = [];
     await withTransaction(this.deps.pool, async (client) => {
-      const res = await client.query<ClaimedOccurrence>(
-        `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
-                r.name AS routine_name, r.prompt, r.kind,
-                ${utcText("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
-                run.status AS run_status, run.error_message AS run_error,
-                ${utcText("run.finished_at")} AS run_finished_at
-         FROM agent_routine_occurrences o
-         JOIN agent_routines r ON r.id = o.routine_id
-         JOIN agents a ON a.id = r.agent_id
-         LEFT JOIN agent_runs run ON run.id = o.run_id
-         WHERE o.status = 'pending' AND o.scheduled_for <= $1::timestamptz
-           AND r.enabled AND a.status = 'active'
-         ORDER BY o.routine_id, o.scheduled_for DESC, o.id DESC
-         FOR UPDATE OF o SKIP LOCKED`,
-        [now.toISOString()],
-      );
+      const rows = await lockDuePending(client, now.toISOString());
       const groups = new Map<string, ClaimedOccurrence[]>();
-      for (const row of res.rows) {
+      for (const row of rows) {
         const list = groups.get(row.routine_id) ?? [];
         list.push(row);
         groups.set(row.routine_id, list);
@@ -219,19 +180,9 @@ export class AgentScheduler {
         const latest = group[0]!;
         if (!retryReady(latest, now)) continue;
         if (group.length > 1) {
-          await client.query(
-            `UPDATE agent_routine_occurrences SET status = 'skipped'
-             WHERE routine_id = $1 AND status = 'pending' AND scheduled_for < $2::timestamptz`,
-            [latest.routine_id, latest.scheduled_for],
-          );
+          await skipOlderPending(client, latest.routine_id, latest.scheduled_for);
         }
-        const updated = await client.query(
-          `UPDATE agent_routine_occurrences
-           SET status = 'claimed', attempts = attempts + 1, claimed_at = now()
-           WHERE id = $1 AND status = 'pending'`,
-          [latest.id],
-        );
-        if ((updated.rowCount ?? 0) > 0) {
+        if (await claimOccurrence(client, latest.id)) {
           claimed.push({ ...latest, attempts: latest.attempts + 1 });
         }
       }
@@ -246,56 +197,22 @@ export class AgentScheduler {
    *  pending only once its lease has passed: before that its claimer may
    *  still be launching it, in this process or another. */
   async reconcileClaimed(): Promise<void> {
-    const res = await this.deps.pool.query<ClaimedOccurrence>(
-      `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
-              r.name AS routine_name, r.prompt, r.kind,
-              ${utcText("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
-              run.status AS run_status, run.error_message AS run_error,
-              ${utcText("run.finished_at")} AS run_finished_at
-       FROM agent_routine_occurrences o
-       JOIN agent_routines r ON r.id = o.routine_id
-       JOIN agents a ON a.id = r.agent_id
-       LEFT JOIN agent_runs run ON run.id = o.run_id
-       WHERE o.status = 'claimed'`,
-    );
-    for (const row of res.rows) {
+    const rows = await claimedOccurrences(this.deps.pool);
+    for (const row of rows) {
       if (row.run_id === null || row.run_status === null) {
-        await this.deps.pool.query(
-          `UPDATE agent_routine_occurrences SET status = 'pending'
-           WHERE id = $1 AND status = 'claimed'
-             AND (claimed_at IS NULL OR claimed_at < now() - $2::interval)`,
-          [row.id, `${CLAIM_LEASE_SECONDS} seconds`],
-        );
+        await releaseExpiredClaim(this.deps.pool, row.id, CLAIM_LEASE_SECONDS);
         continue;
       }
       if (row.run_status === "succeeded" || row.run_status === "silent" || row.run_status === "skipped") {
-        const updated = await this.deps.pool.query(
-          `UPDATE agent_routine_occurrences SET status = 'done', last_error = NULL
-           WHERE id = $1 AND status = 'claimed'`,
-          [row.id],
-        );
-        if ((updated.rowCount ?? 0) > 0 && row.kind === "once") {
-          await this.deps.pool.query(
-            `UPDATE agent_routines SET enabled = false, next_run_at = NULL, updated_at = now()
-             WHERE id = $1`,
-            [row.routine_id],
-          );
-          await this.deps.pool.query(
-            `DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`,
-            [row.routine_id],
-          );
+        if ((await completeClaim(this.deps.pool, row.id)) && row.kind === "once") {
+          await retireOnceRoutine(this.deps.pool, row.routine_id);
         }
         continue;
       }
       if (row.run_status !== "failed") continue;
       const failure = row.run_error ?? "routine run failed";
       if (row.attempts >= MAX_OCCURRENCE_ATTEMPTS) {
-        const updated = await this.deps.pool.query(
-          `UPDATE agent_routine_occurrences SET status = 'failed', last_error = $2
-           WHERE id = $1 AND status = 'claimed'`,
-          [row.id, failure],
-        );
-        if ((updated.rowCount ?? 0) > 0) {
+        if (await failClaim(this.deps.pool, row.id, failure)) {
           await this.writeNotice(row, "routine_failed", {
             routine_id: row.routine_id,
             routine_name: row.routine_name,
@@ -307,11 +224,7 @@ export class AgentScheduler {
           await this.maybeDisable(row);
         }
       } else {
-        await this.deps.pool.query(
-          `UPDATE agent_routine_occurrences SET status = 'pending', last_error = $2
-           WHERE id = $1 AND status = 'claimed'`,
-          [row.id, failure],
-        );
+        await retryClaim(this.deps.pool, row.id, failure);
       }
     }
   }
@@ -339,10 +252,7 @@ export class AgentScheduler {
         // Link the run first: from here the occurrence settles with the run.
         onRunCreated: async (run) => {
           runId = run.id;
-          await this.deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [
-            row.id,
-            run.id,
-          ]);
+          await linkOccurrenceRun(this.deps.pool, row.id, run.id);
         },
       });
     } catch (error) {
@@ -350,14 +260,8 @@ export class AgentScheduler {
       this.deps.log.warn({ err: error, occurrenceId: row.id, routineId: row.routine_id }, "routine launch failed");
       if (runId === null && error instanceof ThreadRunRefused) {
         // A refusal does not pass on retry: the occurrence fails now.
-        const updated = await this.deps.pool
-          .query(
-            `UPDATE agent_routine_occurrences SET status = 'failed', last_error = $2
-             WHERE id = $1 AND status = 'claimed'`,
-            [row.id, message],
-          )
-          .catch(() => null);
-        if ((updated?.rowCount ?? 0) > 0) {
+        const failed = await failClaim(this.deps.pool, row.id, message).catch(() => false);
+        if (failed) {
           await this.writeNotice(row, "routine_failed", {
             routine_id: row.routine_id,
             routine_name: row.routine_name,
@@ -368,36 +272,20 @@ export class AgentScheduler {
           }).catch(() => {});
         }
       } else if (runId === null) {
-        await this.deps.pool
-          .query(
-            `UPDATE agent_routine_occurrences SET status = 'pending', last_error = $2
-             WHERE id = $1 AND status = 'claimed'`,
-            [row.id, message],
-          )
-          .catch(() => {});
+        await retryClaim(this.deps.pool, row.id, message).catch(() => {});
       }
     }
   }
 
   private async maybeDisable(row: ClaimedOccurrence): Promise<void> {
-    const res = await this.deps.pool.query<{ status: string }>(
-      `SELECT status FROM agent_routine_occurrences
-       WHERE routine_id = $1 ORDER BY scheduled_for DESC, id DESC LIMIT $2`,
-      [row.routine_id, MAX_CONSECUTIVE_FAILURES],
-    );
+    const statuses = await recentOccurrenceStatuses(this.deps.pool, row.routine_id, MAX_CONSECUTIVE_FAILURES);
     let streak = 0;
-    for (const occurrence of res.rows) {
-      if (occurrence.status !== "failed") break;
+    for (const status of statuses) {
+      if (status !== "failed") break;
       streak += 1;
     }
     if (streak < MAX_CONSECUTIVE_FAILURES) return;
-    const disabled = await this.deps.pool.query(
-      `UPDATE agent_routines SET enabled = false, next_run_at = NULL, updated_at = now()
-       WHERE id = $1 AND enabled
-       RETURNING id`,
-      [row.routine_id],
-    );
-    if ((disabled.rowCount ?? 0) === 0) return;
+    if (!(await disableRoutine(this.deps.pool, row.routine_id))) return;
     await this.writeNotice(row, "routine_disabled", {
       routine_id: row.routine_id,
       routine_name: row.routine_name,
@@ -433,18 +321,9 @@ export async function runRoutineNow(
   const now = new Date();
   const occurrence = await createOccurrence(deps.pool, routine.id, now);
   if (routine.kind === "once") {
-    await deps.pool.query(
-      `DELETE FROM agent_routine_occurrences
-       WHERE routine_id = $1 AND id <> $2 AND status = 'pending'`,
-      [routine.id, occurrence.id],
-    );
+    await deleteOtherPending(deps.pool, routine.id, occurrence.id);
   }
-  await deps.pool.query(
-    `UPDATE agent_routine_occurrences
-     SET status = 'claimed', attempts = attempts + 1, claimed_at = now()
-     WHERE id = $1 AND status = 'pending'`,
-    [occurrence.id],
-  );
+  await claimOccurrence(deps.pool, occurrence.id);
   const title = `${routine.name} — ${now.toISOString()}`;
   const userId = routine.created_by_user_id ?? agent.owner_user_id;
   const requester = await routineRequester(deps.pool, routine.created_by_user_id).catch((error: unknown) => {
@@ -467,10 +346,7 @@ export async function runRoutineNow(
         summary: routine.name,
       },
       onRunCreated: async (run) => {
-        await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [
-          occurrence.id,
-          run.id,
-        ]);
+        await linkOccurrenceRun(deps.pool, occurrence.id, run.id);
       },
     });
     return run;

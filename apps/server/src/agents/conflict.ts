@@ -14,10 +14,22 @@ import type { ToolCall } from "@earendil-works/pi-ai";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { systemMessageEvent } from "../platform/domain/thread-events.js";
-import { uuidv7 } from "../platform/time.js";
 import { normalizeRelativePath } from "./files.js";
+import { threadChatId, threadTitle } from "./store/bindings.js";
+import { hasSystemMessageSince } from "./store/events.js";
+import {
+  addTurnPaths,
+  finishRunTurns,
+  insertTurn,
+  openTurnForRun,
+  overlappingTurns,
+  type WorkspaceTurnRow,
+} from "./store/workspace-turns.js";
 import type { AgentStore } from "./store.js";
 import type { AgentRun } from "./types.js";
+
+/** Test/support helper: the run's journal row (or null). */
+export { workspaceTurnForRun } from "./store/workspace-turns.js";
 
 const MAX_NOTICE_PATHS = 8;
 
@@ -33,15 +45,6 @@ export interface WorkspaceTurnRef {
   thread_id: string;
   run_id: string;
   started_at: string;
-}
-
-interface TurnRow {
-  id: string;
-  agent_id: string;
-  thread_id: string;
-  run_id: string;
-  started_at: Date;
-  paths: string[];
 }
 
 function clipPaths(paths: string[]): string {
@@ -118,32 +121,15 @@ export class AgentConflictJournal {
   async beginTurn(chatId: string): Promise<WorkspaceTurnRef | null> {
     const run = await this.deps.store.runs.runningRunForChat(chatId);
     if (run === null || run.thread_id === null) return null;
-    const existing = await this.deps.pool.query<TurnRow>(
-      `SELECT id, agent_id, thread_id, run_id, started_at, paths
-       FROM agent_workspace_turns
-       WHERE run_id = $1 AND finished_at IS NULL
-       ORDER BY started_at ASC LIMIT 1`,
-      [run.id],
-    );
-    if (existing.rows[0] !== undefined) return this.ref(existing.rows[0]);
-    const id = uuidv7();
-    const inserted = await this.deps.pool.query<TurnRow>(
-      `INSERT INTO agent_workspace_turns (id, agent_id, thread_id, run_id, started_at, paths)
-       VALUES ($1, $2, $3, $4, now(), '{}')
-       RETURNING id, agent_id, thread_id, run_id, started_at, paths`,
-      [id, run.agent_id, run.thread_id, run.id],
-    );
-    return this.ref(inserted.rows[0]!);
+    const existing = await openTurnForRun(this.deps.pool, run.id);
+    if (existing !== null) return this.ref(existing);
+    return this.ref(await insertTurn(this.deps.pool, { id: run.id, agent_id: run.agent_id, thread_id: run.thread_id }));
   }
 
   /** Marks the run's open turn finished. Idempotent; safe when no turn was
    *  ever started. */
   async finishRun(runId: string): Promise<void> {
-    await this.deps.pool.query(
-      `UPDATE agent_workspace_turns SET finished_at = now()
-       WHERE run_id = $1 AND finished_at IS NULL`,
-      [runId],
-    );
+    await finishRunTurns(this.deps.pool, runId);
   }
 
   /** Records one tool call's write paths and returns a model-visible notice
@@ -155,32 +141,11 @@ export class AgentConflictJournal {
     if (paths.length === 0) return null;
     const turn = await this.beginTurn(chatId);
     if (turn === null) return null;
-    await this.deps.pool.query(
-      `UPDATE agent_workspace_turns
-       SET paths = (
-         SELECT COALESCE(array_agg(DISTINCT p ORDER BY p), '{}')
-         FROM unnest(paths || $2::text[]) AS p
-       )
-       WHERE id = $1`,
-      [turn.id, paths],
-    );
-    const current = await this.deps.pool.query<TurnRow>(
-      `SELECT id, agent_id, thread_id, run_id, started_at, paths
-       FROM agent_workspace_turns WHERE id = $1`,
-      [turn.id],
-    );
-    const mine = current.rows[0];
-    if (mine === undefined) return null;
-    const others = await this.deps.pool.query<TurnRow>(
-      `SELECT id, agent_id, thread_id, run_id, started_at, paths
-       FROM agent_workspace_turns
-       WHERE agent_id = $1 AND id <> $2 AND finished_at IS NULL
-         AND thread_id <> $3 AND paths && $4::text[]
-       ORDER BY started_at ASC`,
-      [mine.agent_id, mine.id, mine.thread_id, paths],
-    );
+    const mine = await addTurnPaths(this.deps.pool, turn.id, paths);
+    if (mine === null) return null;
+    const others = await overlappingTurns(this.deps.pool, mine, paths);
     const writerNotices: string[] = [];
-    for (const other of others.rows) {
+    for (const other of others) {
       const otherTitle = await this.threadTitle(other.thread_id);
       const otherStarted = other.started_at.getTime();
       const myStarted = mine.started_at.getTime();
@@ -197,7 +162,7 @@ export class AgentConflictJournal {
     return writerNotices.length === 0 ? null : writerNotices.join(" ");
   }
 
-  private ref(row: TurnRow): WorkspaceTurnRef {
+  private ref(row: WorkspaceTurnRow): WorkspaceTurnRef {
     return {
       id: row.id,
       agent_id: row.agent_id,
@@ -208,28 +173,15 @@ export class AgentConflictJournal {
   }
 
   private async threadTitle(threadId: string): Promise<string> {
-    const res = await this.deps.pool.query<{ title: string }>("SELECT title FROM agent_threads WHERE id = $1", [
-      threadId,
-    ]);
-    return res.rows[0]?.title?.trim() || threadId;
+    return (await threadTitle(this.deps.pool, threadId))?.trim() || threadId;
   }
 
-  private async appendNotice(other: TurnRow, writer: TurnRow, paths: string[]): Promise<void> {
-    const chat = await this.deps.pool.query<{ chat_id: string }>("SELECT chat_id FROM agent_threads WHERE id = $1", [
-      other.thread_id,
-    ]);
-    const chatId = chat.rows[0]?.chat_id;
-    if (chatId === undefined) return;
+  private async appendNotice(other: WorkspaceTurnRow, writer: WorkspaceTurnRow, paths: string[]): Promise<void> {
+    const chatId = await threadChatId(this.deps.pool, other.thread_id);
+    if (chatId === null) return;
     const title = await this.threadTitle(writer.thread_id);
     const text = `Thread ${title} modified ${clipPaths(paths)} — re-read before editing.`;
-    const duplicate = await this.deps.pool.query(
-      `SELECT 1 FROM thread_events
-       WHERE chat_id = $1 AND type = 'system_message'
-         AND payload->>'content' = $2 AND created_at >= $3::timestamptz
-       LIMIT 1`,
-      [chatId, text, other.started_at.toISOString()],
-    );
-    if ((duplicate.rowCount ?? 0) > 0) return;
+    if (await hasSystemMessageSince(this.deps.pool, chatId, text, other.started_at.toISOString())) return;
     await this.deps.threads.appendEvent(chatId, systemMessageEvent(text));
   }
 }
@@ -259,19 +211,6 @@ export function createConflictHook(
       }
     },
   });
-}
-
-/** Test/support helper: the run's journal row (or null). */
-export async function workspaceTurnForRun(
-  pool: PlatformPool,
-  runId: string,
-): Promise<{ id: string; paths: string[]; finished: boolean } | null> {
-  const res = await pool.query<{ id: string; paths: string[]; finished_at: Date | null }>(
-    "SELECT id, paths, finished_at FROM agent_workspace_turns WHERE run_id = $1 ORDER BY started_at ASC LIMIT 1",
-    [runId],
-  );
-  const row = res.rows[0];
-  return row === undefined ? null : { id: row.id, paths: row.paths, finished: row.finished_at !== null };
 }
 
 export type { AgentRun };

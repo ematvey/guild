@@ -6,9 +6,9 @@
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { agentWorkSql } from "../storage/postgres/queries.js";
-import { pgTimestampToRfc3339, utcText } from "../platform/time.js";
-import { notifySubagentTree } from "./tree.js";
+import { pgTimestampToRfc3339 } from "../platform/time.js";
+import { chatsWithUndeliveredResults, failOrphanedRun, staleRuns } from "./store/stale-runs.js";
+import { notifySubagentTree } from "./store/tree.js";
 
 export interface ReconcileDeps {
   pool: PlatformPool;
@@ -27,19 +27,6 @@ const DEFAULT_IDLE_MS = 10 * 60 * 1000;
  *  alone so a normal delivery is never raced. */
 const DEFAULT_UNDELIVERED_MS = 2 * 60 * 1000;
 
-interface StaleRunRow {
-  id: string;
-  thread_id: string;
-  chat_id: string;
-  parent_thread_id: string | null;
-  parent_chat_id: string | null;
-  closed_at: Date | null;
-  agent_name: string;
-  title: string;
-  started_at: string;
-  idle_seconds: string;
-}
-
 /** Fails runs whose chat has shown no event for `idleMs` and holds no
  *  durable work, settles the parent's strip for a delegated child, and
  *  re-delivers a result whose first delivery never reached a turn. A quiet
@@ -52,39 +39,11 @@ export async function failStaleRuns(
 ): Promise<number> {
   const idleMs = options?.idleMs ?? DEFAULT_IDLE_MS;
   const undeliveredMs = options?.undeliveredMs ?? DEFAULT_UNDELIVERED_MS;
-  const res = await deps.pool.query<StaleRunRow>(
-    `SELECT r.id, r.thread_id, t.chat_id, t.parent_thread_id, t.closed_at,
-            pt.chat_id AS parent_chat_id,
-            a.name AS agent_name, t.title,
-            ${utcText("COALESCE(r.started_at, r.created_at)")} AS started_at,
-            extract(epoch FROM (now() - COALESCE(
-              (SELECT max(e.created_at) FROM thread_events e WHERE e.chat_id = t.chat_id),
-              r.started_at, r.created_at)))::bigint::text AS idle_seconds
-     FROM agent_runs r
-     JOIN agent_threads t ON t.id = r.thread_id
-     JOIN agents a ON a.id = t.agent_id
-     LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
-     WHERE r.status IN ('queued', 'running')
-       AND COALESCE(
-         (SELECT max(e.created_at) FROM thread_events e WHERE e.chat_id = t.chat_id),
-         r.started_at, r.created_at) < now() - ($1::bigint * interval '1 millisecond')
-       AND NOT EXISTS (
-         SELECT 1 FROM chat_conversations c WHERE c.chat_id = t.chat_id AND (${agentWorkSql}))
-     ORDER BY r.created_at ASC, r.id ASC`,
-    [idleMs],
-  );
+  const stale = await staleRuns(deps.pool, idleMs);
 
   let failed = 0;
-  for (const run of res.rows) {
-    const updated = await deps.pool.query(
-      `UPDATE agent_runs
-       SET status = 'failed', finished_at = now(),
-           error_code = 'orphaned',
-           error_message = 'no activity; the run''s process is gone'
-       WHERE id = $1 AND status IN ('queued', 'running')`,
-      [run.id],
-    );
-    if (updated.rowCount === 0) continue;
+  for (const run of stale) {
+    if (!(await failOrphanedRun(deps.pool, run.id))) continue;
     failed += 1;
     await notifySubagentTree(deps.pool, run.thread_id);
 
@@ -129,23 +88,13 @@ export async function failStaleRuns(
  *  parent chat has no run to take it. This pass gives such a batch the turn
  *  it never got. */
 async function deliverUndeliveredResults(deps: ReconcileDeps, undeliveredMs: number): Promise<void> {
-  const res = await deps.pool.query<{ chat_id: string }>(
-    `SELECT DISTINCT e.chat_id
-     FROM thread_events e
-     WHERE e.type = 'child_result' AND e.consumed_by_run_id IS NULL
-       AND e.created_at < now() - ($1::bigint * interval '1 millisecond')
-       AND NOT EXISTS (
-         SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-         WHERE t.chat_id = e.chat_id AND r.status IN ('queued', 'running'))
-     ORDER BY e.chat_id`,
-    [undeliveredMs],
-  );
-  for (const row of res.rows) {
+  const chats = await chatsWithUndeliveredResults(deps.pool, undeliveredMs);
+  for (const chatId of chats) {
     try {
-      const delivered = await deps.runtime.deliverPending(row.chat_id);
-      if (delivered) deps.log.info({ chatId: row.chat_id }, "undelivered child result redelivered");
+      const delivered = await deps.runtime.deliverPending(chatId);
+      if (delivered) deps.log.info({ chatId }, "undelivered child result redelivered");
     } catch (error) {
-      deps.log.warn({ err: error, chatId: row.chat_id }, "undelivered child result redelivery failed");
+      deps.log.warn({ err: error, chatId }, "undelivered child result redelivery failed");
     }
   }
 }

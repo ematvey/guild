@@ -273,6 +273,14 @@
         {
           "where": "apps/server/src/agents/store/runs.ts",
           "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/routines.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/occurrences.ts",
+          "role": "db"
         }
       ],
       "translations": [
