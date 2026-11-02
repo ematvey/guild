@@ -49,6 +49,30 @@ describe("machine tool lifetime", () => {
     } finally { clearTimeout(keepAlive); }
   });
 
+  it("a reconnect settles only that machine's in-flight calls", async () => {
+    const frames: Array<{ machine: string; call_id: string }> = [];
+    const hub = {
+      machineHolder: (machine: string) => ({ conn_id: `${machine}-c1`, org_id: "org" }),
+      sendMachineToolDispatch: (machine: string, _org: string, frame: { call_id: string }) => {
+        frames.push({ machine, call_id: frame.call_id });
+        return true;
+      },
+      sendMachineToolCancel: () => true,
+    } as unknown as MachineDispatchHost;
+    const dispatch = new MachineDispatch(hub);
+    const call = (machineId: string) =>
+      dispatch.dispatch({ machineId, orgId: "org", chatId: "chat", name: "execute", args: {}, workdir: "/tmp", timeoutMs: 60_000 });
+    const onA = call("a");
+    const onB = call("b");
+    dispatch.reconcileMachine("a", "a-c2");
+    expect((await onA).content).toContain("execution outcome is unknown");
+    const callB = frames.find((f) => f.machine === "b")!.call_id;
+    expect(
+      dispatch.resolveToolResult({ conn_id: "b-c1", org_id: "org" }, { call_id: callB, content: "ok", is_error: false, meta: null, images: [] }),
+    ).toBe(true);
+    expect((await onB).content).toBe("ok");
+  });
+
   it("carries cancellation over worker IPC before accepting any late response", async () => {
     const messages: unknown[] = [];
     const proxy = new IpcMachineDispatch(message => messages.push(message));

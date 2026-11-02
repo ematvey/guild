@@ -47,6 +47,7 @@ export interface MachineToolOutcome {
 }
 
 interface PendingTool {
+  machineId: string;
   connectionId: string;
   orgId: string;
   settle: (outcome: MachineToolOutcome) => void;
@@ -54,8 +55,8 @@ interface PendingTool {
 
 
 export class MachineDispatch {
-  /** call_id → pending tool (settle on the machine's tool_result frame, a
-   *  5-minute timeout, or the machine slot dropping). */
+  /** call_id → pending tool (settle on the machine's tool_result frame,
+   *  the dispatch timeout, or the machine slot dropping). */
   private pending = new Map<string, PendingTool>();
   private seq = 0;
 
@@ -85,7 +86,12 @@ export class MachineDispatch {
     const done = new Promise<MachineToolOutcome>((resolve) => {
       settle = resolve;
     });
-    this.pending.set(callId, { connectionId: holder.conn_id, orgId: opts.orgId, settle: settle! });
+    this.pending.set(callId, {
+      machineId: opts.machineId,
+      connectionId: holder.conn_id,
+      orgId: opts.orgId,
+      settle: settle!,
+    });
     let timer: NodeJS.Timeout | undefined;
     const cancel = () => {
       this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
@@ -110,7 +116,7 @@ export class MachineDispatch {
           () => {
             this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
             resolve({
-              content: `client tool ${opts.name} (${callId}) timed out after 5 minutes: no client result arrived`,
+              content: `client tool ${opts.name} (${callId}) timed out after ${Math.round(opts.timeoutMs / 1000)}s: no client result arrived`,
               is_error: true,
               meta: null,
               images: [],
@@ -147,14 +153,13 @@ export class MachineDispatch {
     return true;
   }
 
-  /** The uncertain-execution sweep (Rust reconcile_machine_tools): pending
+  /** The uncertain-execution sweep: pending
    *  dispatches of this machine whose recorded connection differs from the
    *  freshly connected one resolve as unknown-outcome errors — the result
    *  may have executed on the dead link, so retrying blind is unsafe. */
   reconcileMachine(machineId: string, connId: string): void {
-    void machineId;
     for (const [callId, pending] of this.pending) {
-      if (pending.connectionId === connId) continue;
+      if (pending.machineId !== machineId || pending.connectionId === connId) continue;
       this.pending.delete(callId);
       pending.settle({
         content:
@@ -207,7 +212,7 @@ function fileErr(code: (typeof FileError.prototype)["code"], message: string, pa
  *  double-quoted with backslash escapes otherwise. */
 function shellQuote(arg: string): string {
   if (/^[A-Za-z0-9_\-./:=@%+]+$/.test(arg)) return arg;
-  return `"${arg.replaceAll("\\", "\\\\").replaceAll("\"", "\\\\\"").replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
+  return `"${arg.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"").replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
 }
 
 export interface MachineEnvOptions {
