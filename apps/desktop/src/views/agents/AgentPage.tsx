@@ -31,13 +31,13 @@ import {
   ErrorState,
   InlineLoading,
   PageBody,
-  PageHeader,
   RunStatusBadge,
   Section,
   TabBar,
   ToneBadge,
   VisibilityBadge,
 } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
@@ -150,7 +150,7 @@ export function AgentPage({
   if (error !== null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <PageHeader title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
+        <PageHeader variant="bar" title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
         <PageBody>
           <ErrorState message={error} />
         </PageBody>
@@ -160,7 +160,7 @@ export function AgentPage({
   if (agent === null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <PageHeader title="Agent" />
+        <PageHeader variant="bar" title="Agent" />
         <PageBody>
           <InlineLoading label="Loading agent" />
         </PageBody>
@@ -170,7 +170,7 @@ export function AgentPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title={
           <span className="flex min-w-0 items-center gap-2">
             <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />

@@ -23,7 +23,7 @@ import { toast } from "sonner";
 import { deauthorizeMachine, type MachineInfo } from "../../../lib/api/machines";
 import { useMachines } from "../../../lib/machines-store";
 import { relativeTime } from "../../../lib/relative-time";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 
 export function MachineSection() {
   // The registry is shared app state: the member socket sends the rows and

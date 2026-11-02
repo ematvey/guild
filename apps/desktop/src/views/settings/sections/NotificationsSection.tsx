@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { BellRing } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import {
   currentSubscription,

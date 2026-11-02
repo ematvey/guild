@@ -33,7 +33,7 @@ import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { createStore } from "../../../lib/store";
 import { relativeTime } from "../../../lib/relative-time";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 
 /** The member's API keys as last read or written: a revisit renders them at
  *  once while the fresh read lands. Sign-out resets it (createStore), and

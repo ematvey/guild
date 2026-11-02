@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@guild/ui/components/select";
 import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "@guild/ui/components/empty-state";
 import { FactCard, FactGrid } from "../components/fact-card";

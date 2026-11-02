@@ -14,8 +14,8 @@ import {
   AgentStatusBadge,
   LoadingRows,
   PageBody,
-  PageHeader,
 } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 export function filterAgents(agents: Agent[], query: string): Agent[] {
@@ -62,7 +62,7 @@ export function AgentsDirectory({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Agents"
         description="Named teammates with their own workspace, threads and routines."
         actions={

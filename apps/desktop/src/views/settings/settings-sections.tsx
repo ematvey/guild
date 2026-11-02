@@ -21,7 +21,7 @@ import {
 import type { UsageQuery } from "./usage-route";
 import { canonicalSettings, isAdminSection, type SettingsSectionId } from "./section-nav";
 import { useTheme } from "../../theme";
-import { PageHeader } from "./components/page-header";
+import { PageHeader } from "../../components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
 import { MachineSection } from "./sections/MachineSection";
 import { GatewaySection } from "./sections/GatewaySection";

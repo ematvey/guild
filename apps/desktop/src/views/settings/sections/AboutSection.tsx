@@ -7,7 +7,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { HAS_SHELL, serverBase } from "../../../lib/session";
 import { useWorkspaceIdentity } from "../../../lib/workspace-store";
