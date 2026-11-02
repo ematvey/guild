@@ -17,19 +17,7 @@ import { toast } from "sonner";
 import { ThemeProvider } from "./theme";
 import { resetSessionState } from "./lib/session-reset";
 import { ThemedToaster } from "@guild/ui/components/toaster";
-
-/** The engine's `session.info` reply: the connected server and its token.
- *  The engine answers an error when nothing is signed in. */
-interface SessionInfo {
-  base_url?: string | null;
-  token?: string | null;
-  email?: string | null;
-}
-
-/** The engine's `pair` / `login` reply: the signed-in user. */
-interface AuthReply {
-  user?: { email?: string | null } | null;
-}
+import type { LoginResult, SessionResult } from "@guild/wire/rpc";
 
 const BAKED_URL: string =
   (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
@@ -254,7 +242,7 @@ function DesktopApp() {
     (async () => {
       try {
         await timeoutAfter(invoke("start_engine"), 30_000, "attach timed out");
-        const res = await rpcCall<SessionInfo>("session.info", {}, 20_000);
+        const res = await rpcCall<SessionResult>("session.info", {}, 20_000);
         if (cancelled) return;
         if (res?.result?.email) await afterAuth(res.result.email);
         else setUser(null);
@@ -273,7 +261,7 @@ function DesktopApp() {
   const afterAuth = async (fallbackEmail: string) => {
     // session.info is the source of truth for the connected server URL and
     // token (works for both pairing and manual login).
-    const info = await rpcCall<SessionInfo>("session.info", {}, 20_000);
+    const info = await rpcCall<SessionResult>("session.info", {}, 20_000);
     const baseUrl = info.result?.base_url ?? url;
     // Machine identity: the daemon's executor link (machine WS + tool
     // execution) keys on the webview's stable per-install id — report it
@@ -327,7 +315,7 @@ function DesktopApp() {
     try {
       await timeoutAfter(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await rpcCall<AuthReply>("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
+      const res = await rpcCall<LoginResult>("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       if (addWorkspace) {
         setBusy(false);
@@ -348,7 +336,7 @@ function DesktopApp() {
     try {
       await timeoutAfter(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await rpcCall<AuthReply>("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
+      const res = await rpcCall<LoginResult>("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
       if (addWorkspace) {
         setBusy(false);
