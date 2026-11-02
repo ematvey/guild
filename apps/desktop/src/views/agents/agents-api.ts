@@ -2,66 +2,25 @@
 // agents.md, "API surface"). Shapes mirror the design's data model; every
 // response is the server's keyed envelope (`{agents: [...]}`, `{agent}`).
 
-import { request, requestResponse } from "../../lib/api/request";
 import type {
-  AgentStatus,
+  Agent,
+  AgentRoutine,
+  AgentRunStatus,
+  AgentThread,
+  AgentTrigger,
   AgentVisibility,
-  RunStatus,
-  RunTrigger,
-} from "./agents-route";
+  AgentRun as WireAgentRun,
+} from "@guild/wire/rest";
+import { request, requestResponse } from "../../lib/api/request";
 
 /** Authed binary/blob request (file preview and download). */
 export function agentFileResponse(path: string): Promise<Response> {
   return requestResponse("GET", path);
 }
 
-export interface Agent {
-  id: string;
-  org_id: string;
-  owner_user_id: string;
-  owner_label?: string | null;
-  owner_email?: string | null;
-  owner_avatar_url?: string | null;
-  name: string;
-  /** How another agent identifies what this agent is for; at most 500 chars. */
-  description: string;
-  model: string;
-  /** The org's display name for the model ("Auto"); the id is the fallback. */
-  model_alias?: string | null;
-  tools: string[];
-  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
-  tools_mode?: "selected" | "all";
-  visibility: AgentVisibility;
-  resources?: unknown;
-  status: AgentStatus;
-  /** The user's personal agent: always private, never deleted. */
-  is_personal?: boolean;
-  team_ids?: string[];
-  deleted_at?: string | null;
-  purge_after?: string | null;
-  created_at: string;
-  updated_at: string;
-  last_activity_at?: string | null;
-  unread?: boolean;
-}
-
-export interface AgentThread {
-  id: string;
-  agent_id: string;
-  /** The durable chat journal this thread projects into. Agent threads are
-   *  chats; the transcript and send pipeline use this id. */
-  chat_id: string;
-  title: string;
-  title_locked: boolean;
-  type: "user" | "subagent" | "routine";
-  /** The user's Main thread with this agent. */
-  is_default: boolean;
-  /** The run thread this one was opened from, when an agent delivered it. */
-  origin_thread_id?: string | null;
-  created_at: string;
-  last_activity_at: string;
-  unread?: boolean;
-}
+/** The wire shapes: the agent, thread, run and routine rows the REST
+ *  envelopes and the agent socket frames carry. */
+export type { Agent, AgentThread, AgentRoutine };
 
 export interface AgentRunStep {
   kind: string;
@@ -73,51 +32,11 @@ export interface AgentRunStep {
   is_error?: boolean | null;
 }
 
-export interface AgentRun {
-  id: string;
-  agent_id: string;
-  agent_name?: string | null;
-  user_id?: string | null;
-  thread_id?: string | null;
-  chat_id?: string | null;
-  routine_id?: string | null;
-  routine_name?: string | null;
-  parent_run_id?: string | null;
-  delegate_agent_id?: string | null;
-  depth: number;
-  trigger: RunTrigger;
-  status: RunStatus;
-  summary?: string | null;
-  error_code?: string | null;
-  error_message?: string | null;
-  error_step?: string | null;
-  tokens?: number | null;
-  /** Model calls the run made; a finished run's pushed frame carries it. */
-  call_count?: number;
-  /** Tool calls the run made; a finished run's pushed frame carries it. */
-  tool_count?: number;
-  started_at?: string | null;
-  finished_at?: string | null;
-  created_at: string;
+/** A run as the run-detail endpoint returns it: the wire row plus its
+ *  derived steps and the files they wrote. */
+export interface AgentRun extends WireAgentRun {
   steps?: AgentRunStep[];
   files?: string[];
-}
-
-export interface AgentRoutine {
-  id: string;
-  agent_id: string;
-  name: string;
-  kind: "cron" | "once";
-  schedule: string | null;
-  timezone: string;
-  run_at?: string | null;
-  prompt: string;
-  context: "isolated";
-  enabled: boolean;
-  next_run_at?: string | null;
-  created_at: string;
-  updated_at: string;
-  last_run?: AgentRun | null;
 }
 
 export interface AgentRoutineOccurrence {
@@ -322,8 +241,8 @@ export async function listRunChildren(runId: string): Promise<AgentRun[]> {
 
 export interface ActivityFilters {
   agent?: string;
-  status?: RunStatus | "all";
-  trigger?: RunTrigger | "all";
+  status?: AgentRunStatus | "all";
+  trigger?: AgentTrigger | "all";
 }
 
 export async function listActivity(

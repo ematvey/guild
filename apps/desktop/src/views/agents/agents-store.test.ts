@@ -5,6 +5,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySummary, Agent, AgentRun, AgentThread, TraceRow } from "./agents-api";
+import { makeRun, makeThread } from "./test-fixtures";
 
 const api = vi.hoisted(() => ({
   listAgentRuns: vi.fn(),
@@ -30,14 +31,11 @@ import {
 } from "./agents-store";
 
 function run(id: string, status: AgentRun["status"], created_at: string): AgentRun {
-  return { id, agent_id: "a1", depth: 0, trigger: "manual", status, created_at, summary: null };
+  return makeRun({ id, status, created_at });
 }
 
 function thread(id: string, title: string): AgentThread {
-  return {
-    id, agent_id: "a1", chat_id: `chat-${id}`, title, title_locked: false, type: "user",
-    is_default: false, created_at: "2026-11-01T00:00:00Z", last_activity_at: "2026-11-01T00:00:00Z",
-  };
+  return makeThread({ id, chat_id: `chat-${id}`, title });
 }
 
 afterEach(() => {
@@ -99,7 +97,7 @@ describe("agents store", () => {
     const moved = traceWithRun(row, done);
     expect(moved).toMatchObject({ status: "succeeded", duration_ms: 2500, call_count: 3, tokens_out: 20 });
     expect(moved.tokens_in + moved.tokens_out).toBe(500);
-    expect(traceWithRun(moved, { ...done, tokens: null })).toMatchObject({ tokens_in: moved.tokens_in, call_count: 3 });
+    expect(traceWithRun(moved, { ...done, tokens: 0 })).toMatchObject({ tokens_in: moved.tokens_in, call_count: 3 });
     expect(traceFromRun(done)).toMatchObject({ duration_ms: 2500, tokens_in: 500 });
 
     const summary = {

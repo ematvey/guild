@@ -362,6 +362,10 @@
     {
       "where": "crates/app-server/tests/common/mod.rs",
       "reason": "infrastructure"
+    },
+    {
+      "where": "crates/app-server/src/sync.rs",
+      "reason": "infrastructure"
     }
   ],
   "types_no_concept": [

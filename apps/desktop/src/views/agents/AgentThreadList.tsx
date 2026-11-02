@@ -100,13 +100,6 @@ export function ThreadList({
                   Last activity {relativeTime(thread.last_activity_at)}
                 </span>
               </span>
-              {thread.unread && (
-                <span
-                  className="size-2 shrink-0 rounded-full bg-amber-400"
-                  title="Unread"
-                  aria-label="Unread"
-                />
-              )}
               <Mono>{thread.chat_id.slice(0, 8)}</Mono>
             </button>
           ))}

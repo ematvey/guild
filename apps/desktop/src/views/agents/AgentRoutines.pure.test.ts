@@ -2,24 +2,18 @@ import { describe, expect, it } from "vitest";
 import { humanSchedule, scheduleLabel } from "./AgentRoutines";
 import { nextRunLabel } from "../../lib/relative-time";
 import type { AgentRoutine } from "./agents-api";
+import { makeRoutine } from "./test-fixtures";
 
 function routine(patch: Partial<AgentRoutine>): AgentRoutine {
-  return {
-    id: "r1",
-    agent_id: "a1",
+  return makeRoutine({
     name: "Digest",
-    kind: "cron",
     schedule: "0 9 * * 1-5",
     timezone: "Asia/Dubai",
-    run_at: null,
     prompt: "Check the workspace.",
-    context: "isolated",
-    enabled: true,
-    next_run_at: null,
     created_at: "2026-10-20T00:00:00.000Z",
     updated_at: "2026-10-20T00:00:00.000Z",
     ...patch,
-  };
+  });
 }
 
 describe("humanSchedule", () => {

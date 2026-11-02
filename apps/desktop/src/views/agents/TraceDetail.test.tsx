@@ -5,6 +5,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, SpanRow, TraceRow } from "./agents-api";
+import { makeRun } from "./test-fixtures";
 import { traceFromRun } from "./agents-store";
 
 const api = vi.hoisted(() => ({ getTrace: vi.fn(), getRun: vi.fn() }));
@@ -16,10 +17,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
 import { applyAgentRun, clearAgentState, runFinishes } from "./agents-store";
 import { RunDetailPage } from "./TraceDetail";
 
-const running: AgentRun = {
-  id: "r1", agent_id: "a1", agent_name: "Echo", depth: 0, trigger: "manual", status: "running",
-  created_at: "2026-11-01T00:00:00Z", started_at: "2026-11-01T00:00:00Z", summary: null,
-};
+const running: AgentRun = makeRun({ agent_name: "Echo", started_at: "2026-11-01T00:00:00Z" });
 
 function span(id: string, output: string): SpanRow {
   return {

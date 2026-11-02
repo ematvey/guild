@@ -169,7 +169,7 @@ export function traceFromRun(run: AgentRun): TraceRow {
     user_id: run.user_id ?? null,
     agent_id: run.agent_id,
     agent_name: run.agent_name ?? "",
-    session_id: run.chat_id ?? null,
+    session_id: null,
     thread_id: run.thread_id ?? null,
     parent_trace_id: run.parent_run_id ?? null,
     routine_id: run.routine_id ?? null,

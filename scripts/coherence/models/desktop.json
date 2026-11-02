@@ -345,6 +345,10 @@
     {
       "where": "apps/desktop/src/lib/chat-width.ts",
       "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/views/agents/test-fixtures.ts",
+      "reason": "infrastructure"
     }
   ],
   "attaches": []

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createAgentPayload, reachableStep, validateAgentStep } from "./AgentCreate";
 import { AgentRow } from "./AgentsDirectory";
 import type { Agent } from "./agents-api";
+import { makeAgent } from "./test-fixtures";
 
 const draft = {
   name: "Researcher",
@@ -14,22 +15,15 @@ const draft = {
   teamIds: [],
 };
 
-const agent: Agent = {
-  id: "a1",
-  org_id: "o1",
-  owner_user_id: "u1",
+const agent: Agent = makeAgent({
   owner_label: "Owner",
   name: "Researcher",
   description: "Finds primary sources and summarizes them.",
-  model: "m1",
   model_alias: "Auto",
   tools: ["read_file"],
-  tools_mode: "selected",
-  visibility: "private",
-  status: "active",
   created_at: "2026-10-22T10:00:00.000Z",
   updated_at: "2026-10-22T10:00:00.000Z",
-};
+});
 
 describe("agent description", () => {
   it("carries the description in the create payload", () => {

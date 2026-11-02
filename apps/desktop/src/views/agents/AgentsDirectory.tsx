@@ -31,14 +31,14 @@ export function filterAgents(agents: Agent[], query: string): Agent[] {
   );
 }
 
-/** Most recently active first, archived last. */
+/** Most recently updated first, archived last. */
 export function sortAgents(agents: Agent[]): Agent[] {
   const rank = (a: Agent) => (a.status === "active" ? 0 : 1);
   return [...agents].sort((a, b) => {
     const byStatus = rank(a) - rank(b);
     if (byStatus !== 0) return byStatus;
-    const at = Date.parse(a.last_activity_at ?? a.updated_at ?? a.created_at);
-    const bt = Date.parse(b.last_activity_at ?? b.updated_at ?? b.created_at);
+    const at = Date.parse(a.updated_at);
+    const bt = Date.parse(b.updated_at);
     return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
   });
 }
@@ -165,7 +165,7 @@ export function AgentRow({
   agent: Agent;
   onNavigate: (route: AgentsRoute) => void;
 }) {
-  const last = agent.last_activity_at ?? agent.updated_at ?? agent.created_at;
+  const last = agent.updated_at;
   const owner = agent.owner_label ?? "Unknown owner";
   const ownerEmail =
     agent.owner_email && agent.owner_email !== agent.owner_label ? agent.owner_email : null;
@@ -184,12 +184,6 @@ export function AgentRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">{agent.name}</span>
-          {agent.unread === true && (
-            <span
-              aria-label="Unread activity"
-              className="size-1.5 shrink-0 rounded-full bg-sky-500"
-            />
-          )}
           {agent.status !== "active" && <AgentStatusBadge status={agent.status} />}
         </div>
         <p className="mt-0.5 truncate text-2xs text-muted-foreground">

@@ -3,6 +3,8 @@
 // the user was. Pure parse/format functions only — the view never keeps
 // navigation in local state.
 
+import type { AgentRunStatus, AgentStatus, AgentTrigger, AgentVisibility } from "@guild/wire/rest";
+
 export type AgentTab =
   | "overview"
   | "threads"
@@ -308,14 +310,7 @@ export function previewKindOf(name: string): FilePreviewKind {
   return "binary";
 }
 
-export type RunStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "silent"
-  | "skipped"
-  | "cancelled";
+export type RunStatus = AgentRunStatus;
 
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   queued: "Queued",
@@ -327,7 +322,7 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export type RunTrigger = "message" | "routine" | "manual" | "delegation";
+export type RunTrigger = AgentTrigger;
 
 export const RUN_TRIGGER_LABEL: Record<RunTrigger, string> = {
   message: "Message",
@@ -339,9 +334,7 @@ export const RUN_TRIGGER_LABEL: Record<RunTrigger, string> = {
 /** Semantic tone used by status badges. */
 export type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
-
-export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
-export type AgentVisibility = "private" | "team" | "org";
+export type { AgentStatus, AgentVisibility };
 
 export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
   active: "Active",
