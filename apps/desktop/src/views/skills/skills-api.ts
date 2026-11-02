@@ -6,26 +6,13 @@
 // contract: it resolves with the server's value or throws an ApiError
 // carrying the server's message; each view decides what a failure shows.
 
+import type { SkillCatalogItem, SkillInstall, SkillOwner } from "@guild/wire/rest";
 import { request } from "../../lib/api/request";
 
-export interface SkillOwner {
-  kind: "user" | "team";
-  id: string;
-  label: string;
-  /** The owner user's avatar URL; null for teams and unset avatars. */
-  avatar_url?: string | null;
-}
+export type { SkillOwner };
 
-/** One catalog entry (GET /api/v1/skills). */
-export interface SkillItem {
-  slug: string;
-  description: string;
-  latest_version: string | null;
-  owner: SkillOwner | null;
-  maintainer_gated: boolean;
-  installs: number;
-  installs_latest?: number;
-}
+/** One catalog entry (GET /api/v1/skills and the `skill_catalog` frame). */
+export type SkillItem = SkillCatalogItem;
 
 /** One published version row (GET /api/v1/skills/:slug). */
 export interface SkillVersion {
@@ -35,13 +22,7 @@ export interface SkillVersion {
   bundle_sha256: string | null;
 }
 
-/** The current user's install record, when installed. */
-export interface SkillInstall {
-  slug: string;
-  /** The pinned version, or null to follow the latest published version. */
-  pinned_version: string | null;
-  installed_at: string;
-}
+export type { SkillInstall };
 
 export interface SkillPinCount {
   version: string;

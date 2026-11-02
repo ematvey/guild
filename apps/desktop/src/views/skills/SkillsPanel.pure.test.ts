@@ -27,19 +27,21 @@ const fixtures: SkillItem[] = [
     slug: "code-review",
     description: "Reviews diffs against repo standards",
     latest_version: "v3",
-    owner: { kind: "user", id: "u1", label: "Ada" },
+    owner: { kind: "user", id: "u1", label: "Ada", avatar_url: null },
     maintainer_gated: false,
     installs: 12,
     installs_latest: 9,
+    tombstoned: false,
   },
   {
     slug: "deploy-runbook",
     description: "Compose rebuild and live-bundle check",
     latest_version: "v2",
-    owner: { kind: "team", id: "t1", label: "Platform" },
+    owner: { kind: "team", id: "t1", label: "Platform", avatar_url: null },
     maintainer_gated: true,
     installs: 3,
     installs_latest: 1,
+    tombstoned: false,
   },
   {
     slug: "triage",
@@ -48,6 +50,8 @@ const fixtures: SkillItem[] = [
     owner: null,
     maintainer_gated: false,
     installs: 0,
+    installs_latest: 0,
+    tombstoned: false,
   },
 ];
 

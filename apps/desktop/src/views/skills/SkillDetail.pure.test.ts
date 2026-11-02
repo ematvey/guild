@@ -36,7 +36,7 @@ const base: SkillDetailData = {
   ],
   forked_from: null,
   maintainer_gated: false,
-  owner: { kind: "user", id: "u1", label: "Ada" },
+  owner: { kind: "user", id: "u1", label: "Ada", avatar_url: null },
   installs: 12,
   pin_counts: [{ version: "v2", count: 4 }],
   my_install: null,
@@ -113,9 +113,9 @@ describe("detailActions", () => {
   });
 
   it("editAccess maps the gate flag plus owner kind to a user-facing label", () => {
-    const open = { maintainer_gated: false, owner: { kind: "team" as const, id: "t1", label: "Platform" } };
+    const open = { maintainer_gated: false, owner: { kind: "team" as const, id: "t1", label: "Platform", avatar_url: null } };
     const team = { ...open, maintainer_gated: true };
-    const user = { ...open, maintainer_gated: true, owner: { kind: "user" as const, id: "u1", label: "dmitri" } };
+    const user = { ...open, maintainer_gated: true, owner: { kind: "user" as const, id: "u1", label: "dmitri", avatar_url: null } };
     expect(editAccessLabel(editAccess(open), open.owner.label)).toBe("Anyone can edit");
     expect(editAccessLabel(editAccess(team), team.owner.label)).toBe("Team Platform can edit");
     expect(editAccessLabel(editAccess(user), user.owner.label)).toBe("Owner can edit");
@@ -134,7 +134,7 @@ describe("canManageSkill", () => {
     // without a display name matches by email alone.
     const emailOwned: SkillDetailData = {
       ...base,
-      owner: { kind: "user", id: "u1", label: "ada@example.com" },
+      owner: { kind: "user", id: "u1", label: "ada@example.com", avatar_url: null },
     };
     expect(canManageSkill(emailOwned, { role: "member", email: "ada@example.com" })).toBe(true);
     expect(canManageSkill(base, admin)).toBe(true);
@@ -142,7 +142,7 @@ describe("canManageSkill", () => {
   });
 
   it("does not grant user-owner buttons over a team-owned skill", () => {
-    const team: SkillDetailData = { ...base, owner: { kind: "team", id: "t1", label: "Platform" } };
+    const team: SkillDetailData = { ...base, owner: { kind: "team", id: "t1", label: "Platform", avatar_url: null } };
     expect(canManageSkill(team, owner)).toBe(false);
     expect(canManageSkill(team, admin)).toBe(true);
   });

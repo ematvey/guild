@@ -5,9 +5,7 @@
 import type {
   Agent,
   AgentRoutine,
-  AgentRunStatus,
   AgentThread,
-  AgentTrigger,
   AgentVisibility,
   AgentRun as WireAgentRun,
 } from "@guild/wire/rest";
@@ -98,16 +96,6 @@ export interface UpdateAgentInput {
   team_ids?: string[];
 }
 
-export interface RoutineInput {
-  name: string;
-  kind: "cron" | "once";
-  schedule: string | null;
-  timezone: string;
-  run_at?: string | null;
-  prompt: string;
-  enabled: boolean;
-}
-
 export interface AgentFileContent {
   text?: string;
   language?: string | null;
@@ -117,15 +105,6 @@ export interface AgentFileContent {
 }
 
 const agentBase = (id: string) => `/api/v1/agents/${encodeURIComponent(id)}`;
-
-export async function listAgents(includeArchived = false): Promise<Agent[]> {
-  const query = includeArchived ? "?include_archived=1" : "";
-  return (await request<{ agents: Agent[] }>("GET", `/api/v1/agents${query}`)).agents;
-}
-
-export async function getAgent(id: string): Promise<Agent> {
-  return (await request<{ agent: Agent }>("GET", agentBase(id))).agent;
-}
 
 export interface TeamOption {
   id: string;
@@ -161,10 +140,6 @@ export async function exportAgent(id: string): Promise<unknown> {
   return body.export;
 }
 
-export async function purgeAgent(id: string, force = false): Promise<void> {
-  await request<{ purged: boolean }>("POST", `${agentBase(id)}/purge${force ? "?force=1" : ""}`);
-}
-
 export async function deleteAgent(id: string): Promise<void> {
   await request<void>("DELETE", agentBase(id));
 }
@@ -173,21 +148,12 @@ export async function listAgentThreads(id: string): Promise<AgentThread[]> {
   return (await request<{ threads: AgentThread[] }>("GET", `${agentBase(id)}/threads`)).threads;
 }
 
-export async function getAgentThread(
-  id: string,
-  threadId: string,
-): Promise<AgentThread> {
-  return (await request<{ thread: AgentThread }>("GET", `${agentBase(id)}/threads/${encodeURIComponent(threadId)}`)).thread;
-}
-
-
 export type ChildThreadAction = "cancel" | "close";
 
 export type ChildThreadActionResult =
   | { ok: true }
   | { ok: false; unavailable: true }
   | { ok: false; unavailable: false; error: string };
-
 
 export async function createAgentThread(
   id: string,
@@ -234,61 +200,8 @@ export async function getRun(runId: string): Promise<AgentRun> {
   return (await request<{ run: AgentRun }>("GET", `/api/v1/runs/${encodeURIComponent(runId)}`)).run;
 }
 
-export async function listRunChildren(runId: string): Promise<AgentRun[]> {
-  const body = await request<{ children: AgentRun[] }>("GET", `/api/v1/runs/${encodeURIComponent(runId)}/children`);
-  return body.children;
-}
-
-export interface ActivityFilters {
-  agent?: string;
-  status?: AgentRunStatus | "all";
-  trigger?: AgentTrigger | "all";
-}
-
-export async function listActivity(
-  filters: ActivityFilters = {},
-): Promise<AgentRun[]> {
-  const query = new URLSearchParams();
-  if (filters.agent) query.set("agent", filters.agent);
-  if (filters.status && filters.status !== "all")
-    query.set("status", filters.status);
-  if (filters.trigger && filters.trigger !== "all")
-    query.set("trigger", filters.trigger);
-  const suffix = query.toString() ? `?${query}` : "";
-  return (await request<{ activity: AgentRun[] }>("GET", `/api/v1/activity${suffix}`)).activity;
-}
-
 export async function listRoutines(id: string): Promise<AgentRoutine[]> {
   return (await request<{ routines: AgentRoutine[] }>("GET", `${agentBase(id)}/routines`)).routines;
-}
-
-export async function getRoutine(
-  id: string,
-  routineId: string,
-): Promise<AgentRoutine> {
-  return (await request<{ routine: AgentRoutine }>("GET", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`)).routine;
-}
-
-export async function createRoutine(
-  id: string,
-  input: RoutineInput,
-): Promise<AgentRoutine> {
-  return (await request<{ routine: AgentRoutine }>("POST", `${agentBase(id)}/routines`, input)).routine;
-}
-
-export async function updateRoutine(
-  id: string,
-  routineId: string,
-  input: Partial<RoutineInput>,
-): Promise<AgentRoutine> {
-  return (await request<{ routine: AgentRoutine }>("PATCH", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`, input)).routine;
-}
-
-export async function deleteRoutine(
-  id: string,
-  routineId: string,
-): Promise<void> {
-  await request<void>("DELETE", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`);
 }
 
 export async function runRoutine(
