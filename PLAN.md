@@ -12,6 +12,45 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Second review pass: isolation, delivery and lifecycle fixes
+  (2026-11-02).** A full architecture review found bugs the earlier pass
+  missed; this entry records the rules the fixes set.
+  - *Isolation.* An agent's conversation search and read (the tools and
+    `GET /agents/:id/search`) filter by the calling user: sharing an agent
+    never shares its threads. A spawn target resolves among the agents the
+    requester can see (`AgentStore.findVisible`); a name two visible agents
+    share picks the requester's own or answers `ambiguous_target`.
+    `reconcileMachine` settles only the reconnecting machine's calls.
+  - *Delivery.* A restored LISTEN connection calls each subscriber's
+    reconnect hook, and the feed re-pushes every connected user's workspace,
+    agent and skill state and re-captures each shown chat. The
+    `guild_chat_status` NOTIFY rides the UPDATE that changes the flag, and an
+    arriving turn reserves `generating` under the row lock. The SSE thread
+    stream is deleted: the member socket is the only push path.
+  - *Lifecycle.* A routine claim carries `claimed_at` (migration 0104); only
+    a claim older than the two-minute lease with no run is reclaimed. The
+    stale-run sweep skips chats holding durable work. Archiving or deleting
+    an agent cancels its runs and stops their chats; restore needs an
+    archived or deleting agent. An integration save writes secrets and
+    config in one transaction.
+  - *Trust boundaries.* The engine's remote `fs_list` refuses non-WSL UNC
+    paths (`fs_bridge::check_unc_browse`, shared with the desktop browser);
+    a skill bundle on another origin is fetched without the bearer. The
+    user MCP SSRF guard runs on every runtime connect. The web CSP is
+    `script-src 'self'`; the boot scripts load from `/boot.js`.
+  - *Errors.* Every 403 names its reason (`ApiError.forbidden(message)`,
+    `adminRequired()`); the phantom `owner` org role is gone. An invalid
+    JSON-RPC request with an id gets an `INVALID_REQUEST` response; an
+    unknown method answers `METHOD_NOT_FOUND`; engine locks are
+    poison-tolerant (`sync::LockExt`).
+  - *Desktop.* The agents views use the wire types (the never-sent unread
+    fields are gone). The member socket redials with exponential backoff and
+    full jitter (1 s to 30 s). The older-page loader and the SSO status check
+    ride `lib/api/request`. Skill detail re-reads on a pushed catalog change
+    and tells a 404 from an unreachable server.
+  - *Tests.* The agents harness skips only on connection-level errors, so a
+    failing migration fails the suite.
+
 - **Delete closes the subtree; a deleting agent is read-only; list pushes
   coalesce (2026-11-02).** Deleting a chat cancels, closes and deletes its
   agent-thread subtree in one transaction, and the user whose run spawned a
