@@ -8,6 +8,12 @@
 // transaction per file under a Postgres advisory lock, so concurrent
 // starts apply each file once; any failure throws and aborts startup — a
 // schema the server code does not match must never come up quietly.
+//
+// An applied file is never edited, with one exception: a deliberate
+// amendment listed in `amended.json` beside the files (name → the earlier
+// hashes it replaces, and why). A recorded hash that list accepts is
+// updated to the file's current hash; any other mismatch is drift and
+// warns.
 
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
@@ -24,6 +30,25 @@ export interface ApplyPlatformMigrationsOptions {
 }
 
 const MIGRATION_LOCK = "guild:platform-migrations";
+
+/** One deliberate edit of an applied migration. */
+export interface MigrationAmendment {
+  /** The sha256 hashes of the earlier contents this one replaces. */
+  replaces: string[];
+  reason: string;
+}
+
+/** The amendments committed beside the migration files (`amended.json`);
+ *  none when the file is absent. */
+export function readAmendments(dir: string): Record<string, MigrationAmendment> {
+  let text: string;
+  try {
+    text = readFileSync(path.join(dir, "amended.json"), "utf8");
+  } catch {
+    return {};
+  }
+  return JSON.parse(text) as Record<string, MigrationAmendment>;
+}
 
 export function platformMigrationsDir(): string {
   return path.resolve(process.cwd(), "migrations");
@@ -42,6 +67,7 @@ export async function applyPlatformMigrations(
   } catch (error) {
     throw new Error(`platform migrations directory is unreadable: ${dir} (${(error as Error).message})`);
   }
+  const amendments = readAmendments(dir);
   // One runner at a time: two servers starting together must not both see
   // a migration as pending. The session-level lock lives on this client and
   // the history is read only after it is held.
@@ -66,7 +92,13 @@ export async function applyPlatformMigrations(
         const hash = createHash("sha256").update(bytes).digest("hex");
         const known = applied.get(stem(file));
         if (known !== undefined) {
-          if (known !== null && known !== hash) {
+          if (known !== null && known !== hash && amendments[stem(file)]?.replaces.includes(known) === true) {
+            await client.query("UPDATE schema_history SET content_hash = $2 WHERE name = $1", [stem(file), hash]);
+            options.log?.info(
+              { migration: stem(file), replaced_hash: known },
+              "recorded an amended platform migration",
+            );
+          } else if (known !== null && known !== hash) {
             options.log?.warn(
               { migration: stem(file), recorded_hash: known, current_hash: hash },
               "applied platform migration content drifted from schema_history",
