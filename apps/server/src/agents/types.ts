@@ -49,6 +49,10 @@ export type AgentToolName =
   | "subagents"
   | "send_file";
 
+/** One entry of an agent's tool allowlist: a built-in tool, or an
+ *  integration/MCP tool name the runtime resolves at turn time. */
+export type AgentToolRef = AgentToolName | (string & {});
+
 /** Every tool an agent can be given. `tools_mode = 'all'` means this set,
  *  plus every integration tool the org enables (resolved at turn time, so a
  *  new integration reaches the agent without an edit). */
@@ -93,7 +97,7 @@ export interface Agent {
   model: string;
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;
-  tools: AgentToolName[];
+  tools: AgentToolRef[];
   /** `all` follows the org's enabled tools; `selected` uses `tools`. */
   tools_mode: AgentToolsMode;
   visibility: AgentVisibility;

@@ -23,7 +23,7 @@ import type {
   AgentStatus,
   AgentThread,
   AgentThreadType,
-  AgentToolName,
+  AgentToolRef,
   AgentToolsMode,
   AgentTrigger,
   AgentVisibility,
@@ -71,7 +71,7 @@ export interface CreateAgentInput {
   name: string;
   description?: string;
   model: string;
-  tools?: AgentToolName[];
+  tools?: AgentToolRef[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
   team_ids?: string[];
@@ -82,7 +82,7 @@ export interface UpdateAgentInput {
   name?: string;
   description?: string;
   model?: string;
-  tools?: AgentToolName[];
+  tools?: AgentToolRef[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
   team_ids?: string[];
@@ -258,7 +258,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     description: (row.description as string | null) ?? "",
     model: row.model as string,
     model_alias: (row.model_alias as string | null) ?? null,
-    tools: (row.tools as AgentToolName[] | null) ?? [],
+    tools: (row.tools as AgentToolRef[] | null) ?? [],
     tools_mode: (row.tools_mode as AgentToolsMode | null) ?? "selected",
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},

@@ -3,11 +3,12 @@
 // containment is checked after realpath, and symlinks are opaque — listed
 // with their flag but never traversed.
 
-import { createReadStream, type ReadStream } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "../platform/errors.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
+import { openWorkspaceFile, readWorkspaceFile, WorkspaceFsError } from "./workspace-fs.js";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -43,11 +44,27 @@ export interface AgentDownload {
   name: string;
   size: number;
   mtime: string;
-  stream: ReadStream;
+  stream: Readable;
 }
 
 function badPath(message = "invalid path"): ApiError {
   return ApiError.badRequest(message);
+}
+
+/** Maps a workspace-fs refusal onto the route's errors: a missing path is a
+ *  404, every other refusal a 400. */
+function apiErrorOf(error: unknown, tooLarge: string): unknown {
+  if (!(error instanceof WorkspaceFsError)) return error;
+  switch (error.reason) {
+    case "not_found":
+      return ApiError.notFound("no such path");
+    case "too_large":
+      return badPath(tooLarge);
+    case "not_file":
+      return badPath("not a file");
+    default:
+      return badPath(error.message);
+  }
 }
 
 /** Relative path from the query string: rejects absolute paths, `..`
@@ -217,43 +234,39 @@ export class AgentFiles {
 
   /** Reads a text file up to 1 MiB; binary files are rejected. */
   async readText(orgId: string, agentId: string, relPath?: string): Promise<AgentTextFile> {
-    const { rel, abs } = await resolveAgentReadPath(this.workspaceRoot, orgId, agentId, relPath);
-    const stats = await lstat(abs).catch(() => {
-      throw ApiError.notFound("no such path");
+    const rel = normalizeRelativePath(relPath);
+    const { bytes, stats } = await readWorkspaceFile(this.rootFor(orgId, agentId), rel, {
+      maxBytes: MAX_TEXT_BYTES,
+      overflow: "refuse",
+    }).catch((error: unknown) => {
+      throw apiErrorOf(error, "file is larger than 1 MiB");
     });
-    if (!stats.isFile()) throw badPath("not a file");
-    if (stats.size > MAX_TEXT_BYTES) throw badPath("file is larger than 1 MiB");
-    const handle = await open(abs, "r");
-    try {
-      const buffer = Buffer.alloc(Number(stats.size));
-      await handle.read(buffer, 0, buffer.length, 0);
-      if (buffer.subarray(0, Math.min(buffer.length, 8192)).includes(0)) {
-        throw badPath("not a text file");
-      }
-      return {
-        path: rel,
-        size: Number(stats.size),
-        mtime: stats.mtime.toISOString(),
-        text: buffer.toString("utf8"),
-      };
-    } finally {
-      await handle.close();
+    if (bytes.subarray(0, Math.min(bytes.length, 8192)).includes(0)) {
+      throw badPath("not a text file");
     }
+    return {
+      path: rel,
+      size: bytes.length,
+      mtime: stats.mtime.toISOString(),
+      text: bytes.toString("utf8"),
+    };
   }
 
-  /** Opens a streamed download up to 64 MiB. */
+  /** Opens a streamed download up to 64 MiB. The stream reads the opened
+   *  descriptor, never the path, and stops at the size it reports. */
   async streamDownload(orgId: string, agentId: string, relPath?: string): Promise<AgentDownload> {
-    const { rel, abs } = await resolveAgentReadPath(this.workspaceRoot, orgId, agentId, relPath);
-    const stats = await lstat(abs).catch(() => {
-      throw ApiError.notFound("no such path");
+    const rel = normalizeRelativePath(relPath);
+    const { handle, stats } = await openWorkspaceFile(this.rootFor(orgId, agentId), rel).catch((error: unknown) => {
+      throw apiErrorOf(error, "file is larger than 64 MiB");
     });
-    if (!stats.isFile()) throw badPath("not a file");
-    if (stats.size > MAX_DOWNLOAD_BYTES) throw badPath("file is larger than 64 MiB");
+    const size = Number(stats.size);
+    if (size > MAX_DOWNLOAD_BYTES || size === 0) await handle.close();
+    if (size > MAX_DOWNLOAD_BYTES) throw badPath("file is larger than 64 MiB");
     return {
       name: path.basename(rel),
-      size: Number(stats.size),
+      size,
       mtime: stats.mtime.toISOString(),
-      stream: createReadStream(abs),
+      stream: size === 0 ? Readable.from([]) : handle.createReadStream({ start: 0, end: size - 1, autoClose: true }),
     };
   }
 }

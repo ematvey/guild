@@ -2,12 +2,11 @@
 // written playbook. Installing the pack creates or updates three agents and
 // keeps their knowledge notes in the agent workspace.
 
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import type { AgentStore } from "./store.js";
-import type { AgentToolName } from "./types.js";
+import type { AgentToolRef } from "./types.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { agentWorkspaceDir, seedAgentWorkspace } from "./workspace-config.js";
+import { writeWorkspaceFile } from "./workspace-fs.js";
 
 const DELEGATION = `## Delegation
 
@@ -41,7 +40,7 @@ export interface SpecialistDefinition {
   key: string;
   name: string;
   description: string;
-  tools: AgentToolName[];
+  tools: AgentToolRef[];
   playbook: string;
   notesIndex: string;
 }
@@ -267,7 +266,7 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "gitlab_list_issues",
       "gitlab_list_mrs",
       "gitlab_api",
-    ] as AgentToolName[],
+    ],
     playbook: SOURCE_PLAYBOOK,
     notesIndex: SOURCE_NOTES,
   },
@@ -295,7 +294,7 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "langfuse_api",
       "slack_conversations_history",
       "slack_post_message",
-    ] as AgentToolName[],
+    ],
     playbook: OPS_PLAYBOOK,
     notesIndex: OPS_NOTES,
   },
@@ -322,7 +321,7 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "hubspot_update_deal",
       "hubspot_api",
       "slack_conversations_history",
-    ] as AgentToolName[],
+    ],
     playbook: CLIENTS_PLAYBOOK,
     notesIndex: CLIENTS_NOTES,
   },
@@ -352,15 +351,6 @@ function installerActor(input: InstallSpecialistsInput): UserRow {
     avatar_url: null,
     onboarded_at: null,
   };
-}
-
-async function writeIfMissing(file: string, text: string): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  try {
-    await writeFile(file, text, { flag: "wx" });
-  } catch (error) {
-    if ((error as { code?: string }).code !== "EEXIST") throw error;
-  }
 }
 
 /** Creates or updates the specialist agents and writes their playbooks.
@@ -402,8 +392,8 @@ export async function installSpecialists(
 
     const dir = agentWorkspaceDir(deps.workspaceRoot, input.orgId, agent.id);
     await seedAgentWorkspace(dir);
-    await writeFile(path.join(dir, "AGENTS.md"), `${specialist.playbook}${ECONOMY}`);
-    await writeIfMissing(path.join(dir, "notes", "README.md"), specialist.notesIndex);
+    await writeWorkspaceFile(dir, "AGENTS.md", `${specialist.playbook}${ECONOMY}`);
+    await writeWorkspaceFile(dir, "notes/README.md", specialist.notesIndex, { exclusive: true });
   }
 
   return { created, updated };
