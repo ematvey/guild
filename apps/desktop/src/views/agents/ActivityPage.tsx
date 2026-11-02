@@ -683,17 +683,6 @@ export function ChatActivityPage({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  // Old activity chat links used /sessions/<id>; rewrite them to the
-  // canonical /chats/<id> address without adding a history step.
-  useEffect(() => {
-    if (!window.location.pathname.startsWith("/sessions/")) return;
-    window.history.replaceState(
-      null,
-      "",
-      `/chats/${encodeURIComponent(chatId)}${window.location.search}`,
-    );
-  }, [chatId]);
-
   useEffect(() => {
     let live = true;
     setError(null);

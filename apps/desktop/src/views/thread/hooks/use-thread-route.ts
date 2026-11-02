@@ -2,7 +2,8 @@
 // single source of truth, and every navigation pushes history and route state
 // together.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyRoutePatch, chatRoutePath, parseChatRoute, type ChatRoute, type RoutePatch } from "../route";
+import { HAS_ENGINE } from "../../../lib/session";
+import { applyRoutePatch, canonicalRoute, chatRoutePath, parseChatRoute, type ChatRoute, type RoutePatch } from "../route";
 
 export interface RouteNavOptions {
   /** Rewrite the current history entry instead of adding one: a normalising
@@ -42,7 +43,10 @@ export function commitRoute(
   else history.pushState(null, "", path);
 }
 
-export function useThreadRoute() {
+/** The route state and its one navigation function. `role` decides which
+ *  addresses are canonical (`canonicalRoute`): every route that is not is
+ *  rewritten in place as soon as it is entered. */
+export function useThreadRoute({ role }: { role: string }) {
   const [route, setRoute] = useState<ChatRoute>(() =>
     parseChatRoute(window.location.pathname, window.location.search),
   );
@@ -50,11 +54,6 @@ export function useThreadRoute() {
   // re-renders, so two navigations in one handler compose.
   const routeRef = useRef(route);
   routeRef.current = route;
-  // A malformed escape parses to the default route; the address is rewritten
-  // to match, so reload and back/forward do not land on the broken one again.
-  useEffect(() => {
-    if (route.invalid) window.history.replaceState(null, "", "/chats");
-  }, [route.invalid]);
   // Browser back/forward: re-derive the whole route from the URL. The
   // chatId effect takes care of (re)loading or clearing the thread, and the
   // settings/device surfaces follow the parsed route.
@@ -79,6 +78,14 @@ export function useThreadRoute() {
     routeRef.current = resolved;
     setRoute(resolved);
   }, []);
+
+  // Every address normalisation in one place: the route moves to the page it
+  // shows and the entry is rewritten, so reload and back/forward never land
+  // on the non-canonical address again.
+  useEffect(() => {
+    const patch = canonicalRoute(route, { role, hasEngine: HAS_ENGINE, pathname: window.location.pathname });
+    if (patch !== null) pushRoute(patch, { replace: true });
+  }, [route, role, pushRoute]);
 
   return { route, setRoute, pushRoute };
 }

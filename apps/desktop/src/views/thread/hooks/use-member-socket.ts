@@ -8,12 +8,23 @@ import { applyMachineList, applyMachineStatus } from "../../../lib/machines-stor
 import { applyModelList } from "../../../lib/models-store";
 import { applyContextUsage } from "../../../lib/context-usage-store";
 import { applyWorkspaceIdentity } from "../../../lib/workspace-store";
-import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
-import type { Project } from "../../../lib/api/projects";
+import type { ChatSummary } from "../../../lib/api/chats";
 import type { ThreadState } from "../../../lib/thread-events";
 import type { OutgoingCommand } from "../../../lib/outgoing-command";
-import { statusAfterGenerating, statusFromThreads, type ChatStatus } from "../status";
-import type { ThreadViewStore } from "../thread-view-store";
+import { statusAfterGenerating } from "../status";
+import {
+  applyChatList,
+  applyChatRow,
+  archivedChatsStore,
+  archivedProjectsStore,
+  bumpChatActivity,
+  chatsStore,
+  chatStatusStore,
+  projectsStore,
+  resetSubagentTrees,
+  setSubagentTree,
+} from "../chat-stores";
+import type { ThreadStoreHandle } from "./use-thread-store";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 import {
@@ -24,38 +35,30 @@ import {
   resetAgentSlices,
 } from "../../agents/agents-store";
 import { applyOrgEvent, applySkillCatalog } from "../../skills/skills-store";
-import type { ChatTree } from "../../../lib/api/chats";
 
-export interface MemberSocketDeps {
-  signOut: () => void;
-  chatsRef: RefObject<ChatSummary[] | null>;
-  setChats: (update: ChatSummary[] | ((prev: ChatSummary[] | null) => ChatSummary[] | null)) => void;
-  setChatStatus: (update: (prev: ChatStatus) => ChatStatus) => void;
-  setArchivedChats: (chats: ChatSummary[]) => void;
-  setProjects: (projects: Project[]) => void;
-  setArchivedProjects: (projects: Project[]) => void;
-  store: ThreadViewStore;
-  retireSendPending: (chatId: string, source: string, accepted: (key: string) => boolean) => void;
-  openChatIdRef: RefObject<string | null>;
-  onThreadStateApplied: (cid: string) => void;
-  setSubagentTree: (chatId: string, nodes: ChatSubagentNode[]) => void;
-  resetSubagentTrees: () => void;
-  /** One chat's header facts arrived (inside its sync bracket or live). */
-  applyChatTree: (tree: ChatTree) => void;
-  cancelPending: (cid: string) => void;
+/** The send path the socket settles: the outgoing queue and the user
+ *  message ids the server has echoed. */
+export interface OutgoingSettle {
   outgoingRef: RefObject<Map<string, OutgoingCommand>>;
   observedUserIdsRef: RefObject<Set<string>>;
   settleOutgoing: (command: OutgoingCommand) => void;
+}
+
+export interface MemberSocketDeps {
+  signOut: () => void;
+  /** The open view's thread store (useThreadStore). */
+  thread: ThreadStoreHandle;
+  outgoing: OutgoingSettle;
+  /** The open chat no longer exists server-side. */
   recoverMissingChatRef: RefObject<() => void>;
 }
 
+/** Writes the chat-list stores from socket frames; the open view's thread
+ *  store and send path come in as `deps`. */
 export function useMemberSocket(deps: MemberSocketDeps) {
-  const {
-    signOut, chatsRef, setChats, setChatStatus, setArchivedChats, setProjects,
-    setArchivedProjects, store, retireSendPending, openChatIdRef,
-    onThreadStateApplied, setSubagentTree, resetSubagentTrees, applyChatTree,
-    cancelPending, outgoingRef, observedUserIdsRef, settleOutgoing, recoverMissingChatRef,
-  } = deps;
+  const { signOut, thread, outgoing, recoverMissingChatRef } = deps;
+  const { store, retireSendPending, openChatIdRef, onThreadStateApplied, applyChatTree, cancelPending } = thread;
+  const { outgoingRef, observedUserIdsRef, settleOutgoing } = outgoing;
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
   // The newest event id whose read-marker POST already fired per chat:
@@ -82,7 +85,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const sendRead = (cid: string): boolean => {
     if (socketRef.current?.markRead(cid) !== true) return false;
     readSentRef.current.add(cid);
-    setChatStatus((prev) =>
+    chatStatusStore.update((prev) =>
       prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
     );
     return true;
@@ -96,7 +99,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const pushedRows = (rows: ChatSummary[]): ChatSummary[] => {
     const open = openChatIdRef.current;
     const read = open !== null && readSentRef.current.has(open);
-    const known = new Map((chatsRef.current ?? []).map((c) => [c.id, c.title]));
+    const known = new Map((chatsStore.get() ?? []).map((c) => [c.id, c.title]));
     return rows.map((c) => {
       const unread = read && c.id === open && c.unread ? { ...c, unread: false } : c;
       const prior = known.get(c.id);
@@ -132,14 +135,14 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     onThreadStateApplied(cid);
     settleEchoes(cid, state.events);
     const watching = cid === openChatIdRef.current && isVisible();
-    setChatStatus(prev => ({ ...prev, [cid]: statusAfterGenerating(prev[cid], state.generating, watching) }));
+    chatStatusStore.update(prev => ({ ...prev, [cid]: statusAfterGenerating(prev[cid], state.generating, watching) }));
     // ThreadState carries the chat's project fields: a live re-bind from
     // another device updates this client's row, so the chip and the sidebar
     // agree without a reload. It also carries the log through its last row:
     // that row's stamp is the chat's recent-activity sort key (the sidebar
     // fold-outs re-sort on it).
     const activity = state.events[state.events.length - 1]?.created_at;
-    setChats(prev =>
+    chatsStore.update(prev =>
       prev?.map(c =>
         c.id === cid
           ? {
@@ -182,16 +185,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // The socket's handlers are registered once for the component lifetime.
   // Each reads this render's callbacks through `latest`, so a callback that
   // changes between renders is never called stale.
-  const latest = useRef({
-    applyHistory, pushedRows, sendRead, signOut, setChats, setChatStatus, setArchivedChats,
-    setProjects, setArchivedProjects, retireSendPending, onThreadStateApplied, setSubagentTree,
-    resetSubagentTrees, applyChatTree, cancelPending, settleOutgoing, settleEchoes,
-  });
-  latest.current = {
-    applyHistory, pushedRows, sendRead, signOut, setChats, setChatStatus, setArchivedChats,
-    setProjects, setArchivedProjects, retireSendPending, onThreadStateApplied, setSubagentTree,
-    resetSubagentTrees, applyChatTree, cancelPending, settleOutgoing, settleEchoes,
-  };
+  const latest = useRef({ applyHistory, pushedRows, sendRead, signOut, applyChatTree, cancelPending, settleEchoes });
+  latest.current = { applyHistory, pushedRows, sendRead, signOut, applyChatTree, cancelPending, settleEchoes };
   const live = () => latest.current;
 
   // One member socket serves both browser tabs and Tauri webviews. The
@@ -206,7 +201,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         readSentRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         store.mutate((r) => r.invalidate());
-        live().resetSubagentTrees();
+        resetSubagentTrees();
         resetAgentSlices();
       },
       onMachineStatus: applyMachineStatus,
@@ -227,19 +222,16 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
       onOrgEvent: applyOrgEvent,
       onChatTree: (tree) => live().applyChatTree(tree),
-      onArchivedThreadList: (next) => live().setArchivedChats(next),
+      onArchivedThreadList: (next) => archivedChatsStore.set(next),
       onContextUsage: applyContextUsage,
       onProjectList: (next, archived) => {
-        live().setProjects(next);
-        live().setArchivedProjects(archived);
+        projectsStore.set(next);
+        archivedProjectsStore.set(archived);
       },
       onThreadList: (nextChats) => {
         const open = openChatIdRef.current;
         const rows = live().pushedRows(nextChats);
-        live().setChats(rows);
-        // Merge, not replace: a child thread is never in the list, so its
-        // live status must survive every sidebar push.
-        live().setChatStatus((prev) => ({ ...prev, ...statusFromThreads(rows) }));
+        applyChatList(rows);
         traceEvent("thread.list", {
           chats: rows.length,
           open: open ?? "-",
@@ -251,16 +243,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       // One row changed in place: it replaces its own entry, read through
       // the same masks as a whole list.
-      onChatRow: (chat) => {
-        const [row] = live().pushedRows([chat]);
-        live().setChats((prev) => {
-          if (prev === null) return prev;
-          return prev.some((c) => c.id === row!.id)
-            ? prev.map((c) => (c.id === row!.id ? row! : c))
-            : [row!, ...prev];
-        });
-        live().setChatStatus((prev) => ({ ...prev, ...statusFromThreads([row!]) }));
-      },
+      onChatRow: (chat) => applyChatRow(live().pushedRows([chat])[0]!),
       // A chat_status frame moves the spinner and the unread dot of every
       // chat but the open one. The open chat's turn belongs to its sequenced
       // ThreadState: the frame carries no seq, so it never retires a pending
@@ -268,13 +251,13 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       // arrives) and never overrides a newer state's flag.
       onChatStatus: ({ chat_id, generating }) => {
         if (chat_id === openChatIdRef.current) return;
-        live().setChatStatus((prev) => ({ ...prev, [chat_id]: statusAfterGenerating(prev[chat_id], generating, false) }));
+        chatStatusStore.update((prev) => ({ ...prev, [chat_id]: statusAfterGenerating(prev[chat_id], generating, false) }));
       },
       onThreadState: (state) => live().applyHistory(state),
       onSubagentTree: (cid, nodes) => {
         // Every chat id updates the cache: the open thread reads its entry,
         // and a later switch reuses the tree without a fresh sync.
-        live().setSubagentTree(cid, nodes);
+        setSubagentTree(cid, nodes);
       },
       onThreadEvents: (cid, seq, events) => {
         // Incremental durable-log fan-out: the same rows a refresh replays,
@@ -286,15 +269,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         // refreshes. Newer-only — a replayed or stale batch must not regress
         // the stamp the thread-state lane already advanced.
         const activity = events[events.length - 1]?.created_at;
-        if (activity !== undefined) {
-          live().setChats(prev => {
-            const row = prev?.find((c) => c.id === cid);
-            if (!row) return prev;
-            if (row.last_activity_at !== undefined
-              && Date.parse(row.last_activity_at) >= Date.parse(activity)) return prev;
-            return prev!.map((c) => (c.id === cid ? { ...c, last_activity_at: activity } : c));
-          });
-        }
+        if (activity !== undefined) bumpChatActivity(cid, activity);
       },
       onSync: (cid, phase) => {
         traceEvent("thread.sync", { chat: cid, phase, open: cid === openChatIdRef.current });
@@ -351,8 +326,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       if (socketRef.current === connection) socketRef.current = null;
       connection.stop();
     };
-    // The handlers read the latest callbacks through `latest`; the refs and
-    // the store are stable for the component lifetime.
+    // One socket per mount: the handlers read the latest callbacks through
+    // `latest`, and the refs and the thread store live as long as the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
