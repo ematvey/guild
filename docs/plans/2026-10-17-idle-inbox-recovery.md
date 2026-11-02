@@ -1,5 +1,7 @@
 # Idle inbox recovery and local clock updates
 
+Status: **implemented**; a record of the fix. The reproduction test it names was never committed.
+
 The parallel pi investigation supplied a deterministic Guild integration failure, retained
 in the deliberately uncommitted `apps/server/src/test/wedge-repro.test.ts`.
 A provider 404 is wrapped by the gateway as a retryable 502, leaving a run live

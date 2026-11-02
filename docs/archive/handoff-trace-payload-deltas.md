@@ -1,7 +1,9 @@
 # Handoff — trace payload deltas
 
-Status: implemented on `develop`, not deployed. Prod runs the full-body
-version. Payload capture is on unless `GUILD_TRACE_PAYLOADS=0`.
+Status: shipped (`b51ef369`, 2026-10-28; on `master` and in the prod
+checkout). Archived as a handoff record; the "Known limits" below still
+describe `apps/server/src/platform/trace.ts`. Payload capture is on unless
+`GUILD_TRACE_PAYLOADS=0`.
 
 ## Why
 

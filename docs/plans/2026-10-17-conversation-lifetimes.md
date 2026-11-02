@@ -1,5 +1,7 @@
 # Conversation lifetimes, recovery, and queued steering — 0.5.72
 
+Status: **implemented** in 0.5.72 (`ConversationHost`, `ConversationDirectory` in `apps/server/src`).
+
 This implements the follow-up review of `a4527a8`. Pi Durable and its related
 packages remain pinned to 1.3.0. The change addresses the six reproduced
 findings, the inspected lifecycle issues, and the architecture/style work

@@ -1,5 +1,7 @@
 # Pi Durable integration contracts — 0.5.71
 
+Status: **implemented** in 0.5.71; pi-durable and pi-ai are still pinned to 1.3.0 (`apps/server/package.json`).
+
 The server audit compared Guild at `5e6ec4a` against the Pi Durable README,
 examples, and installed implementation. This change fixes its nine findings
 and pins `pi-durable`, `pi-ai`, `pi-codemode`, and Chord to **1.3.0**. Pi AI is

@@ -1,5 +1,7 @@
 # Composer context ring — 0.5.75
 
+Status: **implemented** in 0.5.75 (`apps/desktop/src/components/context-ring.tsx`). The composer's model picker it sits beside is gone (2026-10-21: the model is the agent's); the ring stays in the composer.
+
 The composer shows an 18px ring immediately left of the model picker. No
 percentage or token text occupies the composer row. Hovering or focusing the
 ring reveals the count, capacity, percentage and measurement scope. At 80%

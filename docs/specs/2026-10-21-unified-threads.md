@@ -1,6 +1,9 @@
 # Unified threads — design
 
-Status: decisions settled; no code yet.
+Status: implemented (2026-10-21; PLAN.md "Threads are private; agents are
+shared", "Chats pick their agent", "A personal agent is visible only to its
+owner"). A chat with no agent still exists until its first turn, when the
+caller's personal agent adopts it (`chats/submit-turn.ts`).
 Supersedes the conversation model in
 `docs/specs/2026-10-18-persistent-agents.md` (§2, §3, §16 thread ownership).
 Everything else in that spec still holds.

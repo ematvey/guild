@@ -79,8 +79,7 @@ cargo run -p guild-app-server -- chat --model gpt-4o-mini "hello"
 ## Desktop app
 
 ```bash
-cargo build -p guild-app-server          # the engine, found automatically
-cd apps/desktop && npm install
+cd apps/desktop && npm install   # the engine is a library linked into the desktop binary
 npm run tauri dev
 ```
 

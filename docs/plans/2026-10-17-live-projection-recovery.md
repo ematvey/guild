@@ -1,5 +1,7 @@
 # Live projection recovery and machine tool lifetime
 
+Status: **implemented** (`live_projection_repairs` in the Postgres storage).
+
 The affected dev conversation had a `pi.live` base `{}` followed by a delta
 setting `nestedTools[0].output`. Applying that delta failed on every reopen.
 Separately, its machine-bound shell command remained alive after Guild reported
