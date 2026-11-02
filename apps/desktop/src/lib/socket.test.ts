@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeMessage, startSocket, type SocketHandlers, type SocketLike } from "./socket-client";
 import type { ThreadEventRow } from "./thread-events";
 import type { ThreadEvent } from "./thread-events";
@@ -141,6 +141,14 @@ describe("routeMessage", () => {
 });
 
 describe("startSocket", () => {
+  // Pin the reconnect jitter: the first redial waits 750 ms, the next 1.5 s.
+  beforeEach(() => {
+    vi.spyOn(Math, "random").mockReturnValue(0.75);
+  });
+  afterEach(() => {
+    vi.mocked(Math.random).mockRestore();
+  });
+
   it.each(["reject", "http", "network"])("recovers from a %s ticket failure", async (failure) => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => "client-1" });
@@ -158,7 +166,7 @@ describe("startSocket", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(errors).toHaveLength(1);
     if (failure === "network") expect(errors[0]).toBe("Can't reach the server — reconnecting");
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     connection.stop();
     vi.useRealTimers();
@@ -188,7 +196,7 @@ describe("startSocket", () => {
     expect(accepted).toEqual([9]);
     deliver(sockets[0], { type: "sync_begin", chat_id: "chat" });
     sockets[0].close();
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1000);
     sockets[1].open();
     deliver(sockets[1], { type: "sync_begin", chat_id: "chat" });
     deliver(sockets[1], { ...state, seq: 10 });
@@ -241,7 +249,7 @@ describe("startSocket", () => {
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].open();
     sockets[0].onmessage?.({ data: JSON.stringify({ type: "auth_required" }) });
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1000);
     sockets[1].open();
     expect(paths).toEqual(transientFailure
       ? ["/api/v1/ws/ticket", "/api/v1/auth/refresh", "/api/v1/auth/refresh", "/api/v1/ws/ticket"]
@@ -252,7 +260,7 @@ describe("startSocket", () => {
     vi.useRealTimers(); vi.unstubAllGlobals();
   });
 
-  it("sends the current sync on open and reconnects after three seconds", async () => {
+  it("sends the current sync on open and reconnects after the backoff delay", async () => {
     vi.useFakeTimers();
     const storage = new Map<string, string>([["guild_client_id", "client-1"]]);
     vi.stubGlobal("localStorage", {
@@ -291,7 +299,7 @@ describe("startSocket", () => {
     connection.resync();
     expect(JSON.parse(sockets[0].sent[1])).toEqual({ type: "sync", chat_id: "chat-2" });
     sockets[0].close();
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(749);
     expect(sockets).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     await Promise.resolve();
@@ -367,7 +375,7 @@ describe("startSocket", () => {
       sockets[0].close();
       // The reconnect timer is pending; a silent socket past the dead line
       // makes the wake-up dial at once.
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(500);
       vi.setSystemTime(Date.now() + 20_000);
       win.dispatchEvent(new Event("online"));
       await vi.advanceTimersByTimeAsync(0);

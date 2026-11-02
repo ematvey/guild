@@ -93,6 +93,14 @@ export const SOCKET_FEATURES = "chat_row";
 
 /** Converts the current HTTP origin into the WebSocket origin. */
 
+/** The wait before redial number `failures` (0-based): exponential from
+ *  1 s to a 30 s cap with full jitter, so tabs that lost the same server do
+ *  not redial it in lockstep. `random` is in [0, 1). */
+export function reconnectDelayMs(failures: number, random: number): number {
+  const cap = Math.min(30_000, 1_000 * 2 ** Math.min(failures, 5));
+  return Math.max(250, Math.floor(random * cap));
+}
+
 export function openSocket(url: string, factory: SocketFactory = (u) => new WebSocket(u)): SocketLike {
   return factory(url);
 }
@@ -243,6 +251,9 @@ export function startSocket(
   // The trace is how a dropped link is explained after the fact (the switch
   // is the org's; see telemetry.ts).
   let attempt = 0;
+  /** Dials since the last connection that delivered a frame: the reconnect
+   *  delay grows with it. */
+  let failures = 0;
   let openedAt = 0;
   let pingsTimer: ReturnType<typeof setInterval> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -281,10 +292,12 @@ export function startSocket(
   };
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null || connecting) return;
+    const delay = reconnectDelayMs(failures, Math.random());
+    failures += 1;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       void connect();
-    }, 3000);
+    }, delay);
   };
   const connect = async (): Promise<void> => {
     if (stopped || connecting) return;
@@ -325,6 +338,7 @@ export function startSocket(
       current.onmessage = (event) => {
         if (socket !== current || stopped || typeof event.data !== "string") return;
         noteFrame();
+        failures = 0;
         try {
           // An unknown frame tag is a newer server, not a broken one: ignore
           // it and keep the connection.
