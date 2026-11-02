@@ -14,6 +14,7 @@ import { AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { ApiError } from "../platform/errors.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
+import { IdentityStore, type UserRow } from "../platform/store/identity.js";
 import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
 
@@ -321,10 +322,12 @@ export class AgentScheduler {
     try {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
       const userId = row.created_by_user_id ?? row.owner_user_id;
+      const requester = await routineRequester(this.deps.pool, row.created_by_user_id);
       const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine");
       await startThreadRun(this.deps, {
         agentId: row.agent_id,
         thread,
+        requester,
         content: row.prompt,
         failureCode: "routine_submit_failed",
         run: {
@@ -343,7 +346,26 @@ export class AgentScheduler {
     } catch (error) {
       const message = errorText(error);
       this.deps.log.warn({ err: error, occurrenceId: row.id, routineId: row.routine_id }, "routine launch failed");
-      if (runId === null) {
+      if (runId === null && error instanceof ThreadRunRefused) {
+        // A refusal does not pass on retry: the occurrence fails now.
+        const updated = await this.deps.pool
+          .query(
+            `UPDATE agent_routine_occurrences SET status = 'failed', last_error = $2
+             WHERE id = $1 AND status = 'claimed'`,
+            [row.id, message],
+          )
+          .catch(() => null);
+        if ((updated?.rowCount ?? 0) > 0) {
+          await this.writeNotice(row, "routine_failed", {
+            routine_id: row.routine_id,
+            routine_name: row.routine_name,
+            occurrence_id: row.id,
+            run_id: null,
+            scheduled_for: row.scheduled_for,
+            error: message,
+          }).catch(() => {});
+        }
+      } else if (runId === null) {
         await this.deps.pool
           .query(
             `UPDATE agent_routine_occurrences SET status = 'pending', last_error = $2
@@ -427,11 +449,16 @@ export async function runRoutineNow(
   );
   const title = `${routine.name} — ${now.toISOString()}`;
   const userId = routine.created_by_user_id ?? agent.owner_user_id;
+  const requester = await routineRequester(deps.pool, routine.created_by_user_id).catch((error: unknown) => {
+    if (error instanceof ThreadRunRefused) throw refusalError(error);
+    throw error;
+  });
   const thread = await deps.store.createThread(agent.id, userId, title, "routine");
   try {
     const { run } = await startThreadRun(deps, {
       agentId: agent.id,
       thread,
+      requester,
       content: routine.prompt,
       failureCode: "routine_submit_failed",
       run: {
@@ -447,7 +474,27 @@ export async function runRoutineNow(
     });
     return run;
   } catch (error) {
-    if (error instanceof ThreadRunRefused) throw ApiError.conflict(error.code, error.message);
+    if (error instanceof ThreadRunRefused) throw refusalError(error);
     throw error instanceof ThreadRunSubmitFailed ? (error.cause ?? error) : error;
   }
+}
+
+/** The user a routine runs for: its creator, who must still be able to use
+ *  the agent. A routine with no recorded creator runs as the agent's owner,
+ *  whose access the agent itself implies. A creator who no longer exists
+ *  is refused like one who lost access. */
+async function routineRequester(pool: PlatformPool, creatorId: string | null): Promise<UserRow | undefined> {
+  if (creatorId === null) return undefined;
+  try {
+    return await new IdentityStore(pool).getUser(creatorId);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      throw new ThreadRunRefused("forbidden", "the routine's creator no longer exists");
+    }
+    throw error;
+  }
+}
+
+function refusalError(error: ThreadRunRefused): ApiError {
+  return error.code === "forbidden" ? ApiError.forbidden(error.message) : ApiError.conflict(error.code, error.message);
 }
