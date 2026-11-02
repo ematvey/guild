@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/c
 import { Input } from "@guild/ui/components/input";
 import { HAS_ENGINE, HAS_SHELL, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
 import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
+import { request } from "./lib/api/request";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { clearSettingsCaches } from "./views/settings/use-cached-api";
@@ -69,10 +70,9 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
   // SSO availability is public: the sign-in page offers the IdP button when
   // the org has OIDC configured.
   useEffect(() => {
-    fetch("/api/v1/auth/oidc/status")
-      .then((r) => (r.ok ? r.json() : { configured: false }))
+    request<{ configured?: boolean; org_id?: string }>("GET", "/api/v1/auth/oidc/status")
       .then((v) => {
-        if (v?.configured && v?.org_id) setSso({ org_id: v.org_id });
+        if (v?.configured && v.org_id) setSso({ org_id: v.org_id });
       })
       .catch(() => {});
   }, []);

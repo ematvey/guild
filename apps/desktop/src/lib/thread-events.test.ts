@@ -1,6 +1,6 @@
-// The two thread reads that do not ride the member socket: an older page of
-// the durable log, and the context-usage meter. Both carry the bearer and
-// both surface a failed read instead of an empty page.
+// The one thread read that does not ride the member socket: an older page
+// of the durable log. It carries the bearer, refreshes a lapsed session
+// once, and surfaces a failed read instead of an empty page.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -44,6 +44,6 @@ describe("thread reads", () => {
     const { fetchThreadEventsPage } = await import("./thread-events");
     await expect(
       fetchThreadEventsPage("c1", 10, 20, new AbortController().signal),
-    ).rejects.toThrow("Could not load earlier messages");
+    ).rejects.toMatchObject({ status: 500 });
   });
 });

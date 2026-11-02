@@ -41,9 +41,11 @@ export function useApprovalMode({
       return;
     }
     let dead = false;
-    void getChatApproval(chatId).then((m) => {
-      if (!dead) setApprovalMode(m ?? "default");
-    });
+    void getChatApproval(chatId)
+      .then((m) => {
+        if (!dead) setApprovalMode(m ?? "default");
+      })
+      .catch(() => {});
     return () => {
       dead = true;
     };

@@ -249,10 +249,11 @@ export function useOutgoing(deps: OutgoingDeps) {
       recoverOutgoing(command);
     } finally {
       deliveringRef.current.delete(command.id);
-      if (!mountedRef.current) return;
-      setPendingSubmitId(cur => cur === command.id ? null : cur);
-      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setSendPending(null, "command_error");
-      refreshOutgoing(n => n + 1);
+      if (mountedRef.current) {
+        setPendingSubmitId(cur => cur === command.id ? null : cur);
+        if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setSendPending(null, "command_error");
+        refreshOutgoing(n => n + 1);
+      }
     }
   };
 
