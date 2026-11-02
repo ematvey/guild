@@ -1,31 +1,22 @@
-// Machine registry routes:
-// the machines page list, the owner-scoped control-plane fs ops the desktop
-// UI drives directly, and deauthorization (forget the machine and revoke the
-// session it paired with). Pairing routes live in the auth lane
-// (/api/v1/auth/pair*, already native); there is no rename route — the label
+// Machine registry routes: the machines list (the snapshot the member
+// socket's machine_list frame carries), the owner-scoped control-plane fs
+// ops the desktop UI drives directly, and deauthorization (forget the
+// machine and revoke the session it paired with). Pairing routes live in
+// the auth lane (/api/v1/auth/pair*); there is no rename route — the label
 // comes from the daemon's upgrade query.
 
 import type { FastifyInstance } from "fastify";
-import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
-import { ApiError } from "../platform/errors.js";
-import { parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
-import { machineInfo } from "../hub/workspace.js";
+import type { ChatsCtx, IdentityCtx } from "../route-contexts.js";
+import { ApiError } from "../errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import { machineListSnapshot } from "../../hub/workspace.js";
 
 export function registerMachineRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: IdentityCtx): void {
   /** Lists the calling user's machines: every durable registry row plus the
    *  hub's live socket flag, connected machines first, then by last seen. */
   app.get("/api/v1/machines", async (req) => {
     const user = await requireUser(ctx, req);
-    const rows = await chats.machines.listForUser(user.org_id, user.id);
-    const list = rows.map((row) => machineInfo(row, chats.hub.machineOnline(row.machine_id)));
-    list.sort((a, b) => {
-      const connectedCmp = (b.connected as boolean ? 1 : 0) - (a.connected as boolean ? 1 : 0);
-      if (connectedCmp !== 0) return connectedCmp;
-      return (
-        Date.parse(b.last_seen_at as string) - Date.parse(a.last_seen_at as string)
-      );
-    });
-    return { machines: list };
+    return { machines: await machineListSnapshot(chats, user) };
   });
 
   /** Deauthorizes a machine: drops its registry row, unbinds the chats that

@@ -11,8 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   executeConnectorTool,
   callPlugin,
-} from "../platform/integrations/execute.js";
-import { mcpConnect } from "../platform/integrations/mcp.js";
+} from "../integrations/execute.js";
+import { mcpConnect } from "../integrations/mcp.js";
 
 // ---------- the mock vendor backend ----------
 
@@ -426,10 +426,10 @@ describe("connector execute spot checks (mock backend)", () => {
 
 // ---------- MCP tool call (stub peer) ----------
 
-import type { IntegrationCallIdentity } from "../platform/integrations/execute.js";
-import type { PluginSecretSource, IntegrationTurn } from "../platform/integrations/plugins.js";
+import type { IntegrationCallIdentity } from "../integrations/execute.js";
+import type { PluginSecretSource, IntegrationTurn } from "../integrations/plugins.js";
 import type { JsonObject } from "../integrations/shared.js";
-import type { IntegrationToolSpec } from "../platform/integration-catalog.js";
+import type { IntegrationToolSpec } from "../integrations/loader.js";
 
 describe("MCP tools/call (stub peer)", () => {
   let mcp: Server;

@@ -11,7 +11,7 @@ import { insertChunks } from "./search.js";
 import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
-import type { ChildResultDelivery, ChildRunFinished } from "./delivery.js";
+import { assistantTextForRun, type ChildResultDelivery, type ChildRunFinished } from "./delivery.js";
 import { notifySubagentTree } from "./tree.js";
 import { utcText } from "../platform/time.js";
 
@@ -313,5 +313,40 @@ export class AgentRunLifecycle {
         text: parts.join("\n\n"),
       },
     ]);
+  }
+
+  /** A user stop of a child chat is a delivered cancellation: its queued
+   *  and running runs are marked cancelled, then the parent wakes with
+   *  cancelled/user. A root chat's runs are left to the run-end path. */
+  async cancelChildOnStop(chatId: string): Promise<void> {
+    const thread = await this.deps.pool.query<{ id: string; parent_thread_id: string | null }>(
+      "SELECT id, parent_thread_id FROM agent_threads WHERE chat_id = $1",
+      [chatId],
+    );
+    const row = thread.rows[0];
+    if (row === undefined || row.parent_thread_id === null) return;
+    const runs = await this.deps.pool.query<{ id: string; started_at: string }>(
+      `UPDATE agent_runs
+       SET status = 'cancelled', finished_at = now()
+       WHERE thread_id = $1 AND status IN ('queued', 'running')
+       RETURNING id,
+         ${utcText("COALESCE(started_at, created_at)")} AS started_at`,
+      [row.id],
+    );
+    if (runs.rows.length === 0) return;
+    await notifySubagentTree(this.deps.pool, row.id);
+    for (const run of runs.rows) {
+      this.mirrorFinishedRun(run.id);
+      const finalText = await assistantTextForRun(this.deps.pool, chatId, run.started_at).catch(() => "");
+      await this.deps.delivery
+        ?.deliver({
+          child_thread_id: row.id,
+          run_id: run.id,
+          status: "cancelled",
+          reason: "user",
+          final_text: finalText,
+        })
+        .catch((error: unknown) => this.deps.log.warn({ err: error, chatId, runId: run.id }, "cancel delivery failed"));
+    }
   }
 }

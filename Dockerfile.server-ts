@@ -4,7 +4,7 @@
 # Runtime is Bun executing the TS sources directly — no tsc dist, no
 # compile of the server itself. The chat SPA is built in a `webui` stage
 # and served from apps/desktop/dist (GUILD_WEB_DIST default; see
-# apps/server/src/http/web.ts).
+# apps/server/src/platform/http/web.ts).
 
 # Build stage: npm workspaces install (root package.json/lockfile).
 FROM node:22 AS build

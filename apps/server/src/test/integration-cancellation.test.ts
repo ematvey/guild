@@ -10,7 +10,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { tmpdir } from "node:os";
 import { createRegistry, defineExtension, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { UserMcpRuntime } from "../harness/userMcp.js";
-import { executeConnectorTool } from "../platform/integrations/execute.js";
+import { executeConnectorTool } from "../integrations/execute.js";
 
 const arrived = new Map<string, () => void>();
 const closed = new Map<string, () => void>();

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
-import { ThreadStore } from "../platform/store/thread.js";
+import { contextUsage } from "../chats/context-usage.js";
 
 let stack: M2Stack;
 let chatId: string;
@@ -42,8 +42,7 @@ describe("composer context usage from committed provider measurements", () => {
     await assistant(1002, 99999, "error");
     const response = await stack.env.app.inject({ url: url(), headers: headers() });
     expect(response.json()).toEqual({ tokens: 1420, max: 500000, model: "Context-Test", usage_model: "Context-Test", usage_model_alias: "Context Alias" });
-    const store = new ThreadStore(stack.env.db);
-    expect(await store.contextUsage(crypto.randomUUID(), chatId)).toBeNull();
+    expect(await contextUsage(stack.env.db, crypto.randomUUID(), chatId)).toBeNull();
     const switched = await stack.env.app.inject({
       url: `/api/v1/threads/${chatId}/context?model=Context-Small`, headers: headers(),
     });

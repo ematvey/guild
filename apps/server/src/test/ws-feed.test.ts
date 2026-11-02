@@ -14,6 +14,7 @@ import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
 import { notifySubagentTree } from "../agents/tree.js";
 import type { PlatformContext } from "../composition.js";
+import type { FeedDeps } from "../hub/feed.js";
 import { FeedForwarder } from "../hub/feed.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -386,8 +387,8 @@ describe("member-socket feed", () => {
   it("sends ThreadState even when the child-tree read rejects", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("sync tree failure");
     const ws = await memberSocket();
-    const originalTree = platform.wsSubagentTree!;
-    platform.wsSubagentTree = async () => {
+    const originalTree = platform.sockets.subagentTree;
+    platform.sockets.subagentTree = async () => {
       throw new Error("tree read failed");
     };
     try {
@@ -399,7 +400,7 @@ describe("member-socket feed", () => {
       const trees = textFrames(ws).filter((f) => f.type === "subagent_tree" && f.chat_id === chat.id);
       expect(trees).toHaveLength(0);
     } finally {
-      platform.wsSubagentTree = originalTree;
+      platform.sockets.subagentTree = originalTree;
       ws.end();
     }
   });
@@ -469,10 +470,10 @@ describe("member-socket feed", () => {
     );
 
     const ws = await memberSocket();
-    const originalTree = platform.wsSubagentTree!;
+    const originalTree = platform.sockets.subagentTree;
     let releaseTree: () => void = () => {};
     const treeGate = new Promise<void>((resolve) => { releaseTree = resolve; });
-    platform.wsSubagentTree = async (args) => {
+    platform.sockets.subagentTree = async (args) => {
       await treeGate;
       return originalTree(args);
     };
@@ -529,7 +530,7 @@ describe("member-socket feed", () => {
       expect((bracketTree.frame.nodes as { status: string | null }[]).some((n) => n.status === "running")).toBe(true);
     } finally {
       for (const restore of restoreSends) restore();
-      platform.wsSubagentTree = originalTree;
+      platform.sockets.subagentTree = originalTree;
       ws.end();
     }
   });
@@ -1442,9 +1443,22 @@ function fakeContext(options: { failQueries?: boolean } = {}) {
         return { rows: [] };
       },
     },
+    chats: {
+      identityOf: async (chatId: string) => {
+        if (options.failQueries) throw new Error("db down");
+        return { org_id: "org", user_id: ownerOf(chatId), machine_id: null };
+      },
+      lastEventSeq: async () => {
+        if (options.failQueries) throw new Error("db down");
+        return null;
+      },
+    },
+    threads: {
+      lastEventType: async () => undefined,
+    },
   };
   return {
-    ctx: ctx as unknown as PlatformContext,
+    ctx: ctx as unknown as FeedDeps,
     connected,
     frames,
     ownerOf,
@@ -1485,12 +1499,8 @@ describe("feed forwarder caches", () => {
     const fake = fakeContext();
     const feed = new FeedForwarder(fake.ctx);
     feed.start();
-    for (let index = 0; index < 4_200; index += 1) {
-      fake.notify(
-        "guild_chat_status",
-        JSON.stringify({ org_id: "org", user_id: "u", chat_id: `c${index}`, generating: false }),
-      );
-    }
+    for (let index = 0; index < 4_200; index += 1) feed.open(`c${index}`, `g${index}`);
+    await settle();
     const chats = (feed as unknown as Internals).chats;
     expect(chats.size).toBe(4_096);
     expect(chats.has("c0")).toBe(false);
@@ -1500,10 +1510,10 @@ describe("feed forwarder caches", () => {
 
   it("logs a failed push with its channel and chat id", async () => {
     const fake = fakeContext({ failQueries: true });
-    const warnings: { channel: string; chatId: string | null }[] = [];
+    const warnings: { channel: string; key: string | null }[] = [];
     const feed = new FeedForwarder(fake.ctx, {
-      warn: ((fields: { channel: string; chatId: string | null }) => {
-        warnings.push({ channel: fields.channel, chatId: fields.chatId });
+      warn: ((fields: { channel: string; key: string | null }) => {
+        warnings.push({ channel: fields.channel, key: fields.key });
       }) as never,
     });
     feed.start();
@@ -1513,9 +1523,9 @@ describe("feed forwarder caches", () => {
     await settle();
     expect(warnings).toEqual(
       expect.arrayContaining([
-        { channel: "guild_thread_committed", chatId: "chat-1" },
-        { channel: "guild_subagent_tree", chatId: "chat-2" },
-        { channel: "open", chatId: "chat-3" },
+        { channel: "guild_thread_committed", key: "chat-1" },
+        { channel: "guild_subagent_tree", key: "chat-2" },
+        { channel: "open", key: "chat-3" },
       ]),
     );
     feed.stop();

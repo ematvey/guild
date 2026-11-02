@@ -1,17 +1,23 @@
-import { ApiError } from "../platform/errors.js";
 // The worker supervisor: the main server's one forker. A forked child owns
 // one chat's conversation (its scoped harness, bridge, codemode sandbox);
 // the supervisor routes admission + control over IPC. Workers are
 // reaped after idle work completes; crashed owners resume from the journal.
-// Distributed placement later replaces fork() behind the same seam.
 
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
-import type { Config } from "../config.js";
+import { workerConfigEnv, type Config } from "../config.js";
 import type { MachineToolOutcome } from "../machines/dispatch.js";
-import type { SubmitTurnWireInput } from "./protocol.js";
-import type { MachineDispatchCall, WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { SubmitTurnInput } from "../harness/turn-backend.js";
+import {
+  failure,
+  failureError,
+  type MachineDispatchCall,
+  type Outcome,
+  type ServerReply,
+  type ServerRequest,
+  type WorkerToServer,
+} from "./protocol.js";
 import type { GenerationStreamSink, LiveBuffers } from "../chats/bridge.js";
 
 const WORKER_ENTRY = fileURLToPath(new URL("./main.ts", import.meta.url));
@@ -45,7 +51,7 @@ interface Handle {
   lastBeat: number;
   nextRef: number;
   /** Requests sent before the ready handshake resolved. */
-  readonly queued: WorkerRequest[];
+  readonly queued: ServerRequest[];
   readonly dispatches: Map<number, AbortController>;
   readonly waiters: Map<
     number,
@@ -61,58 +67,21 @@ interface Handle {
 
 /** Bun runs TypeScript natively and the production server runs under bun;
  *  in tests (node) the fork still needs bun for the TS entry. */
-function workerExecPath(): string {
-  const configured = process.env.GUILD_BUN_BIN;
-  if (configured) return configured;
+function workerExecPath(config: Config): string {
+  if (config.bunBin !== null) return config.bunBin;
   if (process.execPath.includes("bun")) return process.execPath;
   return "bun";
 }
 
-/** The fork env: the server's own environment (config secrets, sandbox
- *  runner, gateway base URL) plus the worker's identity. Trusted fleet
- *  model — the worker holds the same credentials the server does. */
+/** The fork env: the server's own environment (ambient settings modules
+ *  read directly) plus the server's parsed config and the worker's chat.
+ *  Trusted fleet model — the worker holds the same credentials the server
+ *  does. */
 function workerEnv(config: Config, chatId: string): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    GUILD_DATABASE_URL: config.databaseUrl,
-    GUILD_SELF_BASE_URL: config.selfBaseUrl,
-    GUILD_S3_URL: config.s3Url,
-    GUILD_S3_BUCKET: config.s3Bucket,
-    GUILD_S3_ACCESS_KEY_ID: config.s3AccessKeyId,
-    GUILD_S3_SECRET_ACCESS_KEY: config.s3SecretAccessKey,
-    GUILD_DATA_DIR: config.dataDir,
-    // Workspace roots: the worker resolves sandbox targets from its own
-    // config, so a non-default root must cross the fork.
-    GUILD_AGENT_WORKSPACE_ROOT: config.agentWorkspaceRoot,
-    GUILD_AGENT_WORKSPACE_WRITE_ROOT: config.agentWorkspaceWriteRoot,
-    ...(process.env.GUILD_SANDBOX_ROOT ? { GUILD_SANDBOX_ROOT: process.env.GUILD_SANDBOX_ROOT } : {}),
-    ...(config.execPolicyRulesPath ? { GUILD_EXEC_POLICY_RULES: config.execPolicyRulesPath } : {}),
-    GUILD_SANDBOX: config.sandbox.mode,
-    ...(config.sandbox.mode === "runner"
-      ? { GUILD_SANDBOX_RUNNER_URL: config.sandbox.runnerUrl, GUILD_SANDBOX_RUNNER_TOKEN: config.sandbox.runnerToken }
-      : {}),
-    GUILD_ALLOW_SHELL_TOOLS: config.allowShellTools ? "1" : "0",
-    GUILD_CLIENT_TOOL_TIMEOUT_MS: String(config.clientToolTimeoutMs),
-    GUILD_APPROVAL_TIMEOUT_MS: String(config.approvalTimeoutMs),
-    GUILD_RETRY_BASE_DELAY_MS: String(config.retryBaseDelayMs),
-    GUILD_LOG_LEVEL: config.logLevel,
-    GUILD_WORKER_MODE: "off", // the worker itself must not spawn workers
-    GUILD_WORKER_CHAT_ID: chatId,
-    // Secrets + infra the Config parser requires (ambient env has them in
-    // production; tests assemble config explicitly, so pass them through).
-    GUILD_MASTER_KEY_HEX: config.masterKeyHex,
-    GUILD_JWT_SECRET: config.jwtSecret,
-    ...(config.internalKey ? { GUILD_INTERNAL_KEY: config.internalKey } : {}),
-    GUILD_API_URL: config.apiUrl,
-    GUILD_CLICKHOUSE_URL: config.clickhouseUrl,
-    GUILD_CLICKHOUSE_DATABASE: config.clickhouseDatabase,
-    GUILD_CLICKHOUSE_USER: config.clickhouseUser,
-    GUILD_CLICKHOUSE_PASSWORD: config.clickhousePassword,
-    GUILD_POOL_MAX: "4",
-  };
+  return { ...process.env, ...workerConfigEnv(config, chatId) };
 }
 
-export type WithoutRef<T> = T extends { ref: number } ? Omit<T, "ref"> : never;
+type WithoutRef<T> = T extends { ref: number } ? Omit<T, "ref"> : never;
 
 export class ForkSupervisor {
   private readonly handles = new Map<string, Handle>();
@@ -124,11 +93,15 @@ export class ForkSupervisor {
   private readonly recoveryAbort = new AbortController();
   private launchQueue: Promise<void> = Promise.resolve();
   private bootRecovery?: Promise<void>;
-  private readonly maxWorkers = Math.max(1, Number(process.env.GUILD_WORKER_LIMIT) || 16);
-  private readonly idleMs = Math.max(1, Number(process.env.GUILD_WORKER_IDLE_MS) || 300_000);
+  private get maxWorkers(): number {
+    return this.config.workerLimit;
+  }
+  private get idleMs(): number {
+    return this.config.workerIdleMs;
+  }
   private streamSink: GenerationStreamSink | null = null;
   private turnEnded: ((chatId: string, failed: boolean) => Promise<void>) | null = null;
-  private submitRemote: ((chatId: string, input: SubmitTurnWireInput) => Promise<number>) | null = null;
+  private submitRemote: ((chatId: string, input: SubmitTurnInput) => Promise<number>) | null = null;
 
   setStreamSink(sink: GenerationStreamSink | null): void { this.streamSink = sink; }
 
@@ -141,7 +114,7 @@ export class ForkSupervisor {
   /** Worker-initiated admission for another chat (delegation): the server
    *  runtime owns every worker, so it forwards the turn to the target
    *  chat's own worker. */
-  setRemoteSubmit(submit: (chatId: string, input: SubmitTurnWireInput) => Promise<number>): void {
+  setRemoteSubmit(submit: (chatId: string, input: SubmitTurnInput) => Promise<number>): void {
     this.submitRemote = submit;
   }
 
@@ -263,7 +236,7 @@ export class ForkSupervisor {
     const handle: Handle = {
       chatId,
       child: (this.options.spawn ?? fork)(WORKER_ENTRY, [], {
-        execPath: workerExecPath(),
+        execPath: workerExecPath(this.config),
         env: workerEnv(this.config, chatId) as NodeJS.ProcessEnv,
         stdio: ["ignore", "inherit", "inherit", "ipc"],
         execArgv: [],
@@ -332,8 +305,27 @@ export class ForkSupervisor {
     return handle;
   }
 
+  /** Answers one of the worker's own requests. */
+  private reply(handle: Handle, ref: number, outcome: Outcome): void {
+    const message: ServerReply = { t: "reply", ref, ...outcome };
+    if (handle.child.connected) handle.child.send(message, () => {});
+  }
+
+  /** Serves one worker request and answers it. */
+  private serve(handle: Handle, ref: number, op: () => Promise<unknown>, done?: () => void): void {
+    void (async () => {
+      try {
+        this.reply(handle, ref, { ok: true, data: await op() });
+      } catch (error) {
+        this.reply(handle, ref, failure(error));
+      } finally {
+        done?.();
+      }
+    })();
+  }
+
   private onMessage(handle: Handle, raw: unknown): void {
-    const message = raw as WorkerMessage;
+    const message = raw as WorkerToServer;
     if (!message || typeof message !== "object" || !("t" in message)) return;
     if (message.t === "stream") {
       if (!handle.alive || this.handles.get(handle.chatId) !== handle) return;
@@ -377,42 +369,17 @@ export class ForkSupervisor {
       return;
     }
     if (message.t === "remote-deliver-steer") {
-      const reply = (response: WorkerResponse) => {
-        if (handle.child.connected) handle.child.send(response, () => {});
-      };
-      void (async () => {
-        try {
-          await this.deliverSteer(message.chatId, message.orgId, message.text, message.model);
-          reply({ t: "result", ref: message.ref, ok: true, data: null });
-        } catch (error) {
-          reply({
-            t: "result",
-            ref: message.ref,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      })();
+      this.serve(handle, message.ref, async () => {
+        await this.deliverSteer(message.chatId, message.orgId, message.text, message.model);
+        return null;
+      });
       return;
     }
     if (message.t === "remote-submit") {
-      const reply = (response: WorkerResponse) => {
-        if (handle.child.connected) handle.child.send(response, () => {});
-      };
-      void (async () => {
-        try {
-          if (!this.submitRemote) throw new Error("remote submit is unavailable");
-          const data = await this.submitRemote(message.chatId, message.input);
-          reply({ t: "result", ref: message.ref, ok: true, data });
-        } catch (error) {
-          reply({
-            t: "result",
-            ref: message.ref,
-            ok: false,
-            error: (error as Error)?.message ?? String(error),
-          });
-        }
-      })();
+      this.serve(handle, message.ref, () => {
+        if (!this.submitRemote) throw new Error("remote submit is unavailable");
+        return this.submitRemote(message.chatId, message.input);
+      });
       return;
     }
     // Worker-initiated machine dispatch (the IPC proxy): the hub-backed
@@ -424,29 +391,15 @@ export class ForkSupervisor {
     if (message.t === "dispatch") {
       const controller = new AbortController();
       handle.dispatches.set(message.ref, controller);
-      const reply = (response: WorkerResponse) => {
-        if (handle.child.connected) handle.child.send(response, () => {});
-      };
-      void (async () => {
-        if (!this.dispatchMachine) {
-          reply({ t: "result", ref: message.ref, ok: false, error: "machine dispatch unavailable" });
-          handle.dispatches.delete(message.ref);
-          return;
-        }
-        try {
-          const outcome = await this.dispatchMachine(message.call, controller.signal);
-          reply({ t: "result", ref: message.ref, ok: true, data: outcome });
-        } catch (error) {
-          reply({
-            t: "result",
-            ref: message.ref,
-            ok: false,
-            error: (error as Error)?.message ?? String(error),
-          });
-        } finally {
-          handle.dispatches.delete(message.ref);
-        }
-      })();
+      this.serve(
+        handle,
+        message.ref,
+        () => {
+          if (!this.dispatchMachine) throw new Error("machine dispatch unavailable");
+          return this.dispatchMachine(message.call, controller.signal);
+        },
+        () => handle.dispatches.delete(message.ref),
+      );
       return;
     }
     if (message.t === "result") {
@@ -456,12 +409,7 @@ export class ForkSupervisor {
       clearTimeout(waiter.timer);
       handle.lastUsed = Date.now();
       if (message.ok) waiter.resolve(message.data);
-      else
-        waiter.reject(
-          message.status && message.code
-            ? new ApiError(message.status, message.code, message.error)
-            : new Error(message.error),
-        );
+      else waiter.reject(failureError(message));
     }
   }
 
@@ -505,7 +453,7 @@ export class ForkSupervisor {
     }
   }
 
-  private send(handle: Handle, request: WorkerRequest): void {
+  private send(handle: Handle, request: ServerRequest): void {
     if (!handle.child.connected) {
       const waiter = handle.waiters.get(request.ref);
       if (waiter) {
@@ -518,10 +466,10 @@ export class ForkSupervisor {
     handle.child.send(request);
   }
 
-  private async request<T>(chatId: string, msg: WithoutRef<WorkerRequest>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  private async request<T>(chatId: string, msg: WithoutRef<ServerRequest>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
     const handle = await this.ensureWorker(chatId);
     const ref = handle.nextRef++;
-    const full = { ...msg, ref } as WorkerRequest;
+    const full = { ...msg, ref } as ServerRequest;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         handle.waiters.delete(ref);
@@ -536,7 +484,7 @@ export class ForkSupervisor {
 
   /** Routes a turn admission into the chat's worker; resolves with the
    *  submission id. */
-  submit(chatId: string, input: Extract<WorkerRequest, { t: "submit" }>["input"]): Promise<number> {
+  submit(chatId: string, input: SubmitTurnInput): Promise<number> {
     return this.request<number>(chatId, { t: "submit", input });
   }
 
@@ -641,6 +589,3 @@ export class ForkSupervisor {
   }
 }
 
-export { pendingWorkQuery } from "../platform/store/work.js";
-
-export type { WorkerResponse };

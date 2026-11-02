@@ -13,11 +13,15 @@
 // Agent and skill state rides the same LISTEN through AgentStateFeed.
 
 import type { Logger } from "pino";
-import type { PlatformContext } from "../composition.js";
-import type { NotifyHandler } from "../platform/notify.js";
-import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
+import { notifyDispatcher, type NotifyHandlers, type NotifyHub } from "../platform/notify.js";
+import type { PlatformPool } from "../platform/db.js";
+import type { ChatStore } from "../platform/store/chats.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import type { ConversationMapStore } from "../platform/store/conversations.js";
+import type { EventStore } from "../platform/store/events.js";
+import { captureThreadState, threadStateMsg, threadStateWire, type ThreadStateReads } from "../chats/thread-state.js";
 import { chatSubagentNodes, chatTreeFacts, chatTreeMsg, subagentTreeMsg } from "../agents/tree.js";
-import { AgentStateFeed } from "./agent-state.js";
+import { AgentStateFeed, type AgentStateDeps } from "./agent-state.js";
 import {
   archivedThreadListSnapshot,
   machineListSnapshot,
@@ -25,12 +29,15 @@ import {
   modelListSnapshot,
   projectListSnapshot,
   threadListSnapshot,
+  type WorkspaceReads,
 } from "./workspace.js";
 import type { GenerationStreamSink } from "../chats/bridge.js";
-import { contextUsageMsg } from "../chats/context-usage.js";
+import { contextUsageMsg, type ContextUsageReads } from "../chats/context-usage.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
 import type { SocketSink } from "./sink.js";
+import type { LiveHub } from "./live.js";
 import { sendChanged, sendChatList } from "./sent-frames.js";
+import { KeyedChain } from "./keyed-chain.js";
 
 const VIEW_POLL_MS = 100;
 /** A dirty view waits for one quiet tick (no new write) before it
@@ -43,6 +50,23 @@ const MAX_CACHED_CHATS = 4_096;
 
 type FeedLog = Pick<Logger, "warn">;
 const SILENT: FeedLog = { warn: () => {} };
+
+/** What the feed reads and pushes through: the LISTEN fan-in, the socket
+ *  registry, the chat and thread stores, the org event log, and the reads
+ *  behind the workspace, thread-state, context-usage and agent-state
+ *  frames. `pool` serves the agent-tree reads. */
+export interface FeedDeps extends WorkspaceReads, ThreadStateReads, ContextUsageReads, Omit<AgentStateDeps, "hub"> {
+  readonly notify: Pick<NotifyHub, "subscribe">;
+  readonly hub: LiveHub;
+  readonly pool: PlatformPool;
+  readonly chats: WorkspaceReads["chats"] &
+    ThreadStateReads["chats"] &
+    Pick<ChatStore, "identityOf" | "lastEventSeq">;
+  readonly conversations: Pick<ConversationMapStore, "chatsOf">;
+  readonly threads: ThreadStateReads["threads"] & Pick<ThreadStore, "lastEventType" | "listEventsSince">;
+  readonly events: Pick<EventStore, "get">;
+  readonly gatewayStore: WorkspaceReads["gatewayStore"] & ContextUsageReads["gatewayStore"];
+}
 
 /** One workspace list; a push re-reads only the parts its change can move. */
 export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models";
@@ -65,7 +89,7 @@ interface ChatIdentity {
 }
 
 export class FeedForwarder implements GenerationStreamSink {
-  private readonly ctx: PlatformContext;
+  private readonly ctx: FeedDeps;
   private unsubscribe: (() => void) | null = null;
   private viewTimer: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -99,31 +123,32 @@ export class FeedForwarder implements GenerationStreamSink {
    *  Undefined = the open() baseline hasn't run yet — committed() falls
    *  back to a full-view publish instead of guessing. */
   private readonly sentSeqs = new Map<string, number>();
-  /** Per-chat send chains: the async watermark + fan-out of one frame
-   *  serializes before the next, so frame order matches emission order. */
-  private readonly chains = new Map<string, Promise<void>>();
-  /** Per-user workspace push chains: one snapshot in flight per user, so a
-   *  query started before a write can never land after the one that
-   *  carries it. */
-  private readonly workspaceChains = new Map<string, Promise<void>>();
+  /** Per-chat send chains (keyed by chat id: the async watermark + fan-out
+   *  of one frame serializes before the next, so frame order matches
+   *  emission order) and per-user workspace chains (keyed `ws:<org>:<user>`:
+   *  one snapshot in flight per user, so a query started before a write can
+   *  never land after the one that carries it). */
+  private readonly chains: KeyedChain;
 
   constructor(
-    ctx: PlatformContext,
+    ctx: FeedDeps,
     private readonly log: FeedLog = SILENT,
   ) {
     this.ctx = ctx;
-    this.agentState = new AgentStateFeed(ctx, (channel, error) => this.failed(channel, null, error));
+    this.chains = new KeyedChain((channel, key, error) => this.failed(channel, key, error));
+    this.agentState = new AgentStateFeed(ctx, (channel, key, error) => this.failed(channel, key, error));
   }
 
-  /** Logs one dropped push: the frame is lost, the next change re-sends. */
-  private failed(channel: string, chatId: string | null, error: unknown): void {
-    this.log.warn({ err: error, channel, chatId }, "feed push failed");
+  /** Logs one dropped push: the frame is lost, the next change re-sends.
+   *  `key` names the chat or chain the push belonged to. */
+  private failed(channel: string, key: string | null, error: unknown): void {
+    this.log.warn({ err: error, channel, key }, "feed push failed");
   }
 
   /** Subscribes the notify fan-out and starts the poll timers. */
   start(): void {
     if (this.unsubscribe !== null || this.stopped) return;
-    const off = this.ctx.notify.subscribe(this.onNotify, this.resync);
+    const off = this.ctx.notify.subscribe(notifyDispatcher(this.handlers), this.resync);
     this.unsubscribe = off;
     this.viewTimer = setInterval(() => {
       if (++this.ticks % SWEEP_EVERY_TICKS === 0) this.sweep();
@@ -134,6 +159,7 @@ export class FeedForwarder implements GenerationStreamSink {
 
   stop(): void {
     this.stopped = true;
+    this.chains.stop();
     this.agentState.stop();
     if (this.viewTimer !== undefined) clearInterval(this.viewTimer);
     this.unsubscribe?.();
@@ -149,7 +175,7 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.stopped) return;
     for (const { userId, orgId } of this.ctx.hub.memberUsers()) {
       void this.pushWorkspace(orgId, userId, ALL_PARTS);
-      void this.agentState.connect(orgId, userId).catch((error: unknown) => this.failed("resync", null, error));
+      void this.agentState.connect(orgId, userId);
       for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
@@ -160,108 +186,67 @@ export class FeedForwarder implements GenerationStreamSink {
 
   // -- notify fan-in ------------------------------------------------------------
 
-  private onNotify: NotifyHandler = (channel, payload) => {
-    if (this.stopped) return;
-    if (channel === "guild_thread_committed") {
-      if (payload === "") return;
-      void this.committed(payload).catch((error: unknown) => this.failed(channel, payload, error));
-      return;
-    }
-    if (channel === "guild_chat_status") {
-      let parsed: { org_id?: string; user_id?: string; chat_id?: string; generating?: boolean };
-      try {
-        parsed = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (
-        typeof parsed.org_id !== "string" ||
-        typeof parsed.user_id !== "string" ||
-        typeof parsed.chat_id !== "string" ||
-        typeof parsed.generating !== "boolean"
-      ) {
-        return;
-      }
+  /** One handler per NOTIFY channel (platform/notify.ts parses each
+   *  payload). */
+  private readonly handlers: NotifyHandlers = {
+    guild_thread_committed: (chatId) => {
+      if (this.stopped) return;
+      void this.committed(chatId).catch((error: unknown) => this.failed("guild_thread_committed", chatId, error));
+    },
+    guild_chat_status: (status) => {
+      if (this.stopped) return;
       // Owner-scoped: only the owner's sockets get the frame.
-      const frame: WsServerMsg = {
-        type: "chat_status",
-        chat_id: parsed.chat_id,
-        generating: parsed.generating,
-      };
-      this.sendToUser(parsed.user_id, frame);
+      this.sendToUser(status.user_id, { type: "chat_status", chat_id: status.chat_id, generating: status.generating });
       // The flip moves the chat's list row (its spinner, its unread dot):
       // each socket gets that row alone.
-      void this.pushWorkspace(parsed.org_id, parsed.user_id, ["chats"]);
+      void this.pushWorkspace(status.org_id, status.user_id, ["chats"]);
       // A generating flip changes the chat's view content: the next view
       // poll re-captures and broadcasts it if it differs.
-      if (!this.chats.has(parsed.chat_id)) {
-        this.remember(parsed.chat_id, { orgId: parsed.org_id, userId: parsed.user_id, machineId: null });
-      }
-      this.markDirty(parsed.chat_id);
-      return;
-    }
-    if (channel === "guild_workspace") {
-      let parsed: { org_id?: string; user_id?: string; parts?: unknown };
-      try {
-        parsed = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (typeof parsed.org_id !== "string" || typeof parsed.user_id !== "string") return;
+      this.markDirty(status.chat_id);
+    },
+    guild_workspace: (change) => {
+      if (this.stopped) return;
       // Every sidebar list (chats, archived, projects, machines) rides one
       // serialized push, so a snapshot taken before a write can never land
       // after the one that carries it. A payload naming its `parts` re-reads
       // only those.
-      const parts = Array.isArray(parsed.parts)
-        ? parsed.parts.filter((part): part is WorkspacePart => ALL_PARTS.includes(part as WorkspacePart))
-        : ALL_PARTS;
-      void this.pushWorkspace(parsed.org_id, parsed.user_id, parts.length > 0 ? parts : ALL_PARTS);
-      return;
-    }
-    if (channel === "guild_org") {
-      let parsed: { org_id?: string };
-      try {
-        parsed = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (typeof parsed.org_id !== "string") return;
-      void this.pushWorkspaceIdentity(parsed.org_id).catch((error: unknown) => this.failed(channel, null, error));
-      return;
-    }
-    if (channel === "guild_models") {
-      let parsed: { org_id?: string };
-      try {
-        parsed = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (typeof parsed.org_id !== "string") return;
-      void this.pushModelList(parsed.org_id).catch((error: unknown) => this.failed(channel, null, error));
-      return;
-    }
-    if (channel === "guild_events") {
-      let parsed: { org_id?: string; event_id?: string };
-      try {
-        parsed = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (typeof parsed.org_id !== "string" || typeof parsed.event_id !== "string") return;
-      void this.orgEvent(parsed.org_id, parsed.event_id).catch((error: unknown) => this.failed(channel, null, error));
-      return;
-    }
-    if (channel === "guild_compaction") {
-      if (payload === "") return;
-      void this.compaction(payload).catch((error: unknown) => this.failed(channel, null, error));
-      return;
-    }
-    if (channel === "guild_subagent_tree") {
-      if (payload === "") return;
-      this.subagentTree(payload);
-      return;
-    }
-    this.agentState.onNotify(channel, payload);
+      const parts =
+        change.parts === null
+          ? ALL_PARTS
+          : change.parts.filter((part): part is WorkspacePart => ALL_PARTS.includes(part as WorkspacePart));
+      void this.pushWorkspace(change.org_id, change.user_id, parts.length > 0 ? parts : ALL_PARTS);
+    },
+    guild_workspace_identity: ({ org_id: orgId }) => {
+      if (this.stopped) return;
+      void this.pushWorkspaceIdentity(orgId).catch((error: unknown) =>
+        this.failed("guild_workspace_identity", orgId, error),
+      );
+    },
+    guild_models: ({ org_id: orgId }) => {
+      if (this.stopped) return;
+      void this.pushModelList(orgId).catch((error: unknown) => this.failed("guild_models", orgId, error));
+    },
+    guild_events: (event) => {
+      if (this.stopped) return;
+      void this.orgEvent(event.org_id, event.event_id).catch((error: unknown) =>
+        this.failed("guild_events", event.org_id, error),
+      );
+    },
+    guild_compaction: (conversationId) => {
+      if (this.stopped) return;
+      void this.compaction(conversationId).catch((error: unknown) =>
+        this.failed("guild_compaction", conversationId, error),
+      );
+    },
+    guild_subagent_tree: (chatId) => {
+      if (this.stopped) return;
+      this.subagentTree(chatId);
+    },
+    guild_agents: (payload) => this.agentState.agents(payload),
+    guild_agent_runs: (payload) => this.agentState.run(payload),
+    guild_agent_routines: (payload) => this.agentState.routines(payload),
+    guild_agent_threads: (payload) => this.agentState.threads(payload),
+    guild_skills: (payload) => this.agentState.skills(payload),
   };
 
   /** A member socket connected: its agent list and skill catalog. */
@@ -313,11 +298,7 @@ export class FeedForwarder implements GenerationStreamSink {
     // activity stamp), an assistant turn moves the unread count, and an
     // approval request or decision flips the blocked flag. Each one moves
     // only the chat list, and each socket gets only the rows that changed.
-    const last = await this.ctx.pool.query<{ type: string }>(
-      "SELECT type FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
-      [chatId],
-    );
-    const lastType = last.rows[0]?.type;
+    const lastType = await this.ctx.threads.lastEventType(chatId);
     if (
       lastType === "user_message" ||
       lastType === "approval_request" ||
@@ -448,11 +429,7 @@ export class FeedForwarder implements GenerationStreamSink {
    *  with no summary, still lowers the line a client armed. The republish
    *  rides the view tick with the chat's other writes. */
   private async compaction(conversationId: string): Promise<void> {
-    const res = await this.ctx.pool.query<{ chat_id: string }>(
-      "SELECT chat_id FROM chat_conversations WHERE conversation_id = $1",
-      [conversationId],
-    );
-    for (const { chat_id: chatId } of res.rows) {
+    for (const chatId of await this.ctx.conversations.chatsOf(conversationId)) {
       const chat = await this.ensureChat(chatId, false);
       if (chat === null) continue;
       if (this.ctx.hub.sinksOfUser(chat.userId).length === 0) {
@@ -474,11 +451,7 @@ export class FeedForwarder implements GenerationStreamSink {
     this.enqueue(chatId, "open", async () => {
       if (this.generations.get(chatId) !== generationId) return;
       try {
-        const res = await this.ctx.pool.query<{ max: string | null }>(
-          "SELECT MAX(seq) AS max FROM thread_events WHERE chat_id = $1",
-          [chatId],
-        );
-        this.sentSeqs.set(chatId, Number(res.rows[0]?.max ?? 0));
+        this.sentSeqs.set(chatId, (await this.ctx.chats.lastEventSeq(chatId)) ?? 0);
       } catch (error) {
         // Without a baseline, committed() falls back to full-view publishes.
         this.sentSeqs.delete(chatId);
@@ -544,17 +517,7 @@ export class FeedForwarder implements GenerationStreamSink {
   /** Serializes one chat's async sends: order preserved, a failed op is
    *  logged and the chain moves on. */
   private enqueue(chatId: string, channel: string, op: () => Promise<void>): void {
-    const prev = this.chains.get(chatId) ?? Promise.resolve();
-    const settled: Promise<void> = prev.then(op).then(
-      () => {
-        if (this.chains.get(chatId) === settled) this.chains.delete(chatId);
-      },
-      (error: unknown) => {
-        this.failed(channel, chatId, error);
-        if (this.chains.get(chatId) === settled) this.chains.delete(chatId);
-      },
-    );
-    this.chains.set(chatId, settled);
+    void this.chains.run(chatId, channel, op);
   }
 
   /** Drops a chat's cached view, tree and baseline. The next capture for
@@ -611,12 +574,8 @@ export class FeedForwarder implements GenerationStreamSink {
       if (inFlight !== undefined) return inFlight;
     }
     const lookup = (async (): Promise<ChatIdentity | null> => {
-      const res = await this.ctx.pool.query<{ org_id: string; user_id: string; machine_id: string | null }>(
-        "SELECT org_id, user_id, machine_id FROM chats WHERE id = $1",
-        [chatId],
-      );
-      const row = res.rows[0];
-      if (!row) return null;
+      const row = await this.ctx.chats.identityOf(chatId);
+      if (row === null) return null;
       const identity: ChatIdentity = { orgId: row.org_id, userId: row.user_id, machineId: row.machine_id };
       this.remember(chatId, identity);
       return identity;
@@ -638,16 +597,7 @@ export class FeedForwarder implements GenerationStreamSink {
    *  change. */
   pushWorkspace(orgId: string, userId: string, parts: readonly WorkspacePart[] = ALL_PARTS): Promise<void> {
     if (this.stopped) return Promise.resolve();
-    const key = `${orgId}:${userId}`;
-    const previous = this.workspaceChains.get(key) ?? Promise.resolve();
-    const next = previous
-      .then(() => this.sendWorkspace(orgId, userId, parts))
-      .catch((error: unknown) => this.failed("guild_workspace", null, error));
-    this.workspaceChains.set(key, next);
-    void next.finally(() => {
-      if (this.workspaceChains.get(key) === next) this.workspaceChains.delete(key);
-    });
-    return next;
+    return this.chains.run(`ws:${orgId}:${userId}`, "guild_workspace", () => this.sendWorkspace(orgId, userId, parts));
   }
 
   private async sendWorkspace(orgId: string, userId: string, parts: readonly WorkspacePart[]): Promise<void> {

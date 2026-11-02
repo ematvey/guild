@@ -12,22 +12,135 @@ export type NotifyHandler = (channel: string, payload: string) => void;
  *  was down is lost, so a subscriber re-reads the state it pushes. */
 export type ReconnectHandler = () => void;
 
-/** The channels the stores NOTIFY. */
-export const NOTIFY_CHANNELS = [
-  "guild_thread_committed",
-  "guild_chat_status",
-  "guild_events",
-  "guild_subagent_tree",
-  "guild_workspace",
-  "guild_org",
-  "guild_models",
-  "guild_agents",
-  "guild_agent_runs",
-  "guild_agent_routines",
-  "guild_agent_threads",
-  "guild_skills",
-  "guild_compaction",
-] as const;
+/** A JSON object payload, or null when the text is not one. */
+export function jsonPayload(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A string field of a payload object, or null. */
+export function stringField(payload: Record<string, unknown>, name: string): string | null {
+  const value = payload[name];
+  return typeof value === "string" ? value : null;
+}
+
+/** An org-scoped payload whose other fields are optional ids. */
+export interface OrgPayload {
+  org_id: string;
+  agent_id: string | null;
+  run_id: string | null;
+  user_id: string | null;
+}
+
+/** A bare-id payload (a chat or conversation id); empty is no payload. */
+function idPayload(raw: string): string | null {
+  return raw === "" ? null : raw;
+}
+
+function orgPayload(raw: string): OrgPayload | null {
+  const payload = jsonPayload(raw);
+  if (payload === null) return null;
+  const orgId = stringField(payload, "org_id");
+  if (orgId === null) return null;
+  return {
+    org_id: orgId,
+    agent_id: stringField(payload, "agent_id"),
+    run_id: stringField(payload, "run_id"),
+    user_id: stringField(payload, "user_id"),
+  };
+}
+
+/** Every channel the stores NOTIFY, with the parser its payload goes
+ *  through. A parser returns null for a payload it cannot read, and the
+ *  notification is dropped. */
+export const NOTIFY_PARSERS = {
+  /** A thread event committed: the chat id. */
+  guild_thread_committed: idPayload,
+  /** A chat's generating flag flipped. */
+  guild_chat_status: (raw: string) => {
+    const payload = jsonPayload(raw);
+    if (payload === null) return null;
+    const orgId = stringField(payload, "org_id");
+    const userId = stringField(payload, "user_id");
+    const chatId = stringField(payload, "chat_id");
+    const generating = payload["generating"];
+    if (orgId === null || userId === null || chatId === null || typeof generating !== "boolean") return null;
+    return { org_id: orgId, user_id: userId, chat_id: chatId, generating };
+  },
+  /** An org event row was written. */
+  guild_events: (raw: string) => {
+    const payload = jsonPayload(raw);
+    if (payload === null) return null;
+    const orgId = stringField(payload, "org_id");
+    const eventId = stringField(payload, "event_id");
+    return orgId === null || eventId === null ? null : { org_id: orgId, event_id: eventId };
+  },
+  /** A chat's agent-thread subtree moved: the chat id. */
+  guild_subagent_tree: idPayload,
+  /** A user's sidebar lists moved; `parts` names the ones (all when null). */
+  guild_workspace: (raw: string) => {
+    const payload = jsonPayload(raw);
+    if (payload === null) return null;
+    const orgId = stringField(payload, "org_id");
+    const userId = stringField(payload, "user_id");
+    if (orgId === null || userId === null) return null;
+    const parts = Array.isArray(payload["parts"])
+      ? (payload["parts"] as unknown[]).filter((part): part is string => typeof part === "string")
+      : null;
+    return { org_id: orgId, user_id: userId, parts };
+  },
+  /** The workspace's name, logo or telemetry switch moved. */
+  guild_workspace_identity: orgPayload,
+  /** The org's model routes moved. */
+  guild_models: orgPayload,
+  guild_agents: orgPayload,
+  guild_agent_runs: orgPayload,
+  guild_agent_routines: orgPayload,
+  guild_agent_threads: orgPayload,
+  guild_skills: orgPayload,
+  /** A compaction task was written: the conversation id. */
+  guild_compaction: idPayload,
+} as const;
+
+export type NotifyChannel = keyof typeof NOTIFY_PARSERS;
+export type NotifyPayload<C extends NotifyChannel> = NonNullable<ReturnType<(typeof NOTIFY_PARSERS)[C]>>;
+
+/** One handler per channel: a channel without one fails the typecheck. */
+export type NotifyHandlers = { readonly [C in NotifyChannel]: (payload: NotifyPayload<C>) => void };
+
+/** The channels the hub LISTENs on. */
+export const NOTIFY_CHANNELS = Object.keys(NOTIFY_PARSERS) as NotifyChannel[];
+
+function isNotifyChannel(channel: string): channel is NotifyChannel {
+  return Object.hasOwn(NOTIFY_PARSERS, channel);
+}
+
+/** A raw notification handler that parses each payload with its channel's
+ *  parser and calls that channel's handler. A channel outside the table or
+ *  an unreadable payload goes to `dropped`. */
+export function notifyDispatcher(
+  handlers: NotifyHandlers,
+  dropped: (channel: string, payload: string) => void = () => {},
+): NotifyHandler {
+  return (channel, raw) => {
+    if (!isNotifyChannel(channel)) {
+      dropped(channel, raw);
+      return;
+    }
+    const payload = NOTIFY_PARSERS[channel](raw);
+    if (payload === null) {
+      dropped(channel, raw);
+      return;
+    }
+    (handlers[channel] as (payload: unknown) => void)(payload);
+  };
+}
 
 export class NotifyHub {
   private client: pg.Client | undefined;
@@ -54,9 +167,8 @@ export class NotifyHub {
   }
 
   /** Connects (or reconnects) the shared LISTEN client. The loop retries
-   *  forever while the hub is open — a dead notify connection would silence
-   *  every consumer (SSE thread streams, the member-socket feed) with no
-   *  other error signal. */
+   *  forever while the hub is open: a dead notify connection would silence
+   *  the member-socket feed with no other error signal. */
   private async ensureListening(): Promise<void> {
     if (this.client !== undefined || this.connecting !== undefined || this.closed) return;
     this.connecting = (async () => {

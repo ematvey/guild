@@ -93,6 +93,17 @@ export interface Config {
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
   workerMode: "off" | "on";
+  /** Most forked workers alive at once (GUILD_WORKER_LIMIT, default 16). */
+  workerLimit: number;
+  /** How long an idle worker lives before it is reaped
+   *  (GUILD_WORKER_IDLE_MS, default 5 min). */
+  workerIdleMs: number;
+  /** The bun binary workers fork under (GUILD_BUN_BIN). Null: the server's
+   *  own runtime when it is bun, else `bun` from PATH. */
+  bunBin: string | null;
+  /** Host root of plain chats' in-process sandbox dirs
+   *  (GUILD_SANDBOX_ROOT, default /tmp/guild-sandboxes). */
+  sandboxRoot: string;
   /** Routine scheduler loop (GUILD_AGENTS_SCHEDULER=off disables it).
    *  Default: on in the server, off under NODE_ENV=test. */
   agentsScheduler: boolean;
@@ -263,8 +274,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     tracePayloads,
     // Worker-per-chat: when "on", the server holds no harness — admission
     // routes over IPC to a forked worker per active chat (see
-    // worker/supervisor.ts). Default off until the rollout completes.
+    // worker/supervisor.ts).
     workerMode: env.GUILD_WORKER_MODE === "on" ? ("on" as const) : ("off" as const),
+    workerLimit: positiveInt(env, "GUILD_WORKER_LIMIT", 16),
+    workerIdleMs: positiveInt(env, "GUILD_WORKER_IDLE_MS", 300_000),
+    bunBin: env.GUILD_BUN_BIN || null,
+    sandboxRoot: env.GUILD_SANDBOX_ROOT || "/tmp/guild-sandboxes",
     // Routine scheduler: explicit off wins; explicit on wins; tests default
     // off so a suite never starts a loop unless it asks for one.
     agentsScheduler:
@@ -288,4 +303,29 @@ function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
     throw new Error(`${name} must be a positive integer, got "${raw}"`);
   }
   return value;
+}
+
+/** The env var a forked worker reads its whole config from. */
+const WORKER_CONFIG_ENV = "GUILD_WORKER_CONFIG";
+/** The env var naming the one chat a worker serves. */
+const WORKER_CHAT_ENV = "GUILD_WORKER_CHAT_ID";
+/** A worker's own pool cap: it serves one chat. */
+const WORKER_POOL_MAX = 4;
+
+/** The fork env entries that carry the server's config to one worker: the
+ *  parsed config itself, so nothing is re-derived from the environment.
+ *  The worker spawns no workers of its own. */
+export function workerConfigEnv(config: Config, chatId: string): Record<string, string> {
+  const worker: Config = { ...config, workerMode: "off", poolMax: WORKER_POOL_MAX };
+  return { [WORKER_CONFIG_ENV]: JSON.stringify(worker), [WORKER_CHAT_ENV]: chatId };
+}
+
+/** A forked worker's config and chat, as the supervisor passed them. */
+export function loadWorkerConfig(env: NodeJS.ProcessEnv): { config: Config; chatId: string } {
+  const raw = env[WORKER_CONFIG_ENV];
+  const chatId = env[WORKER_CHAT_ENV];
+  if (!raw || !chatId) {
+    throw new Error(`${WORKER_CONFIG_ENV} and ${WORKER_CHAT_ENV} are not set — this entry is forked by the supervisor only`);
+  }
+  return { config: JSON.parse(raw) as Config, chatId };
 }

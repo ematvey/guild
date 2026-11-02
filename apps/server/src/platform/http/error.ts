@@ -135,7 +135,7 @@ export function installErrorHandling(
   app: FastifyInstance,
   renderApiError: (error: ApiError, path: string) => { status: number; body: string } = (error) => ({
     status: error.status,
-    body: JSON.stringify({ error: { code: error.code, message: error.message } }),
+    body: JSON.stringify(error.envelope()),
   }),
 ): void {
   app.setErrorHandler((error: unknown, req, reply) => {

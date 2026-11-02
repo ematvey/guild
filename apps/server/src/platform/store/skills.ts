@@ -86,6 +86,25 @@ export class SkillStore {
     return res.rows.map((r: Record<string, unknown>) => this.row(r));
   }
 
+  /** Each user's installs (slug order), in one read; a user with none maps
+   *  to no entry. */
+  async installsForUsers(orgId: string, userIds: readonly string[]): Promise<Map<string, InstallRow[]>> {
+    const out = new Map<string, InstallRow[]>();
+    if (userIds.length === 0) return out;
+    const res = await this.pool.query(
+      `SELECT user_id, slug, pinned_version, ${INSTALLED_AT_TEXT} FROM skill_installs
+       WHERE org_id = $1 AND user_id = ANY($2::uuid[]) ORDER BY user_id, slug`,
+      [orgId, userIds],
+    );
+    for (const r of res.rows as Record<string, unknown>[]) {
+      const userId = String(r["user_id"]);
+      const list = out.get(userId) ?? [];
+      list.push(this.row(r));
+      out.set(userId, list);
+    }
+    return out;
+  }
+
   async byUserAndSlug(orgId: string, userId: string, slug: string): Promise<InstallRow | null> {
     const res = await this.pool.query(
       `SELECT slug, pinned_version, ${INSTALLED_AT_TEXT} FROM skill_installs

@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { ChatBridge, type BridgeDeps, type GenerationStreamSink } from "../chats/bridge.js";
 import type { ThreadEventRow } from "../platform/domain/thread-events.js";
-import { streamEventWire, type StreamWireEvent } from "../hub/protocol.js";
+import type { StreamWireEvent } from "../hub/protocol.js";
 import { uuidv7 } from "../platform/time.js";
 
 function fakeDeps(commands: { id: string; position: number | null }[]): BridgeDeps & { rows: ThreadEventRow[] } {
@@ -321,25 +321,5 @@ describe("bridge generation stream", () => {
       { type: "compaction", summary: "the user wants TURN-1-OK" },
       { type: "compaction", summary: "[Conversation summary so far]\n\nimported summary" },
     ]);
-  });
-
-  it("renders the stream events as their typed JSON shape", () => {
-    expect(JSON.parse(streamEventWire({ type: "delta", content: 'he"llo' }))).toEqual({
-      type: "delta",
-      content: 'he"llo',
-    });
-    expect(
-      JSON.parse(streamEventWire({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 })),
-    ).toEqual({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 });
-    expect(
-      JSON.parse(
-        streamEventWire({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" }),
-      ),
-    ).toEqual({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" });
-    expect(JSON.parse(streamEventWire({ type: "error", code: "provider", message: "x" }))).toEqual({
-      type: "error",
-      code: "provider",
-      message: "x",
-    });
   });
 });

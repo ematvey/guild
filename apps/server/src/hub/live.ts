@@ -4,10 +4,27 @@
 
 import { uuidv7 } from "../platform/time.js";
 import { SocketSink } from "./sink.js";
-import type { MachineRequestError } from "./index.js";
 import type { WsServerMsg } from "./protocol.js";
 
 export const MAX_SOCKETS_PER_USER = 32;
+
+export interface MachineRequestError {
+  kind: "offline" | "timeout" | "socket_limit" | "send_failed" | "rejected";
+  message?: string;
+}
+
+/**
+ * Dispatch one request to a connected machine and await its response.
+ * The holder must still hold the machine slot and belong to `orgId`,
+ * else the call resolves `offline`.
+ */
+export type MachineRequestFn = (
+  machineId: string,
+  orgId: string,
+  op: string,
+  payload: unknown,
+  timeoutMs: number,
+) => Promise<{ ok: true; value: unknown } | { ok: false; error: MachineRequestError }>;
 
 export type MachineRejected = { kind: "cap" } | { kind: "displaced" } | { kind: "foreign_owner" };
 

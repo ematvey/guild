@@ -1,9 +1,10 @@
-import { SingleFlight, ConversationAdmissions, AdmissionCancelled } from "./operations.js";
 // Composes model access, tool provisioning, and chat admission. ConversationHost
-// owns the scheduler lifetime; worker mode scopes that lifetime to one chat.
+// owns the scheduler lifetime; the turn backend (turn-backend.ts) decides
+// where a chat's turns run, and a worker scopes the lifetime to one chat.
 // Durable projection and live presentation consume the same committed records.
+// Every store comes in through RuntimeDeps (built once by the process's
+// composition root); the runtime constructs none.
 
-import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry,
@@ -25,158 +26,121 @@ import {
 } from "@earendil-works/pi-durable";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { createModels, type MutableModels, type UserMessage } from "@earendil-works/pi-ai";
-import { mkdir } from "node:fs/promises";
+import type { UserMessage } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
-import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
-import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
+import { PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
-import type { ForkSupervisor } from "../worker/supervisor.js";
+import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
+import { chatsWithWork, durableSchemaVersion } from "../storage/postgres/queries.js";
 import type { PlatformPool } from "../platform/db.js";
-import { applyPlatformMigrations } from "../platform/migrations.js";
-import { GatewayStore } from "../platform/store/gateway.js";
-import { ChatStore } from "../platform/store/chats.js";
-import { TurnCommandStore } from "../platform/store/turn_commands.js";
-import { ThreadStore } from "../platform/store/thread.js";
-import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
-import { AttachmentStore } from "../platform/store/attachments.js";
-import { modalityOf } from "../platform/domain/mime.js";
-import { EventStore } from "../platform/store/events.js";
-import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
-import { UserMcpStore } from "../platform/store/userMcp.js";
-import { RegistryStore } from "../platform/store/registry.js";
-import { SkillStore } from "../platform/store/skills.js";
-import { MachineStore } from "../platform/store/machines.js";
-import { TeamStore } from "../platform/store/teams.js";
+import { assertPlatformSchema } from "../platform/migrations.js";
+import type { PlatformStores } from "../platform/stores.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillReadSink } from "../platform/skillReads.js";
-import {
-  MachineExecutionEnv,
-  machineDispatch,
-  type ExecutorKind,
-  type MachineDispatchHost,
-} from "../machines/dispatch.js";
+import type { TraceStore } from "../platform/trace.js";
+import { modalityOf } from "../platform/domain/mime.js";
+import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
+import type { UserRow } from "../platform/store/identity.js";
+import { uuidv7 } from "../platform/time.js";
+import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import type { SandboxTarget } from "../sandbox/client.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
-import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
-import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
-import { ConversationDirectory } from "./conversation-directory.js";
-import { chatsWithWork } from "../platform/store/work.js";
-import { assertPlatformSchema } from "../platform/migrations.js";
-import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
-import { drainIdleInbox } from "./queue-recovery.js";
-import { createThreadHistoryTools } from "./thread-history.js";
-import { AgentStore, refuseDeletingAgent } from "../agents/store.js";
+import type { AgentStore } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
-import type { UserRow } from "../platform/store/identity.js";
 import { AgentRunLifecycle } from "../agents/lifecycle.js";
-import { ChildResultDelivery, assistantTextForRun, type ChildRunFinished } from "../agents/delivery.js";
+import { ChildResultDelivery, type ChildRunFinished } from "../agents/delivery.js";
 import { failStaleRuns } from "../agents/reconcile.js";
-import { notifySubagentTree } from "../agents/tree.js";
-import { createAgentTools } from "../agents/tools.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
 import { createTraceHook } from "../agents/trace-hook.js";
-import { subagentsContextForChat } from "../agents/subagents.js";
+import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.js";
+import { ConversationRecovery } from "../chats/recovery.js";
+import { ChatBridge, type GenerationStreamSink, type LiveBuffers } from "../chats/bridge.js";
+import { SharedPoolDatabase } from "../chats/durable-mapping.js";
+import { createGuildExtension } from "./extension.js";
+import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
+import { ConversationDirectory } from "./conversation-directory.js";
+import { SingleFlight, ConversationAdmissions, AdmissionCancelled } from "./operations.js";
+import { drainIdleInbox } from "./queue-recovery.js";
+import { createThreadHistoryTools } from "./thread-history.js";
 import { appendToPendingSteer } from "./inbox-merge.js";
-import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
-import {
-  CONFIG_FILES,
-  agentWorkspaceDir,
-  readAgentConfig,
-  seedAgentWorkspace,
-  type AgentConfigFiles,
-} from "../agents/workspace-config.js";
-import { utcText, uuidv7 } from "../platform/time.js";
-import { CODING_TOOL_NAMES, IntegrationsRuntime } from "./integrations.js";
+import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
-import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
-import type { TraceStore } from "../platform/trace.js";
-import { ConversationRecovery } from "../chats/recovery.js";
-import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
-import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
-import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
-import type { LiveBuffers } from "../chats/bridge.js";
-import { composeAgentInstructions, type ThreadInstructionContext } from "./instructions.js";
-import { TITLE_SYSTEM, resolveGeneratedTitle } from "./title.js";
-import { SharedPoolDatabase, applyChatMappingMigration } from "../chats/durable-mapping.js";
+import { guildProviderId } from "./models.js";
+import { OrgModels } from "./org-models.js";
+import { ConversationExecutors } from "./executors.js";
+import { TurnTools, chatExtensionNames } from "./turn-tools.js";
+import { turnBackend, type SubmitTurnInput, type TurnBackend, type TurnPlacement } from "./turn-backend.js";
 
-/** Thrown when a chat's thread belongs to an agent the caller cannot leave. */
-export class ThreadAgentLocked extends Error {
-  constructor() {
-    super("This thread belongs to its agent. Start a new chat to use another agent.");
-    this.name = "ThreadAgentLocked";
-  }
+export { ThreadAgentLocked } from "../agents/thread-binding.js";
+export type { SubmitTurnInput, TurnPlacement } from "./turn-backend.js";
+
+/** Everything the runtime runs on, built once by the process's composition
+ *  root (composition.ts for the server, worker/main.ts for a worker). */
+export interface RuntimeDeps {
+  readonly config: Config;
+  /** The platform pool: the durable storage facade and the agent lanes'
+   *  reads run on it; its lifetime is the composition root's. */
+  readonly pool: PlatformPool;
+  readonly log: Logger;
+  readonly stores: Pick<
+    PlatformStores,
+    | "chats"
+    | "threads"
+    | "turnCommands"
+    | "gatewayStore"
+    | "toolArtifacts"
+    | "attachments"
+    | "events"
+    | "integrations"
+    | "integrationSecrets"
+    | "userMcp"
+    | "registry"
+    | "skills"
+    | "machines"
+    | "teams"
+    | "orgKv"
+    | "orgs"
+    | "conversations"
+  >;
+  /** The process's one agent store. */
+  readonly agents: AgentStore;
+  /** The 32-byte secrets key. */
+  masterKey(): Buffer;
+  /** Where this process's turns run. */
+  readonly placement: TurnPlacement;
+  readonly objects?: ObjectStore;
+  /** The machine/member socket registry (the server only). */
+  readonly hub?: MachineDispatchHost;
+  readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">;
+  /** The LLM trace sink: the approval judge self-reports through it. */
+  readonly trace?: TraceStore;
 }
 
-export interface SubmitTurnInput {
-  orgId: string;
-  /** The command id (turn_commands row): the submission's request id, so a
-   *  retried dispatch cannot double-admit. */
-  requestId: string;
-  /** Composed user turn content (typed message + inlined attachment text). */
-  content: string;
-  /** Model-facing image parts (data URIs), when the route supports them. */
-  images: { mimeType: string; data: string }[];
-  model: string | null;
-  /** Requested placement when the conversation is busy: "steer" places the
-   *  input after the current tool round and joins the running turn;
-   *  absent (and "queue") is the default follow-up — the input waits for
-   *  the turn's final boundary and starts the next run. */
-  sendMode?: "queue" | "steer";
-  /** The machine turn's client-assembled skills index (the combined
-   *  section's local portion); browser/server turns send none. */
-  skillsIndex?: string;
-  /** The desktop's project instruction chain (global config-dir file plus
-   *  the project's AGENTS.md chain); browser/server turns send none. */
-  agentsMd?: string;
-}
-
-/** Where a chat's turns run: this process's harness, or the chat's forked
- *  worker. Admission, inbox placement, stop and compaction route through it. */
-interface TurnBackend {
-  submit(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number>;
-  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
-  steer(chatId: string, submissionId: number): Promise<boolean>;
-  withdraw(chatId: string, submissionId: number): Promise<string>;
-  stop(chatId: string): Promise<void>;
-  compact(chatId: string): Promise<number | null>;
-  liveBuffers(chatId: string): LiveBuffers;
-}
-
-/** Worker mode: the full admission path (conversation bootstrap, configure,
- *  integrations, submit) runs in the chat's worker; the server keeps only
- *  the projections the routes own. */
-function workerTurns(forker: ForkSupervisor): TurnBackend {
-  return {
-    submit: (chatId, _orgId, input) => forker.submit(chatId, input),
-    deliverSteer: (chatId, orgId, text, model) => forker.deliverSteer(chatId, orgId, text, model),
-    steer: (chatId, submissionId) => forker.steer(chatId, submissionId),
-    withdraw: (chatId, submissionId) => forker.withdraw(chatId, submissionId),
-    stop: (chatId) => forker.stop(chatId),
-    compact: (chatId) => forker.compact(chatId),
-    liveBuffers: (chatId) => forker.liveBuffers(chatId),
-  };
-}
+/** The pause between stale-run sweeps. */
+const STALE_RUN_SWEEP_MS = 5 * 60 * 1000;
 
 export class GuildRuntime {
-  private readonly models: MutableModels;
-  private readonly registry: Registry;
-  private readonly threads: ThreadStore;
-  private readonly chats: ChatStore;
+  private readonly config: Config;
+  private readonly pool: PlatformPool;
+  private readonly log: Logger;
+  private readonly stores: RuntimeDeps["stores"];
+  private readonly registry: Registry = createRegistry();
   /** The process's one agent store: routes, the scheduler and the agent
    *  feed read through it. */
   readonly agents: AgentStore;
+  readonly binding: ThreadBinding;
   private readonly conflicts: AgentConflictJournal;
   private readonly agentRuns: AgentRunLifecycle;
   private readonly childDelivery: ChildResultDelivery;
-  private readonly turnCommands: TurnCommandStore;
-  private readonly gateway: GatewayStore;
   private readonly bridge: ChatBridge;
   private readonly recovery: ConversationRecovery;
+  private readonly directory: ConversationDirectory;
+  private readonly orgModels: OrgModels;
+  private readonly executors: ConversationExecutors;
+  private readonly turnTools: TurnTools;
   private readonly host = new ConversationHost();
   private readonly turns: TurnBackend;
   private readonly watchOpening = new SingleFlight<string, void>();
@@ -184,11 +148,6 @@ export class GuildRuntime {
   private get watches(): Map<string, AgentEventStream> {
     return this.host.value!.watches;
   }
-  private readonly directory: ConversationDirectory;
-  private readonly providerChats = new Map<string, { chatId: string; conversationId: number }>();
-  /** Short-lived chat → running run id cache: one lookup per model call is
-   *  too much, and a run id only matters while the turn is live. */
-  private readonly runIdCache = new Map<string, { id: string | null; at: number }>();
   /** The chat ↔ conversation mapping, both directions. Writes go through
    *  `mapConversation`/`unmapConversation`; `conversationForChat` is the only
    *  accessor that may create, and the reverse map makes
@@ -198,34 +157,20 @@ export class GuildRuntime {
   private get harness() {
     return this.host.value?.harness;
   }
-  /** The durable database facade, created once at startup (the platform
-   *  pool outlives the runtime; the facade must not end it). Reused by
-   *  every reopen. */
-  private durableDb: PgPoolDatabase | undefined;
+  /** The durable database facade over the shared platform pool (the facade
+   *  must not end it). Reused by every reopen. */
+  private readonly durableDb: PgPoolDatabase;
   /** The supervisor's state: the harness reopen loop below. */
   private reopenAttempts = 0;
   private harnessOpenedAt = 0;
   private reopening: Promise<void> | undefined;
-  /** Test/diagnostic access to the owned harness (read-only usage). */
-  harnessForTest(): Harness | undefined {
-    return this.harness;
-  }
-  /** The hub-backed dispatch registry (one per process, keyed by the hub). */
-  dispatch(): ReturnType<typeof machineDispatch> | undefined {
-    return this.hub === undefined ? undefined : machineDispatch(this.hub);
-  }
-  /** The process-wide exec policy (the base rules asset + local layer). */
-  execPolicy(): ExecPolicy {
-    this.policyInstance ??= loadExecPolicy(this.config.execPolicyRulesPath ?? undefined);
-    return this.policyInstance;
-  }
   private policyInstance: ExecPolicy | undefined;
   private starting: Promise<void> | undefined;
   private stopped = false;
   private reconcileStarted = false;
   private reconcileTimer: NodeJS.Timeout | undefined;
 
-  readonly toolArtifacts: ToolArtifactStore;
+  readonly toolArtifacts: PlatformStores["toolArtifacts"];
   /** The integrations chat runtime: per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
   readonly integrationsRuntime: IntegrationsRuntime;
@@ -244,98 +189,54 @@ export class GuildRuntime {
   private readonly codemodeExtension: Extension;
   /** The coding tools (read/write/edit/list/bash/web_search), offered to the
    *  model directly. Integration tools stay script-only. */
-  private readonly codingTools: Extension;
+  private readonly codingTools: Extension = CodingTools;
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
-  /** Server-side tool sandboxes (GUILD_SANDBOX=runner); null otherwise. */
-  private readonly sandboxes: SandboxPool | null;
-  /** Sandbox key → chat id, for the connect-time skill materialization. */
-  private readonly sandboxChats = new Map<string, string>();
-  /** Object storage for turn attachment materialization and send_file. */
-  private readonly objects?: ObjectStore;
-  private readonly attachments: AttachmentStore;
-  /** Chat → run whose turn directory is already materialized. */
-  private readonly materializedTurns = new Map<string, string>();
+  private readonly hub?: MachineDispatchHost;
 
-  constructor(
-    private readonly config: Config,
-    private readonly pool: PlatformPool,
-    private readonly log: Logger,
-    objects?: ObjectStore,
-    private readonly hub?: MachineDispatchHost,
-    private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
-    /** The LLM trace sink: the approval judge self-reports through it. */
-    private readonly trace?: TraceStore,
-    /** Worker-per-chat: forks and owns one worker per active chat (worker
-     *  mode only). When set, turns route over IPC and the server opens no
-     *  harness. */
-    private readonly forker?: ForkSupervisor,
-    /** Worker side: this process serves exactly one chat (worker/main.ts). */
-    private readonly workerScope?: {
-      chatId: string;
-      /** The IPC machine-dispatch proxy (worker/dispatch-proxy.ts): the
-       *  worker has no hub, so machine-bound chats proxy dispatch to the
-       *  server's hub-backed registry over the fork channel. */
-      dispatch?: Pick<import("../machines/dispatch.js").MachineDispatch, "dispatch">;
-      /** Admission for a chat this worker does not own: proxied to the
-       *  server, which owns every chat's worker (delegation). */
-      remoteSubmit?: (chatId: string, orgId: string, input: SubmitTurnInput) => Promise<number>;
-      /** Steer delivery for a chat this worker does not own. */
-      remoteDeliverSteer?: (chatId: string, orgId: string, text: string, model: string | null) => Promise<void>;
-    },
-  ) {
-    this.objects = objects;
-    this.turns =
-      forker === undefined
-        ? {
-            submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
-            deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),
-            steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
-            withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
-            stop: (chatId) => this.stopInProcess(chatId),
-            compact: (chatId) => this.compactInProcess(chatId),
-            liveBuffers: (chatId) => this.liveBuffersInProcess(chatId),
-          }
-        : workerTurns(forker);
-    this.attachments = new AttachmentStore(pool);
-    this.sandboxes =
-      config.sandbox.mode === "runner"
-        ? new SandboxPool({
-            runner: new RunnerClient(config.sandbox.runnerUrl, config.sandbox.runnerToken),
-            log,
-            onConnected: async (target, env) => {
-              const chatId = this.sandboxChats.get(target.key);
-              if (chatId !== undefined) await this.materializeSandboxSkills(chatId, env);
-            },
-          })
-        : null;
-    this.directory = new ConversationDirectory(pool);
+  constructor(deps: RuntimeDeps) {
+    const { config, pool, log, stores, objects } = deps;
+    this.config = config;
+    this.pool = pool;
+    this.log = log;
+    this.stores = stores;
+    this.hub = deps.hub;
+    this.agents = deps.agents;
+    this.toolArtifacts = stores.toolArtifacts;
+    this.durableDb = new SharedPoolDatabase(pool);
+    this.turns = turnBackend(deps.placement, {
+      submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
+      deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),
+      steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
+      withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
+      stop: (chatId) => this.stopInProcess(chatId),
+      compact: (chatId) => this.compactInProcess(chatId),
+      liveBuffers: (chatId) => this.liveBuffersInProcess(chatId),
+    });
+    const chatOfConversation = (conversationId: number) => this.chatOfConversation(conversationId);
+    this.directory = new ConversationDirectory(stores.conversations);
     this.recovery = new ConversationRecovery(pool);
-    this.models = createModels();
-    this.registry = createRegistry();
-    this.threads = new ThreadStore(pool);
-    this.chats = new ChatStore(pool);
-    this.agents = new AgentStore(pool, this.trace, this.config.agentWorkspaceWriteRoot);
-    this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: this.threads });
+    this.binding = new ThreadBinding(pool, this.agents, {
+      maxDepth: config.agentMaxDepth,
+      maxChildrenPerNode: config.agentMaxChildrenPerNode,
+    });
+    this.orgModels = new OrgModels({
+      config,
+      log,
+      gateway: stores.gatewayStore,
+      orgs: stores.orgs,
+      chats: stores.chats,
+      agents: this.agents,
+    });
+    this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: stores.threads });
     this.childDelivery = new ChildResultDelivery({
       pool,
       store: this.agents,
-      threads: this.threads,
+      threads: stores.threads,
       log,
       runtime: {
-        beginRun: async (thread) => {
-          const run = await this.agents.createRun({
-            agent_id: thread.agent_id,
-            user_id: thread.user_id,
-            thread_id: thread.id,
-            depth: thread.depth,
-            trigger: "message",
-            status: "running",
-            started_at: new Date().toISOString(),
-          });
-          return run.id;
-        },
+        beginRun: (thread) => this.binding.beginMessageRun(thread),
         deliverSteer: (chatId, orgId, text, model) => this.deliverChildSteer(chatId, orgId, text, model),
       },
     });
@@ -343,84 +244,93 @@ export class GuildRuntime {
       pool,
       log,
       journal: this.conflicts,
-      trace: this.trace,
-      attachments: this.attachments,
+      trace: deps.trace,
+      attachments: stores.attachments,
       delivery: this.childDelivery,
       title: (chatId, threadId) => this.generateThreadTitle(chatId, threadId),
     });
-    this.turnCommands = new TurnCommandStore(pool);
-    this.gateway = new GatewayStore(pool);
-    this.toolArtifacts = new ToolArtifactStore(pool);
-    const registryStore = new RegistryStore(pool);
-    const events = new EventStore(pool);
+    this.executors = new ConversationExecutors({
+      config,
+      pool,
+      log,
+      chats: stores.chats,
+      threads: stores.threads,
+      attachments: stores.attachments,
+      agents: this.agents,
+      ...(objects === undefined ? {} : { objects }),
+      chatOfConversation,
+      machineDispatch: () => this.turns.machineDispatch ?? this.dispatch(),
+      skills: () => this.skillsRuntime,
+    });
     this.skillsRuntime = new SkillRuntime({
       log,
-      registry: registryStore,
-      skills: new SkillStore(pool),
-      machines: new MachineStore(pool),
+      registry: stores.registry,
+      skills: stores.skills,
+      machines: stores.machines,
       machineOnline: (machineId) => this.hub?.machineOnline(machineId) ?? false,
       machineRequest: async ({ machineId, orgId, op, payload }) =>
         (await this.hub?.machineRequest(machineId, orgId, op, payload, 10_000)) ?? {
           ok: false,
           error: { kind: "offline" as const },
         },
-      selfBaseUrl: this.config.selfBaseUrl,
-      events,
-      teams: new TeamStore(pool),
+      selfBaseUrl: config.selfBaseUrl,
+      events: stores.events,
+      teams: stores.teams,
       objects,
-      skillReads: this.skillReads,
-      chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+      skillReads: deps.skillReads,
+      chatOfConversation,
       chatOwner: async (chatId) => {
-        const owner = await this.chats.ownerOf(chatId);
+        const owner = await stores.chats.ownerOf(chatId);
         if (owner === null) return null;
         const label = owner.display_name !== null && owner.display_name !== "" ? owner.display_name : owner.email;
         return { orgId: owner.org_id, userId: owner.user_id, role: owner.role, label };
       },
       executorKind: (conversationId) => this.executorKind(conversationId),
-      conversationEnv: (conversationId, orgId) => this.envForConversation(conversationId, orgId),
-      materialize: (args) => this.materializeInstalledSkill(args),
+      conversationEnv: (conversationId, orgId) => this.executors.envFor(conversationId, orgId),
+      materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
     this.integrationsRuntime = new IntegrationsRuntime(
       {
         gateway: {
-          integrations: new IntegrationStore(pool),
-          integrationSecrets: new IntegrationSecretStore(pool),
-          registry: registryStore,
-          masterKey: () => this.masterKey(),
+          integrations: stores.integrations,
+          integrationSecrets: stores.integrationSecrets,
+          registry: stores.registry,
+          masterKey: () => deps.masterKey(),
         },
-        events,
-        artifacts: this.toolArtifacts,
+        events: stores.events,
+        artifacts: stores.toolArtifacts,
         objects,
         pool,
+        chats: stores.chats,
         log,
-        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+        chatOfConversation,
       },
       this.registry,
     );
     this.userMcpRuntime = new UserMcpRuntime(
       {
-        store: new UserMcpStore(pool),
-        masterKey: () => this.masterKey(),
+        store: stores.userMcp,
+        masterKey: () => deps.masterKey(),
         log,
-        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
-        chatOwnerOf: async (chatId) => await this.chats.ownerOf(chatId),
+        chatOfConversation,
+        chatOwnerOf: async (chatId) => await stores.chats.ownerOf(chatId),
       },
       this.registry,
     );
     this.bridge = new ChatBridge({
-      threads: this.threads,
-      chats: this.chats,
-      turnCommands: this.turnCommands,
+      threads: stores.threads,
+      chats: stores.chats,
+      turnCommands: stores.turnCommands,
       routeSupportsImages: async (orgId, model) => {
         if (model === null) return false;
         try {
-          const route = await this.gateway.resolveRoute(orgId, model, this.masterKey());
+          const route = await stores.gatewayStore.resolveRoute(orgId, model, deps.masterKey());
           return route.modalities.includes("image");
         } catch {
           return false;
         }
       },
-      ...(objects !== undefined ? { spill: { artifacts: this.toolArtifacts, objects } } : {}),
+      ...(objects !== undefined ? { spill: { artifacts: stores.toolArtifacts, objects } } : {}),
       agentRuns: {
         assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
         runEnd: (chatId, failure) => {
@@ -430,7 +340,7 @@ export class GuildRuntime {
       },
       agentFiles: {
         pending: async (chatId) =>
-          (await this.attachments.pendingAgentFiles(chatId)).map((row) => ({
+          (await stores.attachments.pendingAgentFiles(chatId)).map((row) => ({
             id: row.id,
             filename: row.filename,
             content_type: row.content_type,
@@ -441,16 +351,61 @@ export class GuildRuntime {
       log,
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
-    // tools (spec decision 12: built-in coding tools enabled) + codemode.
+    // tools (built-in coding tools enabled) + codemode.
     this.guildExtension = createGuildExtension({
-      ...this.extensionDeps(),
-      threadTools: createThreadHistoryTools({
-        pool: this.pool,
-        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
-      }),
+      orgPrompt: (orgId) => stores.orgKv.get(orgId, ASSISTANT_PROMPT_KEY),
+      orgOfConversation: async (conversationId) => {
+        const chatId = await this.chatOfConversation(conversationId);
+        return chatId === null ? null : stores.chats.orgOf(chatId);
+      },
+      userOfConversation: async (conversationId) => {
+        const chatId = await this.chatOfConversation(conversationId);
+        if (chatId === null) return null;
+        const owner = await stores.chats.ownerOf(chatId);
+        return owner === null
+          ? null
+          : { id: owner.user_id, email: owner.email, display_name: owner.display_name, role: owner.role };
+      },
+      // The approval gate: exec policy + approvals over the chat mapping and
+      // the executor resolution.
+      pool,
+      threads: stores.threads,
+      chats: stores.chats,
+      orgKv: stores.orgKv,
+      log,
+      execPolicy: this.execPolicy(),
+      approvalTimeoutMs: config.approvalTimeoutMs,
+      selfBaseUrl: config.selfBaseUrl,
+      internalKey: config.internalKey,
+      allowShellTools: config.allowShellTools,
+      chatOfConversation,
+      executorKind: (conversationId) => this.executorKind(conversationId),
+      attachments: stores.attachments,
+      ...(objects === undefined ? {} : { objects }),
+      integrations: {
+        gateDecision: async (conversationId, callName) => {
+          const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
+          if (userDecision !== undefined) return userDecision;
+          return this.integrationsRuntime.gateDecision(conversationId, callName);
+        },
+      },
+      skillRuntime: this.skillsRuntime,
+      toolHooks: [
+        createConflictHook(this.conflicts, chatOfConversation),
+        ...(deps.trace !== undefined ? [createTraceHook(deps.trace, this.agents, chatOfConversation)] : []),
+      ],
+      trace: deps.trace,
+      currentModel: async (conversationId) => {
+        await this.start();
+        const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+        const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
+        const resolved = agent?.model?.modelId ?? null;
+        this.log.debug({ conversationId, found: conversation !== undefined, agentModel: resolved }, "currentModel probe");
+        return resolved;
+      },
+      threadTools: createThreadHistoryTools({ pool, chatOfConversation }),
     });
     this.registry.install(this.guildExtension);
-    this.codingTools = CodingTools;
     this.registry.install(this.codingTools);
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
@@ -464,6 +419,43 @@ export class GuildRuntime {
       inlineBudget: 3500,
     });
     this.registry.install(this.codemodeExtension);
+    this.turnTools = new TurnTools({
+      config,
+      pool,
+      log,
+      registry: this.registry,
+      base: () => this.baseConfiguration(),
+      agents: this.agents,
+      threads: stores.threads,
+      attachments: stores.attachments,
+      ...(objects === undefined ? {} : { objects }),
+      conversations: stores.conversations,
+      binding: this.binding,
+      integrations: this.integrationsRuntime,
+      userMcp: this.userMcpRuntime,
+      executors: this.executors,
+      turns: {
+        submitTurn: (chatId, orgId, input) => this.submitTurn(chatId, orgId, input),
+        stopChat: (chatId) => this.stopChat(chatId),
+        canStopChat: (chatId) => this.canStopChat(chatId),
+      },
+    });
+  }
+
+  /** Test/diagnostic access to the owned harness (read-only usage). */
+  harnessForTest(): Harness | undefined {
+    return this.harness;
+  }
+
+  /** The hub-backed dispatch registry (one per process, keyed by the hub). */
+  dispatch(): ReturnType<typeof machineDispatch> | undefined {
+    return this.hub === undefined ? undefined : machineDispatch(this.hub);
+  }
+
+  /** The process-wide exec policy (the base rules asset + local layer). */
+  execPolicy(): ExecPolicy {
+    this.policyInstance ??= loadExecPolicy(this.config.execPolicyRulesPath ?? undefined);
+    return this.policyInstance;
   }
 
   /** The base conversation configuration: the guild, coding, and codemode
@@ -473,333 +465,83 @@ export class GuildRuntime {
     return { extensions, tools: extensions.flatMap((extension) => extension.tools ?? []) };
   }
 
-  private masterKey(): Buffer {
-    return Buffer.from(this.config.masterKeyHex, "hex");
-  }
-
-  private extensionDeps(): GuildExtensionDeps {
-    return {
-      orgPrompt: async (orgId) => {
-        const res = await this.pool.query<{ value: string | null }>(
-          "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
-          [orgId, ASSISTANT_PROMPT_KEY],
-        );
-        return res.rows[0]?.value ?? null;
-      },
-      orgOfConversation: async (conversationId) => {
-        const chatId = await this.chatOfConversation(conversationId);
-        if (chatId === null) return null;
-        const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-        return res.rows[0]?.org_id ?? null;
-      },
-      userOfConversation: async (conversationId) => {
-        const chatId = await this.chatOfConversation(conversationId);
-        if (chatId === null) return null;
-        const owner = await this.chats.ownerOf(chatId);
-        return owner === null
-          ? null
-          : { id: owner.user_id, email: owner.email, display_name: owner.display_name, role: owner.role };
-      },
-      // The approval gate: exec policy + approvals over the chat mapping and
-      // the executor resolution below.
-      pool: this.pool,
-      threads: this.threads,
-      log: this.log,
-      execPolicy: this.execPolicy(),
-      approvalTimeoutMs: this.config.approvalTimeoutMs,
-      selfBaseUrl: this.config.selfBaseUrl,
-      internalKey: this.config.internalKey,
-      allowShellTools: this.config.allowShellTools,
-      chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
-      executorKind: (conversationId) => this.executorKind(conversationId),
-      attachments: this.attachments,
-      ...(this.objects === undefined ? {} : { objects: this.objects }),
-      integrations: {
-        gateDecision: async (conversationId, callName) => {
-          const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
-          if (userDecision !== undefined) return userDecision;
-          return this.integrationsRuntime.gateDecision(conversationId, callName);
-        },
-      },
-      skillRuntime: this.skillsRuntime,
-      toolHooks: [
-        createConflictHook(this.conflicts, (id) => this.chatOfConversation(id)),
-        ...(this.trace !== undefined
-          ? [createTraceHook(this.trace, this.agents, (id) => this.chatOfConversation(id))]
-          : []),
-      ],
-      trace: this.trace,
-      currentModel: async (conversationId) => {
-        await this.start();
-        const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
-        const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
-        const resolved = agent?.model?.modelId ?? null;
-        this.log.debug(
-          { conversationId, found: conversation !== undefined, agentModel: resolved },
-          "currentModel probe",
-        );
-        return resolved;
-      },
-    };
-  }
-
   /** The conversation's chat id (the reverse of the chat→conversation
    *  mapping; unmapped conversations — e.g. the root — have none). */
   async chatOfConversation(conversationId: number): Promise<string | null> {
     return this.conversationToChat.get(conversationId) ?? null;
   }
 
-  /** Agent workspace resolution lands with the agents runtime. Plain chats
-   *  keep their per-conversation sandbox (`chats/<org>/<conversationId>`);
-   *  `hostDir` is where the in-process executor keeps it (tests/dev). */
-  private async sandboxTarget(
-    conversationId: number,
-    orgId: string,
-  ): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
-    const chatId = await this.chatOfConversation(conversationId);
-    const target = await resolveConversationWorkspace(this.pool, {
-      conversationId,
-      orgId,
-      chatId,
-      agentWorkspaceRoot: this.config.agentWorkspaceRoot,
-      plainHostRoot: sandboxRoot(),
-    });
-    return {
-      key: target.key,
-      subpath: target.subpath,
-      hostDir: target.hostDir,
-      chatId: target.chatId,
-    };
-  }
-
-  /** The execution env for a conversation's server-side tools (the
-   *  SkillRuntime deps hook and the harness env factory). Sandboxed
-   *  (runner), in-process (tests/dev), or refused (disabled). */
-  private async envForConversation(
-    conversationId: number,
-    orgId: string,
-    opts: { materialize?: boolean } = {},
-  ): Promise<ExecutionEnv> {
-    const target = await this.sandboxTarget(conversationId, orgId);
-    switch (this.config.sandbox.mode) {
-      case "runner": {
-        if (target.chatId !== null) this.sandboxChats.set(target.key, target.chatId);
-        return this.sandboxes!.envFor({ key: target.key, subpath: target.subpath });
-      }
-      case "inprocess-unsafe": {
-        // NodeExecutionEnv.exec requires an existing cwd; the dir is
-        // created lazily on first tool use.
-        await mkdir(target.hostDir, { recursive: true });
-        const env = new NodeExecutionEnv({ cwd: target.hostDir });
-        if (opts.materialize && target.chatId !== null) await this.materializeSandboxSkills(target.chatId, env);
-        return env;
-      }
-    }
+  /** Where this conversation's tools execute (executors.ts). */
+  executorKind(conversationId: number): Promise<ExecutorKind> {
+    return this.executors.executorKind(conversationId);
   }
 
   /** Removes a conversation's sandbox container (its files stay on the
    *  volume); a no-op outside runner mode. */
-  async removeSandbox(target: SandboxTarget): Promise<void> {
-    await this.sandboxes?.remove(target);
+  removeSandbox(target: SandboxTarget): Promise<void> {
+    return this.executors.removeSandbox(target);
   }
 
-  /** Where this conversation's tools execute — the env factory and the
-   *  approval gate both resolve through this: the chat's bound machine
-   *  (machine dispatch), an agent session's workspace dir, or the per-
-   *  conversation sandbox (regular chats). */
-  async executorKind(conversationId: number): Promise<ExecutorKind> {
-    const chatId = await this.chatOfConversation(conversationId);
-    if (chatId === null) return null;
-    const chat = await this.pool.query<{ machine_id: string | null; org_id: string }>(
-      "SELECT machine_id, org_id FROM chats WHERE id = $1",
-      [chatId],
-    );
-    const row = chat.rows[0];
-    if (!row) return null;
-    if (row.machine_id !== null) return "machine";
-    const workspace = await this.agentWorkspaceForChat(row.org_id, chatId);
-    return workspace !== null ? "server" : null;
-  }
-
-  /** The agent workspace subpath behind a chat, or null for a plain chat. */
-  private async agentWorkspaceForChat(orgId: string, chatId: string | null): Promise<string | null> {
-    if (chatId === null) return null;
-    const agent = await agentThreadForChat(this.pool, chatId);
-    return agent === null ? null : agentWorkspaceSubpath(orgId, agent.agent_id);
-  }
-  /** Turn-start skill materialization: the chat owner's installed org
-   *  skills land under the sandbox root before the turn's tools run, so a
-   *  plain chat's agent can read a skill's extra files with read_file.
-   *  An agent workspace outlives the conversation and belongs to the agent,
-   *  so no skill files are copied into it — read_skill serves the registry
-   *  bundle instead. Never throws: a broken bundle or a store failure is
-   *  logged and the turn proceeds without the skill files. */
-  private async materializeSandboxSkills(chatId: string, env: ExecutionEnv): Promise<void> {
-    try {
-      const owner = await this.chats.ownerOf(chatId);
-      if (owner === null) return;
-      if ((await this.agentWorkspaceForChat(owner.org_id, chatId)) !== null) return;
-      await this.skillsRuntime.materializeIntoSandbox(owner.org_id, owner.user_id, env);
-    } catch (error) {
-      this.log.warn({ err: error, chatId }, "skill materialization failed");
-    }
-  }
-
-  /** Writes the turn's attachments into the sandbox at
-   *  /tmp/attachments/<runId>/ and wipes the previous turn's directory.
-   *  Runs once per run, before the first tool call. */
-  private async materializeAttachmentsForTurn(chatId: string, orgId: string, env: ExecutionEnv): Promise<void> {
-    if (this.objects === undefined || this.config.sandbox.mode !== "runner") return;
-    const run = await this.agents.runningRunForChat(chatId).catch(() => null);
-    if (run === null) return;
-    if (this.materializedTurns.get(chatId) === run.id) return;
-    this.materializedTurns.set(chatId, run.id);
-    try {
-      const ids = new Set<string>();
-      // The user event is written just before or just after the run row;
-      // the nearest one in time is this turn's message, even when later
-      // messages are already queued.
-      const messages = await this.pool.query<{ payload: Record<string, unknown> }>(
-        `SELECT payload FROM thread_events
-         WHERE chat_id = $1 AND type = 'user_message'
-         ORDER BY abs(extract(epoch FROM (created_at - $2::timestamptz))) ASC, seq DESC
-         LIMIT 1`,
-        [chatId, run.started_at ?? run.created_at],
-      );
-      const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
-        `SELECT payload FROM thread_events
-         WHERE chat_id = $1 AND type = 'child_result'
-           AND (consumed_by_run_id IS NULL OR consumed_by_run_id = $2)`,
-        [chatId, run.id],
-      );
-      for (const row of [...messages.rows, ...deliveries.rows]) {
-        const list = Array.isArray(row.payload.attachments) ? row.payload.attachments : [];
-        for (const item of list) {
-          if (typeof item === "string") ids.add(item);
-          else if (item !== null && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
-            ids.add((item as { id: string }).id);
-          }
-        }
-      }
-      const rows = await this.attachments.byIds(orgId, [...ids]);
-      await materializeTurnAttachments({
-        env,
-        objects: this.objects,
-        orgId,
-        runId: run.id,
-        rows,
-        context: BACKGROUND_CONTEXT,
-      });
-    } catch (error) {
-      this.materializedTurns.delete(chatId);
-      this.log.warn({ err: error, chatId, runId: run.id }, "attachment materialization failed");
-    }
-  }
-
-  /** The read_skill install-on-use dep: one freshly installed skill into a
-   *  plain chat's dir; the caller in harness/skills.ts catches and logs, so
-   *  errors must not escape here. An agent workspace gets nothing. */
-  private async materializeInstalledSkill(args: {
-    conversationId: number;
-    orgId: string;
-    slug: string;
-    version: string;
-  }): Promise<void> {
-    const chatId = await this.chatOfConversation(args.conversationId);
-    if (chatId === null) return;
-    if ((await this.agentWorkspaceForChat(args.orgId, chatId)) !== null) return;
-    const env = await this.envForConversation(args.conversationId, args.orgId);
-    await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, env);
-  }
-
-  /** Initialize once; the server migrates, workers verify and open their scope. */
+  /** Initialize once: verify the schema the composition root migrated, then
+   *  open this process's harness (or, with workers, recover theirs). */
   async start(): Promise<void> {
     this.starting ??= this.startOnce();
     await this.starting;
     await this.reopening;
     if (this.stopped) throw new Error("runtime is closed");
     // Runs left open by a dead process are failed once the harness is up, so
-    // the stop path can reach it. Workers skip this: the server owns the
-    // whole database.
-    if (!this.workerScope && !this.reconcileStarted) {
+    // the stop path can reach it. Only the process that owns the whole
+    // database sweeps.
+    if (this.turns.ownsDatabase && !this.reconcileStarted) {
       this.reconcileStarted = true;
       await this.reconcileStaleRuns();
       this.reconcileTimer = setInterval(() => {
         void this.reconcileStaleRuns();
-      }, 5 * 60 * 1000);
+      }, STALE_RUN_SWEEP_MS);
       this.reconcileTimer.unref();
     }
   }
 
   private async reconcileStaleRuns(): Promise<void> {
-    await failStaleRuns(
-      {
-        pool: this.pool,
-        threads: this.threads,
-        log: this.log,
-        runtime: {
-          stopChat: (chatId) => this.stopChat(chatId),
-          canStopChat: (chatId) => this.canStopChat(chatId),
-          deliverPending: (chatId) => this.childDelivery.deliverPending(chatId),
-        },
+    await failStaleRuns({
+      pool: this.pool,
+      threads: this.stores.threads,
+      log: this.log,
+      runtime: {
+        stopChat: (chatId) => this.stopChat(chatId),
+        canStopChat: (chatId) => this.canStopChat(chatId),
+        deliverPending: (chatId) => this.childDelivery.deliverPending(chatId),
       },
-    ).catch((error: unknown) => {
+    }).catch((error: unknown) => {
       this.log.warn({ err: error }, "stale run reconcile failed");
     });
   }
 
   private async startOnce(): Promise<void> {
-    // The shared platform pool outlives the runtime (PlatformContext owns
-    // it); the database facade must not end it on storage close.
-    this.durableDb = new SharedPoolDatabase(this.pool);
-    // Platform schema first: the mapping below references chats(id), and
-    // every route handler assumes apps/server/migrations are current.
-    // Failure throws — startup must not come up on a stale schema.
-    if (this.workerScope) {
-      await assertPlatformSchema(this.pool);
-      const schema = await this.pool.query<{ version: number }>("SELECT version FROM durable_schema WHERE singleton=1");
-      if (schema.rows[0]?.version !== CURRENT_POSTGRES_SCHEMA_VERSION)
-        throw new Error("durable schema requires server migration");
-    } else {
-      await applyPlatformMigrations(this.pool, { log: this.log });
-      await applyPostgresMigrations(this.durableDb!);
-      await applyChatMappingMigration(this.pool);
-      await this.pool.query(
-        "INSERT INTO chat_recovery_metadata(singleton,legacy_task_id) SELECT true,COALESCE(max(id),0) FROM tasks ON CONFLICT DO NOTHING",
-      );
-      // A send interrupted by the previous shutdown left its chat flagged as
-      // generating with nothing behind it; the journal decides the truth.
-      await this.chats.reconcileAllGenerating();
+    // Startup must not come up on a stale schema: the composition root
+    // migrates before the runtime starts.
+    await assertPlatformSchema(this.pool);
+    if ((await durableSchemaVersion(this.pool)) !== CURRENT_POSTGRES_SCHEMA_VERSION) {
+      throw new Error("durable schema requires server migration");
     }
-    // The skill_reads ClickHouse DDL: ensured once at startup (spec §3's
-    // detail-page stats read the table; record() also awaits it). ClickHouse
-    // being down must not block startup — reads degrade to zero and writes
-    // are dropped until it recovers.
-    try {
-      await this.skillReads?.ensureOnce();
-    } catch (error) {
-      this.log.warn({ err: error }, "skill_reads table ensure failed");
-    }
-    if (this.workerScope) {
-      // Worker: bootstrap its chat's conversation mapping (create on first
-      // touch), then open the scoped harness for exactly that conversation.
-      await this.bootstrapWorkerConversation();
-    } else if (this.forker) {
-      // Server in worker mode: no harness here — a second scheduler would
+    if (!this.turns.hostsHarness) {
+      // Workers run every chat: no harness here — a second scheduler would
       // adopt the workers' tasks. Boot recovery spawns workers for every
       // conversation the journal says still has pending work.
-      await this.forker.recoverFromJournal(await this.chatsWithPendingWork(true));
+      await this.turns.recover(await chatsWithWork(this.pool, true));
       return;
     }
+    // A worker bootstraps its chat's conversation mapping (create on first
+    // touch), then opens the scoped harness for exactly that conversation.
+    if (this.turns.scope !== undefined) await this.bootstrapWorkerConversation(this.turns.scope);
     await this.openHarness();
   }
 
   /** Create a chat's initial records through the Session kernel, without
    * opening a scheduler or adopting any other worker's live tasks. */
-  private async bootstrapWorkerConversation(): Promise<void> {
-    const chatId = this.workerScope!.chatId;
+  private async bootstrapWorkerConversation(chatId: string): Promise<void> {
     const id = await this.directory.ensure(chatId, async () => {
-      const bootstrap = createSession(await PostgresDurableStorage.open(this.durableDb!, { migrate: false }));
+      const bootstrap = createSession(await PostgresDurableStorage.open(this.durableDb, { migrate: false }));
       try {
         const conversation = await bootstrap.commit(async (tx) => {
           const record = await tx.createConversation({ ownership: { kind: "ownerless" } });
@@ -830,12 +572,6 @@ export class GuildRuntime {
     if (this.conversationToChat.get(conversationId) === chatId) this.conversationToChat.delete(conversationId);
   }
 
-  /** Server-side boot scan: chats whose conversation has live tasks or
-   *  queued submissions (the journal is the registry). */
-  private async chatsWithPendingWork(includeProjections = false): Promise<{ chatId: string }[]> {
-    return chatsWithWork(this.pool, includeProjections);
-  }
-
   /** Opens the durable storage + harness and attaches everything a resumed
    *  session needs. Both the startup path and the supervisor's reopen loop
    *  run this — pi-durable's documented recovery for a failed session is
@@ -856,38 +592,25 @@ export class GuildRuntime {
   }
 
   private async createHarness(): Promise<ConversationLifetime> {
-    const db = this.durableDb;
-    if (!db) throw new Error("openHarness before startOnce");
-    const durable = await PostgresDurableStorage.open(db, { migrate: false });
+    const durable = await PostgresDurableStorage.open(this.durableDb, { migrate: false });
     try {
-      const scopeId = this.workerScope ? this.chatToConversation.get(this.workerScope.chatId) : undefined;
-      if (this.workerScope && scopeId === undefined) throw new Error("worker has no conversation mapping");
+      const scope = this.turns.scope;
+      const scopeId = scope === undefined ? undefined : this.chatToConversation.get(scope);
+      if (scope !== undefined && scopeId === undefined) throw new Error("worker has no conversation mapping");
       const repaired = await durable.repairLiveProjections(scopeId as ConversationId | undefined);
-      if (repaired.length)
-        this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
-      let storage;
-      if (this.workerScope) {
-        // The worker's view: every scan forced onto its conversation, by-id
-        // reads refusing foreign records — the boundary that keeps the
-        // scheduler from adopting another conversation's work.
-        const conversationId = this.chatToConversation.get(this.workerScope.chatId);
-        if (conversationId === undefined) throw new Error("worker has no conversation mapping");
-        storage = new ScopedDurableStorage(durable, conversationId as ConversationId);
-      } else {
-        storage = durable;
-      }
+      if (repaired.length) this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
+      // A worker's view: every scan forced onto its conversation, by-id
+      // reads refusing foreign records — the boundary that keeps the
+      // scheduler from adopting another conversation's work.
+      const storage = scopeId === undefined ? durable : new ScopedDurableStorage(durable, scopeId as ConversationId);
       const harness = await Harness.open(
         storage,
         {
-          models: this.models,
+          models: this.orgModels.models,
           registry: this.registry,
           settings: {
-            extensions: [
-              this.registry.snapshot().extension("guild")!,
-              this.codingTools,
-              this.codemodeExtension,
-            ],
-            // Decision 12: automatic background compaction on (built-in default
+            extensions: [this.registry.snapshot().extension("guild")!, this.codingTools, this.codemodeExtension],
+            // Automatic background compaction on (built-in default
             // thresholds), steering/follow-ups on (the inbox boundary places
             // queued inputs; "one-at-a-time" keeps turn semantics).
             compaction: { enabled: true },
@@ -902,63 +625,17 @@ export class GuildRuntime {
               maxAgentDelayMs: 60_000,
             },
           },
-          env: async (target) => {
-            // Executor selection: the chat's bound machine (machine dispatch
-            // over the hub), an agent session's workspace dir
-            // (workspaces/<org>/<name>), or the per-conversation sandbox for
-            // regular chats.
-            const kind = await this.executorKind(Number(target.conversationId));
-            if (kind === "machine") {
-              const dispatch = this.workerScope?.dispatch ?? this.dispatch();
-              if (!dispatch) throw new Error("machine-bound chat has no dispatch host");
-              const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
-              const chat = await this.pool.query<{
-                machine_id: string;
-                machine_label: string | null;
-                org_id: string;
-                project_folder: string | null;
-              }>(
-                `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
-             FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
-                [chatId],
-              );
-              const row = chat.rows[0]!;
-              return new MachineExecutionEnv({
-                machineId: row.machine_id,
-                orgId: row.org_id,
-                chatId,
-                workdir: row.project_folder,
-                timeoutMs: this.config.clientToolTimeoutMs,
-                dispatch,
-              });
-            }
-            // Agent-session workspaces and plain chats: the server-side
-            // sandbox (envForConversation picks runner / in-process / refused).
-            const chatId = await this.chatOfConversation(Number(target.conversationId));
-            if (chatId === null) {
-              // Unmapped conversations have no org to sandbox under; only the
-              // in-process executor serves them.
-              if (this.config.sandbox.mode !== "inprocess-unsafe")
-                throw new Error("no chat is bound to this conversation");
-              const dir = `${sandboxRoot()}/${target.conversationId}`;
-              await mkdir(dir, { recursive: true });
-              return new NodeExecutionEnv({ cwd: dir });
-            }
-            const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-            const env = await this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
-            await this.materializeAttachmentsForTurn(chatId, chat.rows[0]!.org_id, env);
-            return env;
-          },
+          env: (target) => this.executors.harnessEnv(Number(target.conversationId)),
           onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
         },
         BACKGROUND_CONTEXT,
       );
-      void harness.closed.then(() =>
-        this.log.info({ durable: durable.diagnostics() }, "durable storage lifetime closed"),
-      );
+      void harness.closed.then(() => this.log.info({ durable: durable.diagnostics() }, "durable storage lifetime closed"));
       return { harness, storage, watches: new Map() };
     } catch (error) {
-      await durable.close(BACKGROUND_CONTEXT).catch(() => {});
+      await durable.close(BACKGROUND_CONTEXT).catch((closeError: unknown) => {
+        this.log.warn({ err: closeError }, "durable storage close after a failed open failed");
+      });
       throw error;
     }
   }
@@ -966,12 +643,12 @@ export class GuildRuntime {
   private async initializeHarness(): Promise<void> {
     const harness = this.harness!;
     for (const [chatId, id] of this.chatToConversation) this.forgetConversation(chatId, id);
-    this.providerChats.clear();
+    this.orgModels.clear();
     // Only chats with journal work attach now; every other chat maps and
     // attaches on its first touch (attachedConversation). The worker's
     // mapping was bootstrapped for exactly its chat: the scoped harness
     // refuses foreign conversations by design.
-    if (!this.workerScope) {
+    if (this.turns.scope === undefined) {
       this.chatToConversation.clear();
       this.conversationToChat.clear();
       await this.loadPendingMapping();
@@ -986,13 +663,13 @@ export class GuildRuntime {
     // Org model providers register before resume: a re-driven run resolves
     // its model through the registry, and without this it fails no_model —
     // submit-time refresh alone only covers turns submitted in this process.
-    if (this.workerScope) await this.refreshOrgModels(await this.orgOfChat(this.workerScope.chatId));
-    else await this.refreshAllOrgModels();
+    if (this.turns.scope !== undefined) await this.orgModels.refresh(await this.stores.chats.requireOrgOf(this.turns.scope));
+    else await this.orgModels.refreshAll();
     // Tool provisioning rides the same path a submit uses: a re-driven run
     // (crash or deploy restart) must issue new integration/MCP calls
     // against a provisioned surface, not the fresh process's core-only
     // registry.
-    const pendingChats = new Set((await this.chatsWithPendingWork()).map((row) => row.chatId));
+    const pendingChats = new Set((await chatsWithWork(this.pool, false)).map((row) => row.chatId));
     for (const [chatId, conversationId] of this.chatToConversation) {
       if (!pendingChats.has(chatId)) continue;
       await this.provisionResumedConversation(chatId, conversationId);
@@ -1004,21 +681,20 @@ export class GuildRuntime {
     for (const [chatId, conversationId] of this.chatToConversation) {
       await this.reconcileConversation(chatId, conversationId);
     }
-    // Never-delivered commands of past failed submits (the durable wedge
-    // left two pending rows forever) — swept at startup and on every
-    // submit; the sweep failing must not block the turn.
+    // Never-delivered commands of past failed submits are swept at startup
+    // and on every submit; the sweep failing must not block the turn.
     await this.sweepExpiredCommands();
     this.harnessOpenedAt = Date.now();
   }
 
   /** Provisions one resumed conversation's tools — the submit path's
    *  provisioning, keyed by chat. */
-  private async provisionResumedConversation(chatId: string, conversationId: string | number): Promise<void> {
-    const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-    if (chat.rows[0] === undefined) return;
+  private async provisionResumedConversation(chatId: string, conversationId: number): Promise<void> {
+    const orgId = await this.stores.chats.orgOf(chatId);
+    if (orgId === null) return;
     const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return;
-    await this.provisionTurnTools(conversation, chatId, chat.rows[0].org_id);
+    await this.turnTools.provision(conversation, chatId, orgId);
   }
 
   /** The reopen backoff ladder (first attempt immediate, then capped). */
@@ -1030,26 +706,21 @@ export class GuildRuntime {
    *  (the old and the new harness both settling) collapse into one loop. */
   private async scheduleReopen(error: unknown): Promise<void> {
     if (this.stopped) return;
-    {
-      if (Date.now() - this.harnessOpenedAt > 10 * 60_000) this.reopenAttempts = 0;
-      let lastError = error;
-      for (;;) {
-        const delays = GuildRuntime.REOPEN_DELAYS_MS;
-        const delay = delays[Math.min(this.reopenAttempts, delays.length - 1)]!;
-        this.reopenAttempts++;
-        this.log.error(
-          { err: lastError, attempt: this.reopenAttempts, delayMs: delay },
-          "durable session failed; reopening",
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        if (this.stopped) return;
-        try {
-          await this.openHarness();
-          this.log.info({ attempt: this.reopenAttempts }, "durable session reopened");
-          return;
-        } catch (reopenError) {
-          lastError = reopenError;
-        }
+    if (Date.now() - this.harnessOpenedAt > 10 * 60_000) this.reopenAttempts = 0;
+    let lastError = error;
+    for (;;) {
+      const delays = GuildRuntime.REOPEN_DELAYS_MS;
+      const delay = delays[Math.min(this.reopenAttempts, delays.length - 1)]!;
+      this.reopenAttempts++;
+      this.log.error({ err: lastError, attempt: this.reopenAttempts, delayMs: delay }, "durable session failed; reopening");
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (this.stopped) return;
+      try {
+        await this.openHarness();
+        this.log.info({ attempt: this.reopenAttempts }, "durable session reopened");
+        return;
+      } catch (reopenError) {
+        lastError = reopenError;
       }
     }
   }
@@ -1058,7 +729,7 @@ export class GuildRuntime {
    *  accept committed but the submit threw — the two run back to back). */
   private async sweepExpiredCommands(): Promise<void> {
     try {
-      const swept = await this.turnCommands.sweepExpired(15 * 60);
+      const swept = await this.stores.turnCommands.sweepExpired(15 * 60);
       if (swept > 0) this.log.warn({ swept }, "expired pending turn commands failed by sweep");
     } catch (error) {
       this.log.warn({ err: error }, "turn command sweep failed");
@@ -1068,22 +739,17 @@ export class GuildRuntime {
   /** Maps the chats whose conversation has journal work: live tasks,
    *  queued submissions, or entries the projection has not caught up on. */
   private async loadPendingMapping(): Promise<void> {
-    const pending = (await this.chatsWithPendingWork(true)).map((row) => row.chatId);
-    if (pending.length === 0) return;
-    const res = await this.pool.query<{ chat_id: string; conversation_id: string }>(
-      "SELECT chat_id, conversation_id FROM chat_conversations WHERE chat_id = ANY($1::uuid[])",
-      [pending],
-    );
-    for (const row of res.rows) this.mapConversation(row.chat_id, Number(row.conversation_id));
+    const pending = (await chatsWithWork(this.pool, true)).map((row) => row.chatId);
+    for (const [chatId, conversationId] of await this.stores.conversations.conversationsOf(pending)) {
+      this.mapConversation(chatId, conversationId);
+    }
   }
 
   /** Drops everything this process holds for one conversation: bridge
    *  state, provisioned tool snapshots and the chat-scoped extensions. */
   private forgetConversation(chatId: string, conversationId: number): void {
     this.bridge.forget(String(conversationId));
-    for (const [sessionId, source] of this.providerChats) {
-      if (source.conversationId === conversationId) this.providerChats.delete(sessionId);
-    }
+    this.orgModels.forgetConversation(conversationId);
     this.integrationsRuntime.forget(conversationId);
     this.userMcpRuntime.forget(conversationId);
     this.skillsRuntime.forget(conversationId);
@@ -1097,9 +763,8 @@ export class GuildRuntime {
 
   /** Drops the per-run caches of one chat once its run ends. */
   private forgetRun(chatId: string): void {
-    this.materializedTurns.delete(chatId);
-    this.runIdCache.delete(chatId);
-    for (const [key, owner] of this.sandboxChats) if (owner === chatId) this.sandboxChats.delete(key);
+    this.orgModels.forgetRun(chatId);
+    this.executors.forgetRun(chatId);
   }
 
   /** The chat's existing conversation with its watch attached, mapping it
@@ -1108,12 +773,9 @@ export class GuildRuntime {
     await this.start();
     let id = this.chatToConversation.get(chatId);
     if (id === undefined) {
-      const res = await this.pool.query<{ conversation_id: string }>(
-        "SELECT conversation_id FROM chat_conversations WHERE chat_id = $1",
-        [chatId],
-      );
-      if (res.rows[0] === undefined) return undefined;
-      id = Number(res.rows[0].conversation_id);
+      const mapped = await this.stores.conversations.conversationOf(chatId);
+      if (mapped === null) return undefined;
+      id = mapped;
       this.mapConversation(chatId, id);
     }
     const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -1130,16 +792,16 @@ export class GuildRuntime {
   private async attachWatchOnce(chatId: string, conversationId: number): Promise<void> {
     const existing = this.watches.get(chatId);
     if (existing) {
-      await existing.stop().catch(() => {});
+      await existing.stop().catch((error: unknown) => this.log.debug({ err: error, chatId }, "previous watch stop failed"));
       this.watches.delete(chatId);
     }
     const key = String(conversationId);
-    this.bridge.bind(key, chatId, await this.orgOfChat(chatId));
+    this.bridge.bind(key, chatId, await this.stores.chats.requireOrgOf(chatId));
     const sessionId = await this.harness!.commit(
       async (tx) => (await tx.doc(ProviderDoc, conversationId as ConversationId)).sessionId,
       BACKGROUND_CONTEXT,
     );
-    this.providerChats.set(sessionId, { chatId, conversationId });
+    this.orgModels.bindSession(sessionId, chatId, conversationId);
     const harness = this.harness!;
     const conversation = (await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT))!;
     const stream = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
@@ -1163,7 +825,7 @@ export class GuildRuntime {
           typeof record.requestId === "string" &&
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId)
         ) {
-          await this.turnCommands.submitted(record.requestId, `sub:${record.id}`);
+          await this.stores.turnCommands.submitted(record.requestId, `sub:${record.id}`);
         }
         await this.bridge.handle(key, [{ type: "submission", record }]);
       }
@@ -1221,18 +883,10 @@ export class GuildRuntime {
     if (!harness || this.stopped) return;
     const conversation = await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return;
-    const row = await this.pool.query<{ org_id: string; archived_at: Date | null }>(
-      "SELECT org_id,archived_at FROM chats WHERE id=$1",
-      [chatId],
-    );
-    if (!row.rows[0]) return;
-    if (row.rows[0].archived_at === null && (await drainIdleInbox(conversation))) harness.resume();
-    await this.chats.reconcileGenerating(row.rows[0].org_id, chatId);
-  }
-
-  private async orgOfChat(chatId: string): Promise<string> {
-    const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-    return res.rows[0]!.org_id;
+    const chat = await this.stores.chats.identityOf(chatId);
+    if (chat === null) return;
+    if (!chat.archived && (await drainIdleInbox(conversation))) harness.resume();
+    await this.stores.chats.reconcileGenerating(chat.org_id, chatId);
   }
 
   /** Resolves (or creates) the durable conversation for a chat. This is the
@@ -1248,7 +902,7 @@ export class GuildRuntime {
         return conversation;
       }
       this.unmapConversation(chatId);
-      await this.pool.query("DELETE FROM chat_conversations WHERE chat_id = $1", [chatId]);
+      await this.stores.conversations.remove(chatId);
       // Missing durable state cannot be reconstructed from a possibly
       // incomplete visible journal. A replacement starts with empty context.
       this.log.warn(
@@ -1266,296 +920,34 @@ export class GuildRuntime {
     return conversation;
   }
 
-  /** Seeds the workspace config files when absent, reads them, and builds
-   *  the thread's instructions. A broken volume never fails a turn: the
-   *  prompt falls back to the runtime block alone. */
-  private async agentInstructionsFor(
-    agent: Agent,
-    projectInstructions?: string,
-    machineBound = false,
-    chatId?: string,
-  ): Promise<string> {
-    const dir = agentWorkspaceDir(this.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
-    let config: AgentConfigFiles;
-    try {
-      await seedAgentWorkspace(dir);
-      config = await readAgentConfig(dir);
-    } catch (error) {
-      this.log.warn({ err: error, agentId: agent.id }, "agent config files unavailable");
-      config = { files: new Map(), missing: CONFIG_FILES.filter((f) => f.required).map((f) => f.name) };
-    }
-    const spawnedBy = chatId === undefined ? undefined : await this.spawnedByFor(chatId);
-    const thread =
-      chatId === undefined ? undefined : ((await this.threadContextFor(chatId)) ?? undefined);
-    const canDelegate =
-      spawnedBy === undefined
-        ? agent.tools_mode === "all" || agent.tools.includes("subagents")
-        : spawnedBy.can_spawn;
-    return composeAgentInstructions(
-      agent,
-      config,
-      projectInstructions,
-      machineBound,
-      spawnedBy,
-      canDelegate,
-      thread,
-    );
+  /** Makes a plain chat an agent chat (agents/thread-binding.ts). */
+  adoptChatAgent(chatId: string, orgId: string, userId: string, title: string): Promise<ChatAgentBinding | null> {
+    return this.binding.adopt(chatId, orgId, userId, title);
   }
 
-  /** The project instruction chain the chat's latest submit carried, kept
-   *  with the chat's conversation mapping so a resumed run sees it too. */
-  private async projectInstructionsFor(chatId: string): Promise<string | undefined> {
-    const res = await this.pool.query<{ project_instructions: string | null }>(
-      "SELECT project_instructions FROM chat_conversations WHERE chat_id = $1",
-      [chatId],
-    );
-    return res.rows[0]?.project_instructions ?? undefined;
-  }
-
-  /** The thread's own context: an isolated routine run, or a thread the agent
-   *  opened from one of its runs. Null for a plain thread. */
-  private async threadContextFor(chatId: string): Promise<ThreadInstructionContext | null> {
-    const res = await this.pool.query<{
-      type: string;
-      origin_thread_id: string | null;
-      origin_title: string | null;
-      routine_name: string | null;
-    }>(
-      `SELECT t.type, t.origin_thread_id,
-              (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
-              (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
-               WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
-               ORDER BY rn.created_at DESC LIMIT 1) AS routine_name
-       FROM agent_threads t
-       WHERE t.chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined) return null;
-    const origin =
-      row.origin_thread_id === null
-        ? null
-        : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
-    if (row.type !== "routine" && origin === null) return null;
-    return { type: row.type, routineName: row.routine_name, origin };
-  }
-
-  /** The tree context of a spawned child thread, or undefined for a root. */
-  private async spawnedByFor(
-    chatId: string,
-  ): Promise<{ parent_name: string; depth: number; can_spawn: boolean } | undefined> {
-    const res = await this.pool.query<{
-      thread_id: string;
-      parent_thread_id: string | null;
-      depth: number;
-      parent_name: string | null;
-    }>(
-      `SELECT t.id AS thread_id, t.parent_thread_id, t.depth, pa.name AS parent_name
-       FROM agent_threads t
-       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
-       LEFT JOIN agents pa ON pa.id = pt.agent_id
-       WHERE t.chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined || row.parent_thread_id === null) return undefined;
-    const children = await this.agents.childCount(row.thread_id);
-    return {
-      parent_name: row.parent_name ?? "another agent",
-      depth: Number(row.depth),
-      can_spawn: Number(row.depth) < this.config.agentMaxDepth && children < this.config.agentMaxChildrenPerNode,
-    };
-  }
-
-  /** The per-turn tool provisioning submit and resume share: resolve the
-   *  org's enabled integrations + the chat owner's MCP servers into
-   *  extensions + tools and configure the conversation with them. Submit
-   *  runs it before admission; resume runs it before the re-driven run —
-   *  a resumed run must see the same tool surface a submitted one gets
-   *  (the fresh process's registry carries only the base extensions). */
-  private async provisionTurnTools(
-    conversation: Conversation,
-    chatId: string,
-    orgId: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    // Integration connector tools are opt-in for agents: the agent's tool
-    // allowlist narrows the integration surface before the extension is
-    // installed, so unselected tools are neither declared nor callable.
-    // Plain chats keep the full surface.
-    const agentRef = await agentThreadForChat(this.pool, chatId);
-    const agent = agentRef === null ? null : await this.agents.fetchAgent(agentRef.agent_id);
-    const prepared = await this.integrationsRuntime.prepareTurn(
-      Number(conversation.id),
-      chatId,
-      orgId,
-      agent === null || agent.tools_mode === "all" ? undefined : new Set<string>(agent.tools),
-    );
-    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId, signal);
-    // Reconcile the complete desired selection, including an empty surface.
-    // Persisted choices may outlive this process's provisioning caches.
-    const base = this.baseConfiguration();
-    const machineBound = (await this.executorKind(Number(conversation.id))) === "machine";
-    // The agent's allowlist narrows the direct coding and skill tools the
-    // same way it narrows integrations. Codemode itself is always present:
-    // it is the only path to the script-only tools.
-    const baseTools = directBaseTools(
-      machineBound
-        ? base.tools.filter((tool) => !(CODING_TOOL_NAMES as readonly string[]).includes(tool.name))
-        : base.tools,
-      agent,
-    );
-    const agentTools = await this.agentToolsForChat(chatId);
-    // The plain names keep their behavior; only their descriptions change,
-    // so the model sees which environment each set acts on.
-    const machineTools = machineBound ? createMachineTools() : [];
-    // A project-bound chat runs the plain coding tools on the user's
-    // machine, so the agent gets a second set bound to its own sandbox.
-    // They are outside the allowlist: the workspace is the agent's memory,
-    // not an optional capability.
-    const workspaceTools = machineBound
-      ? createAgentWorkspaceTools(await this.envForConversation(Number(conversation.id), orgId))
-      : [];
-    // Tools resolve through installed extensions; configure stores names.
-    // The agent tools are per conversation, so their extension is installed
-    // under a chat-scoped name and listed with the other extensions.
-    const names = chatExtensionNames(chatId);
-    const agentExtension = agentTools.length === 0 ? null : { name: names[0], tools: agentTools };
-    if (agentExtension !== null) this.registry.install(agentExtension);
-    const machineExtension = machineTools.length === 0 ? null : { name: names[1], tools: machineTools };
-    if (machineExtension !== null) this.registry.install(machineExtension);
-    const workspaceExtension = workspaceTools.length === 0 ? null : { name: names[2], tools: workspaceTools };
-    if (workspaceExtension !== null) this.registry.install(workspaceExtension);
-    await conversation.configure(
-      {
-        extensions: [
-          ...base.extensions,
-          ...(agentExtension === null ? [] : [agentExtension]),
-          ...(machineExtension === null ? [] : [machineExtension]),
-          ...(workspaceExtension === null ? [] : [workspaceExtension]),
-          ...prepared.extensions,
-          ...userPrepared.extensions,
-        ],
-        tools: [
-          ...baseTools,
-          ...machineTools,
-          ...prepared.tools,
-          ...userPrepared.tools,
-          ...agentTools,
-          ...workspaceTools,
-        ],
-        ...(agent === null
-          ? {}
-          : {
-              instructions: await this.agentInstructionsFor(
-                agent,
-                await this.projectInstructionsFor(chatId),
-                workspaceTools.length > 0,
-                chatId,
-              ),
-            }),
-      },
-      BACKGROUND_CONTEXT,
-    );
-  }
-
-  /** Makes a plain chat an agent chat: the caller's personal agent adopts it
-   *  on the first turn, so every conversation has an agent. Idempotent — a
-   *  chat that already belongs to an agent keeps it. Returns the agent whose
-   *  model and tools the turn must use, or null when the org has no model.
-   *  A chat whose agent is being deleted refuses the turn (409). */
-  async adoptChatAgent(
-    chatId: string,
-    orgId: string,
-    userId: string,
-    title: string,
-  ): Promise<{ agent_id: string; thread_id: string; model: string } | null> {
-    const existing = await agentThreadForChat(this.pool, chatId);
-    if (existing !== null) {
-      const agent = await this.agents.fetchAgent(existing.agent_id);
-      refuseDeletingAgent(agent);
-      return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
-    }
-    const personal = await this.agents.ensurePersonalAgentFor(orgId, userId);
-    if (personal === null) return null;
-    const threadId = uuidv7();
-    const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
-       VALUES ($1, $2, $3, $4, $5, false, 'user')
-       ON CONFLICT (chat_id) DO NOTHING
-       RETURNING id`,
-      [threadId, personal.id, userId, chatId, title],
-    );
-    const id = inserted.rows[0]?.id;
-    if (id === undefined) {
-      // A concurrent turn adopted it first.
-      const again = await agentThreadForChat(this.pool, chatId);
-      if (again === null) throw new Error("chat adoption lost its thread");
-      const agent = await this.agents.fetchAgent(again.agent_id);
-      refuseDeletingAgent(agent);
-      return { agent_id: agent.id, thread_id: again.thread_id, model: agent.model };
-    }
-    return { agent_id: personal.id, thread_id: id, model: personal.model };
-  }
-
-  /** Binds a chat to a chosen agent (the composer's agent picker). A chat
-   *  that already has a thread keeps its transcript and changes agent; a
-   *  plain chat gets a thread on the chosen agent. An agent being deleted
-   *  takes no chat (409). */
-  async bindChatAgent(
-    chatId: string,
-    userId: string,
-    agentId: string,
-    title: string,
-    user: UserRow,
-  ): Promise<{ agent_id: string; thread_id: string; model: string }> {
-    const { agent } = await this.agents.requireAccess(user, agentId, "use");
-    refuseDeletingAgent(agent);
-    const existing = await agentThreadForChat(this.pool, chatId);
-    if (existing !== null) {
-      if (existing.agent_id !== agent.id && !(await this.agentSwitchAllowed(chatId))) {
-        throw new ThreadAgentLocked();
-      }
-      if (existing.agent_id !== agent.id) {
-        await this.pool.query(
-          `UPDATE agent_threads SET agent_id = $2, last_activity_at = now()
-           WHERE chat_id = $1`,
-          [chatId, agent.id],
-        );
-      }
-      return { agent_id: agent.id, thread_id: existing.thread_id, model: agent.model };
-    }
-    const threadId = uuidv7();
-    const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
-       VALUES ($1, $2, $3, $4, $5, false, 'user')
-       ON CONFLICT (chat_id) DO NOTHING
-       RETURNING id`,
-      [threadId, agent.id, userId, chatId, title],
-    );
-    if (inserted.rows[0] === undefined) {
-      const again = await agentThreadForChat(this.pool, chatId);
-      if (again === null) throw new Error("agent binding lost its thread");
-      return { agent_id: again.agent_id, thread_id: again.thread_id, model: agent.model };
-    }
-    return { agent_id: agent.id, thread_id: threadId, model: agent.model };
+  /** Binds a chat to a chosen agent (agents/thread-binding.ts). */
+  bindChatAgent(chatId: string, userId: string, agentId: string, title: string, user: UserRow): Promise<ChatAgentBinding> {
+    return this.binding.bind(chatId, userId, agentId, title, user);
   }
 
   /** The agent bound to a chat, for the composer's chip. */
-  async chatAgent(chatId: string): Promise<Agent | null> {
-    const ref = await agentThreadForChat(this.pool, chatId);
-    return ref === null ? null : this.agents.fetchAgent(ref.agent_id);
+  chatAgent(chatId: string): Promise<Agent | null> {
+    return this.binding.agentOf(chatId);
   }
 
-  /** A thread keeps the agent that owns it when it is that agent's Main
-   *  thread or a run transcript. Ordinary threads move with the picker. */
-  async agentSwitchAllowed(chatId: string): Promise<boolean> {
-    const res = await this.pool.query<{ type: string; is_default: boolean }>(
-      `SELECT type, is_default FROM agent_threads WHERE chat_id = $1`,
-      [chatId],
-    );
-    const row = res.rows[0];
-    return row === undefined || (row.type === "user" && !row.is_default);
+  /** Whether the chat's thread may move to another agent. */
+  agentSwitchAllowed(chatId: string): Promise<boolean> {
+    return this.binding.switchAllowed(chatId);
+  }
+
+  /** Archiving a chat closes its agent-thread subtree. */
+  closeChatSubtree(chatId: string): Promise<void> {
+    return this.binding.closeSubtree(chatId);
+  }
+
+  /** Opens the run row for an adopted chat turn. */
+  beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
+    return this.binding.beginChatRun(agentId, threadId, userId);
   }
 
   /** Delivers one terminal child run to its parent thread. The run-settle
@@ -1567,18 +959,8 @@ export class GuildRuntime {
   /** Places one drained child-result batch as a steer input: merge into a
    *  pending unplaced steer item, else submit a new steer. Never enqueues a
    *  follow-up turn. */
-  async deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
-    // The conversation handle is invocation-bound: only the worker that owns
-    // the chat can open it. A worker forwards to the owner; the server
-    // routes through its turn backend.
-    if (this.workerScope !== undefined && chatId !== this.workerScope.chatId) {
-      if (this.workerScope.remoteDeliverSteer === undefined) {
-        throw new Error("this worker cannot deliver a steer to another chat");
-      }
-      await this.workerScope.remoteDeliverSteer(chatId, orgId, text, model);
-      return;
-    }
-    await this.turns.deliverSteer(chatId, orgId, text, model);
+  deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    return this.turns.deliverSteer(chatId, orgId, text, model);
   }
 
   private async deliverSteerInProcess(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
@@ -1603,197 +985,43 @@ export class GuildRuntime {
     });
   }
 
-  /** Archiving a chat closes its agent-thread subtree: in-flight runs stop
-   *  and deliveries to and from the subtree stop. */
-  async closeChatSubtree(chatId: string): Promise<void> {
-    const row = await this.pool.query<{ id: string }>("SELECT id FROM agent_threads WHERE chat_id = $1", [chatId]);
-    if (row.rows[0] !== undefined) await this.agents.closeSubtree(row.rows[0].id);
-  }
-
-  /** A user stop of a child chat is a delivered cancellation: mark its
-   *  running runs cancelled, then wake the parent with cancelled/user. */
-  private async cancelChildOnStop(chatId: string): Promise<void> {
-    const thread = await this.pool.query<{ id: string; parent_thread_id: string | null }>(
-      "SELECT id, parent_thread_id FROM agent_threads WHERE chat_id = $1",
-      [chatId],
-    );
-    const row = thread.rows[0];
-    if (row === undefined || row.parent_thread_id === null) return;
-    const runs = await this.pool.query<{ id: string; started_at: string }>(
-      `UPDATE agent_runs
-       SET status = 'cancelled', finished_at = now()
-       WHERE thread_id = $1 AND status IN ('queued', 'running')
-       RETURNING id,
-         ${utcText("COALESCE(started_at, created_at)")} AS started_at`,
-      [row.id],
-    );
-    if (runs.rowCount !== 0) await notifySubagentTree(this.pool, row.id);
-    for (const run of runs.rows) {
-      const finalText = await assistantTextForRun(this.pool, chatId, run.started_at).catch(() => "");
-      await this.childDelivery
-        .deliver({
-          child_thread_id: row.id,
-          run_id: run.id,
-          status: "cancelled",
-          reason: "user",
-          final_text: finalText,
-        })
-        .catch((error: unknown) => this.log.warn({ err: error, chatId, runId: run.id }, "cancel delivery failed"));
-    }
-  }
-
-  /** The chat's running agent run id, cached briefly: every model call in
-   *  the turn carries it as the trace id. Null for plain chats. */
-  private async runningRunId(chatId: string): Promise<string | null> {
-    const cached = this.runIdCache.get(chatId);
-    const now = Date.now();
-    if (cached !== undefined && now - cached.at < 2_000) return cached.id;
-    const run = await this.agents.runningRunForChat(chatId).catch(() => null);
-    const id = run?.id ?? null;
-    this.runIdCache.set(chatId, { id, at: now });
-    return id;
-  }
-
-  /** Opens the run row for an adopted chat turn; the run lifecycle closes it
-   *  from the transcript like any other agent turn. */
-  async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
-    // A delivery may have opened a run for this thread while the chat had no
-    // live turn. Adopt it; a second run would stay open forever.
-    const open = await this.agents.runningRunForThread(threadId);
-    if (open !== null) {
-      if (open.status === "queued") {
-        await this.agents.updateRun(open.id, {
-          status: "running",
-          started_at: new Date().toISOString(),
-        });
-      }
-      return open.id;
-    }
-    const run = await this.agents.createRun({
-      agent_id: agentId,
-      user_id: userId,
-      thread_id: threadId,
-      trigger: "message",
-      status: "running",
-      started_at: new Date().toISOString(),
-    });
-    return run.id;
-  }
-
-  /** The conversation tools that exist only for agent threads: send_message,
-   *  conversations_search and conversation_read, filtered by the agent's
-   *  tool allowlist. Plain chats get none. */
-  private async agentToolsForChat(chatId: string): Promise<ToolRegistration[]> {
-    const ref = await agentThreadForChat(this.pool, chatId);
-    this.log.debug({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
-    if (ref === null) return [];
-    const agent = await this.agents.fetchAgent(ref.agent_id);
-    const subagents = await subagentsContextForChat({
-      pool: this.pool,
-      store: this.agents,
-      threads: this.threads,
-      agent,
-      chatId,
-      maxDepth: this.config.agentMaxDepth,
-      maxChildrenPerNode: this.config.agentMaxChildrenPerNode,
-      runtime: {
-        submitTurn: (childChatId, childOrgId, input) =>
-          this.submitTurn(childChatId, childOrgId, {
-            orgId: input.orgId,
-            requestId: input.requestId,
-            content: input.content,
-            images: input.images,
-            model: input.model,
-          }),
-        stopChat: (childChatId) => this.stopChat(childChatId),
-        canStopChat: (childChatId) => this.canStopChat(childChatId),
-      },
-    });
-    const sendFile =
-      subagents === null || this.objects === undefined
-        ? undefined
-        : {
-            attachments: this.attachments,
-            objects: this.objects,
-            agent,
-            run: subagents.parentRun,
-            chatId,
-            workspaceRoot: this.config.agentWorkspaceWriteRoot,
-          };
-    const tools = createAgentTools({
-      pool: this.pool,
-      store: this.agents,
-      threads: this.threads,
-      agent,
-      userId: ref.user_id,
-      chatId,
-      ...(subagents === null ? {} : { subagents }),
-      ...(sendFile === undefined ? {} : { sendFile }),
-    });
-    this.log.debug({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
-    return tools;
-  }
-
   /** Submits a user turn into the chat's conversation: the model provider
    *  for the org is refreshed from the gateway routes, the agent's model is
    *  configured, and the input is durably admitted (queued in the inbox when
-   *  busy — steering/follow-up semantics, decision 12). */
+   *  busy — steering/follow-up semantics). */
   submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
     // A fresh turn starts a new run (the caller creates it before this
     // call), so the cached run id from the previous turn is stale.
-    this.runIdCache.delete(chatId);
-    // A worker admitting another chat's turn (delegation) must not open the
-    // workspace-turn row: the target chat's own worker owns that run.
-    if (!(this.workerScope !== undefined && chatId !== this.workerScope.chatId)) {
+    this.orgModels.forgetRun(chatId);
+    // A chat whose turns run elsewhere (a worker delegating to another chat)
+    // does not open the workspace-turn row: the chat's own worker owns it.
+    if (this.turns.owns(chatId)) {
       void this.conflicts.beginTurn(chatId).catch((error: unknown) => {
         this.log.warn({ err: error, chatId }, "agent turn journal start failed");
       });
     }
     return this.admissions
-      .run(chatId, (signal) => this.admitTurn(chatId, orgId, input, signal))
+      .run(chatId, (signal) => this.turns.submit(chatId, orgId, input, signal))
       .catch(async (error) => {
         if (error instanceof AdmissionCancelled) {
-          await this.turnCommands.settleCancelledById(input.requestId, chatId);
-          await this.threads.deleteQueuedEvent(chatId, input.requestId);
-          await this.chats.reconcileGenerating(orgId, chatId);
+          await this.stores.turnCommands.settleCancelledById(input.requestId, chatId);
+          await this.stores.threads.deleteQueuedEvent(chatId, input.requestId);
+          await this.stores.chats.reconcileGenerating(orgId, chatId);
         }
         throw error;
       });
   }
 
-  private async admitTurn(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number> {
-    if (this.workerScope !== undefined && chatId !== this.workerScope.chatId) {
-      if (this.workerScope.remoteSubmit === undefined) {
-        throw new Error("this worker cannot admit turns for another chat");
-      }
-      return this.workerScope.remoteSubmit(chatId, orgId, input);
-    }
-    return this.turns.submit(chatId, orgId, input, signal);
-  }
-
-  private async admitInProcess(
-    chatId: string,
-    orgId: string,
-    input: SubmitTurnInput,
-    signal: AbortSignal,
-  ): Promise<number> {
+  private async admitInProcess(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number> {
     await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId);
-    await this.refreshOrgModels(orgId);
-    const owner = await this.chats.ownerOf(chatId);
+    await this.orgModels.refresh(orgId);
+    const owner = await this.stores.chats.ownerOf(chatId);
     // Integrations + user MCP: the shared per-turn provisioning (the same
-    // call the resume path makes before a re-driven run) — the org's
-    // enabled plugins resolve into a snapshot, the per-org extension carries
-    // their tools, and the conversation's agent selection + role-filtered
-    // tool allow-list are refreshed. User MCP servers: the chat owner's
-    // enabled servers declare their tools the same way (one extension + bare
-    // registrations). Empty desired selections clear previously configured
-    // dynamic tools.
-    await this.pool.query("UPDATE chat_conversations SET project_instructions = $2 WHERE chat_id = $1", [
-      chatId,
-      input.agentsMd ?? "",
-    ]);
-    await this.provisionTurnTools(conversation, chatId, orgId, signal);
+    // call the resume path makes before a re-driven run). Empty desired
+    // selections clear previously configured dynamic tools.
+    await this.stores.conversations.setProjectInstructions(chatId, input.agentsMd ?? "");
+    await this.turnTools.provision(conversation, chatId, orgId, signal);
     signal.throwIfAborted();
     // The combined skills index section renders at turn start from the
     // stash; a turn whose client sent no index re-renders from the server
@@ -1803,10 +1031,7 @@ export class GuildRuntime {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const current = agent.model;
       if (!current || current.provider !== guildProviderId(orgId) || current.modelId !== input.model) {
-        await conversation.configure(
-          { model: { provider: guildProviderId(orgId), modelId: input.model } },
-          BACKGROUND_CONTEXT,
-        );
+        await conversation.configure({ model: { provider: guildProviderId(orgId), modelId: input.model } }, BACKGROUND_CONTEXT);
       }
     }
     const content: UserMessage["content"] =
@@ -1877,127 +1102,35 @@ export class GuildRuntime {
     return this.harness!.abortSubmission(submissionId as SubmissionId, BACKGROUND_CONTEXT, conversation.id);
   }
 
-  /** Registers/refreshes every org's loopback provider (startup path: the
-   *  resumed runs of a restart resolve models without a fresh submit). */
-  private async refreshAllOrgModels(): Promise<void> {
-    const orgs = await this.pool.query<{ id: string }>("SELECT id FROM orgs");
-    for (const org of orgs.rows) {
-      await this.refreshOrgModels(org.id).catch((error) =>
-        this.log.warn({ err: error, orgId: org.id }, "org model refresh failed"),
-      );
-    }
-  }
-
   /** Registers/refreshes the org's loopback provider from the gateway route
    *  table (the provider's model catalog = the org's enabled routes). */
-  async refreshOrgModels(orgId: string): Promise<void> {
-    const routes = await this.gateway.listRoutes(orgId);
-    const infos: GuildRouteInfo[] = routes
-      .filter((route) => route.enabled)
-      .map((route) => ({
-        model: route.model,
-        reasoning: route.reasoning,
-        context_window: route.context_window,
-        max_output_tokens: route.max_output_tokens,
-        price_in: route.price_per_mtok_in_usd,
-        price_out: route.price_per_mtok_out_usd,
-      }));
-    ensureOrgProvider(
-      this.models,
-      {
-        selfBaseUrl: this.config.selfBaseUrl,
-        internalKey: this.config.internalKey,
-        traceHeaders: async (sessionId) => {
-          const source = sessionId === undefined ? undefined : this.providerChats.get(sessionId);
-          if (!source) return {};
-          const owner = await this.chats.ownerOf(source.chatId);
-          const runId = await this.runningRunId(source.chatId);
-          return {
-            "x-guild-chat-id": source.chatId,
-            "x-guild-conversation-id": String(source.conversationId),
-            "x-guild-cause": "conversation-request",
-            ...(runId !== null ? { "x-guild-run-id": runId } : {}),
-            ...(owner ? { "x-guild-user-id": owner.user_id } : {}),
-          };
-        },
-      },
-      orgId,
-      infos,
-    );
+  refreshOrgModels(orgId: string): Promise<void> {
+    return this.orgModels.refresh(orgId);
   }
 
   /** Names a fresh thread from its first user message with one short model
    *  call. Explicitly named threads (title_locked), non-chat threads, and
    *  threads that already carry a title are left alone. */
   async generateThreadTitle(chatId: string, threadId: string): Promise<void> {
-    const res = await this.pool.query<{
-      org_id: string;
-      title: string | null;
-      title_locked: boolean;
-      type: string;
-      is_default: boolean;
-      model: string | null;
-    }>(
-      `SELECT c.org_id, t.title, t.title_locked, t.type, t.is_default, a.model
-       FROM agent_threads t
-       JOIN chats c ON c.id = t.chat_id
-       JOIN agents a ON a.id = t.agent_id
-       WHERE t.id = $1 AND t.chat_id = $2`,
-      [threadId, chatId],
-    );
-    const row = res.rows[0];
-    if (row === undefined) return;
-    if (row.type !== "user" || row.is_default || row.title_locked) return;
-    if ((row.title ?? "").trim() !== "") return;
-    const first = await this.pool.query<{ content: string | null }>(
-      `SELECT payload->>'content' AS content FROM thread_events
-       WHERE chat_id = $1 AND type = 'user_message' ORDER BY seq ASC LIMIT 1`,
-      [chatId],
-    );
-    const text = (first.rows[0]?.content ?? "").trim();
-    if (text === "" || row.model === null) return;
-    let model = this.models.getModel(guildProviderId(row.org_id), row.model);
-    if (model === undefined) {
-      // The server process in worker mode has not registered this org's
-      // routes yet; the title call is the first model use there.
-      await this.refreshOrgModels(row.org_id);
-      model = this.models.getModel(guildProviderId(row.org_id), row.model);
-    }
-    if (model === undefined) return;
-    const result = await this.models.completeSimple(
-      model,
-      {
-        systemPrompt: TITLE_SYSTEM,
-        messages: [
-          { role: "user", content: `Name this conversation:\n\n${text.slice(0, 2_000)}`, timestamp: Date.now() },
-        ],
-      },
-      // A reasoning route can spend the whole budget thinking before it
-      // writes the title; the cap is generous and the fallback names the
-      // thread when the reply is still empty.
-      { maxTokens: 1_024, temperature: 0.3, reasoning: "minimal" },
-    );
-    const raw = result.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join(" ");
-    const title = resolveGeneratedTitle(raw, text);
+    const source = await this.binding.titleSource(chatId, threadId);
+    if (source === null) return;
+    const title = await this.orgModels.title(source);
     if (title === "") return;
-    await this.chats.setGeneratedTitle(row.org_id, chatId, threadId, title);
+    await this.stores.chats.setGeneratedTitle(source.orgId, chatId, threadId, title);
   }
 
-  /** Whether this process can stop the chat's in-flight turn. A worker
-   *  owns exactly one chat; another chat needs the remoteStop IPC that does
-   *  not exist yet. */
+  /** Whether this process can stop the chat's in-flight turn: a worker
+   *  stops only its own chat. */
   canStopChat(chatId: string): boolean {
-    return this.workerScope === undefined || this.workerScope.chatId === chatId;
+    return this.turns.owns(chatId);
   }
 
   /** Stops the chat's in-flight generation: withdraws queued inputs, aborts
-   *  the ordinary ownership scope, and waits until it is idle. */
+   *  the ordinary ownership scope, and waits until it is idle. A child
+   *  chat's stop is delivered to its parent as a cancellation. */
   async stopChat(chatId: string): Promise<void> {
     this.admissions.cancel(chatId);
-    await this.cancelChildOnStop(chatId).catch((error: unknown) => {
+    await this.agentRuns.cancelChildOnStop(chatId).catch((error: unknown) => {
       this.log.warn({ err: error, chatId }, "child cancel marking failed");
     });
     await this.turns.stop(chatId);
@@ -2006,10 +1139,8 @@ export class GuildRuntime {
   private async stopInProcess(chatId: string): Promise<void> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return;
-    await conversation
-      .abort(BACKGROUND_CONTEXT)
-      .catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
-    await this.chats.setGenerating(await this.orgOfChat(chatId), chatId, false);
+    await conversation.abort(BACKGROUND_CONTEXT).catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
+    await this.stores.chats.setGenerating(await this.stores.chats.requireOrgOf(chatId), chatId, false);
   }
 
   /** Starts a conversation-owned compaction and returns its durable task identity. */
@@ -2024,18 +1155,18 @@ export class GuildRuntime {
   }
 
   /** Wires the live-frame fan-out (the member-socket feed forwarder). The
-   *  bridge emits into it; without a sink the frames are simply dropped. */
+   *  bridge emits into it; without a sink the frames are dropped. */
   setStreamSink(sink: GenerationStreamSink | null): void {
     this.bridge.setStream(sink);
-    this.forker?.setStreamSink(sink);
+    this.turns.setStreamSink(sink);
   }
 
-  /** The push lane's turn-end hook (the notifier's presence gate decides
-   *  whether a notification is worth sending). */
+  /** The push lane's turn-end hook (the notifier decides whether a
+   *  notification is worth sending). A turn that ends in a worker is
+   *  forwarded here. */
   setTurnEnded(hook: ((chatId: string, failed: boolean) => Promise<void>) | null): void {
     this.bridge.setTurnEnded(hook);
-    // Worker mode: the turn ends in a forked process, which forwards it here.
-    this.forker?.setTurnEnded(hook);
+    this.turns.setTurnEnded(hook);
   }
 
   /** Live streaming buffers of a conversation (the ThreadState frame's
@@ -2060,26 +1191,16 @@ export class GuildRuntime {
     if (this.reconcileTimer !== undefined) clearInterval(this.reconcileTimer);
     this.reconcileTimer = undefined;
     await this.admissions.close();
-    await this.forker?.close();
+    await this.turns.close();
     await this.host.close();
     await this.reopening;
     for (const [chatId, id] of this.chatToConversation) this.forgetConversation(chatId, id);
     this.chatToConversation.clear();
     this.conversationToChat.clear();
-    this.providerChats.clear();
-    await this.codemodeSandbox.close().catch(() => {});
-    await this.sandboxes?.close().catch(() => {});
+    this.orgModels.clear();
+    await this.codemodeSandbox
+      .close()
+      .catch((error: unknown) => this.log.warn({ err: error }, "codemode sandbox close failed"));
+    await this.executors.close();
   }
 }
-
-/** The chat-scoped extensions provisioning installs: agent tools, machine
- *  tools, and the agent's own workspace tools. */
-function chatExtensionNames(chatId: string): [string, string, string] {
-  return [`guild-agent-tools:${chatId}`, `guild-machine-tools:${chatId}`, `guild-agent-workspace-tools:${chatId}`];
-}
-
-function sandboxRoot(): string {
-  return process.env.GUILD_SANDBOX_ROOT ?? "/tmp/guild-sandboxes";
-}
-
-export type { Context };
