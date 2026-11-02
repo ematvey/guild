@@ -24,15 +24,18 @@ you.
 
 - **Every chat/thread UI update arrives over the member WebSocket.** Any
   state the user sees change live — messages, run status, the subagent
-  tree, the chat list, presence — is pushed as a `WsServerMsg` frame on the
-  member socket: inside the `sync` bracket for the first view, then on the
-  store NOTIFY. Clients do not poll HTTP for state the socket carries, and
-  a grandchild's event is pushed to every ancestor chat that displays it.
+  tree, the chat list, presence — is pushed as a `ServerFrame`
+  (`WsServerMsg` in Rust and the server hub) on the member socket: inside
+  the `sync` bracket for the first view, then on the store NOTIFY. Clients
+  do not poll HTTP for state the socket carries, and a grandchild's event
+  is pushed to every ancestor chat that displays it.
   New display state gets a frame variant in `protocol/socket.schema.json`
   (the contract) with a fixture in `protocol/fixtures/socket.ServerFrame.json`,
   the matching variant in `crates/protocol/src/ws.rs` and
   `packages/wire/src/types.ts`, its tag in `SERVER_TAG_NAMES`
-  (`packages/wire/src/parse.ts`), a NOTIFY channel, and a feed handler.
+  (`packages/wire/src/parse.ts`), a NOTIFY channel, a feed handler, and
+  its place in the sync gate's deferred-frame classification
+  (`apps/server/src/http/ws.ts`: held during a `sync` bracket or not).
   The server serializer (`apps/server/src/hub/protocol.ts`) is generic and
   needs no arm.
   The client applies the frame; it never re-fetches.
@@ -40,7 +43,7 @@ you.
   poll for it.** Machine online/offline, run status, unread, approvals,
   presence, registry lists — any fact the UI shows and that can change
   while the app is open — must reach the client as a server-initiated
-  `WsServerMsg` frame the moment it changes. An HTTP snapshot may seed the
+  `ServerFrame` the moment it changes. An HTTP snapshot may seed the
   first paint, but it is never the live source: no timers, no interval
   refetches, no "refresh on focus" for state the socket can carry. A new
   operational fact is not done until it has a frame, a push site in the
@@ -67,6 +70,13 @@ you.
   leaves every installed client on the old bundle, which reads as
   "my fix didn't work". The flow is: commit → compose rebuild → client
   release → verify `latest.json` serves the new version.
+- **Bump the version with `scripts/bump-version.sh <semver>`**, never by
+  hand; it covers every file the health endpoint and the release scripts
+  compare.
+- **Review-loop branch topology:** `review/roundN-<agent>`, `fix/roundN`,
+  `verify/roundN` worktrees, merged `--no-ff`; branches and worktrees are
+  retired after merge, and orchestrator prompt/report files stay out of the
+  repo root (reports live in git history).
 - **Sessions run this repo concurrently.** Check `git log` / `git status`
   for fresh commits before and after editing; pull/rebase rather than
   clobber.

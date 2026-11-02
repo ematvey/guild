@@ -1,5 +1,7 @@
 # Chat isolation — worker-per-chat: decided and building
 
+Status: **implemented** behind `GUILD_WORKER_MODE=on` (`apps/server/src/worker/`). Dev runs worker mode; prod stays on the in-process supervisor until the worker-mode soak in PLAN.md's Next steps passes.
+
 2026-10-15. Outcome of the durability incidents (the poisoned
 `pi.live` document that SessionFailed every chat, the sealed session after a
 transient Postgres failure, the SIGTERM drain). Requirement: **every chat is

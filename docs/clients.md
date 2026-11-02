@@ -68,9 +68,9 @@ The same chat frontend runs in two hosts:
   approvals).
 - **Web** (served by the TS server): the SAME frontend at `/` —
   it detects the browser (no `__TAURI_INTERNALS__`), uses same-origin
-  fetch/SSE instead of the engine, and runs in **chat mode** (streaming
-  gateway chat; agent mode with local tools stays desktop-only — tools run
-  on the machine that has the project).
+  HTTP plus the member WebSocket instead of the engine, and runs in
+  **chat mode** (streaming gateway chat; agent mode with local tools stays
+  desktop-only — tools run on the machine that has the project).
 - **Admin sections**: workspace-wide Settings pages (General, Usage,
   Assistant, Users, Teams, Models, Integrations, SSO, Registry) are
   admin-gated and share the app's session. There is no separate admin app;
@@ -194,13 +194,19 @@ sha256 digest** with a server key (auto-generated once, persisted in
 the server-computed sha256 matches the local file before declaring success.
 
 ### The client tag
-After the last upload the script tags HEAD `client-v<VERSION>` (annotated,
-local; push it yourself if other checkouts need it). The newest
+Before it builds anything the script refuses a dirty working tree, runs
+`node protocol/check.mjs` and aborts on a failure, and refuses a
+`client-v<VERSION>` tag that already marks a different commit (a shipped
+version is never re-tagged; bump `VERSION`). After the last upload it tags
+HEAD `client-v<VERSION>` (annotated) and pushes the tag to `origin` when
+that remote exists (`NO_PUSH_TAG=1` keeps it local). The newest
 `client-v*` tag is the compatibility baseline: `node protocol/check.mjs`
 loads `protocol/*.schema.json` from it and fails when the working tree
 removes or retypes anything a shipped client reads from the server
 (variants, properties, enum values, required-ness), or requires a property
-a shipped client does not send. With no tag the comparison is skipped.
+a shipped client does not send. With no tag reachable (a fresh or shallow
+clone: `git fetch --tags`) the comparison is skipped with a warning, and
+fails when `CI` is set.
 
 ## 5. Downloading + verifying clients
 
@@ -229,11 +235,10 @@ a shipped client does not send. With no tag the comparison is skipped.
 
 | Script | Publishes |
 |---|---|
-| `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) — **the only script needed** |
-| `scripts/release-desktop.sh` | (superseded) separate desktop-only artifacts |
+| `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) |
 
-Both are idempotent: they delete and replace existing artifacts of the same
-version/platform, verify sha256 server-side, and abort on any mismatch.
+It is idempotent: it deletes and replaces existing artifacts of the same
+version/platform, verifies sha256 server-side, and aborts on any mismatch.
 
 ## Desktop auto-updater (v0.3.0+)
 

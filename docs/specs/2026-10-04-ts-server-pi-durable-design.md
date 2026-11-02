@@ -49,9 +49,19 @@ and data semantics stay the same. Restate is dropped.
    pi-durable background tasks (routine → conversation, run → background
    task, request ID = webhook idempotency). Routines are unused today
    (0 rows in dev).
+   *Amended:* routines shipped as agent routines (`apps/server/src/agents/`
+   `routines.ts`, `scheduler.ts`): a cron or one-off trigger on a persistent
+   agent, claimed by the scheduler loop in the server process, each
+   occurrence an isolated agent run. There are no webhook triggers.
 9. **One Node process, one replica per stack.** The process owns HTTP, hub
    WS, gateway, timers, and the pi-durable harness (pi-durable storage allows
    exactly one owning process). Scale-out later = org sharding design.
+   *Amended:* the server runs under Bun, and with `GUILD_WORKER_MODE=on` the
+   main process holds no harness: `worker/supervisor.ts` forks one worker
+   per active chat, and each worker owns that chat's scoped harness. The
+   single-owner rule now holds per conversation, not per stack. Dev runs
+   worker mode; prod runs the supervisor mode this decision describes
+   (`GUILD_WORKER_MODE` unset), one process owning every conversation.
 10. **Framework: Fastify** with `@fastify/websocket` and `@fastify/http-proxy`.
 11. **pi-durable: pinned `1.0.1`, never forked, no upstream fix loop.** Gaps
     and workarounds live Guild-side (the Postgres storage backend is the
@@ -73,8 +83,8 @@ and data semantics stay the same. Restate is dropped.
 | server-side sessions (M6)       | replaced by persistent agents (`2026-10-18-persistent-agents.md`) |
 | exec policy + approvals         | `beforeTool` hooks + durable waiting task resolved by the approval API |
 | machine dispatch via hub        | `ExecutionEnv` proxying through the hub WS to the daemon  |
-| SSE turn frames                 | `watchEvents()` → same SSE frame contract                 |
-| routines on Restate             | (deferred) background tasks + request IDs                 |
+| SSE turn frames                 | `watchEvents()` → member WebSocket frames (*amended:* the SSE turn stream is gone; SSE remains only on the OpenAI/Anthropic-compatible gateway endpoints) |
+| routines on Restate             | agent routines + server-side scheduler (*amended*, see decision 8) |
 | compaction checkpoints          | pi-durable compaction (auto per decision 12)              |
 | usage recording                 | `pi.usage` docs → existing ClickHouse sink                |
 

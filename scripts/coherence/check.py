@@ -4,10 +4,11 @@
 Decoherence is the accumulation of locally valid but incompatible designs.
 It lives in two places, and this tool checks both.
 
-  Counters   Shims, copies, seams, model gaps. Cheap symptoms. They may go
-             down, never up. This stops the cheapest rot. Size counters
-             (files, lines, tests, milestone tags in comments) are reported
-             with their delta and never fail the check.
+  Counters   Shims, copies, seams, model gaps, milestone tags in comments.
+             Cheap symptoms. They may go down, never up. This stops the
+             cheapest rot. Size counters (files, lines, tests) and the
+             unmapped-file backlog are reported with their delta and never
+             fail the check.
 
   Model      A committed map of the domain: one record per concept, its
              canonical home, and every other place that represents it.
@@ -71,18 +72,21 @@ FLOOR_COUNTERS = (
     "duplicate_files",
     "translation_gaps",
     "unmodeled_types",
-    "unmapped_files",
+    "milestone_tags",
 )
 
 # Counters printed with their delta against the last `update`, never gated.
 # Size is not decoherence: a new feature or a new test adds files and lines.
 # `files`/`loc` count production sources only; tests have their own pair.
+# `unmapped_files` is the model's reading backlog: every new source file
+# starts unmapped, so gating it would tax each new file with a model edit.
+# `unmodeled_types` holds the floor for the model roots.
 REPORT_COUNTERS = (
     "files",
     "loc",
     "test_files",
     "test_loc",
-    "milestone_tags",
+    "unmapped_files",
 )
 
 # A milestone label ("M3", "M7") in a comment narrates history the code does

@@ -1,5 +1,7 @@
 # Affected-feature browser verification and fixes — 0.5.74
 
+Status: **done** — a verification record for 0.5.74; its fixes shipped in that release.
+
 The full browser pass follows the Pi Durable audit and conversation-lifetime
 changes in 0.5.71–0.5.72. It uses isolated managed dev members and local MCP
 and provider fixtures against the compose stack at localhost:18080. Real

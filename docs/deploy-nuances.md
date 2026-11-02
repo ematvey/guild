@@ -94,18 +94,6 @@ object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
   `cloudflared` tunnel), each pointing at the stack's port. Add a host with
   `cloudflared tunnel route dns <tunnel> <host>` and restart the service.
 
-### The legacy Node stack on :9330 — removed
-
-If a reverse proxy or tunnel fronts the deployment, point it at
-`localhost:18080`. It previously targeted :9330.
-
-- The old `guild-web-1`, `guild-api-1`, `guild-nginx-1`, `guild-db-1` and
-  `guild-cli-releases-1` containers are gone, and the compose file that
-  defined them is not in the repo. They were a leftover of the earlier
-  architecture.
-- Nothing points at :9330 now. If `guild-*-1` names ever reappear, they are
-  legacy; `compose-*-1` names are the current stack.
-
 ---
 
 ## 2. The big gotcha: the frontend dist is baked into the server IMAGE
@@ -155,9 +143,13 @@ head"` to inspect the served bundle directly.
 
 | Stage | Base | Does |
 |---|---|---|
-| `build` | node:22 | `npm ci --workspace apps/server` + `tsc` (dist compiled at build time) |
+| `build` | node:22 | `npm ci --workspace apps/server` (dependencies, assets, migrations; no compile) |
 | `webui` | node:22 | `npm ci --workspace apps/desktop` + `vite build` (chat SPA, needs `packages/ui/src` + `packages/wire/src`) |
-| runtime | node:22-slim | production `node_modules` + the server dist + the SPA dist + the static exec-policy rules; `node dist/index.js` |
+| runtime | node:22-slim + Bun | production `node_modules` + the server sources + the SPA dist + the static exec-policy rules + migrations; `bun src/index.ts` |
+
+`Dockerfile.sandbox` is the one image that compiles server code: its build
+stage runs `npm run build --workspace apps/server` (`tsc`) and copies only
+the sandbox agent's emitted files.
 
 Notes:
 
@@ -380,8 +372,6 @@ isolated config file (`GUILD_CONFIG_ENV`).
     (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
     deps: zig + cargo-zigbuild, macOS SDK at `$SDKROOT`, mingw-w64, makensis,
     llvm, linuxdeploy, libdmg-hfsplus, hfsprogs, 7z.
-  - `scripts/release-desktop.sh` — portable tar.gz/zip builds for
-    linux/mac/windows (zigbuild), not installer-format.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
     VITE_DEFAULT_SERVER_URL=https://guild.example.com scripts/release-clients.sh`.
   - Running the release script from a systemd transient unit needs an explicit
@@ -404,8 +394,8 @@ isolated config file (`GUILD_CONFIG_ENV`).
   `@fontsource-variable/jetbrains-mono`).
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
   `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
-  GUI spawns `guild-desktop engine` — same binary, so rebuild the Rust
-  binary for engine changes too.
+  GUI hosts the engine in-process (`guild-app-server` is a library
+  dependency of `guild-desktop`), so `tauri dev` rebuilds it with the GUI.
 
 ---
 
@@ -425,10 +415,11 @@ curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'
 docker compose down -v
 ```
 
-# Daemon watch-items (milestone-8, 2026-09-10)
+## Daemon watch-items
 
-Maintenance notes for the per-user daemon. Check these when touching
-releases, tests, or the daemon itself.
+Maintenance notes for the engine's local socket host (the GUI in-process,
+or the `Guild daemon` / `guild-daemon.service` headless host). Check these
+when touching releases, tests, or the daemon itself.
 
 1. **Bump the workspace version on every release.** The attach handshake
    (`daemon.hello` → version compare) reads `CARGO_PKG_VERSION` of the
@@ -451,9 +442,8 @@ releases, tests, or the daemon itself.
    close = EPIPE/EOF races; also: writes to one end arrive at the OTHER
    end — crossed ends make the client read back its own requests).
 
-4. **Overrides for dev:** `GUILD_DAEMON_BIN` (which binary to spawn as
-   daemon), `GUILD_DAEMON_SOCKET` (socket/pipe path). Release builds use
-   `cargo xwin check` (msvc) and `cargo zigbuild --lib` (apple) as
+4. **Overrides for dev:** `GUILD_DAEMON_SOCKET` (socket/pipe path).
+   Release builds use `cargo xwin check` (msvc) and `cargo zigbuild --lib` (apple) as
    compile gates; full binary links happen in the release pipeline
    (Windows SDK / macOS SDK needed there).
 

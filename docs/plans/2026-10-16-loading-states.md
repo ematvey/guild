@@ -1,5 +1,7 @@
 # Loading state audit, 2026-10-16
 
+Status: **implemented** (2026-10-16); a record of the audit and its corrections. The shared skeleton is `packages/ui/src/components/skeleton.tsx`.
+
 Pending data must not be rendered as absent, zero, default, or editable empty
 content. Existing data remains visible during background refreshes.
 

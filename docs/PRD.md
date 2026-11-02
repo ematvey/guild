@@ -35,8 +35,8 @@ Product surfaces:
   managed there.
 - **CLI / engine caller** — a script or tool that drives the local backend
   process (login, chat, publish, install) without the GUI.
-- **External callers** — webhook senders and script-API clients that hit org
-  endpoints with org credentials.
+- **External callers** — script-API clients that hit org endpoints with org
+  credentials.
 
 ## 3. Product requirements
 
