@@ -174,6 +174,11 @@
           "from": "db",
           "to": "wire",
           "at": "apps/server/src/platform/http/registry.ts"
+        },
+        {
+          "from": "domain",
+          "to": "db",
+          "at": "apps/server/src/platform/registry-publish.ts"
         }
       ]
     },
