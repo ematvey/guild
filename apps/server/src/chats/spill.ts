@@ -11,7 +11,7 @@
 import { ApiError } from "../platform/errors.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { safeFilename } from "../platform/store/attachments.js";
-import { artifactUuid, ToolArtifactStore, toolArtifactObjectKey, type ToolArtifactRow } from "../platform/store/toolArtifacts.js";
+import { artifactUuid, ToolArtifactStore, toolArtifactObjectKey, type ToolArtifactRow } from "../platform/store/tool-artifacts.js";
 import { isTextual } from "../platform/domain/mime.js";
 
 /** Serialized model-facing content above this size spills into an artifact

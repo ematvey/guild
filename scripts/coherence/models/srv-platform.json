@@ -1,7 +1,7 @@
 {
  "model_roots": [],
  "shared_canonical": [
-  "apps/server/src/platform/integrations/plugins.ts"
+  "apps/server/src/integrations/plugins.ts"
  ],
  "concepts": [
   {
@@ -22,16 +22,20 @@
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integration-catalog.ts",
+     "where": "apps/server/src/integrations/loader.ts",
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "where": "apps/server/src/integrations/plugins.ts",
      "role": "domain"
     },
     {
      "where": "apps/server/src/platform/http/admin.ts",
      "role": "wire"
+    },
+    {
+     "where": "apps/server/src/harness/turn-tools.ts",
+     "role": "domain"
     }
    ],
    "translations": [
@@ -56,7 +60,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/policy.ts",
+     "where": "apps/server/src/integrations/policy.ts",
      "role": "domain"
     },
     {
@@ -193,7 +197,7 @@
   {
    "id": "skill-read",
    "definition": "One recorded read of a skill bundle, with org, user, team and chat attribution.",
-   "canonical": "apps/server/src/platform/skillReads.ts",
+   "canonical": "apps/server/src/platform/skill-reads.ts",
    "types": [
     "SkillReadSink",
     "SkillReadEvent"
@@ -203,7 +207,7 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/skillReads.ts",
+     "where": "apps/server/src/platform/skill-reads.ts",
      "role": "db"
     }
    ],
@@ -212,7 +216,7 @@
   {
    "id": "chat-work",
    "definition": "The derived predicate that one chat still has work: a live task, a queued submission, or an unprojected entry.",
-   "canonical": "apps/server/src/platform/store/work.ts",
+   "canonical": "apps/server/src/storage/postgres/queries.ts",
    "types": [],
    "aliases": [
     "pending-work",
@@ -220,7 +224,7 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/store/work.ts",
+     "where": "apps/server/src/storage/postgres/queries.ts",
      "role": "domain"
     }
    ],
@@ -229,7 +233,7 @@
   {
    "id": "org-kv",
    "definition": "One key/value setting row, scoped to an org or to the whole server.",
-   "canonical": "apps/server/src/platform/store/org_kv.ts",
+   "canonical": "apps/server/src/platform/store/org-kv.ts",
    "types": [
     "OrgKvStore",
     "KvStore",
@@ -243,7 +247,7 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/store/org_kv.ts",
+     "where": "apps/server/src/platform/store/org-kv.ts",
      "role": "db"
     },
     {
@@ -274,7 +278,7 @@
      "role": "wire"
     },
     {
-     "where": "apps/server/src/platform/store/org_kv.ts",
+     "where": "apps/server/src/platform/store/org-kv.ts",
      "role": "db"
     }
    ],
@@ -289,7 +293,7 @@
   {
    "id": "mcp-peer",
    "definition": "One short-lived client connection to a remote MCP server: handshake, tool list, and tool call.",
-   "canonical": "apps/server/src/platform/integrations/mcp.ts",
+   "canonical": "apps/server/src/integrations/mcp.ts",
    "types": [
     "McpPeer",
     "McpTool",
@@ -300,11 +304,11 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/integrations/mcp.ts",
+     "where": "apps/server/src/integrations/mcp.ts",
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/execute.ts",
+     "where": "apps/server/src/integrations/execute.ts",
      "role": "domain"
     }
    ],
@@ -313,7 +317,7 @@
   {
    "id": "integration-envelope",
    "definition": "The identity and secret headers one integration call carries to an MCP server.",
-   "canonical": "apps/server/src/platform/integrations/plugins.ts",
+   "canonical": "apps/server/src/integrations/plugins.ts",
    "types": [
     "PluginTurn",
     "PluginExecutor",
@@ -325,11 +329,11 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "where": "apps/server/src/integrations/plugins.ts",
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/execute.ts",
+     "where": "apps/server/src/integrations/execute.ts",
      "role": "wire"
     },
     {
@@ -341,7 +345,7 @@
     {
      "from": "domain",
      "to": "wire",
-     "at": "apps/server/src/platform/integrations/execute.ts"
+     "at": "apps/server/src/integrations/execute.ts"
     }
    ]
   },
@@ -359,7 +363,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "where": "apps/server/src/integrations/plugins.ts",
      "role": "domain"
     },
     {
@@ -391,7 +395,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/server/src/platform/integrations/plugins.ts",
+     "where": "apps/server/src/integrations/plugins.ts",
      "role": "domain"
     },
     {
@@ -482,12 +486,12 @@
    "role": "wire"
   },
   {
-   "where": "apps/server/src/platform/integrations/execute.ts",
+   "where": "apps/server/src/integrations/execute.ts",
    "concept": "integration",
    "role": "domain"
   },
   {
-   "where": "apps/server/src/platform/integrations/plugins.ts",
+   "where": "apps/server/src/integrations/plugins.ts",
    "concept": "integration",
    "role": "domain"
   },
@@ -632,7 +636,7 @@
    "role": "domain"
   },
   {
-   "where": "apps/server/src/platform/skillReads.ts",
+   "where": "apps/server/src/platform/skill-reads.ts",
    "concept": "skill",
    "role": "db"
   },

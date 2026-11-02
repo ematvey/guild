@@ -9,7 +9,7 @@ import { ConversationHost } from "../harness/conversation-host.js";
 import { ConversationAdmissions } from "../harness/operations.js";
 import { ForkSupervisor } from "../worker/supervisor.js";
 import { loadConfig } from "../config.js";
-import { userMcpToolName } from "../harness/userMcp.js";
+import { userMcpToolName } from "../harness/user-mcp.js";
 import { toolSchema, toolDetails } from "../harness/tool-schema.js";
 
 const log = pino({ level: "silent" });

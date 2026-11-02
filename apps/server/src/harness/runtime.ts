@@ -37,10 +37,10 @@ import type { PlatformPool } from "../platform/db.js";
 import { assertPlatformSchema } from "../platform/migrations.js";
 import type { PlatformStores } from "../platform/stores.js";
 import type { ObjectStore } from "../platform/s3.js";
-import type { SkillReadSink } from "../platform/skillReads.js";
+import type { SkillReadSink } from "../platform/skill-reads.js";
 import type { TraceStore } from "../platform/trace.js";
 import { modalityOf } from "../platform/domain/mime.js";
-import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
+import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { uuidv7 } from "../platform/time.js";
 import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
@@ -66,7 +66,7 @@ import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
 import { appendToPendingSteer } from "./inbox-merge.js";
 import { IntegrationsRuntime } from "./integrations.js";
-import { UserMcpRuntime } from "./userMcp.js";
+import { UserMcpRuntime } from "./user-mcp.js";
 import { SkillRuntime } from "./skills.js";
 import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
@@ -141,7 +141,7 @@ export class GuildRuntime {
   private readonly orgModels: OrgModels;
   private readonly executors: ConversationExecutors;
   private readonly turnTools: TurnTools;
-  private readonly host = new ConversationHost();
+  private readonly host: ConversationHost;
   private readonly turns: TurnBackend;
   private readonly watchOpening = new SingleFlight<string, void>();
   private readonly admissions = new ConversationAdmissions();
@@ -205,6 +205,7 @@ export class GuildRuntime {
     this.agents = deps.agents;
     this.toolArtifacts = stores.toolArtifacts;
     this.durableDb = new SharedPoolDatabase(pool);
+    this.host = new ConversationHost((step, error) => log.warn({ err: error, step }, "harness teardown step failed"));
     this.turns = turnBackend(deps.placement, {
       submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
       deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),

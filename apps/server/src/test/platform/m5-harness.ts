@@ -2,7 +2,7 @@
 // migrations applied in order, namespaced `guild_m5_test_*`) + a listening
 // app instance so the ws client can dial a real upgrade.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { dropTestDatabase } from "../support/postgres.js";
 import pg from "pg";
 import WebSocket from "ws";
 import { buildApp } from "../../app.js";

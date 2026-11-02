@@ -10,7 +10,7 @@ import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser, requireAdminUser, queryParam, sendJson, bodyBytes } from "./error.js";
 import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
-import { SIGNING_SEED_KV } from "../store/org_kv.js";
+import { SIGNING_SEED_KV } from "../store/org-kv.js";
 import { uuidv7 } from "../time.js";
 
 const MASTER_KEY_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");

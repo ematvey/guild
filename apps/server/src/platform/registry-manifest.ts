@@ -1,6 +1,6 @@
-// Manifest validation — the TS port of protocol/src/registry.rs's
-// validate_manifest/validate_v2. The manifest wire types live in
-// @guild/wire/rest, hand-written from protocol/rest.schema.json.
+// Manifest validation for registry bundles (v1 and v2 manifests). The
+// manifest wire types live in @guild/wire/rest, hand-written from
+// protocol/rest.schema.json.
 // Message texts mirror the Rust anyhow strings, including the FieldSpec
 // debug render, because the publish handler passes them straight into the
 // 400 body.

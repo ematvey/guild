@@ -10,7 +10,7 @@ import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam,
 import { createIntegration, integrationShop, integrationTools, saveIntegration } from "../../integrations/admin.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
 import { DEFAULT_PERSONA } from "../../harness/extension.js";
-import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org_kv.js";
+import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org-kv.js";
 /** Upper bound on a custom prompt — personas are short; this is abuse
  *  protection, not a context-window budget. */
 const ASSISTANT_PROMPT_MAX = 10_000;

@@ -6,7 +6,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Config } from "../../config.js";
-import type { ApiKeyStore } from "../store/api_keys.js";
+import type { ApiKeyStore } from "../store/api-keys.js";
 import type { GatewayCredential } from "../llm-gateway.js";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";

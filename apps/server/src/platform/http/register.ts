@@ -15,7 +15,7 @@ import { registerEventRoutes } from "./events.js";
 import { registerAttachmentRoutes } from "./attachments.js";
 import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
-import { registerApiKeyRoutes } from "./api_keys.js";
+import { registerApiKeyRoutes } from "./api-keys.js";
 import { registerPushRoutes } from "./push.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerActivityRoutes } from "./activity.js";
@@ -31,8 +31,8 @@ import { registerReleaseRoutes } from "./releases.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
-import { registerIntegrationToolRoutes } from "./integration_tools.js";
-import { registerUserMcpRoutes } from "./user_mcp.js";
+import { registerIntegrationToolRoutes } from "./integration-tools.js";
+import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {

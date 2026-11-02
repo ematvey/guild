@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import type { PostgresExecutor } from "./executor.js";
+import type { PostgresExecutor } from "../../storage/postgres/executor.js";
 
 /**
  * Admin connection for disposable test databases: `GUILD_TEST_PG_URL`, the

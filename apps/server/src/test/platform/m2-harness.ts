@@ -4,7 +4,7 @@
 // same server (usage/quota tests) + a scripted mock provider upstream and a
 // built app instance.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { dropTestDatabase } from "../support/postgres.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

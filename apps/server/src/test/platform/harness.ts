@@ -3,7 +3,7 @@
 // instance. Database name is namespaced `guild_m1_test_*` so the durable
 // storage suite (guild_durable_test_*) can run concurrently.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { dropTestDatabase } from "../support/postgres.js";
 import path from "node:path";
 import pg from "pg";
 import {

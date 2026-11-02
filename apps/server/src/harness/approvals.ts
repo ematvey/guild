@@ -37,7 +37,7 @@ import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
 import type { TraceStore } from "../platform/trace.js";
-import { APPROVAL_POLICY_PROMPT_KEY, type OrgKvStore } from "../platform/store/org_kv.js";
+import { APPROVAL_POLICY_PROMPT_KEY, type OrgKvStore } from "../platform/store/org-kv.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import { clientToolClass } from "../platform/domain/tool-class.js";
 

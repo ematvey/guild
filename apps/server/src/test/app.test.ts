@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { buildApp, GUILD_TS_SERVER_VERSION } from "../app.js";
 import { loadConfig } from "../config.js";
-import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "./support/postgres.js";
 
 let wss: WebSocketServer;
 let database: DisposableDatabase;
