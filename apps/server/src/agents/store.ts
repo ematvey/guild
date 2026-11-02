@@ -6,7 +6,7 @@
 import { ApiError } from "../platform/errors.js";
 import type { PlatformPool } from "../platform/db.js";
 import { jsonbText } from "../platform/domain/text.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
+import { isUuid, pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
 import { ChatStore } from "../platform/store/chats.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type {
@@ -553,6 +553,20 @@ export class AgentStore {
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such agent");
     return toAgent(row);
+  }
+
+  /** The agents a reference names among those the user can see, in any
+   *  status: the one with that id, or every agent with that name (names
+   *  are unique per owner, not per org). Oldest first. */
+  async findVisible(user: UserRow, reference: string): Promise<Agent[]> {
+    const match = isUuid(reference) ? "a.id = $4" : "lower(a.name) = lower($4)";
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${AGENT_COLUMNS} FROM agents a
+       WHERE ${match} AND ${visiblePredicate("a")}
+       ORDER BY a.created_at ASC, a.id ASC`,
+      [user.org_id, user.role === "admin", user.id, reference],
+    );
+    return res.rows.map(toAgent);
   }
 
   /** Resolves the caller's grant role and capability flags for one agent.

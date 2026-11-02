@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { isUuid, uuidv7 } from "../platform/time.js";
+import { uuidv7 } from "../platform/time.js";
 import { ChildLimitReached, type AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { userMessageEvent } from "../platform/domain/thread-events.js";
@@ -65,64 +65,38 @@ export class SubagentError extends Error {
   }
 }
 
-/** Resolves the target by id or exact case-insensitive name within the
- *  caller's org. Missing, foreign-org and archived agents are one error. */
+/** Resolves a spawn reference (an agent id or name) among the agents the
+ *  requester can see. A name several visible agents share resolves to the
+ *  requester's own agent when there is one, and is otherwise ambiguous. */
 export async function resolveSpawnTarget(
-  pool: PlatformPool,
-  orgId: string,
+  store: AgentStore,
+  requester: UserRow,
   reference: string,
 ): Promise<Agent> {
   const ref = reference.trim();
   if (ref === "") throw new SubagentError("invalid_target", "agent must not be empty");
-  const params: unknown[] = [orgId, ref];
-  const where = isUuid(ref)
-    ? "a.org_id = $1 AND a.id = $2"
-    : "a.org_id = $1 AND lower(a.name) = lower($2)";
-  const res = await pool.query<Record<string, unknown>>(
-    `SELECT a.id, a.org_id, a.owner_user_id, a.name, a.description, a.model, a.tools_mode,
-            a.is_personal,
-            (SELECT r.alias FROM model_routes r WHERE r.org_id = a.org_id AND r.model = a.model LIMIT 1) AS model_alias,
-            a.tools, a.visibility, a.resources, a.status,
-            to_char(a.deleted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS deleted_at,
-            to_char(a.purge_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS purge_after,
-            to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-            to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
-     FROM agents a WHERE ${where}
-     ORDER BY a.created_at ASC, a.id ASC LIMIT 1`,
-    params,
-  );
-  const row = res.rows[0];
-  if (row === undefined) {
+  const candidates = await store.findVisible(requester, ref);
+  const own = candidates.filter((agent) => agent.owner_user_id === requester.id);
+  const pick = candidates.length === 1 ? candidates[0] : own.length === 1 ? own[0] : undefined;
+  if (pick === undefined && candidates.length > 1) {
+    throw new SubagentError(
+      "ambiguous_target",
+      "several agents have this name; call list_agents and pass the agent's id",
+    );
+  }
+  if (pick === undefined) {
     throw new SubagentError(
       "target_not_found",
       "no such agent in this organization; call list_agents first to see the agents you can use",
     );
   }
-  if (row.status !== "active") {
+  if (pick.status !== "active") {
     throw new SubagentError(
       "target_unavailable",
       "target agent is not active; call list_agents first to see the agents you can use",
     );
   }
-  return {
-    id: row.id as string,
-    org_id: row.org_id as string,
-    owner_user_id: row.owner_user_id as string,
-    name: row.name as string,
-    description: (row.description as string | null) ?? "",
-    model: row.model as string,
-    model_alias: (row.model_alias as string | null) ?? null,
-    is_personal: Boolean(row.is_personal),
-    tools: (row.tools as Agent["tools"] | null) ?? [],
-    tools_mode: (row.tools_mode as Agent["tools_mode"] | null) ?? "selected",
-    visibility: row.visibility as Agent["visibility"],
-    resources: (row.resources as Record<string, unknown> | null) ?? {},
-    status: row.status as Agent["status"],
-    deleted_at: (row.deleted_at as string | null) ?? null,
-    purge_after: (row.purge_after as string | null) ?? null,
-    created_at: row.created_at as string,
-    updated_at: row.updated_at as string,
-  };
+  return pick;
 }
 
 /** The run owner: the user who owns the chat behind the current thread. */
@@ -153,7 +127,7 @@ export async function authorizeSpawn(args: {
   requester: UserRow;
   targetRef: string;
 }): Promise<Agent> {
-  const target = await resolveSpawnTarget(args.pool, args.agent.org_id, args.targetRef);
+  const target = await resolveSpawnTarget(args.store, args.requester, args.targetRef);
   const access = await args.store.access(args.requester, target);
   if (!access.can_use) {
     throw new SubagentError("forbidden", "the requester cannot use the target agent");

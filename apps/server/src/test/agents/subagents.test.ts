@@ -16,6 +16,7 @@ import {
   read,
   send,
   spawn,
+  resolveSpawnTarget,
   subagentsContextForChat,
   type SubagentsRuntime,
   type SubagentsToolContext,
@@ -247,8 +248,13 @@ dbDescribe("subagent tree tools", () => {
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run, fake });
+    // Another user's private agent is invisible: the same answer as a
+    // missing one, by name or by id.
     await expect(spawn(context, { agent: privateTarget.name, task: "secret" })).rejects.toMatchObject({
-      code: "forbidden",
+      code: "target_not_found",
+    });
+    await expect(spawn(context, { agent: privateTarget.id, task: "secret" })).rejects.toMatchObject({
+      code: "target_not_found",
     });
     await expect(spawn(context, { agent: "No Such Agent", task: "x" })).rejects.toMatchObject({
       code: "target_not_found",
@@ -265,6 +271,14 @@ dbDescribe("subagent tree tools", () => {
     const after = await threads.listEvents(orgId, failedThread.chat_id);
     expect(after).toHaveLength(before.length);
     expect(after.some((row) => row.event.type === "child_spawned")).toBe(false);
+  });
+
+  it("a name several visible agents share resolves to the requester's own, or is ambiguous", async () => {
+    const mine = await store.create(owner, { name: "Scout", model: "GLM-Test", visibility: "org" });
+    await store.create(outsider, { name: "scout", model: "GLM-Test", visibility: "org" });
+    expect((await resolveSpawnTarget(store, owner, "Scout")).id).toBe(mine.id);
+    const third = await makeUser(orgId, "subagents-third@example.test");
+    await expect(resolveSpawnTarget(store, third, "Scout")).rejects.toMatchObject({ code: "ambiguous_target" });
   });
 
   it("list_agents is the caller user's directory and never leaks another personal agent", async () => {
