@@ -5,7 +5,7 @@
 // projects.
 
 import { ApiError } from "../errors.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 
 /** One project row joined with its machine's registry label (the machines
@@ -25,7 +25,7 @@ export interface ProjectRow {
 
 const ROW_COLUMNS =
   "p.id, p.org_id, p.user_id, p.name, p.folder, p.machine_id, " +
-  "to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, " +
+  utcText("p.created_at") + " AS created_at, " +
   "coalesce(m.label, p.machine_id) AS machine_label";
 const ROW_FROM = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 

@@ -4,7 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { ApiError } from "../errors.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 import type { PlatformPool } from "../db.js";
 
 export interface ReleaseRow {
@@ -49,7 +49,7 @@ export function sha256Hex(bytes: Buffer): string {
 
 const ROW_COLUMNS =
   "id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, " +
-  "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at";
+  utcText("created_at") + " AS created_at";
 
 /** Struct-serialized shape (serde declaration order) for the wire. */
 function row(r: Record<string, unknown>): ReleaseRow {

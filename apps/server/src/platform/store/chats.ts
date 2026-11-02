@@ -9,7 +9,7 @@ import { generationWorkSql } from "./work.js";
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { UserRow } from "./identity.js";
 import type { AgentThreadType } from "../domain/thread-type.js";
@@ -71,7 +71,7 @@ export interface ChatListRow {
 }
 
 const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
-    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+    ${utcText("created_at")} AS created_at,
     machine_id, machine_label, generating, project_id,
     archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted FROM chats`;
 
@@ -97,7 +97,7 @@ const WORKING_CTE = `WITH RECURSIVE subtree AS (
  *  caller's read watermark (an assistant turn newer than the marker, on a
  *  non-generating chat); the project and machine joins feed the grouping. */
 const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
-    to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+    ${utcText("c.created_at")} AS created_at,
     c.machine_id, c.machine_label, c.generating,
     (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
     pr.name AS project_name, m.label AS project_machine_label,
@@ -113,8 +113,7 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
           SELECT 1 FROM thread_events d
           WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
-    to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
-            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at,
+    ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
     COALESCE(xt.type, 'user') AS type,
     c.archived_at IS NOT NULL AS archived,
     c.deleted_at IS NOT NULL AS deleted
@@ -254,7 +253,7 @@ export class ChatStore {
     const res = await client.query(
       `INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, org_id, user_id, title,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+         ${utcText("created_at")} AS created_at,
          machine_id, machine_label, generating, project_id`,
       [id, orgId, userId, title, projectId, null, null],
     );
@@ -267,7 +266,7 @@ export class ChatStore {
     const res = await this.pool.query<Record<string, unknown>>(
       `INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, org_id, user_id, title,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+         ${utcText("created_at")} AS created_at,
          machine_id, machine_label, generating, project_id`,
       [id, orgId, userId, title, projectId, null, null],
     );
@@ -293,7 +292,7 @@ export class ChatStore {
       const res = await client.query<Record<string, unknown>>(
         `INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id`,
         [id, orgId, userId, title, projectId, row.machine_id, row.label],
       );
@@ -316,7 +315,7 @@ export class ChatStore {
   async listArchivedChats(orgId: string, userId: string): Promise<ChatListRow[]> {
     const res = await this.pool.query<Record<string, unknown>>(
       `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
-              to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+              ${utcText("c.created_at")} AS created_at,
               c.machine_id, c.machine_label, c.generating,
               (c.generating OR wc.chat_id IS NOT NULL) AS working, c.project_id,
               pr.name AS project_name, m.label AS project_machine_label, false AS unread,
@@ -328,8 +327,7 @@ export class ChatStore {
                     SELECT 1 FROM thread_events d
                     WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
-              to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
-                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at,
+              ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
               COALESCE(xt.type, 'user') AS type,
               true AS archived, false AS deleted
        FROM chats c
@@ -428,7 +426,7 @@ export class ChatStore {
              ELSE NULL END
          WHERE org_id = $1 AND id = $2
          RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id`,
         [orgId, chatId, title ?? null, archived ?? null, title !== undefined],
       );
@@ -469,7 +467,7 @@ export class ChatStore {
         `UPDATE chats SET deleted_at = COALESCE(deleted_at, now())
          WHERE org_id = $1 AND id = $2 AND user_id = $3
          RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id,
            archived_at IS NOT NULL AS archived, true AS deleted,
            deleted_at = now() AS newly_deleted`,
@@ -540,7 +538,7 @@ export class ChatStore {
         `UPDATE chats SET machine_id = $3, machine_label = $4
          WHERE org_id = $1 AND id = $2
          RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id`,
         [orgId, chatId, machineId, machineLabel],
       );
@@ -569,7 +567,7 @@ export class ChatStore {
         `UPDATE chats SET project_id = $6, machine_id = $4, machine_label = $5
          WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL
          RETURNING id, org_id, user_id, title,
-           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id`,
         [orgId, chatId, caller.id, machine?.machine_id ?? null, machine?.label ?? null, projectId],
       );

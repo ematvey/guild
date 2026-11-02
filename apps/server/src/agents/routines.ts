@@ -7,7 +7,7 @@
 import { Cron } from "croner";
 import { ApiError } from "../platform/errors.js";
 import type { PlatformPool } from "../platform/db.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../platform/time.js";
 import type {
   AgentRoutine,
   AgentRoutineKind,
@@ -51,15 +51,12 @@ export interface ReminderResult {
   run_at: string;
 }
 
-const TS = (column: string): string =>
-  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
 const ROUTINE_COLUMNS = `r.id, r.agent_id, r.created_by_user_id, r.name, r.kind, r.schedule, r.timezone,
-  ${TS("r.run_at")} AS run_at, r.prompt, r.context, r.enabled,
-  ${TS("r.next_run_at")} AS next_run_at,
-  ${TS("r.created_at")} AS created_at, ${TS("r.updated_at")} AS updated_at`;
+  ${utcText("r.run_at")} AS run_at, r.prompt, r.context, r.enabled,
+  ${utcText("r.next_run_at")} AS next_run_at,
+  ${utcText("r.created_at")} AS created_at, ${utcText("r.updated_at")} AS updated_at`;
 
-const OCCURRENCE_COLUMNS = `o.id, o.routine_id, ${TS("o.scheduled_for")} AS scheduled_for,
+const OCCURRENCE_COLUMNS = `o.id, o.routine_id, ${utcText("o.scheduled_for")} AS scheduled_for,
   o.run_id, o.status, o.attempts, o.last_error`;
 
 function toRoutine(row: Record<string, unknown>): AgentRoutine {

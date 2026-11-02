@@ -3,7 +3,7 @@
 
 import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 
 export interface AttachmentRow {
   id: string;
@@ -71,7 +71,7 @@ export class AttachmentStore {
           author_kind, author_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8)
        RETURNING ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+         ${utcText("created_at")} AS created_at`,
       [id, orgId, chatId, filename, contentType, sizeBytes, objectKey, authorId],
     );
     return toRow(res.rows[0]!);
@@ -96,7 +96,7 @@ export class AttachmentStore {
           author_kind, author_id, source_path)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'agent', $8, $9)
        RETURNING ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+         ${utcText("created_at")} AS created_at`,
       [
         input.id,
         input.orgId,
@@ -118,7 +118,7 @@ export class AttachmentStore {
   async pendingAgentFiles(chatId: string): Promise<AttachmentRow[]> {
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+         ${utcText("created_at")} AS created_at
        FROM attachments
        WHERE chat_id = $1 AND author_kind = 'agent' AND event_id IS NULL
        ORDER BY created_at ASC, id ASC`,
@@ -141,7 +141,7 @@ export class AttachmentStore {
     if (ids.length === 0) return [];
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+         ${utcText("created_at")} AS created_at
        FROM attachments WHERE org_id = $1 AND id = ANY($2::uuid[])`,
       [orgId, ids],
     );
@@ -151,7 +151,7 @@ export class AttachmentStore {
   async list(orgId: string, chatId: string): Promise<AttachmentRow[]> {
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+         ${utcText("created_at")} AS created_at
        FROM attachments WHERE org_id = $1 AND chat_id = $2 ORDER BY attachments.created_at`,
       [orgId, chatId],
     );
@@ -161,7 +161,7 @@ export class AttachmentStore {
   async get(orgId: string, id: string): Promise<AttachmentRow> {
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+         ${utcText("created_at")} AS created_at
        FROM attachments WHERE org_id = $1 AND id = $2`,
       [orgId, id],
     );

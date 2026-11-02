@@ -5,7 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { sha256Hex } from "../crypto.js";
 import { ApiError } from "../errors.js";
-import { uuidv7 } from "../time.js";
+import { utcText, uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 
 export interface ApiKeyRow {
@@ -29,8 +29,8 @@ interface ApiKeyDbRow extends ApiKeyRow {
 
 const KEY_COLUMNS =
   "id, org_id, created_by, name, prefix, " +
-  "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, " +
-  "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS revoked_at, " +
+  utcText("created_at") + " AS created_at, " +
+  utcText("revoked_at") + " AS revoked_at, " +
   "user_id";
 
 export function hashKey(plaintext: string): string {

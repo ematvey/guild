@@ -13,6 +13,7 @@ import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ChildResultDelivery, ChildRunFinished } from "./delivery.js";
 import { notifySubagentTree } from "./tree.js";
+import { utcText } from "../platform/time.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
@@ -262,8 +263,7 @@ export class AgentRunLifecycle {
       started_at: string;
     }>(
       `SELECT r.id, r.agent_id, r.thread_id, t.chat_id,
-              to_char(COALESCE(r.started_at, r.created_at) AT TIME ZONE 'UTC',
-                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
+              ${utcText("COALESCE(r.started_at, r.created_at)")} AS started_at
        FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
        WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
        ORDER BY r.created_at ASC, r.id ASC

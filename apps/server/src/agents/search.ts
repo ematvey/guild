@@ -3,7 +3,7 @@
 // by agent_id; callers pass the agent whose threads may match.
 
 import { withTransaction, type PlatformPool } from "../platform/db.js";
-import { uuidv7 } from "../platform/time.js";
+import { utcText, uuidv7 } from "../platform/time.js";
 
 /** One chunk row to insert. `text` is indexed as-is with the `simple`
  *  configuration (no stemming; agents write in mixed languages). */
@@ -128,7 +128,7 @@ export async function search(
   }>(
     `WITH q AS (SELECT websearch_to_tsquery('simple', $2) AS tsq)
      SELECT c.thread_id, t.title AS thread_title, c.seq_from, c.seq_to,
-            to_char(c.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts,
+            ${utcText("c.ts")} AS ts,
             left(ts_headline('simple', c.text, q.tsq,
               'StartSel=<mark>, StopSel=</mark>, MaxFragments=3, MaxWords=60, MinWords=15'), $4) AS snippet,
             ts_rank(c.tsv, q.tsq) AS rank

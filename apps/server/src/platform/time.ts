@@ -57,3 +57,11 @@ export function pgTimestampToRfc3339(text: string): string {
   }
   return `${m[1]}${fraction}Z`;
 }
+
+/** A SQL expression rendering a timestamptz column as RFC 3339 UTC text
+ *  with microseconds (`2026-11-02T10:00:00.123456Z`); the store row
+ *  mappers normalize it with `pgTimestampToRfc3339` where the wire needs
+ *  chrono's trimmed fraction. */
+export function utcText(column: string): string {
+  return `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+}

@@ -4,7 +4,7 @@
 
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 import type { EventRow } from "@guild/wire/rest";
 
 export const NOTIFY_CHANNEL = "guild_events";
@@ -21,7 +21,7 @@ export class EventStore {
     return withTransaction(this.pool, async (client) => {
       const inserted = await client.query<EventRow>(
         `INSERT INTO events (id, org_id, kind, payload) VALUES ($1, $2, $3, $4)
-         RETURNING id, org_id, kind, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+         RETURNING id, org_id, kind, payload, ${utcText("created_at")} AS created_at`,
         [id, orgId, kind, jsonbText(payload ?? null)],
       );
       const notifyPayload = JSON.stringify({ org_id: orgId, event_id: id, kind });
@@ -34,7 +34,7 @@ export class EventStore {
   async list(orgId: string, limit: number): Promise<EventRow[]> {
     const res = await this.pool.query<EventRow>(
       `SELECT id, org_id, kind, payload,
-              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("created_at")} AS created_at
        FROM events WHERE org_id = $1 ORDER BY events.created_at DESC LIMIT $2`,
       [orgId, Math.min(Math.max(limit, 1), 500)],
     );
@@ -44,7 +44,7 @@ export class EventStore {
   async get(orgId: string, id: string): Promise<EventRow | null> {
     const res = await this.pool.query<EventRow>(
       `SELECT id, org_id, kind, payload,
-              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("created_at")} AS created_at
        FROM events WHERE org_id = $1 AND id = $2`,
       [orgId, id],
     );
@@ -59,7 +59,7 @@ export class EventStore {
     const clauses = prefixes.map((_, i) => `kind LIKE $${i + 2}`).join(" OR ");
     const res = await this.pool.query<EventRow>(
       `SELECT id, org_id, kind, payload,
-              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("created_at")} AS created_at
        FROM events WHERE org_id = $1 AND (${clauses}) ORDER BY created_at DESC LIMIT $${prefixes.length + 2}`,
       [orgId, ...prefixes, Math.min(Math.max(limit, 1), 500)],
     );

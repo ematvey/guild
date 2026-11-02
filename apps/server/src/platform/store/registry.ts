@@ -2,7 +2,7 @@
 // integrations over the registry_items/registry_versions tables.
 
 import { ApiError } from "../errors.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { uuidv7 } from "../time.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
@@ -89,7 +89,7 @@ const SEARCH_COLUMNS =
   "i.slug, i.description, i.latest_version, i.review_status, i.forked_from, " +
   "i.owner_user_id, i.owner_team_id, " +
   "COALESCE(NULLIF(pu.display_name, ''), pu.email) AS publisher, " +
-  "to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, " +
+  utcText("v.published_at") + " AS published_at, " +
   "COALESCE(NULLIF(ou.display_name, ''), ou.email) AS owner_user_label, t.name AS owner_team_label";
 
 /** Joins behind SEARCH_COLUMNS: the latest version row, its publisher, the
@@ -262,7 +262,7 @@ export class RegistryStore {
 
   async itemVersions(orgId: string, kind: string, slug: string): Promise<VersionRow[]> {
     const res = await this.pool.query(
-      "SELECT v.version, to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, v.bundle_sha256, v.published_by AS publisher " +
+      "SELECT v.version, " + utcText("v.published_at") + " AS published_at, v.bundle_sha256, v.published_by AS publisher " +
       "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
       "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 ORDER BY v.published_at DESC",
       [orgId, kind, slug],
@@ -358,7 +358,7 @@ export class RegistryStore {
     const res = await this.pool.query(
       "SELECT v.manifest, v.object_key, v.bundle_sha256, v.published_by, v.skill_md_text, v.files, " +
       "COALESCE(NULLIF(u.display_name, ''), u.email) AS publisher_label, " +
-      "to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at " +
+      utcText("v.published_at") + " AS published_at " +
       "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
       "LEFT JOIN users u ON u.id = v.published_by " +
       "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",

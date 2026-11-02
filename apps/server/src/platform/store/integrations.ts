@@ -4,7 +4,7 @@
 
 import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
@@ -205,7 +205,7 @@ export class IntegrationSecretStore {
    *  returned. */
   async list(orgId: string, integration: string, masterKey: Buffer): Promise<SecretRow[]> {
     const res = await this.pool.query(
-      "SELECT name, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at, masked " +
+      "SELECT name, " + utcText("updated_at") + " AS updated_at, masked " +
       "FROM integration_secrets WHERE org_id = $1 AND integration = $2 ORDER BY name",
       [orgId, integration],
     );

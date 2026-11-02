@@ -3,7 +3,7 @@
 // shape (UserListRow, same as admin users).
 
 import { ApiError } from "../errors.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 import type { UserListRow } from "./identity.js";
 
@@ -47,7 +47,7 @@ export class TeamStore {
     try {
       const res = await this.pool.query(
         "INSERT INTO teams (id, org_id, name) VALUES ($1, $2, $3) " +
-        "RETURNING id, org_id, name, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, 0::bigint AS member_count",
+        "RETURNING id, org_id, name, " + utcText("created_at") + " AS created_at, 0::bigint AS member_count",
         [uuidv7(), orgId, name],
       );
       return teamRow(res.rows[0]!);
@@ -62,7 +62,7 @@ export class TeamStore {
   async listTeams(orgId: string): Promise<TeamRow[]> {
     const res = await this.pool.query(
       "SELECT t.id, t.org_id, t.name, " +
-      "to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, " +
+      utcText("t.created_at") + " AS created_at, " +
       "COUNT(m.user_id)::bigint AS member_count " +
       "FROM teams t LEFT JOIN team_members m ON m.team_id = t.id " +
       "WHERE t.org_id = $1 GROUP BY t.id, t.org_id, t.name, t.created_at ORDER BY t.created_at",
@@ -77,7 +77,7 @@ export class TeamStore {
       const res = await this.pool.query(
         "UPDATE teams SET name = $1 WHERE id = $2 AND org_id = $3 " +
         "RETURNING id, org_id, name, " +
-        "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, " +
+        utcText("created_at") + " AS created_at, " +
         "(SELECT COUNT(*) FROM team_members WHERE team_id = teams.id)::bigint AS member_count",
         [name, teamId, orgId],
       );
@@ -100,7 +100,7 @@ export class TeamStore {
     if (!(await this.teamInOrg(orgId, teamId))) throw ApiError.notFound("no such team");
     const res = await this.pool.query(
       "SELECT u.id, u.email, u.role, u.identity_type, " +
-      "to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at " +
+      utcText("u.created_at") + " AS created_at " +
       "FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY u.created_at",
       [teamId],
     );

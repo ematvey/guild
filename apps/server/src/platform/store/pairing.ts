@@ -6,7 +6,7 @@
 import { sha256Hex } from "../crypto.js";
 import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 
 export interface PairingTokenRow {
   id: string;
@@ -82,9 +82,9 @@ export class PairingStore {
        SELECT $1, $2, $3, $4, $5, u.auth_generation FROM users u
        WHERE u.id = $3 AND u.auth_generation = COALESCE($6, u.auth_generation)
        RETURNING id, org_id, user_id,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS expires_at,
-         to_char(used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS used_at`,
+         ${utcText("created_at")} AS created_at,
+         ${utcText("expires_at")} AS expires_at,
+         ${utcText("used_at")} AS used_at`,
       [id, orgId, userId, sha256Hex(secret), expiresAt, generation],
     );
     if (res.rows.length === 0) {
@@ -114,9 +114,9 @@ export class PairingStore {
   async listOutstanding(userId: string): Promise<PairingTokenRow[]> {
     const res = await this.pool.query<PairingTokenDbRow>(
       `SELECT id, org_id, user_id,
-         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS expires_at,
-         to_char(used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS used_at
+         ${utcText("created_at")} AS created_at,
+         ${utcText("expires_at")} AS expires_at,
+         ${utcText("used_at")} AS used_at
        FROM pairing_tokens
        WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()
        ORDER BY pairing_tokens.created_at DESC`,

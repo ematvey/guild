@@ -4,7 +4,7 @@
 // the endpoint is gone (404/410), so stale devices do not accumulate.
 
 import { withTransaction, type PlatformPool } from "../db.js";
-import { uuidv7 } from "../time.js";
+import { utcText, uuidv7 } from "../time.js";
 
 export interface PushSubscriptionRow {
   id: string;
@@ -23,10 +23,10 @@ export interface PushSubscriptionRow {
 
 const COLUMNS =
   "id, org_id, user_id, device_id, endpoint, p256dh, auth, platform, " +
-  "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, " +
-  "to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS last_seen_at, " +
+  utcText("created_at") + " AS created_at, " +
+  utcText("last_seen_at") + " AS last_seen_at, " +
   "last_error, " +
-  "to_char(failed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS failed_at";
+  utcText("failed_at") + " AS failed_at";
 
 /** What a browser sends when it subscribes. */
 export interface PushSubscriptionInput {

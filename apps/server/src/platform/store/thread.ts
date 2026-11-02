@@ -8,7 +8,7 @@
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { isUuid, pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
+import { isUuid, pgTimestampToRfc3339, utcText, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import { calculateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
@@ -49,7 +49,7 @@ async function insertEvent(client: PoolClient, chatId: string, eventId: string, 
   const res = await client.query<EventRowDb>(
     `INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4::jsonb)
      ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-     RETURNING id, chat_id, seq, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
+     RETURNING id, chat_id, seq, payload, ${utcText("created_at")} AS created_at`,
     [eventId, chatId, event.type, jsonbText(event)],
   );
   const row = res.rows[0];
@@ -64,7 +64,7 @@ async function insertEvent(client: PoolClient, chatId: string, eventId: string, 
 async function recordedDecision(client: PoolClient, chatId: string, callId: string): Promise<ThreadEventRow | undefined> {
   const res = await client.query<EventRowDb>(
     `SELECT id, chat_id, seq, payload,
-            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+            ${utcText("created_at")} AS created_at
      FROM thread_events
      WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
      ORDER BY seq ASC LIMIT 1`,
@@ -167,7 +167,7 @@ export class ThreadStore {
         // The chat lock serializes adoption of pre-projection legacy rows.
         await client.query("SELECT id FROM chats WHERE id=$1 FOR UPDATE", [chatId]);
         const existing = await client.query<EventRowDb>(
-          `SELECT e.id,e.chat_id,e.seq,e.payload,to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at FROM thread_events e
+          `SELECT e.id,e.chat_id,e.seq,e.payload,${utcText("e.created_at")} AS created_at FROM thread_events e
            JOIN ${table} p ON p.event_id=e.id WHERE p.${column}=$1 AND p.chat_id=$2`,
           [sourceId, chatId],
         );
@@ -175,7 +175,7 @@ export class ThreadStore {
           existing.rows[0] || !adoptLegacy
             ? existing
             : await client.query<EventRowDb>(
-                `SELECT e.id,e.chat_id,e.seq,e.payload,to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at FROM thread_events e
+                `SELECT e.id,e.chat_id,e.seq,e.payload,${utcText("e.created_at")} AS created_at FROM thread_events e
            WHERE e.chat_id=$1 AND e.type=$2 AND NOT EXISTS
              (SELECT 1 FROM ${table} p WHERE p.event_id=e.id)
              AND ((e.payload - 'turn' - 'step') = ($3::jsonb - 'turn' - 'step')
@@ -219,7 +219,7 @@ export class ThreadStore {
   async unconsumedChildResults(chatId: string): Promise<ChildResultRecord[]> {
     const res = await this.pool.query<EventRowDb>(
       `SELECT id, chat_id, seq, payload,
-              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("created_at")} AS created_at
        FROM thread_events
        WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
        ORDER BY seq ASC`,
@@ -237,7 +237,7 @@ export class ThreadStore {
     return withTransaction(this.pool, async (client) => {
       const res = await client.query<EventRowDb>(
         `SELECT id, chat_id, seq, payload,
-                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+                ${utcText("created_at")} AS created_at
          FROM thread_events
          WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
          ORDER BY seq ASC
@@ -356,7 +356,7 @@ export class ThreadStore {
         // created_at rides through to_char like every other reader here —
         // a raw RETURNING hands the pg driver's Date to
         // pgTimestampToRfc3339, which expects the microsecond text shape.
-        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at",
+        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, " + utcText("created_at") + " AS created_at",
         [id, chatId, row.type, jsonbText(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
@@ -404,7 +404,7 @@ export class ThreadStore {
   async listEvents(orgId: string, chatId: string): Promise<ThreadEventRow[]> {
     const res = await this.pool.query<EventRowDb>(
       `SELECT e.id, e.chat_id, e.seq, e.payload,
-              to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("e.created_at")} AS created_at
        FROM thread_events e JOIN chats c ON c.id = e.chat_id
        WHERE c.org_id = $1 AND e.chat_id = $2 ORDER BY e.seq`,
       [orgId, chatId],
@@ -424,7 +424,7 @@ export class ThreadStore {
     const before = opts.beforeSeq ?? null;
     const res = await this.pool.query<EventRowDb>(
       `SELECT e.id, e.chat_id, e.seq, e.payload,
-              to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("e.created_at")} AS created_at
        FROM thread_events e JOIN chats c ON c.id = e.chat_id
        WHERE c.org_id = $1 AND e.chat_id = $2 AND ($3::bigint IS NULL OR e.seq < $3::bigint)
        ORDER BY e.seq DESC LIMIT $4`,
@@ -445,7 +445,7 @@ export class ThreadStore {
   async listEventsSince(chatId: string, sinceSeq: number): Promise<ThreadEventRow[]> {
     const res = await this.pool.query<EventRowDb>(
       `SELECT e.id, e.chat_id, e.seq, e.payload,
-              to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+              ${utcText("e.created_at")} AS created_at
        FROM thread_events e
        WHERE e.chat_id = $1 AND e.seq > $2 ORDER BY e.seq`,
       [chatId, sinceSeq],

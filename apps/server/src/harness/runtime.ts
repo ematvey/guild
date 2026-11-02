@@ -89,7 +89,7 @@ import {
   seedAgentWorkspace,
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
-import { uuidv7 } from "../platform/time.js";
+import { utcText, uuidv7 } from "../platform/time.js";
 import { CODING_TOOL_NAMES, IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -1623,8 +1623,7 @@ export class GuildRuntime {
        SET status = 'cancelled', finished_at = now()
        WHERE thread_id = $1 AND status IN ('queued', 'running')
        RETURNING id,
-         to_char(COALESCE(started_at, created_at) AT TIME ZONE 'UTC',
-                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at`,
+         ${utcText("COALESCE(started_at, created_at)")} AS started_at`,
       [row.id],
     );
     if (runs.rowCount !== 0) await notifySubagentTree(this.pool, row.id);

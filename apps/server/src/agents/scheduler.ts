@@ -7,7 +7,7 @@
 import { rm } from "node:fs/promises";
 import type { Logger } from "pino";
 import { withTransaction, type PlatformPool } from "../platform/db.js";
-import { uuidv7 } from "../platform/time.js";
+import { utcText, uuidv7 } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
 import { AgentStore } from "./store.js";
@@ -22,9 +22,6 @@ export const MAX_OCCURRENCE_ATTEMPTS = 3;
 const CLAIM_LEASE_SECONDS = 120;
 export const RETRY_DELAYS_MS = [30_000, 60_000, 300_000] as const;
 export const MAX_CONSECUTIVE_FAILURES = 10;
-
-const TS = (column: string): string =>
-  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 type SchedulerRuntime = Pick<GuildRuntime, "submitTurn">;
 
@@ -146,7 +143,7 @@ export class AgentScheduler {
   async materializeDue(now: Date = this.now()): Promise<void> {
     const res = await this.deps.pool.query<DueRoutine>(
       `SELECT r.id, r.agent_id, r.kind, r.schedule, r.timezone,
-              ${TS("r.next_run_at")} AS next_run_at
+              ${utcText("r.next_run_at")} AS next_run_at
        FROM agent_routines r
        JOIN agents a ON a.id = r.agent_id
        WHERE r.enabled AND r.next_run_at IS NOT NULL AND r.next_run_at <= $1::timestamptz
@@ -198,9 +195,9 @@ export class AgentScheduler {
       const res = await client.query<ClaimedOccurrence>(
         `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
                 r.name AS routine_name, r.prompt, r.kind,
-                ${TS("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
+                ${utcText("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
                 run.status AS run_status, run.error_message AS run_error,
-                ${TS("run.finished_at")} AS run_finished_at
+                ${utcText("run.finished_at")} AS run_finished_at
          FROM agent_routine_occurrences o
          JOIN agent_routines r ON r.id = o.routine_id
          JOIN agents a ON a.id = r.agent_id
@@ -251,9 +248,9 @@ export class AgentScheduler {
     const res = await this.deps.pool.query<ClaimedOccurrence>(
       `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.owner_user_id, r.created_by_user_id, a.model,
               r.name AS routine_name, r.prompt, r.kind,
-              ${TS("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
+              ${utcText("o.scheduled_for")} AS scheduled_for, o.attempts, o.run_id,
               run.status AS run_status, run.error_message AS run_error,
-              ${TS("run.finished_at")} AS run_finished_at
+              ${utcText("run.finished_at")} AS run_finished_at
        FROM agent_routine_occurrences o
        JOIN agent_routines r ON r.id = o.routine_id
        JOIN agents a ON a.id = r.agent_id

@@ -8,7 +8,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
 import { modalityOf } from "../platform/domain/mime.js";
-import { pgTimestampToRfc3339 } from "../platform/time.js";
+import { pgTimestampToRfc3339, utcText } from "../platform/time.js";
 import type { AgentStore } from "./store.js";
 import { terminalAssistantText } from "./lifecycle.js";
 
@@ -131,7 +131,7 @@ export class ChildResultDelivery {
     // own reason and still delivers.
     const run = await pool.query<{ status: string; started_at: string | null }>(
       `SELECT status,
-              to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
+              ${utcText("started_at")} AS started_at
        FROM agent_runs WHERE id = $1`,
       [input.run_id],
     );

@@ -5,7 +5,7 @@
 
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 
 export interface MachineRow {
   machine_id: string;
@@ -26,10 +26,10 @@ export interface MachineRow {
 const DB_COLUMNS =
   "machine_id, org_id, user_id, label, hardware_fingerprint, os, os_version, " +
   "app_version, last_ip, " +
-  "to_char(first_connected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS first_connected_at, " +
-  "to_char(last_connected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS last_connected_at, " +
-  "to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS last_seen_at, " +
-  "to_char(re_paired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS re_paired_at";
+  utcText("first_connected_at") + " AS first_connected_at, " +
+  utcText("last_connected_at") + " AS last_connected_at, " +
+  utcText("last_seen_at") + " AS last_seen_at, " +
+  utcText("re_paired_at") + " AS re_paired_at";
 
 /** Result of a connect-time registration. `adopted_from` is set when the
  *  fingerprint matched an existing row of the same org and that row was

@@ -7,7 +7,7 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { agentWorkSql } from "../platform/store/work.js";
-import { pgTimestampToRfc3339 } from "../platform/time.js";
+import { pgTimestampToRfc3339, utcText } from "../platform/time.js";
 import { notifySubagentTree } from "./tree.js";
 
 export interface ReconcileDeps {
@@ -56,8 +56,7 @@ export async function failStaleRuns(
     `SELECT r.id, r.thread_id, t.chat_id, t.parent_thread_id, t.closed_at,
             pt.chat_id AS parent_chat_id,
             a.name AS agent_name, t.title,
-            to_char(COALESCE(r.started_at, r.created_at) AT TIME ZONE 'UTC',
-                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at,
+            ${utcText("COALESCE(r.started_at, r.created_at)")} AS started_at,
             extract(epoch FROM (now() - COALESCE(
               (SELECT max(e.created_at) FROM thread_events e WHERE e.chat_id = t.chat_id),
               r.started_at, r.created_at)))::bigint::text AS idle_seconds

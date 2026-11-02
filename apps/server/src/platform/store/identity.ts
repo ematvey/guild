@@ -5,7 +5,7 @@ import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 
 /** Minimal org-event capability injected by the composition root — the
  *  store must not depend on the events store directly (DAL stays flat:
@@ -305,7 +305,7 @@ export class IdentityStore {
   async listUsers(orgId: string): Promise<UserListRow[]> {
     const res = await this.pool.query(
       "SELECT id, email, role, identity_type, " +
-      "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at " +
+      utcText("created_at") + " AS created_at " +
       "FROM users WHERE org_id = $1 ORDER BY created_at",
       [orgId],
     );
@@ -350,7 +350,7 @@ export class IdentityStore {
         "auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END " +
         "WHERE id = $1 AND org_id = $4 " +
         "RETURNING id, email, role, identity_type, " +
-        "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at",
+        utcText("created_at") + " AS created_at",
         [userId, role, hash, orgId],
       );
       if (res.rows.length === 0) throw ApiError.notFound("no such user");

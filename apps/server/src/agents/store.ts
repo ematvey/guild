@@ -6,7 +6,7 @@
 import { ApiError } from "../platform/errors.js";
 import { withTransaction, type PlatformPool } from "../platform/db.js";
 import { jsonbText } from "../platform/domain/text.js";
-import { isUuid, pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
+import { isUuid, pgTimestampToRfc3339, utcText, uuidv7 } from "../platform/time.js";
 import { ChatStore } from "../platform/store/chats.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type {
@@ -147,9 +147,6 @@ export interface CreateNoticeInput {
   payload?: Record<string, unknown>;
 }
 
-const TS = (column: string): string =>
-  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
 const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a.model,
   a.tools, a.tools_mode, a.visibility, a.resources, a.status, a.is_personal,
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
@@ -158,23 +155,23 @@ const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a
   (SELECT r.alias FROM model_routes r WHERE r.org_id = a.org_id AND r.model = a.model LIMIT 1) AS model_alias,
   COALESCE((SELECT array_agg(tg.team_id::text ORDER BY tg.team_id)
             FROM agent_team_grants tg WHERE tg.agent_id = a.id), '{}') AS team_ids,
-  ${TS("a.deleted_at")} AS deleted_at, ${TS("a.purge_after")} AS purge_after,
-  ${TS("a.created_at")} AS created_at, ${TS("a.updated_at")} AS updated_at`;
+  ${utcText("a.deleted_at")} AS deleted_at, ${utcText("a.purge_after")} AS purge_after,
+  ${utcText("a.created_at")} AS created_at, ${utcText("a.updated_at")} AS updated_at`;
 
 const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type, t.is_default,
-  t.parent_thread_id, t.origin_thread_id, t.depth, ${TS("t.closed_at")} AS closed_at,
-  ${TS("t.created_at")} AS created_at, ${TS("t.last_activity_at")} AS last_activity_at`;
+  t.parent_thread_id, t.origin_thread_id, t.depth, ${utcText("t.closed_at")} AS closed_at,
+  ${utcText("t.created_at")} AS created_at, ${utcText("t.last_activity_at")} AS last_activity_at`;
 
 const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
   r.delegate_agent_id, r.depth, r.trigger, r.status, r.summary,
   r.error_code, r.error_message, r.error_step, r.tokens,
-  ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
-  ${TS("r.created_at")} AS created_at,
+  ${utcText("r.started_at")} AS started_at, ${utcText("r.finished_at")} AS finished_at,
+  ${utcText("r.created_at")} AS created_at,
   (SELECT name FROM agents WHERE id = r.agent_id) AS agent_name,
   (SELECT name FROM agent_routines WHERE id = r.routine_id) AS routine_name`;
 
 const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.payload,
-  ${TS("n.read_at")} AS read_at, ${TS("n.created_at")} AS created_at`;
+  ${utcText("n.read_at")} AS read_at, ${utcText("n.created_at")} AS created_at`;
 
 /** The largest page a thread list returns. */
 export const MAX_THREAD_PAGE = 100;
@@ -1241,8 +1238,8 @@ export class AgentStore {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS}, a.name AS agent_name,
               r.id AS run_id, r.status AS run_status,
-              ${TS("COALESCE(r.started_at, r.created_at)")} AS run_started_at,
-              ${TS("r.finished_at")} AS run_finished_at
+              ${utcText("COALESCE(r.started_at, r.created_at)")} AS run_started_at,
+              ${utcText("r.finished_at")} AS run_finished_at
        FROM agent_threads t
        JOIN agents a ON a.id = t.agent_id
        LEFT JOIN LATERAL (

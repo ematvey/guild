@@ -4,7 +4,7 @@
 // pins a version explicitly.
 
 import { ApiError } from "../errors.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 import type { SkillCatalogItem, SkillOwner } from "@guild/wire/rest";
@@ -36,7 +36,7 @@ function catalogOwner(r: Record<string, unknown>): SkillOwner | null {
 }
 
 const INSTALLED_AT_TEXT =
-  "to_char(installed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS installed_at";
+  utcText("installed_at") + " AS installed_at";
 
 export class SkillStore {
   constructor(readonly pool: PlatformPool) {}
