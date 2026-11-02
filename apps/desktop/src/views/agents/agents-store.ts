@@ -4,12 +4,15 @@
 // `agent_routines`). A per-agent slice is seeded over HTTP only for the first
 // paint of a connection: the server pushes it when it changes, not on
 // connect, so a reconnect drops the per-agent slices and the views on screen
-// seed them again. A frame that lands before its seed wins over the seed.
+// seed them again. A frame that lands before its seed wins over the seed: a
+// pushed list replaces the slice, and a pushed run is held until the seed
+// lands and merged over it.
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
+import { createStore } from "../../lib/store";
 
 type Slice = "runs" | "threads" | "routines";
 
@@ -20,30 +23,28 @@ interface AgentState {
   runs: Record<string, AgentRun[]>;
   threads: Record<string, AgentThread[]>;
   routines: Record<string, AgentRoutine[]>;
-  /** Bumps on every reconnect: the seeding hooks run again. */
+  /** Why a slice's seed failed, by `slice:agentId`. */
+  errors: Record<string, string>;
+  /** Bumps on every reconnect and sign-out: the seeding hooks run again,
+   *  and a seed started under an older epoch is dropped. */
   epoch: number;
 }
 
-const EMPTY: AgentState = { agents: null, runs: {}, threads: {}, routines: {}, epoch: 0 };
+const EMPTY: AgentState = { agents: null, runs: {}, threads: {}, routines: {}, errors: {}, epoch: 0 };
 
-let state: AgentState = EMPTY;
-const listeners = new Set<() => void>();
+const agentStore = createStore<AgentState>(EMPTY);
+/** Never reset: a seed in flight across a reset must see the epoch move. */
+let epochCounter = 0;
+/** Runs pushed for an agent whose run seed is in flight, merged by the seed. */
+const pendingRuns = new Map<string, AgentRun[]>();
+/** `slice:agentId` of every seed in flight. */
+const seeding = new Set<string>();
 const runListeners = new Set<(run: AgentRun) => void>();
 
-function emit(next: AgentState): void {
-  state = next;
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+const sliceKey = (slice: Slice, agentId: string) => `${slice}:${agentId}`;
 
 /** Newest first: the order every run list shows. */
-function byCreatedDesc(a: AgentRun, b: AgentRun): number {
+function byCreatedDesc(a: { created_at: string }, b: { created_at: string }): number {
   return Date.parse(b.created_at) - Date.parse(a.created_at);
 }
 
@@ -52,58 +53,87 @@ function byCreatedDesc(a: AgentRun, b: AgentRun): number {
 export function upsertRun<T extends { id: string; created_at: string }>(rows: T[], run: T): T[] {
   const index = rows.findIndex((row) => row.id === run.id);
   if (index >= 0) return rows.map((row, i) => (i === index ? { ...row, ...run } : row));
-  return [...rows, run].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return [...rows, run].sort(byCreatedDesc);
 }
 
 /** Replaces the agent list (the `agent_list` frame). */
 export function applyAgentList(agents: Agent[]): void {
-  emit({ ...state, agents });
+  agentStore.update((state) => ({ ...state, agents }));
 }
 
 /** Applies one run (the `agent_run` frame): its agent's loaded run list moves,
- *  and every view that keeps its own run rows hears it. */
+ *  and every view that keeps its own run rows hears it. A run for an agent
+ *  whose seed is still in flight waits for that seed. */
 export function applyAgentRun(run: AgentRun): void {
-  const rows = state.runs[run.agent_id];
-  if (rows !== undefined) emit({ ...state, runs: { ...state.runs, [run.agent_id]: upsertRun(rows, run) } });
+  const rows = agentStore.get().runs[run.agent_id];
+  if (rows !== undefined) {
+    agentStore.update((state) => ({ ...state, runs: { ...state.runs, [run.agent_id]: upsertRun(rows, run) } }));
+  } else if (seeding.has(sliceKey("runs", run.agent_id))) {
+    pendingRuns.set(run.agent_id, upsertRun(pendingRuns.get(run.agent_id) ?? [], run));
+  }
   for (const listener of runListeners) listener(run);
 }
 
 /** Replaces one agent's thread list (the `agent_threads` frame). */
 export function applyAgentThreads(agentId: string, threads: AgentThread[]): void {
-  emit({ ...state, threads: { ...state.threads, [agentId]: threads } });
+  agentStore.update((state) => ({ ...state, threads: { ...state.threads, [agentId]: threads } }));
 }
 
 /** Replaces one agent's routines (the `agent_routines` frame). */
 export function applyAgentRoutines(agentId: string, routines: AgentRoutine[]): void {
-  emit({ ...state, routines: { ...state.routines, [agentId]: routines } });
+  agentStore.update((state) => ({ ...state, routines: { ...state.routines, [agentId]: routines } }));
+}
+
+function dropSeeds(): void {
+  pendingRuns.clear();
+  seeding.clear();
 }
 
 /** A new connection: the per-agent slices may have missed changes while the
  *  socket was down, so they seed again. The agent list stays until the
  *  connect push replaces it. */
 export function resetAgentSlices(): void {
-  emit({ ...state, runs: {}, threads: {}, routines: {}, epoch: state.epoch + 1 });
+  dropSeeds();
+  agentStore.update((state) => ({ ...state, runs: {}, threads: {}, routines: {}, errors: {}, epoch: ++epochCounter }));
 }
 
 /** Drops everything; sign-out runs it so one user's agents never reach
  *  the next session. */
 export function clearAgentState(): void {
-  emit({ ...EMPTY, epoch: state.epoch + 1 });
+  dropSeeds();
+  agentStore.set({ ...EMPTY, epoch: ++epochCounter });
 }
 registerSessionReset(clearAgentState);
 
 /** Seeds one per-agent slice from its HTTP read, unless a frame got there
  *  first. Runs merge: a pushed row is newer than the read. */
 function seed(slice: Slice, agentId: string, rows: AgentRun[] | AgentThread[] | AgentRoutine[]): void {
-  const current = state[slice][agentId];
-  if (slice === "runs") {
-    const pushed = (current ?? []) as AgentRun[];
-    const merged = (rows as AgentRun[]).filter((row) => !pushed.some((p) => p.id === row.id));
-    emit({ ...state, runs: { ...state.runs, [agentId]: [...pushed, ...merged].sort(byCreatedDesc) } });
-    return;
-  }
-  if (current !== undefined) return;
-  emit({ ...state, [slice]: { ...state[slice], [agentId]: rows } });
+  agentStore.update((state) => {
+    if (slice === "runs") {
+      const pushed = [...(state.runs[agentId] ?? []), ...(pendingRuns.get(agentId) ?? [])];
+      pendingRuns.delete(agentId);
+      const read = [...(rows as AgentRun[])].sort(byCreatedDesc);
+      return { ...state, runs: { ...state.runs, [agentId]: pushed.reduce((all, run) => upsertRun(all, run), read) } };
+    }
+    if (state[slice][agentId] !== undefined) return state;
+    return { ...state, [slice]: { ...state[slice], [agentId]: rows } };
+  });
+}
+
+function failSeed(slice: Slice, agentId: string, err: unknown): void {
+  if (slice === "runs") pendingRuns.delete(agentId);
+  const message = err instanceof Error && err.message ? err.message : "Could not load this list.";
+  agentStore.update((state) => ({ ...state, errors: { ...state.errors, [sliceKey(slice, agentId)]: message } }));
+}
+
+function clearSeedError(slice: Slice, agentId: string): void {
+  const key = sliceKey(slice, agentId);
+  agentStore.update((state) => {
+    if (!(key in state.errors)) return state;
+    const errors = { ...state.errors };
+    delete errors[key];
+    return { ...state, errors };
+  });
 }
 
 /** A trace row moved by its run's frame: the trace id is the run id, and the
@@ -212,45 +242,58 @@ export function useAgentRunUpdates(listener: (run: AgentRun) => void): void {
 
 /** Every agent the member may see; null until the first push. */
 export function useAgentList(): Agent[] | null {
-  return useSyncExternalStore(subscribe, () => state.agents, () => state.agents);
+  return agentStore.use((state) => state.agents);
 }
 
-function useSeededSlice<T>(slice: Slice, agentId: string, load: (id: string) => Promise<T[]>): T[] | null {
-  const value = useSyncExternalStore(
-    subscribe,
-    () => (state[slice][agentId] as T[] | undefined) ?? null,
-    () => (state[slice][agentId] as T[] | undefined) ?? null,
-  );
-  const epoch = useSyncExternalStore(subscribe, () => state.epoch, () => state.epoch);
-  const needed = value === null;
+/** A seeded per-agent slice: `rows` is null until it seeds; `error` says why
+ *  the seed failed (rows stay null), and `retry` seeds again. */
+export interface SeededSlice<T> {
+  rows: T[] | null;
+  error: string | null;
+  retry: () => void;
+}
+
+function useSeededSlice<T>(slice: Slice, agentId: string, load: (id: string) => Promise<T[]>): SeededSlice<T> {
+  const rows = agentStore.use((state) => (state[slice][agentId] as T[] | undefined) ?? null);
+  const error = agentStore.use((state) => state.errors[sliceKey(slice, agentId)] ?? null);
+  const epoch = agentStore.use((state) => state.epoch);
+  const needed = rows === null && error === null;
   useEffect(() => {
     if (!needed) return;
+    const key = sliceKey(slice, agentId);
     let live = true;
-    void load(agentId)
-      .catch(() => [] as T[])
-      .then((rows) => {
-        if (live) seed(slice, agentId, rows as AgentRun[]);
+    seeding.add(key);
+    const current = () => live && agentStore.get().epoch === epoch;
+    load(agentId)
+      .then(
+        (loaded) => {
+          if (current()) seed(slice, agentId, loaded as AgentRun[]);
+        },
+        (err: unknown) => {
+          if (current()) failSeed(slice, agentId, err);
+        },
+      )
+      .finally(() => {
+        if (agentStore.get().epoch === epoch) seeding.delete(key);
       });
     return () => {
       live = false;
     };
-    // `load` is a module function; the slice re-seeds per agent and epoch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slice, agentId, epoch, needed]);
-  return value;
+  }, [slice, agentId, epoch, needed, load]);
+  return { rows, error, retry: () => clearSeedError(slice, agentId) };
 }
 
-/** One agent's runs, newest first; null until seeded. */
-export function useAgentRuns(agentId: string): AgentRun[] | null {
+/** One agent's runs, newest first; rows null until seeded. */
+export function useAgentRuns(agentId: string): SeededSlice<AgentRun> {
   return useSeededSlice("runs", agentId, listAgentRuns);
 }
 
-/** The member's open threads with one agent; null until seeded. */
-export function useAgentThreads(agentId: string): AgentThread[] | null {
+/** The member's open threads with one agent; rows null until seeded. */
+export function useAgentThreads(agentId: string): SeededSlice<AgentThread> {
   return useSeededSlice("threads", agentId, listAgentThreads);
 }
 
-/** One agent's routines with their newest runs; null until seeded. */
-export function useAgentRoutines(agentId: string): AgentRoutine[] | null {
+/** One agent's routines with their newest runs; rows null until seeded. */
+export function useAgentRoutines(agentId: string): SeededSlice<AgentRoutine> {
   return useSeededSlice("routines", agentId, listRoutines);
 }

@@ -2,10 +2,11 @@
 // The agent store applies pushed frames: the list replaces, a run upserts
 // into its agent's loaded list and reaches run listeners, a per-agent slice
 // seeds over HTTP only until a frame owns it, and a reconnect re-seeds.
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySummary, Agent, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import { makeRun, makeThread } from "./test-fixtures";
+import { resetSessionState } from "../../lib/session-reset";
 
 const api = vi.hoisted(() => ({
   listAgentRuns: vi.fn(),
@@ -39,6 +40,7 @@ function thread(id: string, title: string): AgentThread {
 }
 
 afterEach(() => {
+  cleanup();
   clearAgentState();
   vi.clearAllMocks();
 });
@@ -58,11 +60,11 @@ describe("agents store", () => {
     const heard: string[] = [];
     const off = onAgentRun((r) => heard.push(`${r.id}:${r.status}`));
     const { result } = renderHook(() => useAgentRuns("a1"));
-    await waitFor(() => expect(result.current).not.toBeNull());
+    await waitFor(() => expect(result.current.rows).not.toBeNull());
     act(() => applyAgentRun(run("r2", "running", "2026-11-02T00:00:00Z")));
-    expect(result.current?.map((r) => `${r.id}:${r.status}`)).toEqual(["r2:running", "r1:succeeded"]);
+    expect(result.current.rows?.map((r) => `${r.id}:${r.status}`)).toEqual(["r2:running", "r1:succeeded"]);
     act(() => applyAgentRun(run("r2", "succeeded", "2026-11-02T00:00:00Z")));
-    expect(result.current?.map((r) => `${r.id}:${r.status}`)).toEqual(["r2:succeeded", "r1:succeeded"]);
+    expect(result.current.rows?.map((r) => `${r.id}:${r.status}`)).toEqual(["r2:succeeded", "r1:succeeded"]);
     expect(heard).toEqual(["r2:running", "r2:succeeded"]);
     expect(api.listAgentRuns).toHaveBeenCalledTimes(1);
     off();
@@ -74,11 +76,44 @@ describe("agents store", () => {
     const { result } = renderHook(() => useAgentThreads("a1"));
     act(() => applyAgentThreads("a1", [thread("t1", "pushed")]));
     await act(async () => { resolveSeed([thread("t1", "stale")]); });
-    expect(result.current?.map((t) => t.title)).toEqual(["pushed"]);
+    expect(result.current.rows?.map((t) => t.title)).toEqual(["pushed"]);
 
     api.listAgentThreads.mockResolvedValueOnce([thread("t1", "after reconnect")]);
     act(() => resetAgentSlices());
-    await waitFor(() => expect(result.current?.map((t) => t.title)).toEqual(["after reconnect"]));
+    await waitFor(() => expect(result.current.rows?.map((t) => t.title)).toEqual(["after reconnect"]));
+  });
+
+  it("keeps a run pushed before its agent's seed and merges it over the read", async () => {
+    let resolveSeed: (rows: AgentRun[]) => void = () => {};
+    api.listAgentRuns.mockReturnValueOnce(new Promise((resolve) => { resolveSeed = resolve; }));
+    const { result } = renderHook(() => useAgentRuns("a1"));
+    act(() => applyAgentRun(run("r2", "succeeded", "2026-11-02T00:00:00Z")));
+    expect(result.current.rows).toBeNull();
+    await act(async () => {
+      resolveSeed([run("r2", "running", "2026-11-02T00:00:00Z"), run("r1", "succeeded", "2026-11-01T00:00:00Z")]);
+    });
+    expect(result.current.rows?.map((r) => `${r.id}:${r.status}`)).toEqual(["r2:succeeded", "r1:succeeded"]);
+  });
+
+  it("reports a failed seed as an error, not an empty list, and retries", async () => {
+    api.listAgentThreads.mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(() => useAgentThreads("a1"));
+    await waitFor(() => expect(result.current.error).toBe("offline"));
+    expect(result.current.rows).toBeNull();
+    api.listAgentThreads.mockResolvedValueOnce([thread("t1", "back")]);
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.rows?.map((t) => t.title)).toEqual(["back"]));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("drops a seed that lands after sign-out", async () => {
+    let resolveSeed: (rows: AgentThread[]) => void = () => {};
+    api.listAgentThreads.mockReturnValueOnce(new Promise((resolve) => { resolveSeed = resolve; }));
+    api.listAgentThreads.mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useAgentThreads("a1"));
+    act(() => resetSessionState());
+    await act(async () => { resolveSeed([thread("t1", "previous user")]); });
+    expect(result.current.rows).toBeNull();
   });
 
   it("moves a trace row with its run and builds a row for a new run", () => {
