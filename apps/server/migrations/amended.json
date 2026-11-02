@@ -1,0 +1,15 @@
+{
+  "0022_drop_messages": {
+    "replaces": [
+      "0ff6b2ce701ec1eb458d0ce0894830d0aecebde41da6e0e199fa198ac242bf33",
+      "3cb7fd2dd4b29433a2d0cf713975a8076dbbe3720a21084562ffd8b75c590c28"
+    ],
+    "reason": "Comment wording only; the statement is unchanged."
+  },
+  "0092_child_request_backfill": {
+    "replaces": [
+      "9567901ec943d29120624f08efa6b234d15ac3995a31ab56b29fc1116b222a38"
+    ],
+    "reason": "Guarded to a no-op on a schema without the durable tables, so a fresh database applies it; databases that ran the unguarded form already hold its backfill."
+  }
+}

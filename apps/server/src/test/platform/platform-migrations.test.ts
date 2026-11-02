@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyPlatformMigrations } from "../../platform/migrations.js";
+import { applyPlatformMigrations, readAmendments } from "../../platform/migrations.js";
+import { execFileSync } from "node:child_process";
 import { TEST_ADMIN_URL } from "../support/platform-env.js";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
@@ -194,5 +195,61 @@ describe("applyPlatformMigrations", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("an amendment listed in amended.json adopts the file's hash without a warning", async () => {
+    const { url } = await bareDatabase();
+    const original = "CREATE TABLE pm_t1 (id INT)";
+    const dir = tempMigrations({ "0001_a.sql": original });
+    try {
+      const pool = new pg.Pool({ connectionString: url, max: 2 });
+      await applyPlatformMigrations(pool, { dir });
+      const amended = "-- reworded\nCREATE TABLE pm_t1 (id INT)";
+      writeFileSync(path.join(dir, "0001_a.sql"), amended);
+      writeFileSync(
+        path.join(dir, "amended.json"),
+        JSON.stringify({ "0001_a": { replaces: [sha256(original)], reason: "comment" } }),
+      );
+      const warns: unknown[] = [];
+      const log = { warn: (entry: unknown) => warns.push(entry), info: () => {} } as never;
+      await applyPlatformMigrations(pool, { dir, log });
+      expect(warns).toEqual([]);
+      expect((await history(url))[0]!.content_hash).toBe(sha256(amended));
+      await pool.end();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// A migration a released client's server shipped is never edited, unless
+// amended.json lists the edit. The baseline is the newest client tag.
+describe("shipped migrations", () => {
+  const git = (...args: string[]): string =>
+    execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  let tag: string | null = null;
+  try {
+    tag = git("describe", "--tags", "--match", "client-v*", "--abbrev=0").trim();
+  } catch {
+    tag = null;
+  }
+
+  it.skipIf(tag === null)("are unchanged since the last client release, or listed as amended", () => {
+    const amendments = readAmendments(REAL_MIGRATIONS_DIR);
+    const shipped = git("ls-tree", "--name-only", `${tag}:apps/server/migrations`)
+      .split("\n")
+      .filter((name) => name.endsWith(".sql"));
+    const edited: string[] = [];
+    for (const file of shipped) {
+      const before = sha256(git("show", `${tag}:apps/server/migrations/${file}`));
+      const now = sha256(readFileSync(path.join(REAL_MIGRATIONS_DIR, file), "utf8"));
+      const stem = file.replace(/\.sql$/, "");
+      if (before !== now && amendments[stem]?.replaces.includes(before) !== true) edited.push(stem);
+    }
+    expect(edited).toEqual([]);
+  });
+
+  it("every amendment names a migration file", () => {
+    const files = new Set(readdirSync(REAL_MIGRATIONS_DIR).map((file) => file.replace(/\.sql$/, "")));
+    expect(Object.keys(readAmendments(REAL_MIGRATIONS_DIR)).filter((name) => !files.has(name))).toEqual([]);
   });
 });
