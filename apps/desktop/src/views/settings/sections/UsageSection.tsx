@@ -25,7 +25,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@guild/ui/components/chart";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 
 interface UsageRow {
   group: string;

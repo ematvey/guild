@@ -17,7 +17,7 @@ import {
 import { toast } from "sonner";
 import { rpcCall } from "../../lib/machine-rpc";
 import { resolveProjectDir } from "../settings/resolve-project-dir";
-import { daemonFs } from "../../lib/fs-bridge";
+import { daemonFs, type BridgeRpc } from "../../lib/fs-bridge";
 import { listSkills, setSkillDisabled } from "../../lib/skills";
 import {
   skillsPin,
@@ -86,7 +86,7 @@ export function installRow(install: SkillInstall, latest: string | null): Instal
  *  in the app-server's settings.json (`disabled: true` on the row means
  *  the toggle enables it — the call passes the desired enabled state). */
 export async function toggleDisabled(
-  rpc: (method: string, params: any, timeoutMs?: number) => Promise<any>,
+  rpc: BridgeRpc,
   row: Pick<LocalSkillRow, "path" | "disabled">,
 ): Promise<void> {
   const fs = daemonFs(rpc);
@@ -101,7 +101,7 @@ export async function toggleDisabled(
  *  install record) falls back to the local-only removal. */
 export async function uninstallSkill(
   slug: string,
-  rpc: (method: string, params: any, timeoutMs?: number) => Promise<any>,
+  rpc: BridgeRpc,
   localGlobal: boolean,
 ): Promise<void> {
   const removed = await skillsUninstall(slug).then(() => true, () => false);

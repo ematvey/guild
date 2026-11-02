@@ -31,13 +31,13 @@ import {
   ErrorState,
   InlineLoading,
   PageBody,
-  PageHeader,
   RunStatusBadge,
   Section,
   TabBar,
   ToneBadge,
   VisibilityBadge,
 } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
@@ -82,7 +82,7 @@ export function AgentPage({
   filePath?: string;
   filters?: ActivityFilters;
   viewer: Viewer;
-  onNavigate: (route: AgentsRoute) => void;
+  onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
   // The agent row is live: the pushed agent list carries every agent this
@@ -150,7 +150,7 @@ export function AgentPage({
   if (error !== null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <PageHeader title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
+        <PageHeader variant="bar" title="Agent" actions={<Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>Agents</Button>} />
         <PageBody>
           <ErrorState message={error} />
         </PageBody>
@@ -160,7 +160,7 @@ export function AgentPage({
   if (agent === null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <PageHeader title="Agent" />
+        <PageHeader variant="bar" title="Agent" />
         <PageBody>
           <InlineLoading label="Loading agent" />
         </PageBody>
@@ -170,7 +170,7 @@ export function AgentPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title={
           <span className="flex min-w-0 items-center gap-2">
             <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
@@ -264,8 +264,8 @@ export function AgentPage({
               role={viewer.role}
               agentId={agent.id}
               filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
-              onFiltersChange={(next) =>
-                onNavigate({ view: "agent", agentId, tab: "activity", filters: next })
+              onFiltersChange={(next, options) =>
+                onNavigate({ view: "agent", agentId, tab: "activity", filters: next }, options)
               }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
@@ -296,8 +296,10 @@ function AgentOverview({
   onNewThread: () => Promise<AgentThread | null>;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const threads = useAgentThreads(agent.id);
-  const runs = useAgentRuns(agent.id);
+  const threadSlice = useAgentThreads(agent.id);
+  const runSlice = useAgentRuns(agent.id);
+  const threads = threadSlice.rows;
+  const runs = runSlice.rows;
   const recent = (threads ?? []).slice(0, 3);
   const recentRuns = [...(runs ?? [])]
     .sort(
@@ -335,7 +337,9 @@ function AgentOverview({
         </Section>
 
         <Section title="Recent threads" description="The default thread is pinned first.">
-          {threads === null ? (
+          {threadSlice.error !== null ? (
+            <ErrorState title="Could not load threads" message={threadSlice.error} onRetry={threadSlice.retry} />
+          ) : threads === null ? (
             <InlineLoading label="Loading threads" />
           ) : recent.length === 0 ? (
             <p className="text-sm text-muted-foreground">No threads yet.</p>
@@ -394,7 +398,9 @@ function AgentOverview({
             </Button>
           }
         >
-          {runs === null ? (
+          {runSlice.error !== null ? (
+            <ErrorState title="Could not load activity" message={runSlice.error} onRetry={runSlice.retry} />
+          ) : runs === null ? (
             <InlineLoading label="Loading activity" />
           ) : recentRuns.length === 0 ? (
             <p className="text-sm text-muted-foreground">No runs yet.</p>

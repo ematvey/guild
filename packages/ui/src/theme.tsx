@@ -10,7 +10,7 @@ const Ctx = createContext<{ theme: Theme; setTheme: (t: Theme) => void }>({
 });
 
 /// Applies the resolved theme by toggling `dark` on <html>; tokens live in
-/// index.css. Default is dark (the product is dark-first).
+/// theme.css. Default is dark (the product is dark-first).
 export function resolvedDark(theme: Theme): boolean {
   return (
     theme === "dark" ||

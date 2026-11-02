@@ -405,7 +405,15 @@ export function startSocket(
 
   livenessLoop();
   // Wake-ups and network flips leave half-open sockets behind: re-check
-  // liveness (and resync when healthy) the moment the tab is live again.
+  // liveness the moment the tab is live again. A dead link reconnects (the
+  // reconnect resyncs); a stale one — silent past two ping intervals, so a
+  // throttled background tab may have stopped hearing it — is probed and
+  // resynced; a link that delivered a frame since is current and only
+  // probed, since an open socket loses no frame.
+  const STALE_AFTER_MS = 2 * PING_INTERVAL_MS;
+  const probe = (): void => {
+    try { socket?.send(serializeClientFrame({ type: "ping" })); } catch { /* closing */ }
+  };
   const wakeCheck = (): void => {
     if (stopped) return;
     if (socket === null || socket.readyState !== 1) {
@@ -413,8 +421,11 @@ export function startSocket(
     } else if (Date.now() - lastFrameAt > DEAD_AFTER_MS) {
       traceEvent("socket.wake_close", { attempt, silentMs: silentMs() });
       try { socket.close(); } catch { /* already closing */ }
-    } else {
+    } else if (Date.now() - lastFrameAt > STALE_AFTER_MS) {
+      probe();
       sendSync();
+    } else {
+      probe();
     }
   };
   const onVisibility = (): void => {

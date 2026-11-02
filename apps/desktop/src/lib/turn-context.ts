@@ -7,6 +7,7 @@
 
 import { parentOf, type BridgeFs } from "./fs-bridge";
 import {
+  byteLength,
   disabledPaths,
   discoverSkills,
   installedOrgSkills,
@@ -25,12 +26,7 @@ export interface PreparedTurn {
 }
 
 
-/** Byte length (the Rust budget checks are byte-based). */
-function byteLength(s: string): number {
-  return new TextEncoder().encode(s).length;
-}
-
-/** UTF-8-safe truncation to `max` bytes (Rust's char-boundary slice). */
+/** UTF-8-safe truncation to `max` bytes (cut at a character boundary). */
 function truncateBytes(s: string, max: number): string {
   if (byteLength(s) <= max) return s;
   const bytes = new TextEncoder().encode(s);
@@ -129,12 +125,12 @@ export async function projectAgentDocs(
 }
 
 /**
- * One-call turn preparation (the old daemon `skills.prepare_turn`):
- * expands `/name` mentions into the prompt, renders the skills index, and
- * assembles the AGENTS.md instructions. Everything best-effort — context
- * assembly never blocks a turn.
+ * Assembles one turn's context over a given fs bridge: expands `/name`
+ * mentions into the prompt, renders the skills index, and assembles the
+ * AGENTS.md instructions. Everything best-effort — context assembly never
+ * blocks a turn. `lib/api/skills.ts` `prepareTurn` picks the bridge.
  */
-export async function prepareTurn(
+export async function assembleTurnContext(
   fs: BridgeFs,
   scopes: { configDir: string | null; home: string | null },
   prompt: string,

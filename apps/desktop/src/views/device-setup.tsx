@@ -15,6 +15,7 @@ import { createPairingToken, pairingCode } from "../lib/api/folders";
 import { downloadRelease, listReleases, type Release } from "../lib/api/releases";
 import { serverUrl } from "../lib/session";
 import { formatBytes } from "../lib/format";
+import { useTransientFlag } from "../lib/use-transient";
 import { compareVersions } from "./skills/version";
 
 type DesktopOs = "mac" | "windows" | "linux";
@@ -50,7 +51,7 @@ export function DeviceSetupDialog({
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [pairBusy, setPairBusy] = useState(false);
-  const [pairCopied, setPairCopied] = useState(false);
+  const [pairCopied, flashPairCopied] = useTransientFlag(1500);
   const [dlBusy, setDlBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -179,8 +180,7 @@ export function DeviceSetupDialog({
                     variant="outline"
                     onClick={() => {
                       void navigator.clipboard?.writeText(pairCode);
-                      setPairCopied(true);
-                      setTimeout(() => setPairCopied(false), 1500);
+                      flashPairCopied();
                     }}
                   >
                     <Copy /> {pairCopied ? "Copied" : "Copy"}

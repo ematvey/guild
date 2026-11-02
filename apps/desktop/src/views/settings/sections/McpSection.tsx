@@ -9,7 +9,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { rowDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import { registerSessionReset } from "../../../lib/session-reset";
+import { createStore } from "../../../lib/store";
 import {
   createMcpServer,
   deleteMcpServer,
@@ -42,7 +42,7 @@ import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -67,11 +67,24 @@ interface ProbeResult {
   error?: string;
 }
 
-/** Client-side cache of the last probe's tool count per server id — the
- *  list's tool-count column reads it; a fresh probe updates it. */
-const toolCounts = new Map<string, number>();
+/** The last probe's tool count per server id — the list's tool-count
+ *  column reads it; a fresh probe updates it, a save drops it. Sign-out
+ *  resets it (createStore). */
+const toolCountsStore = createStore<Record<string, number>>({});
 
-registerSessionReset(() => toolCounts.clear());
+function setToolCount(serverId: string, count: number | undefined): void {
+  toolCountsStore.update((prev) => {
+    const next = { ...prev };
+    if (count === undefined) delete next[serverId];
+    else next[serverId] = count;
+    return next;
+  });
+}
+
+function ToolCount({ serverId }: { serverId: string }) {
+  const count = toolCountsStore.use((counts) => counts[serverId]);
+  return <span className="text-xs text-muted-foreground">{count === undefined ? "—" : `${count}`}</span>;
+}
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
@@ -185,14 +198,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
       {
         id: "tools",
         header: "Tools",
-        cell: ({ row }) => {
-          const count = toolCounts.get(row.original.id);
-          return (
-            <span className="text-xs text-muted-foreground">
-              {count === undefined ? "—" : `${count}`}
-            </span>
-          );
-        },
+        cell: ({ row }) => <ToolCount serverId={row.original.id} />,
       },
       {
         accessorKey: "created_at",
@@ -426,7 +432,7 @@ function McpDetail({
         ...(extra ?? {}),
       });
       setProbe(null);
-      toolCounts.delete(server.id);
+      setToolCount(server.id, undefined);
       toast.success("Saved", { description: name });
       onChanged();
     } catch (e) {
@@ -442,7 +448,7 @@ function McpDetail({
     try {
       const res = await probeMcpServerById<ProbeResult>(server.id);
       setProbe(res);
-      if (res.ok && res.tools !== undefined) toolCounts.set(server.id, res.tools.length);
+      if (res.ok && res.tools !== undefined) setToolCount(server.id, res.tools.length);
     } catch (e) {
       setProbe({ ok: false, error: e instanceof Error ? e.message : String(e) });
     } finally {

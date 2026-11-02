@@ -106,40 +106,6 @@ export function AgentGlyph({
   );
 }
 
-/** Full-width page header: title row plus an optional tab row. */
-export function PageHeader({
-  title,
-  description,
-  actions,
-  tabs,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  actions?: ReactNode;
-  tabs?: ReactNode;
-}) {
-  return (
-    <header className="border-b border-border bg-background px-4 pt-3 sm:px-6">
-      <div className="flex flex-wrap items-center gap-3 pb-3">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-semibold tracking-[-0.01em]">
-            {title}
-          </h1>
-          {description !== undefined && (
-            <p className="mt-0.5 truncate text-sm text-muted-foreground">
-              {description}
-            </p>
-          )}
-        </div>
-        {actions !== undefined && (
-          <div className="flex flex-wrap items-center gap-2">{actions}</div>
-        )}
-      </div>
-      {tabs !== undefined && <div className="flex flex-wrap items-center gap-3">{tabs}</div>}
-    </header>
-  );
-}
-
 export function TabBar<T extends string>({
   label,
   tabs,

@@ -41,7 +41,7 @@ export function AgentsPanel({
         <ActivityPage
           filters={route.filters}
           role={viewer.role}
-          onFiltersChange={(filters) => onNavigate({ view: "activity", filters })}
+          onFiltersChange={(filters, options) => onNavigate({ view: "activity", filters }, options)}
           onNavigate={onNavigate}
           onOpenChat={onOpenChat}
         />

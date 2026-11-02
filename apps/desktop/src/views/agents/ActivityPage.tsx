@@ -54,11 +54,12 @@ import {
   InlineLoading,
   LoadingRows,
   PageBody,
-  PageHeader,
   TabBar,
   ToneBadge,
 } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 import { count } from "../../lib/format";
+import { useDebounced } from "../../lib/use-debounced";
 import { compact, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -89,6 +90,8 @@ export function runMatchesFilters(run: AgentRun, filters: ActivityFilters, agent
   return filters.q.trim() === "";
 }
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 function windowQuery(period: ActivityPeriod): ActivityQuery {
   const now = Date.now();
   return {
@@ -108,7 +111,9 @@ export function ActivityPage({
 }: {
   /** The activity filters named by the route. */
   filters: ActivityFilters;
-  onFiltersChange: (filters: ActivityFilters) => void;
+  /** `replace` rewrites the current history entry: typing in a filter box
+   *  is one edit, not a step per keystroke. */
+  onFiltersChange: (filters: ActivityFilters, options?: { replace?: boolean }) => void;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
   /** Per-agent projection when set. */
@@ -125,20 +130,25 @@ export function ActivityPage({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  const set = (next: Partial<ActivityFilters>) => {
-    onFiltersChange({ ...filters, ...next });
+  const set = (next: Partial<ActivityFilters>, options?: { replace?: boolean }) => {
+    onFiltersChange({ ...filters, ...next }, options);
   };
 
-  const range = windowQuery(filters.period);
-  const query: ActivityQuery = {
-    ...range,
-    ...(agentId !== undefined ? { agent: agentId } : {}),
-    ...(filters.q.trim() !== "" ? { q: filters.q.trim() } : {}),
-  };
+  // The text filters fetch once typing pauses; the URL follows every key.
+  const q = useDebounced(filters.q.trim(), SEARCH_DEBOUNCE_MS);
+  const model = useDebounced(filters.model, SEARCH_DEBOUNCE_MS);
+  const { tab, period, status, trigger, caller } = filters;
 
   useEffect(() => {
     let live = true;
     setError(null);
+    // The window ends now: computed per fetch, not per render.
+    const range = windowQuery(period);
+    const query: ActivityQuery = {
+      ...range,
+      ...(agentId !== undefined ? { agent: agentId } : {}),
+      ...(q !== "" ? { q } : {}),
+    };
     void getActivitySummary({
       ...range,
       ...(agentId !== undefined ? { agent: agentId } : {}),
@@ -150,18 +160,18 @@ export function ActivityPage({
         if (live) setSummary(null);
       });
     const load =
-      filters.tab === "calls"
+      tab === "calls"
         ? listSpans({
             ...query,
             type: "llm",
-            ...(filters.caller !== "all" ? { caller: filters.caller as "model" | "judge" } : {}),
-            ...(filters.model !== "" ? { model: filters.model } : {}),
+            ...(caller !== "all" ? { caller: caller as "model" | "judge" } : {}),
+            ...(model !== "" ? { model } : {}),
           }).then((res) => {
             if (!live) return;
             setSpans(res.spans);
             setTotal(res.total);
           })
-        : filters.tab === "chats"
+        : tab === "chats"
           ? listChatActivity(query).then((res) => {
               if (!live) return;
               setChats(res.chats);
@@ -169,8 +179,8 @@ export function ActivityPage({
             })
           : listTraces({
               ...query,
-              ...(filters.status !== "all" ? { status: filters.status } : {}),
-              ...(filters.trigger !== "all" ? { trigger: filters.trigger } : {}),
+              ...(status !== "all" ? { status } : {}),
+              ...(trigger !== "all" ? { trigger } : {}),
             }).then((res) => {
               if (!live) return;
               setTraces(res.traces);
@@ -186,8 +196,7 @@ export function ActivityPage({
     return () => {
       live = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.tab, filters.period, filters.status, filters.trigger, filters.q, filters.caller, filters.model, agentId, tick]);
+  }, [tab, period, status, trigger, q, caller, model, agentId, tick]);
 
   // The traces tab is live: a pushed run moves its row, and a new run that
   // matches the filters joins the top. The calls and chats tabs are span
@@ -274,7 +283,7 @@ export function ActivityPage({
             </div>
             <input
               value={filters.model}
-              onChange={(e) => set({ model: e.target.value })}
+              onChange={(e) => set({ model: e.target.value }, { replace: true })}
               placeholder="model filter"
               className="w-40 rounded-md border border-border bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground/60"
             />
@@ -284,7 +293,7 @@ export function ActivityPage({
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             value={filters.q}
-            onChange={(e) => set({ q: e.target.value })}
+            onChange={(e) => set({ q: e.target.value }, { replace: true })}
             placeholder={filters.tab === "traces" ? "Search summary or agent" : "Search"}
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
@@ -359,7 +368,7 @@ export function ActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Activity"
         description="Agent runs, the LLM calls and tool calls inside them, and the chats they belong to."
         tabs={
@@ -674,17 +683,6 @@ export function ChatActivityPage({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  // Old activity chat links used /sessions/<id>; rewrite them to the
-  // canonical /chats/<id> address without adding a history step.
-  useEffect(() => {
-    if (!window.location.pathname.startsWith("/sessions/")) return;
-    window.history.replaceState(
-      null,
-      "",
-      `/chats/${encodeURIComponent(chatId)}${window.location.search}`,
-    );
-  }, [chatId]);
-
   useEffect(() => {
     let live = true;
     setError(null);
@@ -719,7 +717,7 @@ export function ChatActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Chat"
         description={chatId}
         actions={

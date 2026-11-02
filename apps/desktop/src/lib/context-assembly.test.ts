@@ -17,7 +17,7 @@ import {
 } from "./skills";
 import {
   loadGlobalAgentsMd,
-  prepareTurn,
+  assembleTurnContext,
   projectAgentDocs,
 } from "./turn-context";
 
@@ -186,7 +186,7 @@ describe("AGENTS.md chain (Codex semantics)", () => {
   });
 });
 
-describe("prepareTurn (end to end over the bridge)", () => {
+describe("assembleTurnContext (end to end over the bridge)", () => {
   it("expands mentions, builds the index, joins global + project docs", async () => {
     const fs = fakeFs({
       "/cfg/guild/AGENTS.md": "global rules",
@@ -196,7 +196,7 @@ describe("prepareTurn (end to end over the bridge)", () => {
       "/home/u/.agents/skills/user-skill/SKILL.md": SKILL("user-skill", "User scope"),
     });
     const scopes = { configDir: "/cfg/guild", home: "/home/u" };
-    const prep = await prepareTurn(fs, scopes, "please /deploy", "/repo/sub");
+    const prep = await assembleTurnContext(fs, scopes, "please /deploy", "/repo/sub");
     expect(prep.prompt).toContain("please /deploy");
     expect(prep.prompt).toContain("### Skill: deploy");
     expect(prep.index).toContain("- deploy: Deploy the thing");
@@ -207,7 +207,7 @@ describe("prepareTurn (end to end over the bridge)", () => {
     );
   });
   it("browser mode (no scopes) passes the prompt through untouched", async () => {
-    const prep = await prepareTurn(
+    const prep = await assembleTurnContext(
       fakeFs({}),
       { configDir: null, home: null },
       "plain prompt",
@@ -348,7 +348,7 @@ describe("installed org skills (spec §2.3)", () => {
     expect(fetched).toEqual([{ slug: "deploy-checklist", version: "v2" }]);
     expect(m).toEqual([]);
   });
-  it("prepareTurn (machine): org installs join the index; local discovery wins a collision", async () => {
+  it("assembleTurnContext (machine): org installs join the index; local discovery wins a collision", async () => {
     const fs = fakeFs({
       "/home/u/.agents/skills/synced/SKILL.md": SKILL("synced", "synced frontmatter"),
     });
@@ -356,27 +356,27 @@ describe("installed org skills (spec §2.3)", () => {
       { slug: "fresh-install", pinned_version: "v1" },
       { slug: "synced", pinned_version: "v2" },
     ]);
-    const prep = await prepareTurn(fs, { configDir: "/cfg/guild", home: "/home/u" }, "no mentions", "/proj", api);
+    const prep = await assembleTurnContext(fs, { configDir: "/cfg/guild", home: "/home/u" }, "no mentions", "/proj", api);
     expect(prep.index).toContain("- fresh-install:  (/home/u/.agents/skills/fresh-install/SKILL.md)");
     expect(prep.index).toContain("- synced: synced frontmatter");
     expect(prep.index).not.toContain("org: ");
   });
-  it("prepareTurn (machine): org mentions expand from the local file", async () => {
+  it("assembleTurnContext (machine): org mentions expand from the local file", async () => {
     const fs = fakeFs({
       "/home/u/.agents/skills/deploy-checklist/SKILL.md": SKILL("deploy-checklist", "Deploy"),
     });
     const { api, fetched } = fakeOrgApi([{ slug: "deploy-checklist", pinned_version: "v2" }]);
-    const prep = await prepareTurn(fs, { configDir: "/cfg/guild", home: "/home/u" }, "run /deploy-checklist", "/proj", api);
+    const prep = await assembleTurnContext(fs, { configDir: "/cfg/guild", home: "/home/u" }, "run /deploy-checklist", "/proj", api);
     expect(prep.prompt).toContain("### Skill: deploy-checklist");
     expect(prep.prompt).toContain("body of deploy-checklist");
     expect(fetched).toEqual([]); // the local file path — no HTTP fetch
   });
-  it("prepareTurn (browser): index stays empty (the server renders installs) but mentions fetch and inline", async () => {
+  it("assembleTurnContext (browser): index stays empty (the server renders installs) but mentions fetch and inline", async () => {
     const { api, fetched } = fakeOrgApi(
       [{ slug: "deploy-checklist", pinned_version: "v2" }],
       { "deploy-checklist": "BROWSER BODY" },
     );
-    const prep = await prepareTurn(fakeFs({}), { configDir: null, home: null }, "run /deploy-checklist", undefined, api);
+    const prep = await assembleTurnContext(fakeFs({}), { configDir: null, home: null }, "run /deploy-checklist", undefined, api);
     expect(prep.index).toBe("");
     expect(prep.prompt).toContain("### Skill: deploy-checklist");
     expect(prep.prompt).toContain("BROWSER BODY");
