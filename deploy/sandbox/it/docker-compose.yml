@@ -5,7 +5,7 @@ services:
   sandbox-runner:
     image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
     user: "0:0"
-    command: ["node", "dist/sandbox/runner/main.js"]
+    command: ["bun", "src/sandbox/runner/main.ts"]
     environment:
       GUILD_SANDBOX_RUNNER_TOKEN: ${GUILD_SANDBOX_RUNNER_TOKEN:?set GUILD_SANDBOX_RUNNER_TOKEN}
       GUILD_SANDBOX_IMAGE: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
@@ -17,6 +17,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - guild_data:/data
+      # Agent workspaces (agents/<org>/<agent>): the runner prepares each
+      # subpath here before a sandbox mounts it, as in deploy/compose.
+      - guild_workspaces:/workspaces
   egress:
     image: ${GUILD_SANDBOX_EGRESS_IMAGE:-guild-sandbox-egress:latest}
     networks:
@@ -35,3 +38,4 @@ networks:
       config: [{ subnet: "${GUILD_SANDBOX_IT_SUBNET:-10.214.0.0/24}" }]
 volumes:
   guild_data:
+  guild_workspaces:
