@@ -1,10 +1,9 @@
 // Script-facing integration tool API: the same policy-filtered plugin
-// tools the chat loop
-// uses — built-in and MCP plugins alike — reachable over HTTPS so scripts
-// can call them with session or org-API-key auth. The execute route
-// dispatches through the connector runtime (platform/integrations/
-// execute.ts): a connector failure is a result (HTTP 200, ok:false), never
-// an HTTP error.
+// tools the chat loop uses — built-in and MCP plugins alike — reachable
+// over HTTPS so scripts can call them with session or org-API-key auth.
+// The execute route dispatches through the connector runtime
+// (src/integrations/execute.ts): a connector failure is a result (HTTP
+// 200, ok:false), never an HTTP error.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
