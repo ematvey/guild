@@ -409,6 +409,29 @@ describe("startSocket", () => {
       connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
     });
 
+    it("a wake on a current link probes it without a resync; a stale one resyncs", async () => {
+      vi.useFakeTimers();
+      const { doc } = stubHost();
+      const sockets: FakeSocket[] = [];
+      const connection = startSocket({
+        ...handlers,
+        socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0].open();
+      const sent = () => sockets[0].sent.map((frame) => JSON.parse(frame).type as string);
+      expect(sent()).toEqual(["sync"]);
+      doc.dispatchEvent(new Event("visibilitychange"));
+      expect(sent()).toEqual(["sync", "ping"]);
+      // Silent past two ping intervals (a throttled background tab): the
+      // wake probes and resyncs.
+      vi.setSystemTime(Date.now() + 12_000);
+      doc.dispatchEvent(new Event("visibilitychange"));
+      expect(sent().slice(-2)).toEqual(["ping", "sync"]);
+      expect(sockets).toHaveLength(1);
+      connection.stop(); vi.useRealTimers(); vi.unstubAllGlobals();
+    });
+
     it("stop removes the wake listeners", async () => {
       vi.useFakeTimers();
       const { win, doc } = stubHost();
