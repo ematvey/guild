@@ -296,8 +296,10 @@ function AgentOverview({
   onNewThread: () => Promise<AgentThread | null>;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const threads = useAgentThreads(agent.id);
-  const runs = useAgentRuns(agent.id);
+  const threadSlice = useAgentThreads(agent.id);
+  const runSlice = useAgentRuns(agent.id);
+  const threads = threadSlice.rows;
+  const runs = runSlice.rows;
   const recent = (threads ?? []).slice(0, 3);
   const recentRuns = [...(runs ?? [])]
     .sort(
@@ -335,7 +337,9 @@ function AgentOverview({
         </Section>
 
         <Section title="Recent threads" description="The default thread is pinned first.">
-          {threads === null ? (
+          {threadSlice.error !== null ? (
+            <ErrorState title="Could not load threads" message={threadSlice.error} onRetry={threadSlice.retry} />
+          ) : threads === null ? (
             <InlineLoading label="Loading threads" />
           ) : recent.length === 0 ? (
             <p className="text-sm text-muted-foreground">No threads yet.</p>
@@ -394,7 +398,9 @@ function AgentOverview({
             </Button>
           }
         >
-          {runs === null ? (
+          {runSlice.error !== null ? (
+            <ErrorState title="Could not load activity" message={runSlice.error} onRetry={runSlice.retry} />
+          ) : runs === null ? (
             <InlineLoading label="Loading activity" />
           ) : recentRuns.length === 0 ? (
             <p className="text-sm text-muted-foreground">No runs yet.</p>

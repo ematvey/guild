@@ -9,7 +9,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { relativeTime } from "../../lib/relative-time";
 import type { Agent, AgentThread } from "./agents-api";
 import type { AgentsRoute } from "./agents-route";
-import { Mono, ToneBadge } from "./agent-ui";
+import { ErrorState, Mono, ToneBadge } from "./agent-ui";
 import { useAgentThreads } from "./agents-store";
 
 /** Thread list: default thread pinned first, then most recent activity. */
@@ -34,7 +34,7 @@ export function ThreadList({
   /** A thread has one canonical address: its chat. */
   onOpenChat?: (chatId: string) => void;
 }) {
-  const threads = useAgentThreads(agent.id);
+  const { rows: threads, error: loadError, retry } = useAgentThreads(agent.id);
   const [creating, setCreating] = useState(false);
 
   const create = async () => {
@@ -61,7 +61,8 @@ export function ThreadList({
           New thread
         </Button>
       </div>
-      {sorted === null && (
+      {loadError !== null && <ErrorState title="Could not load threads" message={loadError} onRetry={retry} />}
+      {sorted === null && loadError === null && (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-14 w-full rounded-lg" />

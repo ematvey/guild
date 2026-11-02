@@ -125,7 +125,7 @@ function RoutineList({
 }) {
   // Live: the member socket pushes the routines whenever one is created,
   // changed, scheduled, run or deleted.
-  const routines = useAgentRoutines(agentId);
+  const { rows: routines, error: loadError, retry } = useAgentRoutines(agentId);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -154,7 +154,8 @@ function RoutineList({
         </Button>
       </div>
       {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
-      {routines === null && <LoadingRows rows={3} />}
+      {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
+      {routines === null && loadError === null && <LoadingRows rows={3} />}
       {routines !== null && routines.length === 0 && (
         <EmptyState
           icon={Clock}
@@ -225,9 +226,9 @@ function RoutineDetail({
 }) {
   // The routine comes from the agent's pushed routines; its run history is
   // seeded once and then follows every pushed run of this routine.
-  const routines = useAgentRoutines(agentId);
+  const { rows: routines, error: loadError, retry } = useAgentRoutines(agentId);
   const routine = routines?.find((row) => row.id === routineId) ?? null;
-  const error = routines !== null && routine === null ? "This routine no longer exists." : null;
+  const error = loadError ?? (routines !== null && routine === null ? "This routine no longer exists." : null);
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -281,7 +282,7 @@ function RoutineDetail({
     return (
       <div className="space-y-4">
         <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <ErrorState message={error} />
+        <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
       </div>
     );
   }
