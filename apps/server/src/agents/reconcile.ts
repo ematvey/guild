@@ -6,6 +6,7 @@
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
+import { agentWorkSql } from "../platform/store/work.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
 import { notifySubagentTree } from "./tree.js";
 
@@ -39,9 +40,12 @@ interface StaleRunRow {
   idle_seconds: string;
 }
 
-/** Fails runs whose chat has shown no event for `idleMs`, settles the
- *  parent's strip for a delegated child, and re-delivers a result whose
- *  first delivery never reached a turn. */
+/** Fails runs whose chat has shown no event for `idleMs` and holds no
+ *  durable work, settles the parent's strip for a delegated child, and
+ *  re-delivers a result whose first delivery never reached a turn. A quiet
+ *  chat with a non-terminal task or a queued submission is alive — a turn
+ *  waiting on an approval or a long tool call — or is resumed by startup
+ *  recovery, so it is never failed here. */
 export async function failStaleRuns(
   deps: ReconcileDeps,
   options?: { idleMs?: number; undeliveredMs?: number },
@@ -65,6 +69,8 @@ export async function failStaleRuns(
        AND COALESCE(
          (SELECT max(e.created_at) FROM thread_events e WHERE e.chat_id = t.chat_id),
          r.started_at, r.created_at) < now() - ($1::bigint * interval '1 millisecond')
+       AND NOT EXISTS (
+         SELECT 1 FROM chat_conversations c WHERE c.chat_id = t.chat_id AND (${agentWorkSql}))
      ORDER BY r.created_at ASC, r.id ASC`,
     [idleMs],
   );

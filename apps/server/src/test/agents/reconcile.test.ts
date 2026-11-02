@@ -144,6 +144,24 @@ dbDescribe("stale run reconciliation", () => {
     expect(await childResults(fx.parentChatId, fx.runId)).toHaveLength(0);
   });
 
+  it("leaves a quiet run alone while its chat holds durable work", async () => {
+    const fx = await fixture({ ageMs: 20 * 60 * 1000 });
+    // A turn waiting on an approval: quiet, but its generation task is live.
+    const conversationId = Math.floor(Math.random() * 1e12);
+    await env!.db.query("INSERT INTO chat_conversations (chat_id, conversation_id) VALUES ($1, $2)", [
+      fx.childChatId,
+      conversationId,
+    ]);
+    await env!.db.query(
+      `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record)
+       VALUES ($1, $2, '"pi.generation"', 'waiting', false, false, '{}')`,
+      [conversationId, conversationId],
+    );
+    await failStaleRuns(deps());
+    expect((await store.getRun(fx.runId)).status).toBe("running");
+    expect(stopped).not.toContain(fx.childChatId);
+  });
+
   it("fails a closed child without a parent child_result", async () => {
     const fx = await fixture({ ageMs: 20 * 60 * 1000, closed: true });
     await failStaleRuns(deps());
