@@ -5,7 +5,8 @@
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { PushNotifier } from "../../push/notifier.js";
-import { ApiError, sortedJson } from "../errors.js";
+import { ApiError } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { requireJsonBody, requireUser } from "./error.js";
 import { isPushServiceEndpoint } from "../../push/sender.js";
 

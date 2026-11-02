@@ -6,7 +6,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { PlatformPool } from "../db.js";
-import { ApiError, sortedJson } from "../errors.js";
+import { ApiError } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam, sendJson } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";

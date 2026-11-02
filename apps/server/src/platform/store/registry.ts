@@ -6,6 +6,7 @@ import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { uuidv7 } from "../time.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
+import { canonicalJson } from "../domain/json.js";
 
 const MAINTAINERS_ONLY = "only the item's maintainers can publish it";
 
@@ -38,18 +39,6 @@ export interface StoredVersion {
   manifest: unknown;
   object_key: string;
   bundle_sha256: string | null;
-}
-
-/** Canonical JSON text for structural Value equality (key order ignored —
- *  serde_json::Value equality and Postgres JSONB normalization are both
- *  order-insensitive). */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const keys = Object.keys(value as Record<string, unknown>).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 /** Struct-serialized shape (serde declaration order) for the wire. */

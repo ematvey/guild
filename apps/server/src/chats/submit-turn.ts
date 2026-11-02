@@ -6,7 +6,8 @@
 
 import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../platform/route-contexts.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { ApiError, sortedJson } from "../platform/errors.js";
+import { ApiError } from "../platform/errors.js";
+import { sortedJson } from "../platform/domain/json.js";
 import { isUuid, uuidv7 } from "../platform/time.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import { modalityOf } from "../platform/domain/mime.js";

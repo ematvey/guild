@@ -5,7 +5,8 @@
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
-import { ApiError, sortedJson } from "../errors.js";
+import { ApiError } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireJsonBody, requireUser, requireAdminUser, queryParam, bodyBytes } from "./error.js";
 
 /** Accepted logo content types → file extension in the object key. */

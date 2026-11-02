@@ -3,7 +3,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
-import { sortedJson } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { requireUser } from "./error.js";
 
 export function registerEventRoutes(app: FastifyInstance, ctx: IdentityCtx): void {

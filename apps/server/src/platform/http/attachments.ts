@@ -4,7 +4,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { InfraContext } from "../route-contexts.js";
-import { ApiError, sortedJson } from "../errors.js";
+import { ApiError } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireUser, queryParam } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
 import type { ChatStore } from "../store/chats.js";

@@ -5,7 +5,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
-import { ApiError, sortedJson } from "../errors.js";
+import { ApiError } from "../errors.js";
+import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import { submitTurn } from "../../chats/submit-turn.js";
 import type { ObjectStore } from "../s3.js";
