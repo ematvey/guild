@@ -86,6 +86,81 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Full review applied: trust boundaries, one home per layer, exact
+  machine files, desktop stores (2026-11-03).** A six-lane review (server
+  runtime, platform/hub, services, desktop, Rust, cross-cutting) found two
+  trust-boundary bugs and a set of structural ones; this entry records the
+  rules the fixes set.
+  - *Agent workspace files never follow sandbox symlinks.* Server reads and
+    writes under an agent workspace go through `agents/workspace-fs.ts`:
+    segment `lstat`, `O_NOFOLLOW|O_NONBLOCK`, a regular-file check on the
+    opened file, real-path containment, byte caps (config 128 KiB with a
+    marker). The sandbox writes that volume, so a planted link must never
+    resolve in the server's namespace.
+  - *Machine file ops are exact.* The server's machine file adapter reads
+    through `fs.read_raw_v1` (exact bytes, 8 MiB cap, `too_large` instead of
+    a cut) and `fs.stat_v1`, never the model's paged, text-only `read_file`,
+    so a read-modify-write edit cannot write a large file back truncated. An
+    engine without the ops fails file access as `not_supported`.
+  - *Runs and turns.* Spawn, send and routine runs start through
+    `startThreadRun`, which refuses a deleting or inactive agent and a
+    requester who lost access; a routine runs only while its creator can use
+    the agent (a scheduled occurrence fails at once with a notice, a manual
+    run answers 403). A turn's idempotency check runs before the agent
+    binding and covers `agent_id`. `send_message` dedupe is per user and
+    chat of origin. Grant roles are `owner|user`; a row with another role
+    grants nothing.
+  - *Outbound URLs.* `integrations/ip-guard.ts` is the one address
+    classifier (hex IPv4-mapped IPv6, CGNAT, this-network, multicast
+    included); the user MCP guard and the `web_fetch`/`map` guard share it.
+    Integrations share one `fetchTimeout`, `readBodyCapped` and
+    `requestJson`.
+  - *Layers, enforced.* `arch-layers.test.ts` knows every top-level folder;
+    no layer imports the composition root; the DAL imports nothing above
+    it; durable tables are read only through `storage/postgres/queries.ts`;
+    platform-table SQL outside the DAL is a shrinking allowlist. `src/http`
+    moved under `platform/http`, `platform/integrations` into
+    `src/integrations`. The runtime is built from `RuntimeDeps`
+    (`platform/stores.ts`, once per process) and its turn placement lives in
+    `harness/turn-backend.ts`. Migration 0105 owns `chat_conversations`;
+    `PlatformContext.start` is the one bootstrap. Worker IPC has one turn
+    input, a ref space per direction, error codes kept across the fork,
+    timed-out requests and the config passed as JSON; the core turn flow is
+    tested in both placements.
+  - *Push.* The NOTIFY channels are one typed parser table, per-key pushes
+    share `KeyedChain`, and `DEFERRED_UNTIL_SYNC` classifies every frame
+    tag. A read that moves nothing notifies nothing, nor does a no-op agents
+    UPDATE (0106). `member_profile` carries the member's own account on
+    every workspace push and on each role, name, avatar or onboarding change
+    (0107), so a promoted member gets the admin UI live.
+  - *Admin configuration stays a read.* The settings sections' lists
+    (users, teams, MCP servers, registry items, integrations, gateway routes
+    and providers, SSO) are admin editing surfaces read on open, like the
+    ClickHouse analytics: the admin who edits them is the one viewing them.
+    Anything a member sees change live is pushed.
+  - *Engine.* The dead machine surface (`artifact.prefetch_v1`,
+    `context.prepare_v1`, `MachineContext`, `edit_file`) is deleted; the CLI
+    `chat` streams from the gateway itself; registry install/uninstall take
+    `project_dir` per call; config-dir writes follow the read grant;
+    `rpc.schema.json` declares every method and tests hold the dispatch
+    table and the webview allowlist to it; one lazy, owner-only trace, off
+    by default; plain-http pairing needs a loopback host or
+    `GUILD_ALLOW_INSECURE_PAIRING=1`.
+  - *Desktop.* `foldEvent` is the one event-to-block rule for the full and
+    live paths, with keys `<seq>:<n>`. Chat rows, status, trees, projects,
+    agents, gateway keys and MCP tool counts are `createStore` stores the
+    socket writes; ThreadView only assembles its parts. A frame before its
+    seed wins; a failed seed is an error with retry. `canonicalRoute` is the
+    one address normaliser; the skills route carries the shown file and the
+    catalog query; text filters replace the history entry, discrete picks
+    push. A wake resyncs only a dead or stale link.
+  - *Gate.* `check.mjs` compares property shapes by name (array elements,
+    inline objects, maps) and fails on undeclared types or refs; the release
+    script refuses a dirty tree or a moved tag and runs it before building.
+    `check.sh` gains `fmt` and typechecks `packages/ui`; coherence gates
+    `milestone_tags`. Tests share one disposable-database factory under
+    feature names.
+
 - **A first send opens its thread once the server holds it; the keyboard
   never pans the shell (2026-11-02).** The scratch composer stays frozen
   (text, spinner) through create, uploads and submit, and the route moves
