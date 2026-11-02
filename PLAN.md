@@ -12,6 +12,13 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A push waits for a read, not for an absent socket (2026-11-02).** The
+  notifier no longer skips a push because some member socket is open. A
+  finished turn records the chat's last event seq, waits four seconds
+  (`READ_GRACE_MS`), and pushes unless the owner's read marker reached it.
+  Clients mark a chat read only while it is open and visible, so the read
+  marker is the presence signal, per chat.
+
 - **Layers, one home per helper (2026-11-02).** The review's structural
   findings, applied:
   - *Server layers.* The composition root is `src/composition.ts`, above
