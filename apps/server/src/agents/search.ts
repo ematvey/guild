@@ -115,11 +115,12 @@ export async function chunkThread(
   await insertChunks(pool, chunks);
 }
 
-/** FTS over the agent's own threads: max 20 rows, rank/ts order, a
- *  highlighted snippet capped at 700 characters. */
+/** FTS over one user's threads with an agent: max 20 rows, rank/ts order,
+ *  a highlighted snippet capped at 700 characters. Sharing an agent shares
+ *  its workspace, never its conversations, so the user is always a filter. */
 export async function search(
   pool: PlatformPool,
-  args: { agentId: string; query: string; limit?: number },
+  args: { agentId: string; userId: string; query: string; limit?: number },
 ): Promise<AgentSearchHit[]> {
   const query = args.query.trim();
   if (query === "") return [];
@@ -142,10 +143,10 @@ export async function search(
      FROM agent_thread_chunks c
      JOIN agent_threads t ON t.id = c.thread_id
      CROSS JOIN q
-     WHERE c.agent_id = $1 AND c.tsv @@ q.tsq
+     WHERE c.agent_id = $1 AND t.user_id = $5 AND c.tsv @@ q.tsq
      ORDER BY rank DESC, c.ts DESC
      LIMIT $3`,
-    [args.agentId, query.slice(0, MAX_QUERY_CHARS), limit, MAX_SNIPPET_CHARS],
+    [args.agentId, query.slice(0, MAX_QUERY_CHARS), limit, MAX_SNIPPET_CHARS, args.userId],
   );
   return res.rows.map((row) => ({
     thread_id: row.thread_id,

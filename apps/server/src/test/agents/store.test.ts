@@ -290,7 +290,7 @@ dbDescribe("AgentStore", () => {
         text: "User: how do I bake bread?\n\nAssistant: mix flour and water.",
       },
     ]);
-    const hits = await store.searchThreads(agent.id, "bread");
+    const hits = await store.searchThreads(agent.id, owner.id, "bread");
     expect(hits).toHaveLength(1);
     expect(hits[0]!.thread_id).toBe(thread.id);
   });

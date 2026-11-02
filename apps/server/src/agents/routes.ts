@@ -768,6 +768,6 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
     const query = queryParam(req, "q") ?? "";
-    return sendJson(reply, { results: await store.searchThreads(agentId, query) });
+    return sendJson(reply, { results: await store.searchThreads(agentId, user.id, query) });
   });
 }

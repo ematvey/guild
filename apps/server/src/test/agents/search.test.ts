@@ -55,7 +55,7 @@ dbDescribe("agent conversation search", () => {
         { seq: 3, role: "tool", text: "ignored tool output" },
       ],
     });
-    const hits = await search(env!.db, { agentId, query: "bread" });
+    const hits = await search(env!.db, { agentId, userId: owner.id, query: "bread" });
     expect(hits).toHaveLength(1);
     expect(hits[0]!.thread_id).toBe(threadId);
     expect(hits[0]!.seq_from).toBe(1);
@@ -73,9 +73,9 @@ dbDescribe("agent conversation search", () => {
       agentId: other.id,
       messages: [{ seq: 1, role: "user", text: "Bread belongs to the other agent." }],
     });
-    const hits = await search(env!.db, { agentId, query: "bread" });
+    const hits = await search(env!.db, { agentId, userId: owner.id, query: "bread" });
     expect(hits.every((hit) => hit.thread_id !== otherThread)).toBe(true);
-    expect(await search(env!.db, { agentId, query: "   " })).toEqual([]);
+    expect(await search(env!.db, { agentId, userId: owner.id, query: "   " })).toEqual([]);
   });
 
   it("caps results at 20 and honours a smaller limit", async () => {
@@ -89,7 +89,7 @@ dbDescribe("agent conversation search", () => {
       text: `User: bulkword uncommonterm${index}\n\nAssistant: reply ${index}`,
     }));
     await store.insertChunks(chunks);
-    expect(await search(env!.db, { agentId: bulk.id, query: "bulkword" })).toHaveLength(20);
-    expect(await search(env!.db, { agentId: bulk.id, query: "bulkword", limit: 5 })).toHaveLength(5);
+    expect(await search(env!.db, { agentId: bulk.id, userId: owner.id, query: "bulkword" })).toHaveLength(20);
+    expect(await search(env!.db, { agentId: bulk.id, userId: owner.id, query: "bulkword", limit: 5 })).toHaveLength(5);
   });
 });

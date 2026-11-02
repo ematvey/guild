@@ -1659,7 +1659,12 @@ export class AgentStore {
     await insertChunks(this.pool, chunks);
   }
 
-  async searchThreads(agentId: string, query: string, limit?: number): Promise<AgentSearchHit[]> {
-    return search(this.pool, { agentId, query, limit });
+  async searchThreads(
+    agentId: string,
+    userId: string,
+    query: string,
+    limit?: number,
+  ): Promise<AgentSearchHit[]> {
+    return search(this.pool, { agentId, userId, query, limit });
   }
 }

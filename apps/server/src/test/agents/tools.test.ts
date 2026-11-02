@@ -194,12 +194,36 @@ dbDescribe("agent conversation tools", () => {
         text: "User: lighthouse belongs to the other agent",
       },
     ]);
-    const hits = await searchAgentConversations(store, agent.id, "lighthouse");
+    const hits = await searchAgentConversations(store, agent.id, owner.id, "lighthouse");
     expect(hits).toHaveLength(1);
     expect(hits[0]!.thread_id).toBe(ownThread.id);
 
-    const own = await readAgentConversation(env!.db, agent.id, { threadId: ownThread.id });
+    const own = await readAgentConversation(env!.db, agent.id, owner.id, { threadId: ownThread.id });
     expect(own?.thread_title).toBe(ownThread.title);
-    expect(await readAgentConversation(env!.db, agent.id, { threadId: otherThread.id })).toBeNull();
+    expect(await readAgentConversation(env!.db, agent.id, owner.id, { threadId: otherThread.id })).toBeNull();
+  });
+
+  it("search and read never reach another user's threads with a shared agent", async () => {
+    const res = await env!.db.query(
+      `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
+       VALUES ($1, $2, 'agents-tools-peer@example.test', '', 'member', 'managed')
+       RETURNING id`,
+      [randomUUID(), orgId],
+    );
+    const peerId = res.rows[0]!.id as string;
+    const peerThread = await store.createThread(agent.id, peerId, "Peer thread", "user");
+    await store.insertChunks([
+      {
+        thread_id: peerThread.id,
+        agent_id: agent.id,
+        seq_from: 1,
+        seq_to: 2,
+        text: "User: the peer's private harbour plan",
+      },
+    ]);
+    expect(await searchAgentConversations(store, agent.id, owner.id, "harbour")).toEqual([]);
+    expect(await searchAgentConversations(store, agent.id, peerId, "harbour")).toHaveLength(1);
+    expect(await readAgentConversation(env!.db, agent.id, owner.id, { threadId: peerThread.id })).toBeNull();
+    expect(await readAgentConversation(env!.db, agent.id, peerId, { threadId: peerThread.id })).not.toBeNull();
   });
 });

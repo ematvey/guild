@@ -108,26 +108,29 @@ export async function sendAgentMessage(
 export async function searchAgentConversations(
   store: AgentStore,
   agentId: string,
+  userId: string,
   query: string,
   limit?: number,
 ): Promise<Awaited<ReturnType<AgentStore["searchThreads"]>>> {
   const capped = Math.max(1, Math.min(MAX_SEARCH_RESULTS, Math.floor(limit ?? MAX_SEARCH_RESULTS)));
-  return store.searchThreads(agentId, query, capped);
+  return store.searchThreads(agentId, userId, query, capped);
 }
 
 export type AgentConversationRead = ThreadReadResult;
 
-/** Bounded read of one of the agent's own threads. A foreign thread id is
- *  the same not-found answer as a missing one. */
+/** Bounded read of one of the user's threads with this agent. Another
+ *  agent's or another user's thread id is the same not-found answer as a
+ *  missing one. */
 export async function readAgentConversation(
   pool: PlatformPool,
   agentId: string,
+  userId: string,
   args: { threadId: string; fromSeq?: number; toSeq?: number },
 ): Promise<AgentConversationRead | null> {
   const owned = await pool.query<{ chat_id: string; title: string }>(
     `SELECT t.chat_id, t.title FROM agent_threads t
-     WHERE t.id = $1 AND t.agent_id = $2`,
-    [args.threadId, agentId],
+     WHERE t.id = $1 AND t.agent_id = $2 AND t.user_id = $3`,
+    [args.threadId, agentId, userId],
   );
   const thread = owned.rows[0];
   if (thread === undefined) return null;
@@ -291,7 +294,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         execute: async (args) => {
           const query = args.query.trim();
           if (query === "") return textErr("query must not be empty");
-          const hits = await searchAgentConversations(deps.store, deps.agent.id, query, args.limit);
+          const hits = await searchAgentConversations(deps.store, deps.agent.id, deps.userId, query, args.limit);
           return { structuredOutput: structured({ hits }) };
         },
       }),
@@ -555,7 +558,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         callers: ["tools"],
         outputLimits: { maxBytes: 32 * 1024 },
         execute: async (args) => {
-          const read = await readAgentConversation(deps.pool, deps.agent.id, {
+          const read = await readAgentConversation(deps.pool, deps.agent.id, deps.userId, {
             threadId: args.thread_id,
             fromSeq: args.from_seq,
             toSeq: args.to_seq,

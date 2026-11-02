@@ -1,5 +1,6 @@
-// Agents test harness: the shared M5 disposable database/app, plus a
-// clean skip when the local Postgres is unreachable.
+// Agents test harness: the shared disposable database/app, plus a clean
+// skip when the local Postgres cannot be reached. Only connection-level
+// error codes skip; a migration or query failure fails the suite.
 
 import type { M5TestEnv } from "../platform/m5-harness.js";
 
@@ -14,15 +15,12 @@ const UNAVAILABLE_CODES = new Set([
 ]);
 
 function isUnavailable(error: unknown): boolean {
-  const code = (error as { code?: string }).code;
-  if (code !== undefined && UNAVAILABLE_CODES.has(code)) return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("ECONNREFUSED") ||
-    message.includes("connect") ||
-    message.includes("does not exist") ||
-    message.includes("is not set")
-  );
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && UNAVAILABLE_CODES.has(code)) return true;
+  // Node reports a refused dual-stack connect as an AggregateError whose
+  // members carry the codes.
+  if (error instanceof AggregateError) return error.errors.some(isUnavailable);
+  return false;
 }
 
 /** Returns the shared test env, or null when Postgres is not available. */
