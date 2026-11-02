@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyRoutePatch, canonicalSurfacePath, parseChatRoute } from "../route";
+import { applyRoutePatch, canonicalRoute, canonicalSurfacePath, parseChatRoute } from "../route";
 import { canonicalSettings } from "../../settings/section-nav";
-import { commitRoute } from "./use-thread-route";
+import { commitRoute, routePath } from "./use-thread-route";
 
 describe("settings address normalisation", () => {
   it("lands an unknown or absent section on the default one", () => {
@@ -82,6 +82,55 @@ describe("agents and skills address normalisation", () => {
     expect(fix("/activity")).toBeNull();
     expect(fix("/thread/c1")).toBeNull();
     expect(fix("/settings/machines")).toBeNull();
+  });
+});
+
+describe("canonicalRoute", () => {
+  const ctx = (role = "admin", hasEngine = true) => ({ role, hasEngine });
+  const fix = (path: string, role = "admin", hasEngine = true) => {
+    const route = parseChatRoute(path.split("?")[0]!, path.includes("?") ? path.slice(path.indexOf("?")) : "");
+    const patch = canonicalRoute(route, { ...ctx(role, hasEngine), pathname: path.split("?")[0]! });
+    return patch === null ? null : routePath(applyRoutePatch(route, patch));
+  };
+
+  it("leaves canonical addresses alone", () => {
+    for (const path of ["/chats", "/thread/c1", "/settings/account", "/agents/a1", "/activity", "/skills/machine"]) {
+      expect(fix(path)).toBeNull();
+    }
+    expect(fix("/agents/a1", "member")).toBeNull();
+  });
+
+  it("lands a malformed address on the default route", () => {
+    expect(fix("/thread/%E0%A4%A")).toBe("/chats");
+  });
+
+  it("moves a member off the admin activity surfaces", () => {
+    expect(fix("/activity", "member")).toBe("/agents");
+    expect(fix("/runs/r1", "member")).toBe("/agents");
+    expect(fix("/sessions/c1", "member")).toBe("/agents");
+    expect(fix("/agents/a1/activity", "member")).toBe("/agents/a1");
+  });
+
+  it("lands settings on a section the role may open", () => {
+    expect(fix("/settings")).toBe("/settings/account");
+    expect(fix("/settings/users", "member")).toBe("/settings/account");
+    expect(fix("/settings/account/bogus")).toBe("/settings/account");
+  });
+
+  it("clamps the machine tab without an engine", () => {
+    expect(fix("/skills/machine", "admin", false)).toBe("/skills");
+  });
+
+  it("rewrites a surface address the parser read past, and the old chat alias", () => {
+    expect(fix("/agents/a1/bogus")).toBe("/agents/a1");
+    expect(fix("/sessions/c1")).toBe("/chats/c1");
+  });
+
+  it("is stable: a canonical result needs no second pass", () => {
+    for (const [path, role] of [["/settings", "member"], ["/activity", "member"], ["/agents/a1/bogus", "admin"]] as const) {
+      const once = fix(path, role)!;
+      expect(fix(once, role)).toBeNull();
+    }
   });
 });
 

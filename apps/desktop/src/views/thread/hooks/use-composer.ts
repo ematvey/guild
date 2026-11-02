@@ -331,3 +331,6 @@ export function useComposer({
     observedUserIdsRef,
   };
 }
+
+/** One composer: its draft, attachments, mention picker and stored queue. */
+export type ComposerHandle = ReturnType<typeof useComposer>;

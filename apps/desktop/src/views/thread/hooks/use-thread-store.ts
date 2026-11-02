@@ -268,3 +268,6 @@ export function useThreadStore(chatId: string | null) {
     cancelPending,
   };
 }
+
+/** What one thread view holds: its store, view snapshot and callbacks. */
+export type ThreadStoreHandle = ReturnType<typeof useThreadStore>;

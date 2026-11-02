@@ -1,12 +1,12 @@
 // Sending: the outgoing command queue, its delivery round trip, recovery of
 // failed sends, and the queued-chip actions.
-import { useCallback, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import { createChat, sendChatNoStream, steerQueued, stopChat, uploadAttachment, withdrawQueued, compactChat } from "../../../lib/api/chats";
 import { machineId } from "../../../lib/machine-rpc";
 import { prepareTurn } from "../../../lib/api/skills";
 import { setChatApproval, type ChatApprovalMode } from "../../../lib/api/approvals";
-import { readDraft, writeDraft, type DraftStorage } from "../../../lib/drafts";
+import { readDraft, writeDraft } from "../../../lib/drafts";
 import {
   captureCommand,
   detachCommandDraft,
@@ -16,72 +16,54 @@ import {
   recoveryDraft,
   rememberCommand,
   submitCommand,
-  type DraftAttachment,
   type OutgoingCommand,
 } from "../../../lib/outgoing-command";
 import type { RenderBlock } from "../../../lib/thread-reducer";
-import type { ThreadViewStore } from "../thread-view-store";
 import { outgoingProjectId, type PickedProject } from "../../projects/projects";
 import type { Agent } from "../../agents/agents-api";
-import type { Project } from "../../../lib/api/projects";
+import { projectsStore } from "../chat-stores";
+import type { ComposerHandle } from "./use-composer";
+import type { ThreadStoreHandle } from "./use-thread-store";
 import type { RoutePatch } from "../route";
 import { HAS_ENGINE } from "../../../lib/session";
 import { withTimeout } from "../../../lib/timeout";
 
 
 export interface OutgoingDeps {
+  /** The composer's draft, attachments and stored queue (useComposer). */
+  composer: ComposerHandle;
+  /** The open view's thread store (useThreadStore). */
+  thread: ThreadStoreHandle;
   chatId: string | null;
   model: string;
   busy: boolean;
-  compacting: boolean;
-  filesReady: boolean;
-  promptRef: RefObject<string>;
-  setPrompt: (v: string) => void;
-  pendingRef: RefObject<DraftAttachment[]>;
-  setPending: (v: DraftAttachment[]) => void;
-  autoGrow: () => void;
-  outgoingRef: RefObject<Map<string, OutgoingCommand>>;
-  pendingDraftsRef: RefObject<Map<string | null, DraftAttachment[]>>;
-  draftStorage: DraftStorage;
-  fileStore: {
-    saveCommand(command: OutgoingCommand): Promise<void>;
-    forgetCommand(id: string): Promise<void>;
-  };
-  storageFailure: (reason?: unknown) => void;
-  persistCommand: (command: OutgoingCommand) => Promise<void>;
-  persistFiles: (target: string | null, files: readonly DraftAttachment[]) => void;
-  mountedRef: RefObject<boolean>;
-  deliveringRef: RefObject<Set<string>>;
-  restoredCommandRef: RefObject<Map<string | null, string>>;
-  refreshOutgoing: (update: (n: number) => number) => void;
+  /** Where this session's outgoing commands are stored. */
   outgoingScope: string;
-  store: ThreadViewStore;
-  setSendPending: (chatId: string | null, source: string, key?: string | null) => void;
-  openChatIdRef: RefObject<string | null>;
-  loadSeq: RefObject<number>;
-  projects: Project[] | null;
-  openRow: { machine_id?: string | null } | undefined;
-  currentProject: PickedProject | null;
-  pickedProjectRef: RefObject<PickedProject | null>;
-  pickedAgentRef: RefObject<Agent | null>;
-  approvalMode: ChatApprovalMode | "default";
-  stopping: Record<string, true>;
-  setStopping: Dispatch<SetStateAction<Record<string, true>>>;
+  /** What a send binds, as the composer shows it. */
+  target: {
+    openRow: { machine_id?: string | null } | undefined;
+    currentProject: PickedProject | null;
+    pickedProjectRef: RefObject<PickedProject | null>;
+    pickedAgentRef: RefObject<Agent | null>;
+    approvalMode: ChatApprovalMode | "default";
+  };
+  /** Chats the first send created, whose fresh state the view must not
+   *  refetch over. */
   justCreatedApprovalRef: RefObject<string | null>;
   justCreatedChatRef: RefObject<string | null>;
   pushRoute: (next: RoutePatch) => void;
 }
 
 export function useOutgoing(deps: OutgoingDeps) {
+  const { composer, thread, chatId, model, busy, outgoingScope, target, justCreatedApprovalRef, justCreatedChatRef, pushRoute } = deps;
   const {
-    chatId, model, busy, compacting, filesReady,
-    promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
+    filesReady, promptRef, setPrompt, pendingRef, setPending, autoGrow, outgoingRef, pendingDraftsRef,
     draftStorage, fileStore, storageFailure, persistCommand, persistFiles, mountedRef,
-    deliveringRef, restoredCommandRef, refreshOutgoing, outgoingScope, store,
-    setSendPending, openChatIdRef, loadSeq, projects, openRow,
-    currentProject, pickedProjectRef, pickedAgentRef, approvalMode, stopping, setStopping,
-    justCreatedApprovalRef, justCreatedChatRef, pushRoute,
-  } = deps;
+    deliveringRef, restoredCommandRef, refreshOutgoing,
+  } = composer;
+  const { store, setSendPending, openChatIdRef, loadSeq, stopping, setStopping } = thread;
+  const { compacting } = thread.view;
+  const { openRow, currentProject, pickedProjectRef, pickedAgentRef, approvalMode } = target;
   const [pendingSubmitId, setPendingSubmitId] = useState<string | null>(null);
   const [steeringMessage, setSteeringMessage] = useState<string | null>(null);
 
@@ -293,7 +275,7 @@ export function useOutgoing(deps: OutgoingDeps) {
     if (mode === "normal" && busy) return;
     if ([...outgoingRef.current.values()].some(c => deliveringRef.current.has(c.id) && !c.running && (c.chatId ?? c.originChatId) === chatId)) return;
     if (!chatId && [...outgoingRef.current.values()].some(c => c.running && c.originChatId === null)) return;
-    const selected = currentProject ? projects?.find(p => p.id === currentProject.id) : undefined;
+    const selected = currentProject ? projectsStore.get()?.find(p => p.id === currentProject.id) : undefined;
     const executor = selected?.machine_id ?? (currentProject ? openRow?.machine_id ?? undefined : undefined);
     const command = captureCommand({
       id: crypto.randomUUID(), originChatId: chatId, chatId, text,

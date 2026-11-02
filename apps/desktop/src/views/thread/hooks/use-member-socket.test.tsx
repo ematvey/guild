@@ -10,6 +10,7 @@ import type { OutgoingCommand } from "../../../lib/outgoing-command";
 import type { ThreadEventRow } from "../../../lib/thread-events";
 import { busyFrom } from "../status";
 import { useChatData } from "./use-chat-data";
+import { resetChatStores } from "../chat-stores";
 import { useMemberSocket } from "./use-member-socket";
 import { useThreadStore } from "./use-thread-store";
 import { contextUsageOf } from "../../../lib/context-usage-store";
@@ -62,23 +63,8 @@ function useHarness() {
   const recoverMissingChatRef = useRef<() => void>(() => {});
   useMemberSocket({
     signOut: () => {},
-    chatsRef: data.chatsRef,
-    setChats: data.setChats,
-    setChatStatus: data.setChatStatus,
-    setArchivedChats: data.setArchivedChats,
-    setProjects: data.setProjects,
-    setArchivedProjects: data.setArchivedProjects,
-    store: thread.store,
-    retireSendPending: thread.retireSendPending,
-    openChatIdRef: thread.openChatIdRef,
-    onThreadStateApplied: thread.onThreadStateApplied,
-    setSubagentTree: data.setSubagentTree,
-    resetSubagentTrees: data.resetSubagentTrees,
-    applyChatTree: thread.applyChatTree,
-    cancelPending: thread.cancelPending,
-    outgoingRef,
-    observedUserIdsRef,
-    settleOutgoing: () => {},
+    thread,
+    outgoing: { outgoingRef, observedUserIdsRef, settleOutgoing: () => {} },
     recoverMissingChatRef,
   });
   useEffect(() => {
@@ -109,6 +95,7 @@ describe("member socket → thread store (integration)", () => {
     )));
   });
   afterEach(() => {
+    resetChatStores();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });

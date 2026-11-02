@@ -36,11 +36,13 @@
 // Back/forward, reloads and deep links all resolve through parseChatRoute.
 import {
   AGENTS_ACTIVITY,
+  AGENTS_DIRECTORY,
   agentsRoutePath,
   parseAgentsRoute,
   type AgentsRoute,
 } from "../agents/agents-route";
-import { SKILLS_CATALOG, type SkillsRoute } from "../skills/skills-route";
+import { clampSkillsRoute, SKILLS_CATALOG, type SkillsRoute } from "../skills/skills-route";
+import { canonicalSettings } from "../settings/section-nav";
 import {
   DEFAULT_USAGE,
   parseUsageQuery,
@@ -417,3 +419,49 @@ export const chatRoutePath = (
     }${settingsSection === "usage" ? usageQueryString(usage) : ""}`;
   return base || "/";
 };
+
+/** What decides an address's canonical form besides the route itself. */
+export interface RouteContext {
+  /** The signed-in user's workspace role. */
+  role: string;
+  /** The desktop engine (the fs bridge) is present. */
+  hasEngine: boolean;
+  /** The address the route was parsed from. */
+  pathname: string;
+}
+
+/** The patch that moves a route to the address of the page it shows, or
+ *  null when it already is there. An empty patch keeps the route and
+ *  rewrites only the address. Applied with `replace`: a normalisation is
+ *  not a step back.
+ *  - A malformed address is the default route's.
+ *  - Activity is an admin surface: a member lands on the agents directory
+ *    (or the agent's overview for its activity tab).
+ *  - A settings address names a section the role may open and a sub-page
+ *    that section has; anything else is the default section.
+ *  - The skills machine tab needs the engine; without one it is the catalog.
+ *  - An agents or skills address the parser read past (an unknown tab, a
+ *    trailing segment, an old alias) is the page it shows. */
+export function canonicalRoute(route: ChatRoute, ctx: RouteContext): RoutePatch | null {
+  if (route.invalid) return {};
+  const a = route.agents;
+  if (a !== null && ctx.role !== "admin") {
+    if (a.view === "activity" || a.view === "run" || a.view === "trace" || a.view === "chat") {
+      return { agents: AGENTS_DIRECTORY };
+    }
+    if (a.view === "agent" && a.tab === "activity") {
+      return { agents: { view: "agent", agentId: a.agentId, tab: "overview" } };
+    }
+  }
+  if (route.tab === "settings" && route.overlay === null && route.skills === null && a === null) {
+    const shown = canonicalSettings(route.settingsSection, route.settingsDetail, ctx.role);
+    if (shown.section !== route.settingsSection || shown.detail !== route.settingsDetail) {
+      return { tab: "settings", settingsSection: shown.section, settingsDetail: shown.detail };
+    }
+  }
+  if (route.skills !== null) {
+    const clamped = clampSkillsRoute(route.skills, ctx.hasEngine);
+    if (clamped !== route.skills) return { skills: clamped };
+  }
+  return canonicalSurfacePath(route, ctx.pathname) === null ? null : {};
+}
