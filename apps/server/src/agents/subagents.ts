@@ -34,7 +34,7 @@ export interface SubagentsRuntime {
   /** Stops the chat's in-flight turn. */
   stopChat(chatId: string): Promise<void>;
   /** True when this process can stop that chat's turn. A worker owns one
-   *  chat; another chat needs the remoteStop IPC that does not exist yet. */
+   *  chat and cannot stop a turn in any other. */
   canStopChat(chatId: string): boolean;
 }
 
