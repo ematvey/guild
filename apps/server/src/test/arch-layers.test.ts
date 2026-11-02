@@ -184,11 +184,9 @@ const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
   "agents/store/rows.ts": 7,
   "agents/store/runs.ts": 20,
   "agents/store/subtree.ts": 12,
-  "agents/store/threads.ts": 15,
-  "agents/subagents.ts": 2,
+  "agents/store/threads.ts": 16,
   "agents/thread-binding.ts": 15,
   "agents/thread-read.ts": 1,
-  "agents/tools.ts": 2,
   "agents/tree.ts": 16,
   "agents/workspace.ts": 2,
 };

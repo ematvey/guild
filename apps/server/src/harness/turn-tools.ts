@@ -12,7 +12,9 @@ import type { Config } from "../config.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
+import type { ChatStore } from "../platform/store/chats.js";
 import type { ConversationMapStore } from "../platform/store/conversations.js";
+import type { IdentityStore } from "../platform/store/identity.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { AgentStore } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
@@ -38,6 +40,9 @@ export interface TurnToolDeps {
   base(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] };
   readonly agents: AgentStore;
   readonly threads: ThreadStore;
+  /** The chat owner lookup the subagent tools resolve the requester by. */
+  readonly chats: Pick<ChatStore, "ownerOf">;
+  readonly identity: Pick<IdentityStore, "getUser">;
   readonly attachments: AttachmentStore;
   readonly objects?: ObjectStore;
   readonly conversations: Pick<ConversationMapStore, "projectInstructions">;
@@ -168,6 +173,8 @@ export class TurnTools {
     const agent = await deps.agents.fetchAgent(ref.agent_id);
     const subagents = await subagentsContextForChat({
       pool: deps.pool,
+      chats: deps.chats,
+      identity: deps.identity,
       store: deps.agents,
       threads: deps.threads,
       agent,

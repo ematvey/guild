@@ -255,14 +255,41 @@ export class AgentThreadStore {
 
   /** One of the caller's threads with this agent; 404 otherwise. */
   async getThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {
+    const thread = await this.findThread(agentId, userId, threadId);
+    if (thread === null) throw ApiError.notFound("no such thread");
+    return thread;
+  }
+
+  /** One of the caller's threads with this agent; null for another agent's
+   *  or another user's thread as for a missing one. */
+  async findThread(agentId: string, userId: string, threadId: string): Promise<AgentThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
        WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3`,
       [agentId, userId, threadId],
     );
     const row = res.rows[0];
-    if (row === undefined) throw ApiError.notFound("no such thread");
-    return toThread(row);
+    return row === undefined ? null : toThread(row);
+  }
+
+  /** The newest thread of this agent and user with this title and origin
+   *  opened within the last minute, if any: a repeated send_message lands
+   *  in the thread it already opened. */
+  async recentlyOpened(
+    agentId: string,
+    userId: string,
+    title: string,
+    originThreadId: string | null,
+  ): Promise<{ id: string; chat_id: string } | null> {
+    const res = await this.pool.query<{ id: string; chat_id: string }>(
+      `SELECT id, chat_id FROM agent_threads
+       WHERE agent_id = $1 AND user_id = $2 AND title = $3
+         AND origin_thread_id IS NOT DISTINCT FROM $4::uuid
+         AND created_at > now() - interval '1 minute'
+       ORDER BY created_at DESC LIMIT 1`,
+      [agentId, userId, title, originThreadId],
+    );
+    return res.rows[0] ?? null;
   }
 
   /** One thread row by id without caller scoping. Tree tools resolve a child

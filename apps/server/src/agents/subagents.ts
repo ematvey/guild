@@ -9,7 +9,8 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
-import type { UserRow } from "../platform/store/identity.js";
+import type { ChatStore } from "../platform/store/chats.js";
+import type { IdentityStore, UserRow } from "../platform/store/identity.js";
 import { ChildLimitReached, type AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
@@ -98,24 +99,18 @@ export async function resolveSpawnTarget(
   return pick;
 }
 
-/** The run owner: the user who owns the chat behind the current thread. */
-export async function requesterForChat(pool: PlatformPool, chatId: string): Promise<UserRow | null> {
-  const res = await pool.query<{
-    id: string;
-    org_id: string;
-    email: string;
-    role: string;
-    identity_type: string;
-    display_name: string | null;
-    avatar_url: string | null;
-    onboarded_at: Date | null;
-  }>(
-    `SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url, u.onboarded_at
-     FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1`,
-    [chatId],
-  );
-  const row = res.rows[0];
-  return row === undefined ? null : { ...row, onboarded_at: row.onboarded_at ?? null };
+/** The reads that resolve a run's owner. */
+export interface RequesterReads {
+  chats: Pick<ChatStore, "ownerOf">;
+  identity: Pick<IdentityStore, "getUser">;
+}
+
+/** The run owner: the user who owns the chat behind the current thread;
+ *  null when the chat or its owner is gone. */
+export async function requesterForChat(reads: RequesterReads, chatId: string): Promise<UserRow | null> {
+  const owner = await reads.chats.ownerOf(chatId);
+  if (owner === null) return null;
+  return reads.identity.getUser(owner.user_id).catch(() => null);
 }
 
 /** Resolves the target agent and checks that the requester may use it. */
@@ -472,7 +467,7 @@ export async function close(
 
 /** Builds the per-run subagent context; null when the chat has no running
  *  run (plain chats and turns before admission). */
-export async function subagentsContextForChat(args: {
+export async function subagentsContextForChat(args: RequesterReads & {
   pool: PlatformPool;
   store: AgentStore;
   threads: ThreadStore;
@@ -484,7 +479,7 @@ export async function subagentsContextForChat(args: {
 }): Promise<SubagentsToolContext | null> {
   const parentRun = await args.store.runs.runningRunForChat(args.chatId);
   if (parentRun === null) return null;
-  const requester = await requesterForChat(args.pool, args.chatId);
+  const requester = await requesterForChat(args, args.chatId);
   if (requester === null) return null;
   return {
     pool: args.pool,
