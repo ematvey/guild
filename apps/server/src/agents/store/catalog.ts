@@ -189,6 +189,17 @@ export class AgentCatalog {
     return res.rows.map(toAgent);
   }
 
+  /** Every agent of the org, unfiltered by viewer, in the list's order: the
+   *  member socket narrows it per member with `AgentGrants.visibleAgentIds`. */
+  async listForOrg(orgId: string, options: AgentListOptions = {}): Promise<Agent[]> {
+    const params: unknown[] = [orgId];
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.org_id = $1 AND ${statusClause(options, params)} ${LIST_ORDER}`,
+      params,
+    );
+    return res.rows.map(toAgent);
+  }
+
   /** Loads one visible agent; invisible and missing agents are the same 404. */
   async get(user: UserRow, agentId: string): Promise<Agent> {
     const res = await this.pool.query<Record<string, unknown>>(

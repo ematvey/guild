@@ -87,4 +87,21 @@ export class AgentGrants {
     );
     return res.rows.map((row) => row.id);
   }
+
+  /** For each of `userIds` in the org, the ids of the org's agents that user
+   *  may see (any status), in one read. A user outside the org, or one who
+   *  sees nothing, maps to an empty set. */
+  async visibleAgentIds(orgId: string, userIds: readonly string[]): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>(userIds.map((userId) => [userId, new Set<string>()]));
+    if (userIds.length === 0) return out;
+    const res = await this.pool.query<{ user_id: string; agent_id: string }>(
+      `SELECT u.id AS user_id, a.id AS agent_id
+       FROM users u JOIN agents a ON a.org_id = u.org_id
+       WHERE u.org_id = $1 AND u.id = ANY($2::uuid[])
+         AND ${visiblePredicate("a", userViewer("u"))}`,
+      [orgId, userIds],
+    );
+    for (const row of res.rows) out.get(row.user_id)?.add(row.agent_id);
+    return out;
+  }
 }

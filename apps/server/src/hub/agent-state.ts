@@ -28,8 +28,8 @@ import { KeyedChain, type ChainFailure } from "./keyed-chain.js";
 export interface AgentStateDeps {
   readonly hub: Pick<LiveHub, "memberUsersOfOrg" | "memberSinksOfUser">;
   /** The process's one agent store. */
-  readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "list"> & {
-    readonly grants: Pick<AgentGrants, "visibleUserIds">;
+  readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "listForOrg"> & {
+    readonly grants: Pick<AgentGrants, "visibleUserIds" | "visibleAgentIds">;
     readonly runs: Pick<AgentRunStore, "getRun" | "listRoutines">;
     readonly threads: Pick<AgentThreadStore, "listThreads">;
   };
@@ -153,17 +153,31 @@ export class AgentStateFeed {
     ]).then(() => {});
   }
 
-  /** Each connected member's filtered agent list. The member rows load in
-   *  one read; a member who left the org or was deleted gets nothing. */
+  /** Each connected member's filtered agent list. The member rows, the
+   *  members' visible agent ids and the org's agent rows load in one read
+   *  each, whatever the member count; each list keeps the org rows' order.
+   *  A member who left the org or was deleted gets nothing. */
   private async sendAgentLists(orgId: string, userIds: string[], ensurePersonal: boolean): Promise<void> {
-    const members = userIds.filter((userId) => this.connected(userId));
+    const connected = userIds.filter((userId) => this.connected(userId));
+    if (connected.length === 0) return;
+    const members = (await this.ctx.identity.getUsers(connected)).filter((user) => user.org_id === orgId);
     if (members.length === 0) return;
-    for (const user of await this.ctx.identity.getUsers(members)) {
-      if (user.org_id !== orgId || !this.connected(user.id)) continue;
-      const userId = user.id;
-      if (ensurePersonal) await this.store.ensurePersonalAgent(user);
-      const agents = (await this.store.list(user, { includeArchived: true })).map(agentWire);
-      this.sendKeyed(userId, "agent_list", { type: "agent_list", agents });
+    if (ensurePersonal) {
+      for (const user of members) await this.store.ensurePersonalAgent(user);
+    }
+    const [visible, rows] = await Promise.all([
+      this.store.grants.visibleAgentIds(
+        orgId,
+        members.map((user) => user.id),
+      ),
+      this.store.listForOrg(orgId, { includeArchived: true }),
+    ]);
+    const wire = rows.map(agentWire);
+    for (const user of members) {
+      if (!this.connected(user.id)) continue;
+      const ids = visible.get(user.id);
+      const agents = ids === undefined ? [] : wire.filter((agent) => ids.has(agent.id));
+      this.sendKeyed(user.id, "agent_list", { type: "agent_list", agents });
     }
   }
 
