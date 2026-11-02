@@ -268,6 +268,7 @@ export function useComposer({
       setFilesReady(true);
     }).catch(() => { if (active) { storageFailure(); setFilesReady(true); } });
     return () => { active = false; };
+    // One restore per file store; the refs and setters it reads live as long.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileStore]);
 

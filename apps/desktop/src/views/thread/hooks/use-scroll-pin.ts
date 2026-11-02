@@ -87,6 +87,7 @@ export function useScrollPin(input: {
     if (!stick.current || anchorGuard.current) return;
     const el = pane.current;
     if (el) el.scrollTop = el.scrollHeight;
+    // The caller's repin keys are a dependency list of their own, spread in.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...repinKeys, composerH, displayedChatId]);
 
