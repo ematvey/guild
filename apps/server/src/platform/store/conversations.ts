@@ -2,7 +2,15 @@
 // pi-durable conversation holds a chat's agent state, and the project
 // instruction chain the chat's latest desktop submit carried.
 
-import type { PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool } from "../db.js";
+
+/** One durable submission's projected state (chat_submission_projections). */
+export interface SubmissionProjection {
+  id: string | number;
+  status: string;
+  entry: string | number | null;
+  answer: string | number | null;
+}
 
 export class ConversationMapStore {
   constructor(private readonly pool: PlatformPool) {}
@@ -86,5 +94,33 @@ export class ConversationMapStore {
       chatId,
       instructions,
     ]);
+  }
+
+  /** Upserts the submissions' projected state and advances the chat's
+   *  reconciliation cursor to the highest id, in one transaction; a cursor
+   *  on another conversation restarts at this batch. */
+  async acknowledgeSubmissions(
+    chatId: string,
+    conversationId: string | number,
+    records: readonly SubmissionProjection[],
+  ): Promise<void> {
+    if (records.length === 0) return;
+    await withTransaction(this.pool, async (client) => {
+      for (const record of records) {
+        await client.query(
+          `INSERT INTO chat_submission_projections(submission_id,chat_id,status,entry_id,answer_id)
+          VALUES($1,$2,$3,$4,$5) ON CONFLICT(submission_id) DO UPDATE SET status=EXCLUDED.status,entry_id=EXCLUDED.entry_id,answer_id=EXCLUDED.answer_id`,
+          [record.id, chatId, record.status, record.entry, record.answer],
+        );
+      }
+      const last = records.reduce((max, record) => Math.max(max, Number(record.id)), 0);
+      await client.query(
+        `INSERT INTO chat_reconciliation_cursors(chat_id,conversation_id,submission_id) VALUES($1,$2,$3)
+        ON CONFLICT(chat_id) DO UPDATE SET conversation_id=EXCLUDED.conversation_id,
+          submission_id=CASE WHEN chat_reconciliation_cursors.conversation_id=EXCLUDED.conversation_id
+            THEN GREATEST(chat_reconciliation_cursors.submission_id,EXCLUDED.submission_id) ELSE EXCLUDED.submission_id END`,
+        [chatId, conversationId, last],
+      );
+    });
   }
 }

@@ -184,9 +184,6 @@ const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
   "agents/tools.ts": 2,
   "agents/tree.ts": 16,
   "agents/workspace.ts": 2,
-  "chats/recovery.ts": 2,
-  "harness/approvals.ts": 6,
-  "harness/thread-history.ts": 8,
 };
 
 describe("arch layers", () => {

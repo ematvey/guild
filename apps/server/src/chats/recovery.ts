@@ -3,12 +3,16 @@
 // coherence:seam owner=@maintainer until=2027-01-31 reason="durable log and platform tables retire at different times"
 
 import type { ConversationId, SubmissionRecord } from "@earendil-works/pi-durable";
-import { withTransaction, type PlatformPool } from "../platform/db.js";
+import type { PlatformPool } from "../platform/db.js";
+import type { ConversationMapStore } from "../platform/store/conversations.js";
 import { changedSubmissions, unprojectedFailedGenerations } from "../storage/postgres/queries.js";
 
 /** Incremental platform reconciliation, independent of bounded live events. */
 export class ConversationRecovery {
-  constructor(private readonly pool: PlatformPool) {}
+  constructor(
+    private readonly pool: PlatformPool,
+    private readonly conversations: Pick<ConversationMapStore, "acknowledgeSubmissions">,
+  ) {}
 
   async submissions(chatId: string, conversationId: ConversationId): Promise<SubmissionRecord[]> {
     const records = await changedSubmissions(this.pool, chatId, conversationId);
@@ -17,29 +21,16 @@ export class ConversationRecovery {
 
   async acknowledge(chatId: string, records: readonly SubmissionRecord[]): Promise<void> {
     if (!records.length) return;
-    await withTransaction(this.pool, async (client) => {
-      for (const record of records) {
-        await client.query(
-          `INSERT INTO chat_submission_projections(submission_id,chat_id,status,entry_id,answer_id)
-          VALUES($1,$2,$3,$4,$5) ON CONFLICT(submission_id) DO UPDATE SET status=EXCLUDED.status,entry_id=EXCLUDED.entry_id,answer_id=EXCLUDED.answer_id`,
-          [
-            record.id,
-            chatId,
-            record.status,
-            record.entry ?? null,
-            record.type === "input" && record.status === "done" ? record.answer : null,
-          ],
-        );
-      }
-      const last = records.reduce((max, record) => Math.max(max, Number(record.id)), 0);
-      await client.query(
-        `INSERT INTO chat_reconciliation_cursors(chat_id,conversation_id,submission_id) VALUES($1,$2,$3)
-        ON CONFLICT(chat_id) DO UPDATE SET conversation_id=EXCLUDED.conversation_id,
-          submission_id=CASE WHEN chat_reconciliation_cursors.conversation_id=EXCLUDED.conversation_id
-            THEN GREATEST(chat_reconciliation_cursors.submission_id,EXCLUDED.submission_id) ELSE EXCLUDED.submission_id END`,
-        [chatId, records[0]!.conversationId, last],
-      );
-    });
+    await this.conversations.acknowledgeSubmissions(
+      chatId,
+      records[0]!.conversationId,
+      records.map((record) => ({
+        id: record.id,
+        status: record.status,
+        entry: record.entry ?? null,
+        answer: record.type === "input" && record.status === "done" ? record.answer : null,
+      })),
+    );
   }
 
   async failures(

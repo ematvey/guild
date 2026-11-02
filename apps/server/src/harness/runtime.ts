@@ -217,7 +217,7 @@ export class GuildRuntime {
     });
     const chatOfConversation = (conversationId: number) => this.chatOfConversation(conversationId);
     this.directory = new ConversationDirectory(stores.conversations);
-    this.recovery = new ConversationRecovery(pool);
+    this.recovery = new ConversationRecovery(pool, stores.conversations);
     this.binding = new ThreadBinding(pool, this.agents, {
       maxDepth: config.agentMaxDepth,
       maxChildrenPerNode: config.agentMaxChildrenPerNode,
@@ -404,7 +404,7 @@ export class GuildRuntime {
         this.log.debug({ conversationId, found: conversation !== undefined, agentModel: resolved }, "currentModel probe");
         return resolved;
       },
-      threadTools: createThreadHistoryTools({ pool, chatOfConversation }),
+      threadTools: createThreadHistoryTools({ chats: stores.chats, threads: stores.threads, chatOfConversation }),
     });
     this.registry.install(this.guildExtension);
     this.registry.install(this.codingTools);

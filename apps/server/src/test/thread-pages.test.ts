@@ -101,6 +101,38 @@ describe("thread event pages", () => {
     }
   });
 
+  it("pages and searches message events for the history tools", async () => {
+    const chatId = await createChat("history");
+    const other = await createChat("history-other");
+    await platform.threads.appendEvent(chatId, { type: "user_message", content: "find 100%_needle", attachments: [] });
+    await platform.threads.appendEvent(chatId, {
+      type: "assistant_message",
+      blocks: [{ type: "text", text: "assistant needle" }],
+    } as never);
+    await platform.threads.appendEvent(chatId, { type: "user_message", content: "plain", attachments: [] });
+    await platform.threads.appendEvent(other, { type: "user_message", content: "other needle", attachments: [] });
+
+    const newest = await platform.threads.messagePage(chatId, { limit: 2 });
+    expect(newest.rows.map((r) => r.type)).toEqual(["user_message", "assistant_message"]);
+    expect(newest.more).toBe(true);
+    const older = await platform.threads.messagePage(chatId, { limit: 2, beforeSeq: newest.rows[1]!.seq });
+    expect(older.rows.map((r) => r.payload.content)).toEqual(["find 100%_needle"]);
+    expect(older.more).toBe(false);
+    const byRole = await platform.threads.messagePage(chatId, { limit: 10, role: "assistant" });
+    expect(byRole.rows.map((r) => r.type)).toEqual(["assistant_message"]);
+    const byText = await platform.threads.messagePage(chatId, { limit: 10, text: "needle" });
+    expect(byText.rows).toHaveLength(2);
+    const escaped = await platform.threads.messagePage(chatId, { limit: 10, text: "0%_n" });
+    expect(escaped.rows.map((r) => r.payload.content)).toEqual(["find 100%_needle"]);
+
+    const hits = await platform.threads.searchOwnerMessages(chatId, "needle", 2);
+    expect(hits.rows).toHaveLength(2);
+    expect(hits.more).toBe(true);
+    expect(hits.rows[0]!.chat_id).toBe(other);
+    expect(hits.rows[0]!.title).toBe("history-other");
+    expect(await platform.chats.sameOwner(chatId, other)).toBe(true);
+  });
+
   it("captures only the newest window in a ThreadState", async () => {
     const chatId = await createChat("long");
     await appendUserMessages(chatId, THREAD_STATE_EVENT_LIMIT + 30);
