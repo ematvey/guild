@@ -5,7 +5,13 @@ import type { AgentThreadType } from "../platform/domain/thread-type.js";
 
 export type { AgentThreadType };
 export type AgentVisibility = "private" | "team" | "org";
-export type AgentRole = "owner" | "editor" | "user" | "viewer";
+/** An agent access role: `owner` manages and uses (the agent's owner and
+ *  org admins), `user` uses (a direct or team grant). Grant rows store
+ *  `user`; any other stored role grants nothing. */
+export type AgentRole = "owner" | "user";
+
+/** The one role a grant row confers. */
+export const GRANT_ROLE = "user" satisfies AgentRole;
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 
 export type AgentRunStatus =

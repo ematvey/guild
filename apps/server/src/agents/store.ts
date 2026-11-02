@@ -28,7 +28,7 @@ import type {
   AgentTrigger,
   AgentVisibility,
 } from "./types.js";
-import { DEFAULT_AGENT_TOOLS } from "./types.js";
+import { DEFAULT_AGENT_TOOLS, GRANT_ROLE } from "./types.js";
 import {
   createOccurrence,
   createRoutine,
@@ -237,11 +237,12 @@ function visiblePredicate(
     OR (${alias}.is_personal = false AND (
       ${viewer.admin}
       OR ${alias}.visibility = 'org'
-      OR EXISTS (SELECT 1 FROM agent_grants g WHERE g.agent_id = ${alias}.id AND g.user_id = ${viewer.user})
+      OR EXISTS (SELECT 1 FROM agent_grants g
+        WHERE g.agent_id = ${alias}.id AND g.user_id = ${viewer.user} AND g.role = '${GRANT_ROLE}')
       OR (${alias}.visibility = 'team' AND EXISTS (
         SELECT 1 FROM agent_team_grants tg
         JOIN team_members tm ON tm.team_id = tg.team_id
-        WHERE tg.agent_id = ${alias}.id AND tm.user_id = ${viewer.user}))
+        WHERE tg.agent_id = ${alias}.id AND tm.user_id = ${viewer.user} AND tg.role = '${GRANT_ROLE}'))
     ))
   ))`;
 }
@@ -568,20 +569,17 @@ export class AgentStore {
     if (user.role === "admin" || agent.owner_user_id === user.id) {
       return accessForRole("owner", true);
     }
-    const direct = await this.pool.query<{ role: AgentRole }>(
-      "SELECT role FROM agent_grants WHERE agent_id = $1 AND user_id = $2",
-      [agent.id, user.id],
-    );
-    if (direct.rows[0]) return accessForRole(direct.rows[0].role, false);
-    const team = await this.pool.query<{ role: AgentRole }>(
-      `SELECT tg.role FROM agent_team_grants tg
+    // Only a `user` grant confers use; a row with any other role is ignored.
+    const granted = await this.pool.query(
+      `SELECT 1 FROM agent_grants WHERE agent_id = $1 AND user_id = $2 AND role = $3
+       UNION ALL
+       SELECT 1 FROM agent_team_grants tg
        JOIN team_members tm ON tm.team_id = tg.team_id
-       WHERE tg.agent_id = $1 AND tm.user_id = $2
-       ORDER BY CASE tg.role WHEN 'editor' THEN 0 WHEN 'user' THEN 1 ELSE 2 END
+       WHERE tg.agent_id = $1 AND tm.user_id = $2 AND tg.role = $3
        LIMIT 1`,
-      [agent.id, user.id],
+      [agent.id, user.id, GRANT_ROLE],
     );
-    if (team.rows[0]) return accessForRole(team.rows[0].role, false);
+    if (granted.rows.length > 0) return accessForRole(GRANT_ROLE, false);
     if (agent.visibility === "org") return accessForRole(null, false, true);
     return accessForRole(null, false);
   }
@@ -616,23 +614,23 @@ export class AgentStore {
     }
     if (patch.resources !== undefined) add("resources", jsonbText(patch.resources), "::jsonb");
     if (sets.length === 0 && patch.team_ids === undefined) return agent;
-    if (sets.length > 0) {
-      sets.push("updated_at = now()");
-      try {
-        await this.pool.query(
-          `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
-          params,
-        );
-      } catch (error) {
-        if ((error as { code?: string }).code === "23505") {
-          throw ApiError.conflict("name_taken", "you already have an agent with this name");
+    // The row and its team grants change together or not at all.
+    await withTransaction(this.pool, async (client) => {
+      if (sets.length > 0) {
+        sets.push("updated_at = now()");
+        try {
+          await client.query(`UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`, params);
+        } catch (error) {
+          if ((error as { code?: string }).code === "23505") {
+            throw ApiError.conflict("name_taken", "you already have an agent with this name");
+          }
+          throw error;
         }
-        throw error;
       }
-    }
-    if (patch.team_ids !== undefined) {
-      await this.replaceTeamGrants(this.pool, agent.org_id, agentId, patch.team_ids);
-    }
+      if (patch.team_ids !== undefined) {
+        await this.replaceTeamGrants(client, agent.org_id, agentId, patch.team_ids);
+      }
+    });
     const updated = await this.fetchById(agent.org_id, agentId);
     if (updated === null) throw ApiError.notFound("no such agent");
     return updated;
@@ -669,9 +667,9 @@ export class AgentStore {
     await db.query("DELETE FROM agent_team_grants WHERE agent_id = $1", [agentId]);
     for (const teamId of unique) {
       await db.query(
-        `INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, 'user')
+        `INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, $3)
          ON CONFLICT (agent_id, team_id) DO NOTHING`,
-        [agentId, teamId],
+        [agentId, teamId, GRANT_ROLE],
       );
     }
   }
