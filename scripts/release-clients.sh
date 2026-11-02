@@ -21,8 +21,12 @@
 # (~/.tauri/guild.key; override with UPDATER_KEY) and published with its
 # signature so /api/v1/updates/latest.json can serve the auto-updater.
 #
-# After publishing, HEAD gets an annotated local tag `client-v<VERSION>`: the
-# compatibility baseline for protocol/check.mjs.
+# Before building, the script refuses a dirty tree, runs protocol/check.mjs
+# (the compatibility gate against the last shipped client) and refuses a
+# `client-v<VERSION>` tag that already marks another commit. After
+# publishing, HEAD gets the annotated tag `client-v<VERSION>` (the next
+# baseline for protocol/check.mjs), pushed to `origin` when that remote
+# exists; NO_PUSH_TAG=1 keeps it local.
 #
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
@@ -43,6 +47,23 @@ export TAURI_SIGNING_PRIVATE_KEY="$UPDATER_KEY"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
 cd "$(dirname "$0")/.."
+
+# The tag names the commit that was built, so the tree must be that commit.
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "ERROR: the working tree is dirty; commit or remove the changes before a release" >&2
+  git status --short >&2
+  exit 1
+fi
+TAG="client-v$VERSION"
+TAGGED=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)
+if [[ -n "$TAGGED" && "$TAGGED" != "$(git rev-parse HEAD)" ]]; then
+  echo "ERROR: $TAG already marks $TAGGED, not HEAD; a shipped version is not re-tagged — bump VERSION" >&2
+  exit 1
+fi
+# The compatibility gate: a schema change an installed client cannot read
+# must not ship, and must not become the next baseline.
+echo "==> protocol compatibility check"
+node protocol/check.mjs
 
 echo "==> building the single client binary (GUI + engine)"
 rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc >/dev/null
@@ -217,13 +238,19 @@ echo "==> client distributions published (single binary, production formats)"
 
 # The tag marks the protocol a shipped client speaks: protocol/check.mjs
 # compares the working tree's schemas against the newest client-v* tag and
-# fails on changes an installed client cannot read. Local only; pushing it
-# is a separate, deliberate step. A republish of the same version moves the
-# tag to the commit that was actually built.
-TAG="client-v$VERSION"
-if [[ "$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null)" == "$(git rev-parse HEAD)" ]]; then
+# fails on changes an installed client cannot read. A republish of the same
+# version from the same commit leaves the tag as it is.
+if [[ -n "$TAGGED" ]]; then
   echo "==> $TAG already marks HEAD"
 else
-  git tag -f -a "$TAG" -m "client release $VERSION" HEAD >/dev/null
-  echo "==> tagged HEAD as $TAG (local; not pushed)"
+  git tag -a "$TAG" -m "client release $VERSION" HEAD
+  echo "==> tagged HEAD as $TAG"
+fi
+if [[ "${NO_PUSH_TAG:-0}" == "1" ]]; then
+  echo "==> NO_PUSH_TAG=1: $TAG stays local"
+elif git remote get-url origin >/dev/null 2>&1; then
+  git push origin "refs/tags/$TAG" \
+    || echo "WARNING: pushing $TAG failed; push it by hand: git push origin $TAG" >&2
+else
+  echo "==> no origin remote: $TAG stays local"
 fi
