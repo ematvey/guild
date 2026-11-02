@@ -165,11 +165,12 @@ describe("forkPayload", () => {
 });
 
 describe("detailLoadState", () => {
-  it("is loading until the detail resolves, missing when it resolves null", () => {
-    expect(detailLoadState(null, false)).toBe("loading");
-    expect(detailLoadState(null, true)).toBe("missing");
-    expect(detailLoadState(base, true)).toBe("ready");
-    expect(detailLoadState(base, false)).toBe("ready");
+  it("is loading until the detail resolves, then ready, missing (404) or unreachable", () => {
+    expect(detailLoadState(null, null)).toBe("loading");
+    expect(detailLoadState(null, "missing")).toBe("missing");
+    expect(detailLoadState(null, "unreachable")).toBe("unreachable");
+    expect(detailLoadState(base, "missing")).toBe("ready");
+    expect(detailLoadState(base, null)).toBe("ready");
   });
 });
 

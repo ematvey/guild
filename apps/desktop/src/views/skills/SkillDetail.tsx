@@ -36,6 +36,8 @@ import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { FileTree } from "./FileTree";
 import { buildFileTree, bundleFilePaths, isMarkdownPath } from "./skill-files";
 import { avatarChip } from "../../lib/format";
+import { ApiError } from "../../lib/api/request";
+import { useSkillCatalog } from "./skills-store";
 
 /** SKILL.md body without the leading YAML frontmatter block: the detail
  * page header already shows name/description, so the preview starts at
@@ -184,13 +186,20 @@ export function forkPayload(
   return { slug: newSlug, forked_from: detail.slug, from_version: fromVersion };
 }
 
-/** The detail page's lifecycle: loading (skeleton), missing (the call
- *  resolved null — 404 or network error), or ready (payload in hand). */
-export type DetailLoadState = "loading" | "missing" | "ready";
+/** Why the detail read failed: the server answered 404, or it could not be
+ *  reached (or answered with an error). */
+export type DetailLoadError = "missing" | "unreachable";
 
-export function detailLoadState(detail: SkillDetailData | null, loadFailed: boolean): DetailLoadState {
+/** The detail page's lifecycle: loading (skeleton), missing (404),
+ *  unreachable (any other failure), or ready (payload in hand). */
+export type DetailLoadState = "loading" | DetailLoadError | "ready";
+
+export function detailLoadState(
+  detail: SkillDetailData | null,
+  loadError: DetailLoadError | null,
+): DetailLoadState {
   if (detail !== null) return "ready";
-  return loadFailed ? "missing" : "loading";
+  return loadError ?? "loading";
 }
 
 /** A section heading: label + muted "· N" count. */
@@ -239,7 +248,13 @@ export interface SkillDetailProps {
 
 export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDetailProps) {
   const [detail, setDetail] = useState<SkillDetailData | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<DetailLoadError | null>(null);
+  // The catalog row moves when anyone publishes, gates, unpublishes or
+  // installs this skill: its pushed value re-reads the detail.
+  const catalog = useSkillCatalog();
+  const catalogRow = catalog?.items.find((item) => item.slug === slug);
+  const myInstall = catalog?.installs.find((install) => install.slug === slug);
+  const pushedVersion = JSON.stringify([catalogRow ?? null, myInstall ?? null]);
   const [source, setSource] = useState<{
     version: string;
     skill_md: string;
@@ -259,20 +274,19 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     skillsDetail(slug).then(
       (d) => {
         if (!live) return;
-        setLoadFailed(false);
+        setLoadError(null);
         setDetail(d);
       },
-      // A missing skill and an unreachable server both show not-found.
-      () => {
+      (error: unknown) => {
         if (!live) return;
-        setLoadFailed(true);
+        setLoadError(error instanceof ApiError && error.status === 404 ? "missing" : "unreachable");
         setDetail(null);
       },
     );
     return () => {
       live = false;
     };
-  }, [slug, tick]);
+  }, [slug, tick, pushedVersion]);
 
   // The Files section reads the bundle manifest (SKILL.md body + extra
   // file paths) once the detail is in hand; refetches reload it too.
@@ -310,17 +324,27 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     [refetch],
   );
 
-  if (detailLoadState(detail, loadFailed) === "missing") {
+  const loadState = detailLoadState(detail, loadError);
+  if (loadState === "missing" || loadState === "unreachable") {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <DetailHeader slug={slug} onBack={onBack} />
         <div className="px-5 pb-3">
           <p className="text-sm text-muted-foreground">
-            Skill not found — it may have been unpublished, or the request failed.
+            {loadState === "missing"
+              ? "Skill not found — it may have been unpublished."
+              : "Could not load this skill — the server did not answer."}
           </p>
-          <Button variant="outline" size="sm" className="mt-2" onClick={onBack}>
-            Back to skills
-          </Button>
+          <div className="mt-2 flex gap-2">
+            {loadState === "unreachable" && (
+              <Button variant="outline" size="sm" onClick={refetch}>
+                Try again
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={onBack}>
+              Back to skills
+            </Button>
+          </div>
         </div>
       </div>
     );
