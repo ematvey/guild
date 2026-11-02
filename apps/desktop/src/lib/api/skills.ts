@@ -5,7 +5,7 @@ import { HAS_ENGINE } from "../session";
 import { rpcCall } from "../machine-rpc";
 import { browserFs, daemonFs } from "../fs-bridge";
 import type { OrgSkillsApi } from "../skills";
-import { prepareTurn as assembleTurn } from "../turn-context";
+import { assembleTurnContext } from "../turn-context";
 import { fetchInstalls, skillsSource } from "../../views/skills/skills-api";
 
 function orgSkillsApi(): OrgSkillsApi {
@@ -40,7 +40,7 @@ export async function prepareTurn(
   // bridge; browser mode has no local files and passes through untouched.
   const fs = HAS_ENGINE ? daemonFs(rpcCall) : browserFs;
   const scopes = await fs.scopes();
-  return assembleTurn(fs, scopes, prompt, projectDir, orgSkillsApi());
+  return assembleTurnContext(fs, scopes, prompt, projectDir, orgSkillsApi());
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):

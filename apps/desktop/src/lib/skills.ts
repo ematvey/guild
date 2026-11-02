@@ -1,6 +1,5 @@
 //! Skills discovery, the prompt index, `/name` expansion and the org
-//! installs merge — the client-side port of the daemon's Rust
-//! (`app-server/src/skills.rs`). Discovery order: config scope → user
+//! installs merge, over the fs bridge. Discovery order: config scope → user
 //! `~/.agents` → repo chain (git root → cwd) → legacy `.guild`; later
 //! entries win a name collision. The index budget is 8000 bytes with
 //! description clipping at 120/60/24 then tail-dropping with an omission
@@ -9,8 +8,8 @@
 import { parentOf, type BridgeFs } from "./fs-bridge";
 
 
-/** Byte length (the Rust budget checks are byte-based). */
-function byteLength(s: string): number {
+/** UTF-8 byte length: the index and instruction budgets count bytes. */
+export function byteLength(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
@@ -31,7 +30,7 @@ export interface SkillListEntry extends SkillEntry {
   scope: string;
   provenance: Record<string, string> | null;
   installed: boolean;
-  /** snake_case: the UI consumes the old Rust wire shape. */
+  /** snake_case, as the local skills panel reads it. */
   published_by_me: boolean;
   disabled: boolean;
 }
