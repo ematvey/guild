@@ -13,6 +13,7 @@ import pino from "pino";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AttachmentStore, attachmentObjectKey } from "../../platform/store/attachments.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
@@ -67,7 +68,7 @@ dbDescribe("agent send_file and turn attachments", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
     attachments = new AttachmentStore(env.db);
     objects = new FakeObjects();
@@ -84,8 +85,8 @@ dbDescribe("agent send_file and turn attachments", () => {
   });
 
   it("uploads, records a pending agent attachment and publishes it at turn end", async () => {
-    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
-    const run = await store.createRun({
+    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
+    const run = await store.runs.createRun({
       agent_id: agent.id,
       thread_id: thread.id,
       trigger: "message",
@@ -153,8 +154,8 @@ dbDescribe("agent send_file and turn attachments", () => {
   it("rejects paths outside the workspace and symlinks", async () => {
     const workspace = path.join(root, "agents", orgId, agent.id);
     await mkdir(workspace, { recursive: true });
-    const thread = (await store.listThreads(agent.id, owner.id)).threads[0]!;
-    const run = await store.createRun({
+    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
+    const run = await store.runs.createRun({
       agent_id: agent.id,
       thread_id: thread.id,
       trigger: "message",

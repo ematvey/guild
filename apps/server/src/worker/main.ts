@@ -80,7 +80,7 @@ const runtime = new GuildRuntime({
   pool,
   log,
   stores,
-  agents: new AgentStore(pool, trace, config.agentWorkspaceWriteRoot),
+  agents: new AgentStore({ pool, chats: stores.chats, trace, workspaceRoot: config.agentWorkspaceWriteRoot }),
   masterKey: () => secretsKey,
   objects,
   trace,

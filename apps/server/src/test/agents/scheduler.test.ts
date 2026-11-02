@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import {
   AgentScheduler,
@@ -13,7 +14,7 @@ import {
   runRoutineNow,
   type AgentSchedulerDeps,
 } from "../../agents/scheduler.js";
-import { createOccurrence } from "../../agents/routines.js";
+import { createOccurrence, createRoutine, getRoutine, listOccurrences } from "../../agents/routines.js";
 import type { Agent, AgentRoutine } from "../../agents/types.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
@@ -49,7 +50,7 @@ dbDescribe("agent scheduler", () => {
   }
 
   async function makeRoutine(name: string): Promise<AgentRoutine> {
-    return store.createRoutine(agent.id, {
+    return createRoutine(env!.db, agent.id, {
     created_by_user_id: owner.id,
       name,
       kind: "cron",
@@ -73,7 +74,7 @@ dbDescribe("agent scheduler", () => {
   }
 
   async function failRun(runId: string, when = new Date(Date.now() - 10 * 60_000)): Promise<void> {
-    await store.updateRun(runId, {
+    await store.runs.updateRun(runId, {
       status: "failed",
       error_code: "run_error",
       error_message: "boom",
@@ -83,7 +84,7 @@ dbDescribe("agent scheduler", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-scheduler-org')", [orgId]);
     const id = randomUUID();
@@ -109,7 +110,7 @@ dbDescribe("agent scheduler", () => {
 
   it("materializes missed occurrences and coalesces to the latest one", async () => {
     scheduler = makeScheduler();
-    const routine = await store.createRoutine(agent.id, {
+    const routine = await createRoutine(env!.db, agent.id, {
     created_by_user_id: owner.id,
       name: "Coalesce",
       kind: "cron",
@@ -125,7 +126,7 @@ dbDescribe("agent scheduler", () => {
     await scheduler.materializeDue(now);
     const materialized = await occurrenceStatuses(routine.id);
     expect(materialized.length).toBeGreaterThanOrEqual(3);
-    const advanced = await store.getRoutine(agent.id, routine.id);
+    const advanced = await getRoutine(env!.db, agent.id, routine.id);
     expect(Date.parse(advanced.next_run_at!)).toBeGreaterThan(now.getTime());
 
     const claimed = await scheduler.claimDue(now);
@@ -137,14 +138,14 @@ dbDescribe("agent scheduler", () => {
     expect(statuses.at(-1)!.status).toBe("claimed");
     expect(statuses.at(-1)!.attempts).toBe(1);
 
-    const runs = await store.listRoutineRuns(agent.id, routine.id);
+    const runs = await store.runs.listRoutineRuns(agent.id, routine.id);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.trigger).toBe("routine");
     const threads = await env!.db.query<{ type: string }>("SELECT type FROM agent_threads WHERE id = $1", [
       runs[0]!.thread_id,
     ]);
     expect(threads.rows[0]!.type).toBe("routine");
-    expect((await store.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
+    expect((await store.threads.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id)).toBe(false);
     const first = await env!.db.query<{ type: string; content: string }>(
       "SELECT type, payload->>'content' AS content FROM thread_events WHERE chat_id = (SELECT chat_id FROM agent_threads WHERE id = $1) ORDER BY seq LIMIT 1",
       [runs[0]!.thread_id],
@@ -162,12 +163,12 @@ dbDescribe("agent scheduler", () => {
       const claimed = await scheduler.claimDue(new Date(Date.now() + attempt * 10 * 60_000));
       expect(claimed).toHaveLength(1);
       expect(claimed[0]!.attempts).toBe(attempt);
-      const latest = (await store.listOccurrences(routine.id))[0]!;
+      const latest = (await listOccurrences(env!.db, routine.id))[0]!;
       expect(latest.status).toBe("claimed");
       expect(latest.run_id).not.toBeNull();
       await failRun(latest.run_id!);
       await scheduler.reconcileClaimed();
-      const after = (await store.listOccurrences(routine.id))[0]!;
+      const after = (await listOccurrences(env!.db, routine.id))[0]!;
       if (attempt < 3) {
         expect(after.status).toBe("pending");
         expect(after.attempts).toBe(attempt);
@@ -176,7 +177,7 @@ dbDescribe("agent scheduler", () => {
         expect(after.last_error).toBe("boom");
       }
     }
-    const notices = await store.listNotices(owner.id, orgId);
+    const notices = await store.notices.listNotices(owner.id, orgId);
     expect(notices.some((notice) => notice.kind === "routine_failed" && notice.agent_id === agent.id)).toBe(true);
   });
 
@@ -190,14 +191,14 @@ dbDescribe("agent scheduler", () => {
       [occurrence.id],
     );
     await scheduler.reconcileClaimed();
-    expect((await store.listOccurrences(routine.id))[0]!.status).toBe("claimed");
+    expect((await listOccurrences(env!.db, routine.id))[0]!.status).toBe("claimed");
     // The claimer died: past the lease the claim returns to pending.
     await env!.db.query(
       "UPDATE agent_routine_occurrences SET claimed_at = now() - interval '1 hour' WHERE id = $1",
       [occurrence.id],
     );
     await scheduler.reconcileClaimed();
-    expect((await store.listOccurrences(routine.id))[0]!.status).toBe("pending");
+    expect((await listOccurrences(env!.db, routine.id))[0]!.status).toBe("pending");
   });
 
   it("auto-disables after ten consecutive failed occurrences", async () => {
@@ -214,20 +215,20 @@ dbDescribe("agent scheduler", () => {
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       await scheduler.claimDue(new Date(Date.now() + attempt * 10 * 60_000));
-      const latest = (await store.listOccurrences(routine.id))[0]!;
+      const latest = (await listOccurrences(env!.db, routine.id))[0]!;
       await failRun(latest.run_id!);
       await scheduler.reconcileClaimed();
     }
-    const disabled = await store.getRoutine(agent.id, routine.id);
+    const disabled = await getRoutine(env!.db, agent.id, routine.id);
     expect(disabled.enabled).toBe(false);
     expect(disabled.next_run_at).toBeNull();
-    const notices = await store.listNotices(owner.id, orgId);
+    const notices = await store.notices.listNotices(owner.id, orgId);
     expect(notices.some((notice) => notice.kind === "routine_disabled")).toBe(true);
   });
 
   it("runs a routine manually and refuses an archived agent", async () => {
     scheduler = makeScheduler();
-    const routine = await store.createRoutine(agent.id, {
+    const routine = await createRoutine(env!.db, agent.id, {
     created_by_user_id: owner.id,
       name: "Manual",
       kind: "once",
@@ -237,19 +238,19 @@ dbDescribe("agent scheduler", () => {
     const run = await runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, agent, routine);
     expect(run.trigger).toBe("manual");
     expect(calls).toHaveLength(1);
-    const occurrence = (await store.listOccurrences(routine.id))[0]!;
+    const occurrence = (await listOccurrences(env!.db, routine.id))[0]!;
     expect(occurrence.status).toBe("claimed");
     expect(occurrence.run_id).toBe(run.id);
 
     const archived = await store.create(owner, { name: "Archived", model: "GLM-Test" });
-    const archivedRoutine = await store.createRoutine(archived.id, {
+    const archivedRoutine = await createRoutine(env!.db, archived.id, {
     created_by_user_id: owner.id,
       name: "Archived routine",
       kind: "once",
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       prompt: "Never runs.",
     });
-    await store.archive(owner, archived.id);
+    await store.lifecycle.archive(owner, archived.id);
     await expect(
       runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, { ...archived, status: "archived" }, archivedRoutine),
     ).rejects.toThrow(/not active/);
@@ -263,7 +264,7 @@ dbDescribe("agent scheduler", () => {
       [outsiderId, orgId],
     );
     // The creator once had access; the agent is the owner's private one.
-    const routine = await store.createRoutine(agent.id, {
+    const routine = await createRoutine(env!.db, agent.id, {
       created_by_user_id: outsiderId,
       name: "Lost access",
       kind: "cron",
@@ -274,7 +275,7 @@ dbDescribe("agent scheduler", () => {
     await createOccurrence(env!.db, routine.id, new Date());
     await scheduler.claimDue(new Date(Date.now() + 10 * 60_000));
     expect(calls).toHaveLength(0);
-    const occurrence = (await store.listOccurrences(routine.id))[0]!;
+    const occurrence = (await listOccurrences(env!.db, routine.id))[0]!;
     expect(occurrence.status).toBe("failed");
     expect(occurrence.run_id).toBeNull();
 

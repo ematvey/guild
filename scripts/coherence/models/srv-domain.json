@@ -46,6 +46,14 @@
         {
           "where": "apps/server/src/agents/thread-binding.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/store/threads.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/subtree.ts",
+          "role": "db"
         }
       ],
       "translations": [
@@ -53,6 +61,11 @@
           "from": "domain",
           "to": "wire",
           "at": "apps/server/src/agents/tree.ts"
+        },
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/agents/store/threads.ts"
         }
       ]
     },
@@ -71,9 +84,19 @@
         {
           "where": "apps/server/src/agents/types.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/store/notices.ts",
+          "role": "db"
         }
       ],
-      "translations": []
+      "translations": [
+        {
+          "from": "db",
+          "to": "domain",
+          "at": "apps/server/src/agents/store/notices.ts"
+        }
+      ]
     },
     {
       "id": "agent-workspace-file",

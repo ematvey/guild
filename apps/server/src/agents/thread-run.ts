@@ -8,7 +8,7 @@ import type { UserRow } from "../platform/store/identity.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { userMessageEvent } from "../platform/domain/thread-events.js";
 import { uuidv7 } from "../platform/time.js";
-import type { AgentStore, CreateRunInput } from "./store.js";
+import type { AgentRunStore, AgentStore, CreateRunInput } from "./store.js";
 import type { Agent, AgentRun } from "./types.js";
 
 export interface ThreadRunRuntime {
@@ -26,7 +26,7 @@ export interface ThreadRunRuntime {
 }
 
 export interface StartThreadRunDeps {
-  store: Pick<AgentStore, "fetchAgent" | "access" | "createRun" | "updateRun">;
+  store: Pick<AgentStore, "fetchAgent" | "access"> & { readonly runs: Pick<AgentRunStore, "createRun" | "updateRun"> };
   threads: Pick<ThreadStore, "appendEvent">;
   runtime: ThreadRunRuntime;
 }
@@ -88,7 +88,7 @@ export async function startThreadRun(
     const access = await deps.store.access(input.requester, agent);
     if (!access.can_use) throw new ThreadRunRefused("forbidden", "the requester cannot use the target agent");
   }
-  const run = await deps.store.createRun({
+  const run = await deps.store.runs.createRun({
     ...input.run,
     agent_id: agent.id,
     thread_id: input.thread.id,
@@ -108,7 +108,7 @@ export async function startThreadRun(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const detail = input.recordStack === true && error instanceof Error && error.stack ? `${message}\n${error.stack}` : message;
-    await deps.store
+    await deps.store.runs
       .updateRun(run.id, {
         status: "failed",
         error_code: input.failureCode,

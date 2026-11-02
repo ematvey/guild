@@ -9,7 +9,7 @@ import type { Config } from "../config.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { GatewayStore } from "../platform/store/gateway.js";
 import type { OrgStore } from "../platform/store/orgs.js";
-import type { AgentStore } from "../agents/store.js";
+import type { AgentRunStore } from "../agents/store.js";
 import type { TitleSource } from "../agents/thread-binding.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import { TITLE_SYSTEM, resolveGeneratedTitle } from "./title.js";
@@ -20,7 +20,7 @@ export interface OrgModelDeps {
   readonly gateway: Pick<GatewayStore, "listRoutes">;
   readonly orgs: Pick<OrgStore, "listIds">;
   readonly chats: Pick<ChatStore, "ownerOf">;
-  readonly agents: Pick<AgentStore, "runningRunForChat">;
+  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat"> };
 }
 
 /** How long a chat's running run id is reused for trace headers. */
@@ -147,7 +147,7 @@ export class OrgModels {
     const cached = this.runIds.get(chatId);
     const now = Date.now();
     if (cached !== undefined && now - cached.at < RUN_ID_TTL_MS) return cached.id;
-    const run = await this.deps.agents.runningRunForChat(chatId).catch(() => null);
+    const run = await this.deps.agents.runs.runningRunForChat(chatId).catch(() => null);
     const id = run?.id ?? null;
     this.runIds.set(chatId, { id, at: now });
     return id;

@@ -123,10 +123,10 @@ export class AgentScheduler {
   /** Phase two of agent deletion: rows past their grace period are purged
    *  and their workspace directories removed. */
   private async purgeDue(): Promise<void> {
-    const due = await this.deps.store.dueForPurge();
+    const due = await this.deps.store.lifecycle.dueForPurge();
     for (const row of due) {
       try {
-        await this.deps.store.purgeById(row.org_id, row.id);
+        await this.deps.store.lifecycle.purgeById(row.org_id, row.id);
         if (this.deps.workspaceRoot !== undefined) {
           await rm(agentWorkspaceDir(this.deps.workspaceRoot, row.org_id, row.id), {
             recursive: true,
@@ -323,7 +323,7 @@ export class AgentScheduler {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
       const userId = row.created_by_user_id ?? row.owner_user_id;
       const requester = await routineRequester(this.deps.pool, row.created_by_user_id);
-      const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine");
+      const thread = await this.deps.store.threads.createThread(row.agent_id, userId, title, "routine");
       await startThreadRun(this.deps, {
         agentId: row.agent_id,
         thread,
@@ -408,7 +408,7 @@ export class AgentScheduler {
     kind: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    await this.deps.store
+    await this.deps.store.notices
       .createNotice({
         org_id: row.org_id,
         agent_id: row.agent_id,
@@ -453,7 +453,7 @@ export async function runRoutineNow(
     if (error instanceof ThreadRunRefused) throw refusalError(error);
     throw error;
   });
-  const thread = await deps.store.createThread(agent.id, userId, title, "routine");
+  const thread = await deps.store.threads.createThread(agent.id, userId, title, "routine");
   try {
     const { run } = await startThreadRun(deps, {
       agentId: agent.id,

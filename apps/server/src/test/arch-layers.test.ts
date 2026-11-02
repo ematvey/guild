@@ -167,8 +167,8 @@ function sqlHits(code: string, tables: readonly string[]): number {
  *  their statement counts. Moving a site into a store lowers its count;
  *  the entry goes when it reaches zero. A new site fails the suite. The
  *  agents lane keeps its own data access beside its services (AgentStore
- *  and the run, tree and delivery reads); it moves into platform/store as
- *  a unit. */
+ *  with its agents/store modules, and the run, tree and delivery reads);
+ *  it moves into platform/store as a unit. */
 const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
   "agents/conflict.ts": 10,
   "agents/delivery.ts": 11,
@@ -177,16 +177,18 @@ const PLATFORM_SQL_ALLOWLIST: Record<string, number> = {
   "agents/routines.ts": 11,
   "agents/scheduler.ts": 28,
   "agents/search.ts": 3,
-  "agents/store.ts": 97,
-  "agents/subagents.ts": 2,
+  "agents/store/access.ts": 10,
+  "agents/store/catalog.ts": 16,
+  "agents/store/lifecycle.ts": 9,
+  "agents/store/notices.ts": 3,
+  "agents/store/rows.ts": 7,
+  "agents/store/runs.ts": 20,
+  "agents/store/subtree.ts": 12,
+  "agents/store/threads.ts": 16,
   "agents/thread-binding.ts": 15,
   "agents/thread-read.ts": 1,
-  "agents/tools.ts": 2,
   "agents/tree.ts": 16,
   "agents/workspace.ts": 2,
-  "chats/recovery.ts": 2,
-  "harness/approvals.ts": 6,
-  "harness/thread-history.ts": 8,
 };
 
 describe("arch layers", () => {

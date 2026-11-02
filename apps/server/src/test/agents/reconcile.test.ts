@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { failStaleRuns } from "../../agents/reconcile.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { GuildRuntime } from "../../harness/runtime.js";
@@ -39,7 +40,7 @@ dbDescribe("stale run reconciliation", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
     orgId = randomUUID();
     userId = randomUUID();
@@ -76,9 +77,9 @@ dbDescribe("stale run reconciliation", () => {
       },
       { name: `Agent ${randomUUID().slice(0, 8)}`, model: "GLM-Test" },
     );
-    const parent = (await store.listThreads(agent.id, userId)).threads[0]!;
-    const child = await store.createChildThread(parent.id, agent.id, userId, "Child task");
-    const run = await store.createRun({
+    const parent = (await store.threads.listThreads(agent.id, userId)).threads[0]!;
+    const child = await store.threads.createChildThread(parent.id, agent.id, userId, "Child task");
+    const run = await store.runs.createRun({
       agent_id: agent.id,
       user_id: userId,
       thread_id: child.id,
@@ -120,7 +121,7 @@ dbDescribe("stale run reconciliation", () => {
     const failed = await failStaleRuns(deps());
     expect(failed).toBe(1);
 
-    const run = await store.getRun(fx.runId);
+    const run = await store.runs.getRun(fx.runId);
     expect(run.status).toBe("failed");
     expect(run.error_code).toBe("orphaned");
 
@@ -140,7 +141,7 @@ dbDescribe("stale run reconciliation", () => {
   it("leaves a run with a fresh event untouched", async () => {
     const fx = await fixture({ ageMs: null });
     await failStaleRuns(deps());
-    expect((await store.getRun(fx.runId)).status).toBe("running");
+    expect((await store.runs.getRun(fx.runId)).status).toBe("running");
     expect(await childResults(fx.parentChatId, fx.runId)).toHaveLength(0);
   });
 
@@ -158,14 +159,14 @@ dbDescribe("stale run reconciliation", () => {
       [conversationId, conversationId],
     );
     await failStaleRuns(deps());
-    expect((await store.getRun(fx.runId)).status).toBe("running");
+    expect((await store.runs.getRun(fx.runId)).status).toBe("running");
     expect(stopped).not.toContain(fx.childChatId);
   });
 
   it("fails a closed child without a parent child_result", async () => {
     const fx = await fixture({ ageMs: 20 * 60 * 1000, closed: true });
     await failStaleRuns(deps());
-    expect((await store.getRun(fx.runId)).status).toBe("failed");
+    expect((await store.runs.getRun(fx.runId)).status).toBe("failed");
     expect(await childResults(fx.parentChatId, fx.runId)).toHaveLength(0);
   });
 
@@ -173,7 +174,7 @@ dbDescribe("stale run reconciliation", () => {
     const fx = await fixture({ ageMs: 20 * 60 * 1000 });
     expect(await failStaleRuns(deps())).toBe(1);
     expect(await failStaleRuns(deps())).toBe(0);
-    expect((await store.getRun(fx.runId)).status).toBe("failed");
+    expect((await store.runs.getRun(fx.runId)).status).toBe("failed");
   });
 
   it("redelivers a child result that no turn ever took", async () => {

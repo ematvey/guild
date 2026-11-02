@@ -12,6 +12,7 @@ import { waitFor } from "./support/wait.js";
 import { TraceStore } from "../platform/trace.js";
 import { ClickhouseClient } from "../platform/clickhouse.js";
 import { AgentStore } from "../agents/store.js";
+import { ChatStore } from "../platform/store/chats.js";
 
 const TEST_TIMEOUT = 120_000;
 
@@ -434,8 +435,8 @@ describe("run lifecycle mirror", () => {
       expect(created.statusCode).toBe(200);
       const agentId = (JSON.parse(created.body) as { agent: { id: string } }).agent.id;
 
-      const store = new AgentStore(stack.env.db, stack.env.app.platform.trace);
-      const run = await store.createRun({
+      const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), trace: stack.env.app.platform.trace });
+      const run = await store.runs.createRun({
         agent_id: agentId,
         user_id: stack.memberId,
         trigger: "message",
@@ -451,7 +452,7 @@ describe("run lifecycle mirror", () => {
       expect(createdRows[0]?.["agent_name"]).toBe("Trace Mirror Agent");
 
       await new Promise((resolve) => setTimeout(resolve, 10));
-      await store.updateRun(run.id, {
+      await store.runs.updateRun(run.id, {
         status: "succeeded",
         summary: "finished cleanly",
         finished_at: new Date().toISOString(),

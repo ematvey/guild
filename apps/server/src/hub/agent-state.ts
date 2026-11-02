@@ -12,7 +12,7 @@
 // only when it differs from the one that socket holds: a write another member
 // cannot see sends that member nothing.
 
-import type { AgentStore } from "../agents/store.js";
+import type { AgentGrants, AgentRunStore, AgentStore, AgentThreadStore } from "../agents/store.js";
 import type { Agent as StoreAgent, AgentRoutine as StoreRoutine, AgentRun as StoreRun } from "../agents/types.js";
 import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
 import type { OrgPayload } from "../platform/notify.js";
@@ -28,10 +28,11 @@ import { KeyedChain, type ChainFailure } from "./keyed-chain.js";
 export interface AgentStateDeps {
   readonly hub: Pick<LiveHub, "memberUsersOfOrg" | "memberSinksOfUser">;
   /** The process's one agent store. */
-  readonly agents: Pick<
-    AgentStore,
-    "ensurePersonalAgent" | "list" | "visibleUserIds" | "getRun" | "listRoutines" | "listThreads"
-  >;
+  readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "listForOrg"> & {
+    readonly grants: Pick<AgentGrants, "visibleUserIds" | "visibleAgentIds">;
+    readonly runs: Pick<AgentRunStore, "getRun" | "listRoutines">;
+    readonly threads: Pick<AgentThreadStore, "listThreads">;
+  };
   readonly identity: Pick<IdentityStore, "getUsers">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   readonly trace: Pick<TraceStore, "callCounts">;
@@ -152,28 +153,42 @@ export class AgentStateFeed {
     ]).then(() => {});
   }
 
-  /** Each connected member's filtered agent list. The member rows load in
-   *  one read; a member who left the org or was deleted gets nothing. */
+  /** Each connected member's filtered agent list. The member rows, the
+   *  members' visible agent ids and the org's agent rows load in one read
+   *  each, whatever the member count; each list keeps the org rows' order.
+   *  A member who left the org or was deleted gets nothing. */
   private async sendAgentLists(orgId: string, userIds: string[], ensurePersonal: boolean): Promise<void> {
-    const members = userIds.filter((userId) => this.connected(userId));
+    const connected = userIds.filter((userId) => this.connected(userId));
+    if (connected.length === 0) return;
+    const members = (await this.ctx.identity.getUsers(connected)).filter((user) => user.org_id === orgId);
     if (members.length === 0) return;
-    for (const user of await this.ctx.identity.getUsers(members)) {
-      if (user.org_id !== orgId || !this.connected(user.id)) continue;
-      const userId = user.id;
-      if (ensurePersonal) await this.store.ensurePersonalAgent(user);
-      const agents = (await this.store.list(user, { includeArchived: true })).map(agentWire);
-      this.sendKeyed(userId, "agent_list", { type: "agent_list", agents });
+    if (ensurePersonal) {
+      for (const user of members) await this.store.ensurePersonalAgent(user);
+    }
+    const [visible, rows] = await Promise.all([
+      this.store.grants.visibleAgentIds(
+        orgId,
+        members.map((user) => user.id),
+      ),
+      this.store.listForOrg(orgId, { includeArchived: true }),
+    ]);
+    const wire = rows.map(agentWire);
+    for (const user of members) {
+      if (!this.connected(user.id)) continue;
+      const ids = visible.get(user.id);
+      const agents = ids === undefined ? [] : wire.filter((agent) => ids.has(agent.id));
+      this.sendKeyed(user.id, "agent_list", { type: "agent_list", agents });
     }
   }
 
   private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {
     const users = this.ctx.hub.memberUsersOfOrg(orgId);
     if (users.length === 0) return;
-    const viewers = await this.store.visibleUserIds(agentId, users);
+    const viewers = await this.store.grants.visibleUserIds(agentId, users);
     if (viewers.length === 0) return;
     let run: StoreRun;
     try {
-      run = await this.store.getRun(runId);
+      run = await this.store.runs.getRun(runId);
     } catch {
       return;
     }
@@ -203,16 +218,16 @@ export class AgentStateFeed {
   private async sendRoutines(orgId: string, agentId: string): Promise<void> {
     const users = this.ctx.hub.memberUsersOfOrg(orgId);
     if (users.length === 0) return;
-    const viewers = await this.store.visibleUserIds(agentId, users);
+    const viewers = await this.store.grants.visibleUserIds(agentId, users);
     if (viewers.length === 0) return;
-    const routines = (await this.store.listRoutines(agentId)).map(routineWire);
+    const routines = (await this.store.runs.listRoutines(agentId)).map(routineWire);
     const frame: WsServerMsg = { type: "agent_routines", agent_id: agentId, routines };
     for (const userId of viewers) this.sendKeyed(userId, `agent_routines:${agentId}`, frame);
   }
 
   private async sendThreads(userId: string, agentId: string): Promise<void> {
     if (!this.connected(userId)) return;
-    const page = await this.store.listThreads(agentId, userId);
+    const page = await this.store.threads.listThreads(agentId, userId);
     this.sendKeyed(userId, `agent_threads:${agentId}`, { type: "agent_threads", agent_id: agentId, threads: page.threads });
   }
 

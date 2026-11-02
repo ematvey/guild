@@ -114,7 +114,7 @@ describe("durable integration contracts", () => {
       const settled = await submission.wait(context);
       expect(settled.status).toBe("unanswered");
       await h.waitForIdle(context);
-      const recovery = new ConversationRecovery(stack.env.db);
+      const recovery = new ConversationRecovery(stack.env.db, new ConversationMapStore(stack.env.db));
       const b = bridge(id, c);
       const records = await recovery.submissions(id, c.id);
       await b.recover(c, records);
@@ -373,7 +373,7 @@ describe("durable integration contracts", () => {
       pool: stack.env.db,
       log,
       stores: createStores(stack.env.db),
-      agents: new AgentStore(stack.env.db),
+      agents: new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db) }),
       masterKey: () => masterKeyBytes(stack.env.config.masterKeyHex),
       placement: {
         kind: "worker",

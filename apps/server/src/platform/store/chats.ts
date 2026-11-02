@@ -821,6 +821,43 @@ export class ChatStore {
     return orgId;
   }
 
+  /** True when `otherChatId` shares `chatId`'s org and owner (the scope
+   *  the owner's chat list shows). */
+  async sameOwner(chatId: string, otherChatId: string): Promise<boolean> {
+    const res = await this.pool.query(
+      `SELECT 1 FROM chats c
+       WHERE c.id = $1
+         AND c.org_id = (SELECT org_id FROM chats WHERE id = $2)
+         AND c.user_id = (SELECT user_id FROM chats WHERE id = $2)`,
+      [otherChatId, chatId],
+    );
+    return res.rows.length > 0;
+  }
+
+  /** The chat's approval mode (composer selector) and its owner's account
+   *  approval policy; null when the chat is gone. */
+  async approvalPolicyOf(
+    chatId: string,
+  ): Promise<{ chat_mode: string | null; user_policy: Record<string, unknown> | null } | null> {
+    const res = await this.pool.query<{ chat_mode: string | null; user_policy: Record<string, unknown> | null }>(
+      "SELECT c.approval->>'default' AS chat_mode, u.approval AS user_policy FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
+      [chatId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /** The oldest queued or running agent run on the chat's thread; null
+   *  when none is open. */
+  async openAgentRunOf(chatId: string): Promise<string | null> {
+    const res = await this.pool.query<{ id: string }>(
+      `SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
+       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+       ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
+      [chatId],
+    );
+    return res.rows[0]?.id ?? null;
+  }
+
 }
 
 function rowToList(r: Record<string, unknown>): ChatListRow {

@@ -41,6 +41,39 @@ function toRow(r: EventRowDb): ThreadEventRow | undefined {
   return { id: r.id, chat_id: r.chat_id, seq: Number(r.seq), event, created_at: pgTimestampToRfc3339(r.created_at) };
 }
 
+/** One message event as the history and search reads return it: `title`
+ *  is the chat's title on a search hit and null on a history page. */
+export interface MessageEventRow {
+  chat_id: string;
+  title: string | null;
+  seq: number;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at: Date;
+}
+
+interface MessageEventDb extends Omit<MessageEventRow, "seq"> {
+  seq: string;
+}
+
+const MESSAGE_TYPES = "('user_message','assistant_message','system_message')";
+
+/** A message event whose content or a text block matches the ILIKE
+ *  pattern bound at `param`. */
+function messageTextMatch(param: string): string {
+  return `(e.payload->>'content' ILIKE ${param} OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'blocks') b WHERE b->>'type' = 'text' AND b->>'text' ILIKE ${param}))`;
+}
+
+/** Escapes the LIKE metacharacters of a user query used inside an ILIKE pattern. */
+function likeEscape(text: string): string {
+  return text.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+function pageOf(rows: readonly MessageEventDb[], limit: number): { rows: MessageEventRow[]; more: boolean } {
+  const more = rows.length > limit;
+  return { rows: rows.slice(0, limit).map((row) => ({ ...row, seq: Number(row.seq) })), more };
+}
+
 /** Inserts one event row (an id conflict returns the existing row) and
  *  notifies `guild_thread_committed` inside the caller's transaction. */
 async function insertEvent(client: PoolClient, chatId: string, eventId: string, event: ThreadEvent): Promise<ThreadEventRow> {
@@ -460,6 +493,82 @@ export class ThreadStore {
       [chatId, sinceSeq],
     );
     return res.rows.map(toRow).filter((row): row is ThreadEventRow => row !== undefined);
+  }
+
+  /** The latest decision journaled for one approval call, if any. */
+  async latestApprovalDecision(chatId: string, callId: string): Promise<{ approved: boolean; reason: string | null } | null> {
+    const res = await this.pool.query<{ approved: boolean; reason: string | null }>(
+      `SELECT (payload->>'approved')::boolean AS approved, payload->>'reason' AS reason
+       FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
+       ORDER BY seq DESC LIMIT 1`,
+      [chatId, callId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /** The judge verdict on the latest approval card for one call: undefined
+   *  when the call has no card, null when its card carries no verdict. */
+  async approvalRequestJudge(chatId: string, callId: string): Promise<Record<string, unknown> | null | undefined> {
+    const res = await this.pool.query<{ judge: Record<string, unknown> | null }>(
+      `SELECT payload->'judge' AS judge FROM thread_events
+       WHERE chat_id = $1 AND type = 'approval_request' AND payload->>'call_id' = $2
+       ORDER BY seq DESC LIMIT 1`,
+      [chatId, callId],
+    );
+    const row = res.rows[0];
+    return row === undefined ? undefined : row.judge;
+  }
+
+  /** One newest-first page of a chat's message events (user, assistant,
+   *  system), optionally narrowed by role and a case-insensitive text match
+   *  on message content; at most `limit` rows plus whether an older page
+   *  exists. */
+  async messagePage(
+    chatId: string,
+    opts: { role?: "user" | "assistant"; text?: string; beforeSeq?: number; limit: number },
+  ): Promise<{ rows: MessageEventRow[]; more: boolean }> {
+    const params: unknown[] = [chatId, opts.beforeSeq ?? null, opts.role === undefined ? null : `${opts.role}_message`];
+    let textClause = "";
+    if (opts.text !== undefined) {
+      params.push(`%${likeEscape(opts.text)}%`);
+      textClause = `AND ${messageTextMatch("$4")}`;
+    }
+    params.push(opts.limit + 1);
+    const res = await this.pool.query<MessageEventDb>(
+      `SELECT e.chat_id, NULL::text AS title, e.seq, e.type, e.payload, e.created_at
+       FROM thread_events e
+       WHERE e.chat_id = $1 AND e.type IN ${MESSAGE_TYPES}
+         AND ($2::bigint IS NULL OR e.seq < $2::bigint)
+         AND ($3::text IS NULL OR e.type = $3::text)
+         ${textClause}
+       ORDER BY e.seq DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return pageOf(res.rows, opts.limit);
+  }
+
+  /** Message events containing `query` (case-insensitive) across every chat
+   *  sharing `chatId`'s org and owner, newest first; at most `limit` rows
+   *  plus whether more matched. */
+  async searchOwnerMessages(
+    chatId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ rows: MessageEventRow[]; more: boolean }> {
+    const res = await this.pool.query<MessageEventDb>(
+      `SELECT e.chat_id, c.title, e.seq, e.type, e.payload, e.created_at
+       FROM thread_events e
+       JOIN chats c ON c.id = e.chat_id
+       WHERE c.org_id = (SELECT org_id FROM chats WHERE id = $1)
+         AND c.user_id = (SELECT user_id FROM chats WHERE id = $1)
+         AND e.type IN ${MESSAGE_TYPES}
+         AND ${messageTextMatch("$2")}
+       ORDER BY e.seq DESC
+       LIMIT $3`,
+      [chatId, `%${likeEscape(query)}%`, limit + 1],
+    );
+    return pageOf(res.rows, limit);
   }
 
   /** Highest `turn` value in the chat's log (0 when empty). */

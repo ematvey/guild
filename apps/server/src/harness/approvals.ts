@@ -69,8 +69,9 @@ import { AGENT_TOOL_NAMES } from "./agent-tools.js";
 export interface ApprovalGateDeps {
   pool: PlatformPool;
   threads: ThreadStore;
-  /** The chat's tenant and owner (the policy read). */
-  chats: Pick<ChatStore, "identityOf">;
+  /** The chat's tenant and owner, its approval policy, and its open agent
+   *  run (the judge trace's run id). */
+  chats: Pick<ChatStore, "identityOf" | "approvalPolicyOf" | "openAgentRunOf">;
   /** The org's approval-policy prompt. */
   orgKv: Pick<OrgKvStore, "get">;
   log: Logger;
@@ -277,21 +278,14 @@ async function judgeVerdict(
     if (attempted && deps.trace) {
       const sink = deps.trace;
       void (async () => {
-        const run = await deps.pool
-          .query<{ id: string }>(
-            `SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-             WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
-             ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
-            [chatId],
-          )
-          .catch(() => null);
+        const runId = await deps.chats.openAgentRunOf(chatId).catch(() => null);
         await sink.record({
           ts: new Date(),
           request_id: requestId,
           org_id: orgId,
           user_id: userId ?? INTERNAL_JUDGE_USER_UUID,
           session_id: INTERNAL_JUDGE_SESSION_UUID,
-          run_id: run?.rows[0]?.id ?? null,
+          run_id: runId,
           chat_id: chatId,
           conversation_id: null,
           turn: null,
@@ -313,7 +307,7 @@ async function judgeVerdict(
           completion_chars: responsePayload?.length ?? 0,
         });
         if (requestPayload !== null) {
-          await sink.recordPayload(requestId, orgId, "request", requestPayload, run?.rows[0]?.id ?? chatId);
+          await sink.recordPayload(requestId, orgId, "request", requestPayload, runId ?? chatId);
         }
         if (responsePayload !== null) await sink.recordPayload(requestId, orgId, "response", responsePayload);
       })();
@@ -326,33 +320,11 @@ async function judgeVerdict(
  *  falls back to the server default (the safe direction). */
 async function readChatPolicy(deps: ApprovalGateDeps, chatId: string): Promise<ChatPolicyRow> {
   try {
-    const res = await deps.pool.query<{ chat_mode: string | null; user_policy: Record<string, unknown> | null }>(
-      "SELECT c.approval->>'default' AS chat_mode, u.approval AS user_policy FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
-      [chatId],
-    );
-    const row = res.rows[0];
-    if (!row) return { chat_mode: null, user_policy: null };
-    return row;
+    return (await deps.chats.approvalPolicyOf(chatId)) ?? { chat_mode: null, user_policy: null };
   } catch (error) {
     deps.log.warn({ err: error, chatId }, "approval policy read failed, using server default");
     return { chat_mode: null, user_policy: null };
   }
-}
-
-/** The recorded decision for one call, if any (the route journals it). */
-async function recordedDecision(
-  deps: ApprovalGateDeps,
-  chatId: string,
-  callId: string,
-): Promise<{ approved: boolean; reason: string | null } | null> {
-  const res = await deps.pool.query<{ approved: boolean; reason: string | null }>(
-    `SELECT (payload->>'approved')::boolean AS approved, payload->>'reason' AS reason
-     FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
-     ORDER BY seq DESC LIMIT 1`,
-    [chatId, callId],
-  );
-  const row = res.rows[0];
-  return row ? { approved: row.approved, reason: row.reason } : null;
 }
 
 /** The card this call already has on the journal, if any: the gate runs
@@ -365,13 +337,7 @@ async function existingApprovalRequest(
   chatId: string,
   callId: string,
 ): Promise<JudgeVerdict | undefined> {
-  const res = await deps.pool.query<{ judge: Record<string, unknown> | null }>(
-    `SELECT payload->'judge' AS judge FROM thread_events
-     WHERE chat_id = $1 AND type = 'approval_request' AND payload->>'call_id' = $2
-     ORDER BY seq DESC LIMIT 1`,
-    [chatId, callId],
-  );
-  const raw = res.rows[0]?.judge;
+  const raw = await deps.threads.approvalRequestJudge(chatId, callId);
   if (raw === null || raw === undefined) return undefined;
   const approve = raw["approve"];
   const reason = raw["reason"];
@@ -409,7 +375,7 @@ async function waitForApproval(
   const deadline = Date.parse(request.created_at) + deps.approvalTimeoutMs;
   try {
     while (true) {
-      const decision = await recordedDecision(deps, chatId, call.id);
+      const decision = await deps.threads.latestApprovalDecision(chatId, call.id);
       if (decision !== null) {
         if (decision.approved) return undefined;
         return { block: decision.reason ? `denied by user: ${decision.reason}` : "denied by user" };

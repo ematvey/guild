@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { AgentStore } from "../../agents/store.js";
+import { ChatStore } from "../../platform/store/chats.js";
 import { AgentConflictJournal, workspaceTurnForRun, writtenPaths } from "../../agents/conflict.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
@@ -23,7 +24,7 @@ dbDescribe("agent workspace conflict journal", () => {
 
   beforeAll(async () => {
     if (env === null) return;
-    store = new AgentStore(env.db);
+    store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
     journal = new AgentConflictJournal({ pool: env.db, store, threads });
     orgId = randomUUID();
@@ -61,16 +62,16 @@ dbDescribe("agent workspace conflict journal", () => {
   });
 
   it("notifies the other running turn and finishes the journal row", async () => {
-    const firstThread = await store.createThread(agent.id, owner.id, "First turn");
-    const secondThread = await store.createThread(agent.id, owner.id, "Second turn");
-    const firstRun = await store.createRun({
+    const firstThread = await store.threads.createThread(agent.id, owner.id, "First turn");
+    const secondThread = await store.threads.createThread(agent.id, owner.id, "Second turn");
+    const firstRun = await store.runs.createRun({
       agent_id: agent.id,
       thread_id: firstThread.id,
       trigger: "message",
       status: "running",
       started_at: new Date().toISOString(),
     });
-    const secondRun = await store.createRun({
+    const secondRun = await store.runs.createRun({
       agent_id: agent.id,
       thread_id: secondThread.id,
       trigger: "message",
@@ -89,7 +90,7 @@ dbDescribe("agent workspace conflict journal", () => {
     expect(system).toBeDefined();
     expect((system!.event as { content: string }).content).toContain("Second turn");
     expect((system!.event as { content: string }).content).toContain("shared.txt");
-    const notices = await store.listNotices(owner.id, orgId);
+    const notices = await store.notices.listNotices(owner.id, orgId);
     expect(notices.some((item) => item.kind === "workspace_conflict")).toBe(false);
 
     await journal.finishRun(firstRun.id);
