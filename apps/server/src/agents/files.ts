@@ -1,7 +1,9 @@
 // Read-only file browser over one agent's workspace subtree:
 // <agentWorkspaceRoot>/agents/<orgId>/<agentId>. Paths are relative,
 // containment is checked after realpath, and symlinks are opaque — listed
-// with their flag but never traversed.
+// with their flag but never traversed. File contents are read through
+// workspace-fs, which opens without following links and checks the opened
+// descriptor.
 
 import { Readable } from "node:stream";
 import { lstat, readdir, realpath } from "node:fs/promises";
