@@ -2,6 +2,8 @@
 // sink and the usage/quota queries. Each `?` in the SQL is replaced inline
 // with the escaped bind literal (strings in single quotes, numbers raw).
 
+import type { Config } from "../config.js";
+
 export type BindValue = string | number;
 
 export interface ClickhouseOptions {
@@ -9,6 +11,18 @@ export interface ClickhouseOptions {
   database: string;
   user: string;
   password: string;
+}
+
+/** The client over the configured ClickHouse (GUILD_CLICKHOUSE_*). */
+export function clickhouseFromConfig(
+  config: Pick<Config, "clickhouseUrl" | "clickhouseDatabase" | "clickhouseUser" | "clickhousePassword">,
+): ClickhouseClient {
+  return new ClickhouseClient({
+    url: config.clickhouseUrl,
+    database: config.clickhouseDatabase,
+    user: config.clickhouseUser,
+    password: config.clickhousePassword,
+  });
 }
 
 export class ClickhouseClient {

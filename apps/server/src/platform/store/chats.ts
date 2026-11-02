@@ -7,6 +7,7 @@
 
 import { generationWorkSql } from "../../storage/postgres/queries.js";
 import { ApiError } from "../errors.js";
+import { readsWholeOrg } from "../domain/access.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
@@ -130,11 +131,10 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
   ) le ON true`;
 
-/** Routine runs and delegation children are execution transcripts, not
- *  conversations: they stay out of the sidebar lists. The HTTP lists and the
- *  WebSocket thread_list push share this one predicate. */
-/** A sidebar row is a user conversation: subagent and routine threads are
- *  execution transcripts, reachable by direct link but never listed. */
+/** A sidebar row is a user conversation: routine runs and delegation
+ *  children are execution transcripts, reachable by direct link but never
+ *  listed. The HTTP lists and the socket's thread_list push share this one
+ *  predicate. */
 export const USER_THREAD = `NOT EXISTS (
     SELECT 1 FROM agent_threads xt
     WHERE xt.chat_id = c.id AND xt.type <> 'user'
@@ -328,10 +328,9 @@ export class ChatStore {
    *  not read other members' threads. A deleted chat still resolves (its
    *  transcript stays reachable by link). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
-    const isAdmin = caller.role === "admin";
     const res = await this.pool.query<Record<string, unknown>>(
       `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)`,
-      [orgId, chatId, caller.id, isAdmin],
+      [orgId, chatId, caller.id, readsWholeOrg(caller)],
     );
     const row = res.rows[0];
     if (!row) throw ApiError.notFound("no such chat");

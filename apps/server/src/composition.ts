@@ -26,7 +26,8 @@ import { AgentStore } from "./agents/store.js";
 import { AgentScheduler } from "./agents/scheduler.js";
 import { ForkSupervisor } from "./worker/supervisor.js";
 import { NotifyHub } from "./platform/notify.js";
-import { ClickhouseClient } from "./platform/clickhouse.js";
+import { clickhouseFromConfig, type ClickhouseClient } from "./platform/clickhouse.js";
+import { reportMalformedEventRows } from "./hub/protocol.js";
 import { SkillReadSink } from "./platform/skillReads.js";
 import { UsageSink } from "./platform/usage.js";
 import { TraceStore } from "./platform/trace.js";
@@ -43,16 +44,6 @@ export async function migrateSchema(pool: PlatformPool, log: Logger): Promise<vo
   await applyPlatformMigrations(pool, { log });
   await applyPostgresMigrations(new SharedPoolDatabase(pool));
   await seedRecoveryBoundary(pool);
-}
-
-/** The ClickHouse client the usage, trace and skill-read sinks share. */
-export function clickhouseClient(config: Config): ClickhouseClient {
-  return new ClickhouseClient({
-    url: config.clickhouseUrl,
-    database: config.clickhouseDatabase,
-    user: config.clickhouseUser,
-    password: config.clickhousePassword,
-  });
 }
 
 export class PlatformContext implements PlatformStores {
@@ -125,6 +116,7 @@ export class PlatformContext implements PlatformStores {
     private readonly log: Logger = pino({ level: "silent" }),
   ) {
     this.secretsKey = masterKeyBytes(config.masterKeyHex);
+    reportMalformedEventRows((error) => log.warn({ err: error }, "thread event row sent unnormalized"));
     this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
     this.objects = new ObjectStore(config);
     const stores = createStores(this.pool);
@@ -163,7 +155,7 @@ export class PlatformContext implements PlatformStores {
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
-    this.clickhouse = clickhouseClient(config);
+    this.clickhouse = clickhouseFromConfig(config);
     this.usage = new UsageSink(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
     this.skillReads = new SkillReadSink(this.clickhouse);

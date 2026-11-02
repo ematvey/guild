@@ -8,6 +8,7 @@
 // carrying the worker's ref, so the two counters never meet.
 
 import { ApiError } from "../platform/errors.js";
+import { AdmissionCancelled } from "../harness/operations.js";
 import type { StreamWireEvent } from "../hub/protocol.js";
 import type { SubmitTurnInput } from "../harness/turn-backend.js";
 
@@ -29,7 +30,7 @@ export interface MachineDispatchCall {
  *  it was an ApiError. */
 export type Outcome =
   | { ok: true; data: unknown }
-  | { ok: false; error: string; status?: number; code?: string };
+  | { ok: false; error: string; status?: number; code?: string; cancelled?: true };
 
 /** Server → worker: requests about the worker's own chat. */
 export type ServerRequest =
@@ -76,19 +77,22 @@ export type WorkerEvent =
 
 export type WorkerToServer = WorkerRequest | WorkerCancel | WorkerResult | WorkerEvent;
 
-/** The failed outcome of `error`, keeping an ApiError's status and code so
- *  the caller's route answers what the other process answered. */
+/** The failed outcome of `error`, keeping an ApiError's status and code
+ *  (and a cancelled admission) so the caller's route answers what the
+ *  other process answered. */
 export function failure(error: unknown): Extract<Outcome, { ok: false }> {
   return {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
     ...(error instanceof ApiError ? { status: error.status, code: error.code } : {}),
+    ...(error instanceof AdmissionCancelled ? { cancelled: true as const } : {}),
   };
 }
 
-/** The error a failed outcome stands for: the ApiError it carried, or a
- *  plain Error. */
+/** The error a failed outcome stands for: the ApiError or cancelled
+ *  admission it carried, or a plain Error. */
 export function failureError(outcome: Extract<Outcome, { ok: false }>): Error {
+  if (outcome.cancelled === true) return new AdmissionCancelled();
   return outcome.status !== undefined && outcome.code !== undefined
     ? new ApiError(outcome.status, outcome.code, outcome.error)
     : new Error(outcome.error);

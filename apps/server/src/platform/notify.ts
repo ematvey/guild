@@ -142,6 +142,8 @@ export function notifyDispatcher(
   };
 }
 
+const SILENT: Pick<Logger, "warn" | "info"> = { warn: () => {}, info: () => {} };
+
 export class NotifyHub {
   private client: pg.Client | undefined;
   private connecting: Promise<void> | undefined;
@@ -153,7 +155,7 @@ export class NotifyHub {
 
   constructor(
     private readonly connectionString: string,
-    private readonly log: Logger = { warn() {}, error() {}, info() {} } as never,
+    private readonly log: Pick<Logger, "warn" | "info"> = SILENT,
   ) {}
 
   subscribe(handler: NotifyHandler, onReconnect?: ReconnectHandler): () => void {
