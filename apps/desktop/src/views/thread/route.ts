@@ -28,7 +28,7 @@
 //                                a model route or "add", a registry
 //                                kind/slug. A bare /settings normalizes to
 //                                /settings/account (replaceState).
-//   /skills[/activity|/machine|/<slug>[/edit] | /new]
+//   /skills[/activity|/machine|/<slug>[/edit][/files/<path>] | /new[/files/<path>]][?q=&filter=&sort=]
 //                              — the skills page (top-level; replaces the
 //                                main pane): tab views, a detail page, the
 //                                editor in edit or create mode. See
@@ -41,7 +41,7 @@ import {
   parseAgentsRoute,
   type AgentsRoute,
 } from "../agents/agents-route";
-import { clampSkillsRoute, SKILLS_CATALOG, type SkillsRoute } from "../skills/skills-route";
+import { clampSkillsRoute, parseSkillsRoute, skillsRoutePath, type SkillsRoute } from "../skills/skills-route";
 import { canonicalSettings } from "../settings/section-nav";
 import {
   DEFAULT_USAGE,
@@ -228,24 +228,10 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   // Skills is chat-independent and top-level like settings: the URL drops
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
-    const skills = parseSkillsRoute(parts.slice(1));
+    const skills = parseSkillsRoute(parts.slice(1), search);
     return { chatId: null, projectId: null, overlay: null, skills, agents: null, tab: "chats", settingsSection: null, settingsDetail: null, usage, newChat: false };
   }
   return { chatId, projectId, tab, overlay: null, skills: null, agents: null, settingsSection: null, settingsDetail: null, usage, newChat };
-};
-
-/// /skills/<seg...> after the leading "skills": a bare /skills is the
-/// catalog, the reserved segments name the activity/machine tabs and the
-/// create editor, and anything else is a detail slug with an optional
-/// /edit suffix. The reserved-segment rule is what disambiguates tabs from
-/// slugs — see SkillsRoute.
-const parseSkillsRoute = (parts: string[]): SkillsRoute => {
-  const seg = parts[0];
-  if (seg === undefined) return SKILLS_CATALOG;
-  if (seg === "activity") return { view: "activity", slug: null, editor: null };
-  if (seg === "machine") return { view: "machine", slug: null, editor: null };
-  if (seg === "new") return { view: "catalog", slug: null, editor: "new" };
-  return { view: "catalog", slug: seg, editor: parts[1] === "edit" ? seg : null };
 };
 
 export interface RoutePatch {
@@ -363,16 +349,7 @@ export const chatRoutePath = (
   // The agents surface is chat-independent: its route owns the whole URL.
   if (agents !== null) return agentsRoutePath(agents);
   // Skills is chat-independent — top-level URL that replaces the chat view.
-  if (skills !== null) {
-    if (skills.editor === "new") return "/skills/new";
-    if (skills.slug !== null)
-      return skills.editor !== null
-        ? `/skills/${encodeURIComponent(skills.slug)}/edit`
-        : `/skills/${encodeURIComponent(skills.slug)}`;
-    if (skills.view === "activity") return "/skills/activity";
-    if (skills.view === "machine") return "/skills/machine";
-    return "/skills";
-  }
+  if (skills !== null) return skillsRoutePath(skills);
   // The scratch composer is a chatless surface: the project-bound form
   // implies the Work tab, the bare form rides on /chats/new or /work/new.
   // An overlay URL never carries the segment (the dialog is chatless too).

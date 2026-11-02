@@ -8,7 +8,6 @@
 // user action navigates through onNavigate (see skills-route.ts); only the
 // catalog's search/filter/sort stay local component state.
 
-import { useState } from "react";
 import { Lock, Plus, Search } from "lucide-react";
 import { HAS_ENGINE } from "../../lib/session";
 import { Input } from "@guild/ui/components/input";
@@ -30,7 +29,7 @@ import { count } from "../../lib/format";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";
-import { skillsPageState, type SkillsRoute } from "./skills-route";
+import { skillsPageState, withCatalogQuery, withSkillFile, type SkillsRoute } from "./skills-route";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 import { useSkillCatalog } from "./skills-store";
 
@@ -217,9 +216,10 @@ export function SkillsPanel({
   route: SkillsRoute;
   /** User navigation: replaces the /skills... route (pushState + route
    *  state move together in WebChat, like every other navigation). */
-  onNavigate: (next: SkillsRoute) => void;
+  /** `replace` rewrites the current entry: typing a search is one edit. */
+  onNavigate: (next: SkillsRoute, options?: { replace?: boolean }) => void;
 }) {
-  const { tab, selected, editor } = skillsPageState(route);
+  const { tab, selected, editor, file, catalog: listQuery } = skillsPageState(route);
   // The catalog and the member's installs are live: the skill_catalog frame
   // lands on connect and after every publish, gate, unpublish, install,
   // uninstall or pin, so returning from a detail or the editor shows the
@@ -227,9 +227,14 @@ export function SkillsPanel({
   const catalog = useSkillCatalog();
   const skills: SkillItem[] | null = catalog?.items ?? null;
   const installs: SkillInstall[] | null = catalog?.installs ?? null;
-  const [query, setQuery] = useState("");
-  const [filterKind, setFilterKind] = useState<SkillFilterKind>("all");
-  const [sortKey, setSortKey] = useState<SkillSortKey>("installs");
+  // The list's search, filter and sort are route state; a detail or editor
+  // opened from the list keeps them, so its Back lands on the same list.
+  const { q: query, filter: filterKind, sort: sortKey } = listQuery;
+  const setQuery = (q: string) => onNavigate(withCatalogQuery(route, { q }), { replace: true });
+  const setFilterKind = (filter: SkillFilterKind) => onNavigate(withCatalogQuery(route, { filter }));
+  const setSortKey = (sort: SkillSortKey) => onNavigate(withCatalogQuery(route, { sort }));
+  const toCatalog = (next: Omit<SkillsRoute, "catalog" | "file">): SkillsRoute =>
+    route.catalog === undefined ? next : { ...next, catalog: route.catalog };
   const installedSlugs = new Set((installs ?? []).map((i) => i.slug));
   const search = filterSkills(skills ?? [], query);
   const kind = filterByKind(search, filterKind, { installedSlugs, me });
@@ -247,8 +252,10 @@ export function SkillsPanel({
           slug={editor.slug}
           // Cancel returns to the owning catalog URL; the save below is the
           // one editor exit that carries the saved slug forward.
-          onBack={() => onNavigate({ view: "catalog", slug: null, editor: null })}
-          onSaved={(slug) => onNavigate({ view: "catalog", slug, editor: null })}
+          onBack={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: null }))}
+          onSaved={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: null }))}
+          file={file}
+          onSelectFile={(path, options) => onNavigate(withSkillFile(route, path), options)}
         />
       </div>
     );
@@ -262,9 +269,11 @@ export function SkillsPanel({
         <SkillDetail
           slug={selected}
           me={me}
-          onBack={() => onNavigate({ view: "catalog", slug: null, editor: null })}
-          onOpenSkill={(slug) => onNavigate({ view: "catalog", slug, editor: null })}
-          onEdit={(slug) => onNavigate({ view: "catalog", slug, editor: slug })}
+          onBack={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: null }))}
+          onOpenSkill={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: null }))}
+          onEdit={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: slug }))}
+          file={file}
+          onSelectFile={(path) => onNavigate(withSkillFile(route, path))}
         />
       </div>
     );

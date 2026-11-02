@@ -244,9 +244,12 @@ export interface SkillDetailProps {
   onEdit?: (slug: string) => void;
   /** Navigates to another skill's detail (used after a successful fork). */
   onOpenSkill?: (slug: string) => void;
+  /** The bundle file shown (route state); SKILL.md when the route names none. */
+  file?: string;
+  onSelectFile?: (path: string) => void;
 }
 
-export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDetailProps) {
+export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKILL.md", onSelectFile }: SkillDetailProps) {
   const [detail, setDetail] = useState<SkillDetailData | null>(null);
   const [loadError, setLoadError] = useState<DetailLoadError | null>(null);
   // The catalog row moves when anyone publishes, gates, unpublishes or
@@ -261,7 +264,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     files: SkillSourceFile[];
   } | null>(null);
   const [sourceLoading, setSourceLoading] = useState(true);
-  const [selectedFile, setSelectedFile] = useState("SKILL.md");
+  const selectedFile = file;
   const [rawSkillMd, setRawSkillMd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
@@ -592,7 +595,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           {files !== null && files.length > 1 ? (
             <div className="flex items-start gap-3.5">
               <div className="max-h-[55vh] w-[230px] shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-1.5">
-                <FileTree nodes={tree} selected={currentPath} onSelect={setSelectedFile} />
+                <FileTree nodes={tree} selected={currentPath} onSelect={(path) => onSelectFile?.(path)} />
               </div>
               {viewer}
             </div>
