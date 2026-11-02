@@ -64,13 +64,18 @@ export async function sendAgentMessage(
   const text = args.text.trim();
   if (text === "") throw new Error("text must not be empty");
   const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
-  // A model that calls send_message twice with the same content in one run
-  // must not open two threads; the recent identical thread is the result.
+  const origin = deps.chatId === undefined ? null : await deps.store.threadByChatId(deps.chatId);
+  // A model that repeats send_message with the same title from one chat
+  // within a minute gets the thread it already opened, not a second one. The
+  // match is scoped to this agent, this user and this chat of origin, so two
+  // users of a shared agent never receive each other's thread.
   const existing = await deps.pool.query<{ id: string; chat_id: string }>(
     `SELECT id, chat_id FROM agent_threads
-     WHERE agent_id = $1 AND title = $2 AND created_at > now() - interval '1 minute'
+     WHERE agent_id = $1 AND user_id = $2 AND title = $3
+       AND origin_thread_id IS NOT DISTINCT FROM $4::uuid
+       AND created_at > now() - interval '1 minute'
      ORDER BY created_at DESC LIMIT 1`,
-    [deps.agent.id, title],
+    [deps.agent.id, deps.userId, title, origin?.id ?? null],
   );
   if (existing.rows[0] !== undefined) {
     return {
@@ -78,7 +83,6 @@ export async function sendAgentMessage(
       url: `/thread/${existing.rows[0].chat_id}`,
     };
   }
-  const origin = deps.chatId === undefined ? null : await deps.store.threadByChatId(deps.chatId);
   const thread = await deps.store.createThread(deps.agent.id, deps.userId, title, "user", {
     ...(origin === null ? {} : { originThreadId: origin.id }),
   });
