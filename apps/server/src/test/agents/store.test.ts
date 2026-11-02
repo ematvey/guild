@@ -99,13 +99,22 @@ dbDescribe("AgentStore", () => {
     await expect(store.get(member, agent.id)).rejects.toMatchObject({ status: 404 });
     expect((await store.list(member)).map((a) => a.id)).not.toContain(agent.id);
 
+    // A role other than `user` grants nothing: a viewer row neither shows
+    // the agent nor lets the member use it.
     await env!.db.query("INSERT INTO agent_grants (agent_id, user_id, role) VALUES ($1, $2, 'viewer')", [
+      agent.id,
+      member.id,
+    ]);
+    await expect(store.get(member, agent.id)).rejects.toMatchObject({ status: 404 });
+    expect(await store.access(member, agent)).toMatchObject({ role: null, can_use: false, can_manage: false });
+
+    await env!.db.query("UPDATE agent_grants SET role = 'user' WHERE agent_id = $1 AND user_id = $2", [
       agent.id,
       member.id,
     ]);
     const visible = await store.get(member, agent.id);
     const access = await store.access(member, visible);
-    expect(access).toMatchObject({ role: "viewer", can_use: true, can_manage: false });
+    expect(access).toMatchObject({ role: "user", can_use: true, can_manage: false });
   });
 
   it("resolves org visibility, team grants and admin override", async () => {
@@ -120,13 +129,23 @@ dbDescribe("AgentStore", () => {
       "INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, 'editor')",
       [teamAgent.id, teamId],
     );
+    await expect(store.get(member, teamAgent.id)).rejects.toMatchObject({ status: 404 });
+    await env!.db.query("UPDATE agent_team_grants SET role = 'user' WHERE agent_id = $1", [teamAgent.id]);
     const teamAccess = await store.access(member, await store.get(member, teamAgent.id));
-    expect(teamAccess).toMatchObject({ role: "editor", can_use: true, can_manage: false });
+    expect(teamAccess).toMatchObject({ role: "user", can_use: true, can_manage: false });
 
     const adminAccess = await store.access(admin, await store.get(admin, orgAgent.id));
     expect(adminAccess).toMatchObject({ role: "owner", can_manage: true });
     const renamed = await store.update(admin, orgAgent.id, { name: "Org renamed" });
     expect(renamed.name).toBe("Org renamed");
+  });
+
+  it("an update whose team grants fail leaves the agent row unchanged", async () => {
+    const agent = await store.create(owner, { name: "Atomic", model: "GLM-Test", visibility: "team" });
+    await expect(
+      store.update(owner, agent.id, { name: "Atomic renamed", team_ids: [teamId, randomUUID()] }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect((await store.get(owner, agent.id)).name).toBe("Atomic");
   });
 
   it("updates config, archives, restores and marks deletion with the grace window", async () => {

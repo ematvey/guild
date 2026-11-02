@@ -170,8 +170,8 @@ agents(id, org_id, owner_user_id, name, instructions, model,
        resources jsonb, status ∈ active|archived|deleting|deleted,
        deleted_at, purge_after, created_at, updated_at)
 
-agent_grants(agent_id, user_id, role ∈ owner|editor|user|viewer)
-agent_team_grants(agent_id, team_id, role ∈ editor|user|viewer)
+agent_grants(agent_id, user_id, role = user)
+agent_team_grants(agent_id, team_id, role = user)
 
 agent_threads(id, agent_id, title, title_locked bool,
               kind ∈ default|thread|routine_run,
@@ -203,8 +203,12 @@ agent_notices(id, org_id, agent_id?, user_id?, kind, payload jsonb,
               read_at, created_at)   -- inbox
 ```
 
-`agent_grants`/`agent_team_grants` exist from day one even though M1's
-visibility rules mostly resolve through `visibility` + team membership.
+Access has two roles. `owner` (the agent's owner and org admins) manages
+and uses the agent; `user` uses it (chat, read its threads). A grant row
+confers `user` and nothing else; the schema's CHECK still admits
+`owner|editor|viewer`, but the server writes only `user` and ignores a row
+with any other role, so no stored role widens access. Org visibility gives
+every member `user` access without a row.
 
 ## Runtime
 
