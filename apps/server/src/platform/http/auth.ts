@@ -15,7 +15,7 @@ import { requireJsonBody, requireStringFields, requireUser, parseUuidParam, send
 import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
 import type { UserRow } from "../store/identity.js";
-import type { UserInfo } from "@guild/wire/rest";
+import { userInfo } from "../domain/user-info.js";
 
 // Fixed identities for the config-minted internal gateway key. Usage rows
 // for internal calls stay distinct through them: the synthetic caller id
@@ -73,19 +73,6 @@ export async function gatewayCredential(
     };
   }
   throw ApiError.unauthorized("invalid api key");
-}
-
-/** UserInfo in protocol::api field order (direct struct serialization). */
-export function userInfo(u: UserRow): UserInfo {
-  return {
-    id: u.id,
-    email: u.email,
-    org_id: u.org_id,
-    role: u.role,
-    display_name: u.display_name,
-    avatar_url: u.avatar_url,
-    onboarded: u.onboarded_at != null,
-  };
 }
 
 function bearerToken(req: FastifyRequest): string {

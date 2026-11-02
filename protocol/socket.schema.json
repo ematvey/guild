@@ -33,6 +33,7 @@
     "MachineList": { "$ref": "#/$defs/MachineList" },
     "WorkspaceIdentity": { "$ref": "#/$defs/WorkspaceIdentity" },
     "ModelList": { "$ref": "#/$defs/ModelList" },
+    "MemberProfile": { "$ref": "#/$defs/MemberProfile" },
     "ModelOption": { "$ref": "#/$defs/ModelOption" },
     "AgentList": { "$ref": "#/$defs/AgentList" },
     "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
@@ -89,6 +90,7 @@
         { "$ref": "#/$defs/MachineList" },
         { "$ref": "#/$defs/WorkspaceIdentity" },
         { "$ref": "#/$defs/ModelList" },
+        { "$ref": "#/$defs/MemberProfile" },
         { "$ref": "#/$defs/AgentList" },
         { "$ref": "#/$defs/AgentRunFrame" },
         { "$ref": "#/$defs/AgentThreads" },
@@ -372,6 +374,18 @@
           "type": "array",
           "description": "The org's enabled chat models, ordered by id. Sent with every workspace push and to every member socket of the org when an admin changes a route.",
           "items": { "$ref": "#/$defs/ModelOption" }
+        }
+      }
+    },
+    "MemberProfile": {
+      "type": "object",
+      "required": ["type", "user"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "member_profile" },
+        "user": {
+          "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/UserInfo",
+          "description": "The member's own account. Sent with every workspace push and whenever its role, name, avatar or onboarding flag changes."
         }
       }
     },

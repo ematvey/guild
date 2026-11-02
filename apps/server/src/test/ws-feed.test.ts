@@ -1012,6 +1012,29 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("pushes the member's profile on connect and when an admin changes the role", { timeout: TEST_TIMEOUT }, async () => {
+    type Profile = { id: string; role: string };
+    const me = await stack.env.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: auth(stack.memberToken) });
+    const memberId = (JSON.parse(me.body) as Profile).id;
+    const ws = await memberSocket();
+    const initial = await waitFrame(ws, (f) => f.type === "member_profile");
+    expect((initial.user as Profile).id).toBe(memberId);
+    expect((initial.user as Profile).role).toBe("member");
+
+    const promote = (role: string) =>
+      stack.env.app.inject({
+        method: "PUT",
+        url: `/api/v1/admin/users/${memberId}`,
+        headers: auth(stack.adminToken),
+        payload: { role },
+      });
+    expect((await promote("admin")).statusCode).toBe(200);
+    await waitFrame(ws, (f) => f.type === "member_profile" && (f.user as Profile).role === "admin");
+    expect((await promote("member")).statusCode).toBe(200);
+    await waitFrame(ws, (f) => f.type === "member_profile" && (f.user as Profile).role === "member");
+    ws.end();
+  });
+
   it("pushes the updated workspace on a chat rename and archive", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("rename me");
     const ws = await memberSocket();
@@ -1099,6 +1122,7 @@ describe("member-socket push volume", () => {
     "project_list",
     "machine_list",
     "model_list",
+    "member_profile",
   ]);
 
   it("a plain turn sends the changed chat row and its context usage, never the workspace bracket", { timeout: TEST_TIMEOUT }, async () => {

@@ -26,6 +26,7 @@ import {
   archivedThreadListSnapshot,
   machineListSnapshot,
   workspaceIdentitySnapshot,
+  memberProfileSnapshot,
   modelListSnapshot,
   projectListSnapshot,
   threadListSnapshot,
@@ -66,12 +67,13 @@ export interface FeedDeps extends WorkspaceReads, ThreadStateReads, ContextUsage
   readonly threads: ThreadStateReads["threads"] & Pick<ThreadStore, "lastEventType" | "listEventsSince">;
   readonly events: Pick<EventStore, "get">;
   readonly gatewayStore: WorkspaceReads["gatewayStore"] & ContextUsageReads["gatewayStore"];
+  readonly identity: WorkspaceReads["identity"] & AgentStateDeps["identity"];
 }
 
 /** One workspace list; a push re-reads only the parts its change can move. */
-export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models";
+export type WorkspacePart = "identity" | "chats" | "archived" | "projects" | "machines" | "models" | "member";
 
-const ALL_PARTS: readonly WorkspacePart[] = ["identity", "chats", "archived", "projects", "machines", "models"];
+const ALL_PARTS: readonly WorkspacePart[] = ["identity", "chats", "archived", "projects", "machines", "models", "member"];
 
 /** One chat whose view awaits a republish: the ticks of its first and
  *  newest write, and whether the republish must send even an unchanged
@@ -606,13 +608,14 @@ export class FeedForwarder implements GenerationStreamSink {
     if (sinks.length === 0) return;
     const user = { org_id: orgId, id: userId };
     const want = new Set<WorkspacePart>(parts);
-    const [info, chats, archived, projects, machines, models] = await Promise.all([
+    const [info, chats, archived, projects, machines, models, member] = await Promise.all([
       want.has("identity") ? workspaceIdentitySnapshot(this.ctx, orgId) : null,
       want.has("chats") ? threadListSnapshot(this.ctx, user) : null,
       want.has("archived") ? archivedThreadListSnapshot(this.ctx, user) : null,
       want.has("projects") ? projectListSnapshot(this.ctx, user) : null,
       want.has("machines") ? machineListSnapshot(this.ctx, user) : null,
       want.has("models") ? modelListSnapshot(this.ctx, orgId) : null,
+      want.has("member") ? memberProfileSnapshot(this.ctx, userId) : null,
     ]);
     for (const sink of sinks) {
       // The chat list goes first: the local engine waits on it at
@@ -629,6 +632,7 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       if (machines !== null) sendChanged(sink, "machine_list", { type: "machine_list", machines });
       if (models !== null) sendChanged(sink, "model_list", { type: "model_list", models });
+      if (member !== null) sendChanged(sink, "member_profile", { type: "member_profile", user: member });
     }
   }
 

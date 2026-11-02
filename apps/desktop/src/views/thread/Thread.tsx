@@ -42,6 +42,7 @@ import { useChatActions } from "./hooks/use-chat-actions";
 import { useChatColumnWidth, useSidebarWidth } from "./hooks/use-column-resize";
 import { useMobileGestures } from "./hooks/use-mobile-gestures";
 import { useScrollPin } from "./hooks/use-scroll-pin";
+import { useMemberProfile } from "../../lib/profile-store";
 
 type ThreadProps = {
   email: string;
@@ -91,7 +92,16 @@ export default function Thread(props: ThreadProps) {
   );
 }
 
-function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: ThreadProps) {
+function ThreadView(props: ThreadProps) {
+  const { email, onSignOut, onAddWorkspace, onOnboarded } = props;
+  // The pushed profile is the live source; the props seed it from the login
+  // or me response until the first push lands. Onboarding only moves to
+  // done, so either source saying done is done.
+  const pushed = useMemberProfile();
+  const role = pushed?.role ?? props.role ?? "member";
+  const displayName = pushed !== null ? pushed.display_name : props.displayName;
+  const avatarUrl = pushed !== null ? pushed.avatar_url : props.avatarUrl;
+  const onboarded = (props.onboarded ?? true) || pushed?.onboarded === true;
   // The chat stores outlive a view; a new workspace scope (a remount) starts
   // from an empty sidebar.
   useEffect(() => resetChatStores, []);

@@ -11,6 +11,7 @@ import type {
   EventRow,
   SkillCatalogItem,
   SkillInstall,
+  UserInfo,
 } from "@guild/wire/rest";
 import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
@@ -85,6 +86,9 @@ export interface SocketHandlers {
   /** The org's enabled models, sent with every workspace push and on every
    *  route change. */
   onModelList?: (models: ModelOption[]) => void;
+  /** The member's own account, sent with every workspace push and on every
+   *  change to its role, name, avatar or onboarding flag. */
+  onMemberProfile?: (user: UserInfo) => void;
 }
 
 /** Optional server frames this client applies: one changed chat-list row
@@ -205,6 +209,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     }
     case "model_list":
       handlers.onModelList?.(message.models);
+      return;
+    case "member_profile":
+      handlers.onMemberProfile?.(message.user);
       return;
     case "chat_row":
       handlers.onChatRow?.(message.chat);

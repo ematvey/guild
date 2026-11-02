@@ -107,6 +107,20 @@ describe("routeMessage", () => {
     expect(lists).toEqual([[{ id: "m1", alias: "Auto" }]]);
   });
 
+  it("hands the pushed member profile to its handler", () => {
+    const seen: unknown[] = [];
+    const user = {
+      id: "u1", email: "ada@example.org", org_id: "o1", role: "admin",
+      display_name: "Ada", avatar_url: null, onboarded: true,
+    };
+    routeMessage(
+      { type: "member_profile", user },
+      { onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+        onMemberProfile: (profile) => seen.push(profile) },
+    );
+    expect(seen).toEqual([user]);
+  });
+
   it("routes the agent, skill catalog and chat tree frames", () => {
     const calls: string[] = [];
     const handlers: SocketHandlers = {

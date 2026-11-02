@@ -1,16 +1,18 @@
 // Workspace snapshots: the sidebar's whole live state — active chats,
-// archived chats, projects, the machine registry and the model list. The feed pushes them
+// archived chats, projects, the machine registry, the model list and the
+// member's own profile. The feed pushes them
 // together on every workspace change, so no client reads them over HTTP.
 
 import type { Config } from "../config.js";
-import type { UserRow } from "../platform/store/identity.js";
+import type { IdentityStore, UserRow } from "../platform/store/identity.js";
 import type { MachineRow, MachineStore } from "../platform/store/machines.js";
 import type { ProjectRow, ProjectStore } from "../platform/store/projects.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { OrgStore } from "../platform/store/orgs.js";
 import type { OrgKvStore } from "../platform/store/org-kv.js";
 import type { GatewayStore } from "../platform/store/gateway.js";
-import type { Chat, MachineInfo } from "@guild/wire/rest";
+import type { Chat, MachineInfo, UserInfo } from "@guild/wire/rest";
+import { userInfo } from "../platform/domain/user-info.js";
 import type { ModelOption } from "@guild/wire/types";
 import { servedWebBundle } from "../platform/web-bundle.js";
 import { chatWire, type ChatWireHub } from "../chats/chat-wire.js";
@@ -28,6 +30,7 @@ export interface WorkspaceReads {
   readonly orgKv: Pick<OrgKvStore, "telemetryEnabled">;
   readonly gatewayStore: Pick<GatewayStore, "listModels">;
   readonly machines: Pick<MachineStore, "listForUser">;
+  readonly identity: Pick<IdentityStore, "getUser">;
 }
 
 /** The caller's active chats, newest activity first. */
@@ -89,6 +92,11 @@ export async function modelListSnapshot(ctx: Pick<WorkspaceReads, "gatewayStore"
     alias: row.alias,
     context_window: row.context_window ?? DEFAULT_CONTEXT_WINDOW,
   }));
+}
+
+/** The member's own account: role, name, avatar and onboarding flag. */
+export async function memberProfileSnapshot(ctx: Pick<WorkspaceReads, "identity">, userId: string): Promise<UserInfo> {
+  return userInfo(await ctx.identity.getUser(userId));
 }
 
 /** MachineInfo wire shape. */
