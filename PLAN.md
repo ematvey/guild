@@ -12,6 +12,34 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Layers, one home per helper (2026-11-02).** The review's structural
+  findings, applied:
+  - *Server layers.* The composition root is `src/composition.ts`, above
+    every layer; `platform/` no longer constructs the services it hands out.
+    The agent routes live in `platform/http/agents.ts`. `arch-layers.test.ts`
+    checks every service folder (agents, chats, execpolicy, harness, hub,
+    integrations, machines, push, sandbox, worker) and bans all of them
+    from the DAL; `AgentThreadType` lives in `platform/domain`.
+  - *One home.* The runtime owns the process's one `AgentStore`. Every
+    transaction goes through `withTransaction`. `utcText(column)` in
+    `platform/time.ts` is the one RFC 3339 timestamp expression;
+    `canonicalJson` and `sortedJson` live in `platform/domain/json.ts`.
+    `platform/registry-publish.ts` is the one registry publish (route,
+    skills editor, `push_skill`). Common HTTP errors use the `ApiError`
+    factories. The dead `Hub` interface is gone.
+  - *Desktop.* `lib/store.ts` `createStore` is the store primitive; every
+    store it makes, the settings cache and the agent store register with
+    `lib/session-reset.ts`, and sign-out calls `resetSessionState()` once.
+    The member socket's handlers read the current render's callbacks
+    through a ref. The agents and skills views use the wire types. `CHAT_ROOT`
+    and `SURFACE_BASE` name the root route patches. `lib/timeout.ts` is the
+    one timeout race. `@guild/ui/components/empty-state` is the one empty
+    state.
+  - *Tests.* One `createObjectStoreStack` replaces the M6/M7 harness copies;
+    `test/support/wait.ts` is the one `waitFor`.
+  - *Comments* no longer narrate the Rust port or plan steps; references
+    that state a live wire contract with the engine stay.
+
 - **The engine no longer carries a turn-driving stack (2026-11-02).** Agent
   turns run in the TS server's durable harness, so the engine's own
   `agent.start` / `agent.approve` / `agent.policy.*` surface, the approval
