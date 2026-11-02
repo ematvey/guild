@@ -176,6 +176,17 @@ async function notifyChatCreated(
   ]);
 }
 
+/** The `guild_chat_status` NOTIFY for one changed row aliased `u` (the
+ *  member socket's listener flips the sidebar spinner from it). */
+const STATUS_NOTIFY = `pg_notify('guild_chat_status', json_build_object(
+  'org_id', u.org_id, 'user_id', u.user_id, 'chat_id', u.id, 'generating', u.generating)::text)`;
+
+/** Wraps an `UPDATE … RETURNING org_id, user_id, id, generating` so each
+ *  changed row notifies the status channel in the same statement. */
+function withStatusNotify(update: string): string {
+  return `WITH u AS (${update}) SELECT ${STATUS_NOTIFY} FROM u`;
+}
+
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
 
@@ -625,9 +636,6 @@ export class ChatStore {
     return res.rows[0]!.approval ?? null;
   }
 
-  /** Flips the generating flag and notifies the status channel in the same
-   *  transaction, so no observer sees the flag and the notification
-   *  disagree. Silent no-op when the flag already holds the target value. */
   /** The chat's generating flag (the approval route's live-turn check). */
   async isGenerating(orgId: string, chatId: string): Promise<boolean> {
     const res = await this.pool.query<{ generating: boolean }>(
@@ -637,27 +645,53 @@ export class ChatStore {
     return res.rows[0]?.generating ?? false;
   }
 
+  /** Flips the generating flag. The status NOTIFY rides the same statement,
+   *  so notifications reach listeners in commit order and always agree
+   *  with the flag. Silent no-op when the flag already holds the value. */
   async setGenerating(orgId: string, chatId: string, generating: boolean): Promise<void> {
-    const res = await this.pool.query<{ user_id: string }>(
-      "UPDATE chats SET generating = $3 WHERE org_id = $1 AND id = $2 AND generating IS DISTINCT FROM $3 RETURNING user_id",
+    await this.pool.query(
+      withStatusNotify(
+        `UPDATE chats SET generating = $3
+         WHERE org_id = $1 AND id = $2 AND generating IS DISTINCT FROM $3
+         RETURNING org_id, user_id, id, generating`,
+      ),
       [orgId, chatId, generating],
     );
-    if (res.rows[0]) {
-      await this.notifyChatStatus(orgId, res.rows[0].user_id, chatId, generating);
-    }
+  }
+
+  /** Sets the generating flag for an arriving turn and returns the value it
+   *  held, under the row lock: of two concurrent arrivals exactly one sees
+   *  `false`, so the other is marked queued. */
+  async reserveGenerating(orgId: string, chatId: string): Promise<boolean> {
+    const res = await this.pool.query<{ prior: boolean }>(
+      `WITH prior AS (
+         SELECT id, generating FROM chats WHERE org_id = $1 AND id = $2 FOR UPDATE
+       ), flipped AS (
+         UPDATE chats c SET generating = true FROM prior
+         WHERE c.id = prior.id AND NOT prior.generating
+         RETURNING c.org_id, c.user_id, c.id, c.generating
+       ), notified AS (
+         SELECT ${STATUS_NOTIFY} FROM flipped u
+       )
+       SELECT prior.generating AS prior, (SELECT count(*) FROM notified) AS notified FROM prior`,
+      [orgId, chatId],
+    );
+    return res.rows[0]?.prior ?? false;
   }
 
   /** Reconcile the UI projection against current durable work in one SQL
    * statement, rather than clearing a flag from an earlier run's snapshot. */
   async reconcileGenerating(orgId: string, chatId: string): Promise<void> {
-    const res = await this.pool.query<{ user_id: string; generating: boolean }>(
-      `WITH work AS (
-        SELECT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.chat_id=$2 AND (${generationWorkSql})) AS generating
-      ) UPDATE chats c SET generating=work.generating FROM work
-        WHERE c.org_id=$1 AND c.id=$2 AND c.generating IS DISTINCT FROM work.generating
-        RETURNING c.user_id,c.generating`, [orgId, chatId],
+    await this.pool.query(
+      withStatusNotify(
+        `WITH work AS (
+          SELECT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.chat_id=$2 AND (${generationWorkSql})) AS generating
+        ) UPDATE chats c SET generating=work.generating FROM work
+          WHERE c.org_id=$1 AND c.id=$2 AND c.generating IS DISTINCT FROM work.generating
+          RETURNING c.org_id, c.user_id, c.id, c.generating`,
+      ),
+      [orgId, chatId],
     );
-    if (res.rows[0]) await this.notifyChatStatus(orgId, res.rows[0].user_id, chatId, res.rows[0].generating);
   }
 
   /** Boot repair: a send that was in flight when the process stopped left
@@ -665,26 +699,18 @@ export class ChatStore {
    *  clear it — the chat spins forever. Recompute every set flag against the
    *  journal once, so a restart cannot leave one behind. */
   async reconcileAllGenerating(): Promise<void> {
-    const res = await this.pool.query<{ org_id: string; user_id: string; id: string; generating: boolean }>(
-      `WITH work AS (
-        SELECT ch.id, EXISTS (
-          SELECT 1 FROM chat_conversations c WHERE c.chat_id = ch.id AND (${generationWorkSql})
-        ) AS generating
-        FROM chats ch WHERE ch.generating
-      ) UPDATE chats c SET generating = work.generating FROM work
-        WHERE c.id = work.id AND c.generating IS DISTINCT FROM work.generating
-        RETURNING c.org_id, c.user_id, c.id, c.generating`,
+    await this.pool.query(
+      withStatusNotify(
+        `WITH work AS (
+          SELECT ch.id, EXISTS (
+            SELECT 1 FROM chat_conversations c WHERE c.chat_id = ch.id AND (${generationWorkSql})
+          ) AS generating
+          FROM chats ch WHERE ch.generating
+        ) UPDATE chats c SET generating = work.generating FROM work
+          WHERE c.id = work.id AND c.generating IS DISTINCT FROM work.generating
+          RETURNING c.org_id, c.user_id, c.id, c.generating`,
+      ),
     );
-    for (const row of res.rows) {
-      await this.notifyChatStatus(row.org_id, row.user_id, row.id, row.generating);
-    }
-  }
-
-  private async notifyChatStatus(orgId: string, userId: string, chatId: string, generating: boolean): Promise<void> {
-    // The member socket's listener flips the sidebar spinner from it.
-    await this.pool.query("SELECT pg_notify('guild_chat_status', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: userId, chat_id: chatId, generating }),
-    ]);
   }
 
   /** Fills an empty chat title with a generated name and mirrors it onto

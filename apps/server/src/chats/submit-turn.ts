@@ -157,9 +157,9 @@ export async function submitTurn(
   // echoing the new message must already say generating, or its socket
   // delivery lands after the HTTP response and clobbers the client's
   // optimistic busy (the Working indicator blinks off in the pre-turn
-  // window). A failed accept or submit restores the previous flag.
-  const priorGenerating = await chats.chats.isGenerating(user.org_id, chatId);
-  await chats.chats.setGenerating(user.org_id, chatId, true);
+  // window). A failed accept or submit recomputes the flag from durable
+  // work, so it never clears a turn another request started meanwhile.
+  const priorGenerating = await chats.chats.reserveGenerating(user.org_id, chatId);
   const sendMode = body["send_mode"] === "steer" ? ("steer" as const) : body["send_mode"] === "queue" ? ("queue" as const) : undefined;
   let command;
   try {
@@ -193,11 +193,10 @@ export async function submitTurn(
       void chats.runtime.generateThreadTitle(chatId, adopted.thread_id).catch(() => {});
     }
   } catch (error) {
-    await chats.chats.setGenerating(user.org_id, chatId, priorGenerating);
     // The delivery failed after the accept committed: mark the command so
-    // it stops claiming a pending turn (the echo stays — the user typed
-    // it). The alternative was an immortal pending row.
+    // it stops claiming a pending turn (the echo stays — the user typed it).
     await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
+    await chats.chats.reconcileGenerating(user.org_id, chatId).catch(() => {});
     throw error;
   }
   await chats.chats.reconcileGenerating(user.org_id, chatId);
