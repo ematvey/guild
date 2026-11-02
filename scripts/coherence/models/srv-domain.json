@@ -54,6 +54,18 @@
         {
           "where": "apps/server/src/agents/store/subtree.ts",
           "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/bindings.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/tree.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/delivery.ts",
+          "role": "db"
         }
       ],
       "translations": [
@@ -133,6 +145,10 @@
       "representations": [
         {
           "where": "apps/server/src/agents/conflict.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/workspace-turns.ts",
           "role": "db"
         }
       ],
@@ -362,6 +378,10 @@
       "representations": [
         {
           "where": "apps/server/src/agents/search.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/store/chunks.ts",
           "role": "db"
         }
       ],
@@ -642,6 +662,21 @@
       "where": "apps/server/src/hub/workspace.ts",
       "concept": "machine",
       "role": "wire"
+    },
+    {
+      "where": "apps/server/src/agents/store/run-finish.ts",
+      "concept": "agent-run",
+      "role": "db"
+    },
+    {
+      "where": "apps/server/src/agents/store/stale-runs.ts",
+      "concept": "agent-run",
+      "role": "db"
+    },
+    {
+      "where": "apps/server/src/agents/store/events.ts",
+      "concept": "thread-event",
+      "role": "db"
     }
   ],
   "no_concept": [],

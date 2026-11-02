@@ -2,19 +2,10 @@
 // searchable rows and query them with Postgres FTS. Scope is enforced in SQL
 // by agent_id; callers pass the agent whose threads may match.
 
-import { withTransaction, type PlatformPool } from "../platform/db.js";
-import { utcText, uuidv7 } from "../platform/time.js";
+import type { PlatformPool } from "../platform/db.js";
+import { type AgentChunkInput, insertChunks, searchChunks } from "./store/chunks.js";
 
-/** One chunk row to insert. `text` is indexed as-is with the `simple`
- *  configuration (no stemming; agents write in mixed languages). */
-export interface AgentChunkInput {
-  thread_id: string;
-  agent_id: string;
-  seq_from: number;
-  seq_to: number;
-  text: string;
-  ts?: string;
-}
+export { type AgentChunkInput, insertChunks } from "./store/chunks.js";
 
 /** A message slice fed to chunkThread: the durable journal's sequence
  *  number plus the rendered user/assistant text. */
@@ -38,20 +29,6 @@ const MAX_QUERY_CHARS = 512;
 const MAX_RESULTS = 20;
 const MAX_SNIPPET_CHARS = 700;
 const CHUNK_TARGET_CHARS = 2000;
-
-/** Inserts chunks with their tsvector computed by Postgres. */
-export async function insertChunks(pool: PlatformPool, chunks: AgentChunkInput[]): Promise<void> {
-  if (chunks.length === 0) return;
-  await withTransaction(pool, async (client) => {
-    for (const chunk of chunks) {
-      await client.query(
-        `INSERT INTO agent_thread_chunks (id, thread_id, agent_id, seq_from, seq_to, ts, text, tsv)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7, to_tsvector('simple', $7))`,
-        [uuidv7(), chunk.thread_id, chunk.agent_id, chunk.seq_from, chunk.seq_to, chunk.ts ?? null, chunk.text],
-      );
-    }
-  });
-}
 
 /**
  * Chunks one completed turn's user/assistant messages and inserts the rows.
@@ -107,30 +84,14 @@ export async function search(
   const query = args.query.trim();
   if (query === "") return [];
   const limit = Math.max(1, Math.min(MAX_RESULTS, args.limit ?? MAX_RESULTS));
-  const res = await pool.query<{
-    thread_id: string;
-    thread_title: string;
-    seq_from: number;
-    seq_to: number;
-    ts: string;
-    snippet: string;
-    rank: number;
-  }>(
-    `WITH q AS (SELECT websearch_to_tsquery('simple', $2) AS tsq)
-     SELECT c.thread_id, t.title AS thread_title, c.seq_from, c.seq_to,
-            ${utcText("c.ts")} AS ts,
-            left(ts_headline('simple', c.text, q.tsq,
-              'StartSel=<mark>, StopSel=</mark>, MaxFragments=3, MaxWords=60, MinWords=15'), $4) AS snippet,
-            ts_rank(c.tsv, q.tsq) AS rank
-     FROM agent_thread_chunks c
-     JOIN agent_threads t ON t.id = c.thread_id
-     CROSS JOIN q
-     WHERE c.agent_id = $1 AND t.user_id = $5 AND c.tsv @@ q.tsq
-     ORDER BY rank DESC, c.ts DESC
-     LIMIT $3`,
-    [args.agentId, query.slice(0, MAX_QUERY_CHARS), limit, MAX_SNIPPET_CHARS, args.userId],
-  );
-  return res.rows.map((row) => ({
+  const rows = await searchChunks(pool, {
+    agentId: args.agentId,
+    userId: args.userId,
+    query: query.slice(0, MAX_QUERY_CHARS),
+    limit,
+    snippetChars: MAX_SNIPPET_CHARS,
+  });
+  return rows.map((row) => ({
     thread_id: row.thread_id,
     thread_title: row.thread_title,
     seq_from: Number(row.seq_from),

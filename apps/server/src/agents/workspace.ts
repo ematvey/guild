@@ -4,17 +4,11 @@
 // chat keeps its per-conversation sandbox.
 
 import type { PlatformPool } from "../platform/db.js";
+import { agentThreadForChat } from "./store/bindings.js";
 import { agentWorkspaceDir, agentWorkspaceSubpath } from "./workspace-config.js";
 
+export { agentThreadForChat, type AgentThreadRef } from "./store/bindings.js";
 export { agentWorkspaceSubpath } from "./workspace-config.js";
-
-export interface AgentThreadRef {
-  thread_id: string;
-  agent_id: string;
-  org_id: string;
-  /** The user whose private conversation this thread is. */
-  user_id: string;
-}
 
 export interface ConversationWorkspace {
   key: string;
@@ -22,25 +16,6 @@ export interface ConversationWorkspace {
   hostDir: string;
   chatId: string | null;
   agentId: string | null;
-}
-
-/** The agent row behind a chat journal row, or null for a plain chat. */
-export async function agentThreadForChat(pool: PlatformPool, chatId: string): Promise<AgentThreadRef | null> {
-  const res = await pool.query<{ thread_id: string; agent_id: string; org_id: string; user_id: string }>(
-    `SELECT t.id AS thread_id, t.agent_id, a.org_id, t.user_id
-     FROM agent_threads t JOIN agents a ON a.id = t.agent_id
-     WHERE t.chat_id = $1`,
-    [chatId],
-  );
-  const row = res.rows[0];
-  return row === undefined
-    ? null
-    : {
-        thread_id: row.thread_id,
-        agent_id: row.agent_id,
-        org_id: row.org_id,
-        user_id: row.user_id,
-      };
 }
 
 /** Resolves the sandbox target for one conversation. Agent threads share the

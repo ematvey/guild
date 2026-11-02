@@ -15,6 +15,7 @@ import { AgentNoticeStore } from "./store/notices.js";
 import { AgentRunStore } from "./store/runs.js";
 import { AgentTreeStore } from "./store/subtree.js";
 import { AgentThreadStore } from "./store/threads.js";
+import { agentWorkspaceDir, seedAgentWorkspace } from "./workspace-config.js";
 
 export { AgentGrants } from "./store/access.js";
 export {
@@ -66,7 +67,13 @@ export class AgentStore extends AgentCatalog {
 
   constructor(deps: AgentStoreDeps) {
     const grants = new AgentGrants(deps.pool);
-    super(deps.pool, deps.chats, grants, deps.workspaceRoot);
+    const root = deps.workspaceRoot;
+    super(
+      deps.pool,
+      deps.chats,
+      grants,
+      root === undefined ? undefined : (agent) => seedAgentWorkspace(agentWorkspaceDir(root, agent.org_id, agent.id)),
+    );
     this.grants = grants;
     this.threads = new AgentThreadStore(deps.pool, deps.chats, (agentId) => this.fetchAgent(agentId));
     this.tree = new AgentTreeStore(deps.pool);
