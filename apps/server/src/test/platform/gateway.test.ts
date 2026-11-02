@@ -4,15 +4,15 @@
 // wire captures in gateway-golden.test.ts.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
 const INTERNAL_CALLER_UUID = "084e9c72-8c73-636b-f784-132bbeaf766e";
 const INTERNAL_KEY_UUID = "bf14cf48-bd7d-5fb6-6c0f-9047919fb0d8";
 
 describe("M2 gateway: api keys + admin + quota + internal key", () => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
   beforeAll(async () => {
-    stack = await setupM2Stack();
+    stack = await setupGatewayStack();
   }, 120_000);
   afterAll(async () => {
     await stack?.close();
@@ -322,7 +322,7 @@ describe("M2 gateway: api keys + admin + quota + internal key", () => {
     // A completion through the internal key records usage under the
     // synthetic internal caller (distinct from every user row).
     await stack.mock.stop();
-    const { startMockUpstream } = await import("./m2-harness.js");
+    const { startMockUpstream } = await import("../support/gateway-stack.js");
     const scripted = await startMockUpstream([
       {
         body:

@@ -1,14 +1,15 @@
-// Golden WS replay: runs the exact scenario captured from the Rust server
-// against the TS implementation and compares every recorded text frame and
-// HTTP body as parsed JSON after masking dynamic values (uuids/timestamps/
-// tickets). Key order and float text are not part of the contract; field
+// Golden WS replay: runs a fixed captured scenario (platform/fixtures/
+// ws-golden.json) against the server and compares every recorded text frame
+// and HTTP body as parsed JSON after masking dynamic values (uuids/
+// timestamps/tickets). The capture is the wire contract shipped clients
+// hold. Key order and float text are not part of the contract; field
 // names, presence and values are. Ping/pong payloads are compared as shape
 // (uuid v7 bytes), not bytes — they are per-connection random challenges.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createM5TestEnv, type M5TestEnv } from "./m5-harness.js";
+import { createHubTestEnv, type HubTestEnv } from "../support/hub-env.js";
 import { runScenario, normalizeHexPayload, type ScenarioStep } from "./ws-driver.js";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -44,11 +45,11 @@ const fixture = JSON.parse(
   }[];
 };
 
-let env: M5TestEnv;
+let env: HubTestEnv;
 let base: string;
 
 beforeAll(async () => {
-  env = await createM5TestEnv();
+  env = await createHubTestEnv();
   base = await env.listen();
 }, 60_000);
 
@@ -56,7 +57,7 @@ afterAll(async () => {
   await env.cleanup();
 });
 
-describe("hub WS golden replay (captured from the Rust server)", () => {
+describe("member socket golden replay (captured scenario)", () => {
   it(
     "replays the full capture with the same parsed frames",
     { timeout: 120_000 },

@@ -23,9 +23,9 @@ import {
 } from "../../agents/subagents.js";
 import type { AgentRun } from "../../agents/types.js";
 import { createAgentsTestEnv } from "./harness.js";
-import type { M5TestEnv } from "../platform/m5-harness.js";
+import type { HubTestEnv } from "../support/hub-env.js";
 
-const env: M5TestEnv | null = await createAgentsTestEnv();
+const env: HubTestEnv | null = await createAgentsTestEnv();
 const dbDescribe = env === null ? describe.skip : describe;
 
 async function makeUser(orgId: string, email: string, role = "member"): Promise<UserRow> {

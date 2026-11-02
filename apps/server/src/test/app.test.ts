@@ -1,7 +1,6 @@
 // App-shell tests: the native surface (health, platform groups, the
-// Rust-shaped not-found envelope for deferred routes, the SPA fallback, the
-// hub WS upgrade). No external services, no upstream — the Rust server is
-// retired (M7).
+// not-found envelope for unmatched routes, the SPA fallback, the member
+// socket upgrade). No external services and no upstream.
 
 import { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -77,7 +76,7 @@ describe("web UI fallback", () => {
   });
 });
 
-describe("hub WS upgrade (native since M5)", () => {
+describe("member socket upgrade", () => {
   it("the upgrade is native now: an upgrade without a ticket is rejected by the hub itself", async () => {
     const app = await makeApp();
     await app.listen({ host: "127.0.0.1", port: 0 });

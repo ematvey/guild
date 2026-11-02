@@ -1,8 +1,8 @@
-// M8 suites: the integrations chat runtime. The connector execute paths
-// against a local mock backend (no external API calls — ever), the MCP
-// tool call against a stub MCP peer, and the chat-loop registration flow
-// (per-turn tool registration, discovery, execution, audit, and the
-// always_ask approval card) against the real app + harness + mock provider.
+// The integrations chat runtime: the connector execute paths against a
+// local mock backend (no external API calls — ever), the MCP tool call
+// against a stub MCP peer, and the chat-loop registration flow (per-turn
+// tool registration, discovery, execution, audit, and the always_ask
+// approval card) against the real app + harness + mock provider.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";

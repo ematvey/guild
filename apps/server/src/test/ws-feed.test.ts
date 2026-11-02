@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import crypto from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, startMockUpstream, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, startMockUpstream, type GatewayStack } from "./support/gateway-stack.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
 import { notifySubagentTree } from "../agents/tree.js";
@@ -24,7 +24,7 @@ import { guildProviderId } from "../harness/models.js";
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let slowMock: Awaited<ReturnType<typeof startMockUpstream>>;
 let port: number;
 let base: string;
@@ -37,7 +37,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_fix_test_" });
+  stack = await setupGatewayStack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_fix_test_" });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   base = `http://127.0.0.1:${port}`;
   platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
@@ -592,9 +592,9 @@ describe("member-socket feed", () => {
     await stack.env.db.query("UPDATE chats SET machine_id = 'fix-presence-m1', machine_label = 'Desk' WHERE id = $1", [chat.id]);
 
     const browser = await memberSocket();
-    // One presence poll passes while the machine is still offline, so the
-    // online flip below is guaranteed to be observed as a change.
-    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    // The connect push carries the machine offline, so the online flip
+    // below is observed as a change.
+    await waitFrame(browser, (f) => f.type === "machine_list");
 
     // The machine's daemon connects: the live slot flips online.
     const res = await stack.env.app.inject({
@@ -905,7 +905,7 @@ describe("member-socket feed", () => {
     // The legacy chat list is first (old clients wait for it); the rest of
     // the sidebar state follows on the same bootstrap.
     const info = await waitFrame(ws, (f) => f.type === "workspace_identity");
-    expect(info.name).toBe("m2 test org");
+    expect(info.name).toBe("gateway test org");
     await waitFrame(ws, (f) => f.type === "archived_thread_list");
     await waitFrame(ws, (f) => f.type === "project_list");
     await waitFrame(ws, (f) => f.type === "machine_list");
@@ -931,7 +931,7 @@ describe("member-socket feed", () => {
       method: "PUT",
       url: "/api/v1/org",
       headers: auth(stack.adminToken),
-      payload: { name: "m2 test org" },
+      payload: { name: "gateway test org" },
     });
     ws.end();
   });

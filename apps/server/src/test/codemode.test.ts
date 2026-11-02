@@ -13,12 +13,12 @@ import { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { GuildRuntime } from "../harness/runtime.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
 const TEST_TIMEOUT = 120_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 let memberToken: string;
 const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-codemode-sandbox-"));
@@ -56,7 +56,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack(
+  stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_SANDBOX_ROOT: sandboxRoot,

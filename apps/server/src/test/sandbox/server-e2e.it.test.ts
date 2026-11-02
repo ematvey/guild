@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
@@ -32,14 +32,14 @@ const finalSse =
   "data: [DONE]\n\n";
 
 describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
 
   beforeAll(async () => {
     const probe = createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = (probe.address() as AddressInfo).port;
     await new Promise<void>((resolve) => probe.close(() => resolve()));
-    stack = await setupM2Stack(
+    stack = await setupGatewayStack(
       {
         GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
         GUILD_DATA_DIR: mkdtempSync(path.join(tmpdir(), "guild-sbx-e2e-data-")),

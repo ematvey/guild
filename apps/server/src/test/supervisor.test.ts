@@ -1,16 +1,16 @@
-// M0 supervisor: a durable session failure must be healed in-process by
-// the reopen loop (pi-durable's documented recovery: reopen + resume), not
-// wedge the server until a redeploy. A sealed session takes no writes, so
-// the in-flight turn stays pending and resume re-drives it to completion.
+// The harness supervisor: a durable session failure is healed in-process
+// by the reopen loop (pi-durable's documented recovery: reopen + resume),
+// not a wedge until a redeploy. A sealed session takes no writes, so the
+// in-flight turn stays pending and resume re-drives it to completion.
 
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { armDurableFault } from "../storage/postgres/pg.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 
 beforeAll(async () => {
@@ -18,7 +18,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
@@ -53,7 +53,7 @@ async function assistantText(chatId: string): Promise<string> {
   return blocks.map((b) => b.text ?? "").join("");
 }
 
-describe("supervisor reopen (M0)", () => {
+describe("supervisor reopen", () => {
   it("a storage fault mid-turn reopens the session and the turn completes", async () => {
     // A stream slow enough to still be running when the session fails.
     stack.mock.setResponses([

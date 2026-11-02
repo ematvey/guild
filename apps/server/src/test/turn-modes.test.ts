@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
 const MODEL = "Mode-Test-Model";
@@ -33,11 +33,11 @@ describe.each([
   { mode: "off" as const, label: "in-process" },
   { mode: "on" as const, label: "workers" },
 ])("turn flow ($label)", ({ mode }) => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
 
   beforeAll(async () => {
     const port = await freePort();
-    stack = await setupM2Stack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`, GUILD_WORKER_MODE: mode });
+    stack = await setupGatewayStack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`, GUILD_WORKER_MODE: mode });
     await stack.env.app.listen({ port, host: "127.0.0.1" });
     await stack.routeModel(MODEL);
   });

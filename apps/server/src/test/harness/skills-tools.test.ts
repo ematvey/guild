@@ -15,7 +15,7 @@ import { packBundle } from "../../platform/bundle.js";
 import { ApiError } from "../../platform/errors.js";
 import { RegistryStore } from "../../platform/store/registry.js";
 import { ChatStore } from "../../platform/store/chats.js";
-import { createM5TestEnv, type M5TestEnv } from "../platform/m5-harness.js";
+import { createHubTestEnv, type HubTestEnv } from "../support/hub-env.js";
 
 const ORG = "org-1";
 const USER = "user-1";
@@ -651,14 +651,14 @@ describe("SkillRuntime surfaces", () => {
 // ------------------------------------------------ new store surfaces (real DB)
 
 describe("store surfaces", () => {
-  let env: M5TestEnv | undefined;
+  let env: HubTestEnv | undefined;
   let registry: RegistryStore;
   let chats: ChatStore;
   let orgId: string;
   let userId: string;
 
   beforeAll(async () => {
-    env = await createM5TestEnv();
+    env = await createHubTestEnv();
     registry = new RegistryStore(env.db);
     chats = new ChatStore(env.db);
     await env.db.query("INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'skill-tools-org')");

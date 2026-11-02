@@ -2,16 +2,16 @@
 // (user, slug), counts aggregate for the detail page.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createM5TestEnv, type M5TestEnv } from "./m5-harness.js";
+import { createHubTestEnv, type HubTestEnv } from "../support/hub-env.js";
 import { SkillStore } from "../../platform/store/skills.js";
 
-let env: M5TestEnv;
+let env: HubTestEnv;
 let store: SkillStore;
 let orgId: string;
 let userId: string;
 
 beforeAll(async () => {
-  env = await createM5TestEnv();
+  env = await createHubTestEnv();
   store = new SkillStore(env.db);
   await env.db.query("INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'skills-store-org')");
   await env.db.query(

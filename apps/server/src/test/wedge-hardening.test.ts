@@ -5,7 +5,7 @@
 import { createModels } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "../harness/models.js";
 import { TurnCommandStore } from "../platform/store/turn-commands.js";
 
@@ -31,7 +31,7 @@ describe("wedge hardening", () => {
   });
 
   describe("turn commands: failed delivery and expiry sweep", () => {
-    let stack: M2Stack;
+    let stack: GatewayStack;
     let commands: TurnCommandStore;
     let chatId: string;
 
@@ -40,7 +40,7 @@ describe("wedge hardening", () => {
     });
 
     it("seeds the stack", async () => {
-      stack = await setupM2Stack({}, { dbPrefix: "guild_wedge_test", logLevel: "error" });
+      stack = await setupGatewayStack({}, { dbPrefix: "guild_wedge_test", logLevel: "error" });
       commands = new TurnCommandStore(stack.env.db);
       const res = await stack.env.app.inject({
         method: "POST",

@@ -1,12 +1,12 @@
-// Golden replay: every M2 surface is replayed against fixtures captured from
-// the live dev stack (TS :18080 proxying the Rust server), with only dynamic
+// Golden replay: every gateway surface is replayed against fixed captured
+// fixtures (the wire contract shipped clients hold), with only dynamic
 // values masked (completion ids, created timestamps, uuids, key prefixes,
 // upstream URLs, masked-key bullets). JSON bodies compare as parsed values;
 // SSE streams compare as parsed frames.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { setupM2Stack, startMockUpstream, type M2Stack } from "./m2-harness.js";
+import { setupGatewayStack, startMockUpstream, type GatewayStack } from "../support/gateway-stack.js";
 
 const gold = (name: string): string =>
   readFileSync(new URL(`./fixtures/golden/${name}`, import.meta.url), "utf8");
@@ -60,11 +60,11 @@ function parseSse(text: string): SseFrame[] {
     });
 }
 
-describe("M2 golden replay (live-capture fixtures)", () => {
-  let stack: M2Stack;
+describe("gateway golden replay (captured fixtures)", () => {
+  let stack: GatewayStack;
 
   it("setup", async () => {
-    stack = await setupM2Stack();
+    stack = await setupGatewayStack();
   }, 120_000);
 
   it("admin catalog, models, api keys, both LLM surfaces, usage — matches the live stack", async () => {

@@ -3,16 +3,16 @@
 // frame carries only the newest window with has_more_events set.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import type { PlatformContext } from "../composition.js";
 import { captureThreadState, THREAD_STATE_EVENT_LIMIT } from "../chats/thread-state.js";
 import { uuidv7 } from "../platform/time.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let platform: PlatformContext;
 
 beforeAll(async () => {
-  stack = await setupM2Stack();
+  stack = await setupGatewayStack();
   platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
 });
 

@@ -1,7 +1,7 @@
-// M6 long-tail suites: registry (incl. integration install), releases,
-// projects, teams, admin users/prompts/integration reads, and the web UI
-// serving + Faro ingest, against a disposable guild_m6_test_* database and
-// rustfs bucket.
+// Registry and admin surfaces: the registry (incl. integration install),
+// releases, projects, teams, admin users/prompts/integration reads, and the
+// web UI serving + Faro ingest, against a disposable database and rustfs
+// bucket.
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -9,7 +9,7 @@ import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./platform/object-store-stack.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
 import { hashPassword } from "../platform/crypto.js";
 import { versionGt, toRfc3339Offset } from "../platform/http/releases.js";
 

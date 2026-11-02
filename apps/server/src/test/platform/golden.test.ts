@@ -1,19 +1,15 @@
-// Golden wire-contract tests: replays the captured Rust request/response
-// pairs (apps/server/src/test/golden/fixtures.json — captured from the live
-// Rust server, token material redacted) against the native TS routes and
-// asserts byte-semantic equality: exact status, exact body text modulo
-// dynamic values (uuids masked, timestamps masked to the chrono AutoSi
-// shape, harvested tokens/ids substituted), exact noted headers.
-//
-// Sequence state lives in the substitution map: sessions minted by replayed
-// logins feed later bearers, uploaded attachment/pairing ids feed later
-// paths, exactly as in the capture run.
+// Golden wire-contract tests: replays fixed captured request/response pairs
+// (apps/server/src/test/golden/fixtures.json, token material redacted)
+// against the routes and asserts byte-semantic equality: exact status,
+// exact body text modulo dynamic values (uuids masked, timestamps masked to
+// one RFC 3339 shape, harvested tokens/ids substituted), exact noted
+// headers.
 
 import { readFileSync } from "node:fs";
 import pg from "pg";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createM1TestEnv, type M1TestEnv } from "./harness.js";
+import { createPlatformTestEnv, type PlatformTestEnv } from "../support/platform-env.js";
 import { hashPassword } from "../../platform/crypto.js";
 import { uuidv7 } from "../../platform/time.js";
 
@@ -28,11 +24,11 @@ interface CapturedFixture {
   response: { status: number; headers: Record<string, string>; body: string | { base64: string; length: number } };
 }
 
-let env: M1TestEnv;
+let env: PlatformTestEnv;
 let db: pg.Pool;
 
 beforeAll(async () => {
-  env = await createM1TestEnv();
+  env = await createPlatformTestEnv();
   db = env.db;
 });
 

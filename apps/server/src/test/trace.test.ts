@@ -7,14 +7,15 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
+import { waitFor } from "./support/wait.js";
 import { TraceStore } from "../platform/trace.js";
 import { ClickhouseClient } from "../platform/clickhouse.js";
 import { AgentStore } from "../agents/store.js";
 
 const TEST_TIMEOUT = 120_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 const orgAuth = (token: string): Record<string, string> => ({
   authorization: `Bearer ${token}`,
@@ -28,7 +29,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack(
+  stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_ALLOW_SHELL_TOOLS: "1",
@@ -139,16 +140,19 @@ describe("trace sink", () => {
         completion_chars: 50,
       });
       await sink.recordPayload(llmRequestId, stack.orgId, "request", "x");
-      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const { rows: traces } = await sink.traces({
-        orgId: stack.orgId,
-        from: new Date(Date.now() - 60_000),
-        to: new Date(Date.now() + 60_000),
-        limit: 10,
-        offset: 0,
-      });
-      const row = traces.find((item) => item["trace_id"] === traceId);
+      let row: Record<string, unknown> | undefined;
+      await waitFor(async () => {
+        const { rows: traces } = await sink.traces({
+          orgId: stack.orgId,
+          from: new Date(Date.now() - 60_000),
+          to: new Date(Date.now() + 60_000),
+          limit: 10,
+          offset: 0,
+        });
+        row = traces.find((item) => item["trace_id"] === traceId);
+        return row !== undefined && Number(row["call_count"]) === 1 && Number(row["tool_count"]) === 1;
+      }, 10_000);
       expect(row).toBeDefined();
       expect(row!["summary"]).toBe("round-trip");
       expect(Number(row!["tool_count"])).toBe(1);
@@ -452,10 +456,13 @@ describe("run lifecycle mirror", () => {
         summary: "finished cleanly",
         finished_at: new Date().toISOString(),
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const final = await chClient().query(
-        `SELECT status, summary FROM agent_traces FINAL WHERE trace_id = toUUID('${run.id}')`,
-      );
+      let final: Record<string, unknown>[] = [];
+      await waitFor(async () => {
+        final = await chClient().query(
+          `SELECT status, summary FROM agent_traces FINAL WHERE trace_id = toUUID('${run.id}')`,
+        );
+        return final[0]?.["status"] === "succeeded";
+      }, 10_000);
       expect(final[0]?.["status"]).toBe("succeeded");
       expect(final[0]?.["summary"]).toBe("finished cleanly");
 

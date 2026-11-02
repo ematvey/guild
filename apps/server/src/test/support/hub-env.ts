@@ -1,22 +1,15 @@
-// M5 hub-core test harness: disposable Postgres database (verbatim Rust
-// migrations applied in order, namespaced `guild_m5_test_*`) + a listening
-// app instance so the ws client can dial a real upgrade.
+// Hub test env: a disposable database with every migration applied
+// (`guild_hub_test_*`) and a listening app, so a ws client can dial a real
+// upgrade.
 
-import { dropTestDatabase } from "../support/postgres.js";
-import pg from "pg";
+import { createTestDatabase } from "./postgres.js";
+import type pg from "pg";
 import WebSocket from "ws";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
-import { applyPlatformMigrations } from "../../platform/migrations.js";
-import { TEST_ADMIN_URL, TEST_CLICKHOUSE_PASSWORD, TEST_CLICKHOUSE_USER } from "./harness.js";
+import { TEST_CLICKHOUSE_PASSWORD, TEST_CLICKHOUSE_USER } from "./platform-env.js";
 
-function randomSuffix(): string {
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export interface M5TestEnv {
+export interface HubTestEnv {
   databaseName: string;
   databaseUrl: string;
   db: pg.Pool;
@@ -27,35 +20,22 @@ export interface M5TestEnv {
   cleanup(): Promise<void>;
 }
 
-export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
-  const suffix = randomSuffix();
-  const databaseName = `guild_m5_test_${suffix}`;
-
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-  await adminPool.query(`CREATE DATABASE "${databaseName}"`);
-  await adminPool.end();
-  const databaseUrl = new URL(TEST_ADMIN_URL);
-  databaseUrl.pathname = `/${databaseName}`;
-
-  // Seeding/preparation pool on the disposable database — never on the
-  // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4, idleTimeoutMillis: 2000 });
-
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-  // The production startup path (applyPlatformMigrations): same filename
-  // order, same schema_history tracking hand-run deployments use.
-  await applyPlatformMigrations(migrationPool);
-  await migrationPool.end();
+/** `logLevel` sets the app's log level; HUB_TEST_LOG overrides it. */
+export async function createHubTestEnv(logLevel = "warn"): Promise<HubTestEnv> {
+  const database = await createTestDatabase("guild_hub_test_");
+  const databaseName = database.name;
+  const databaseUrl = new URL(database.url);
+  const dbPool = database.pool;
 
   const config = loadConfig({
     GUILD_DATABASE_URL: databaseUrl.toString(),
     GUILD_MASTER_KEY_HEX: "33".repeat(32),
-    GUILD_JWT_SECRET: "m5-test-jwt-secret",
+    GUILD_JWT_SECRET: "hub-test-jwt-secret",
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_POOL_MAX: "5",
     GUILD_API_URL: "http://localhost:18080",
-    GUILD_LOG_LEVEL: process.env.M5_TEST_LOG ?? "warn",
+    GUILD_LOG_LEVEL: process.env.HUB_TEST_LOG ?? logLevel,
   });
   const app = await buildApp(config);
 
@@ -64,13 +44,7 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     if (done) return;
     done = true;
     await app.close();
-    await dbPool.end();
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-    try {
-      await dropTestDatabase(dropper, databaseName);
-    } finally {
-      await dropper.end();
-    }
+    await database.drop();
   };
 
   return {
@@ -96,8 +70,6 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     cleanup,
   };
 }
-
-// ---------- scripted ws client ----------
 
 // ---------- scripted ws client ----------
 

@@ -1,13 +1,12 @@
 // Platform semantic tests beyond the golden wire fixtures: auth-generation
-// stamping semantics (ports of the Rust identity/pairing tests), OIDC
-// provisioning rules and a full OIDC round-trip against a mock IdP, S3
-// round-trip through the attachment routes, events emission with
-// LISTEN/NOTIFY, and the time/uuid helpers.
+// stamping and pairing semantics, OIDC provisioning rules and a full OIDC
+// round-trip against a mock IdP, S3 round-trip through the attachment
+// routes, events emission with LISTEN/NOTIFY, and the time/uuid helpers.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
-import { createM1TestEnv, type M1TestEnv } from "./harness.js";
+import { createPlatformTestEnv, type PlatformTestEnv } from "../support/platform-env.js";
 import { PlatformContext } from "../../composition.js";
 import { hashPassword, verifyPassword } from "../../platform/crypto.js";
 import { pgTimestampToRfc3339, uuidv7, isUuid } from "../../platform/time.js";
@@ -17,7 +16,7 @@ import { ApiError } from "../../platform/errors.js";
 
 const PASSWORD = "hunter226";
 
-let env: M1TestEnv;
+let env: PlatformTestEnv;
 let ctx: PlatformContext;
 let orgId: string;
 let adminId: string;
@@ -47,7 +46,7 @@ async function meStatus(token: string): Promise<number> {
 }
 
 beforeAll(async () => {
-  env = await createM1TestEnv();
+  env = await createPlatformTestEnv();
   ctx = new PlatformContext(env.config);
   const boot = await env.app.inject({
     method: "POST",

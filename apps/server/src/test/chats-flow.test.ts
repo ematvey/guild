@@ -16,7 +16,7 @@ const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
   "data: [DONE]\n\n";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import type { PlatformContext } from "../composition.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { guildProviderId } from "../harness/models.js";
@@ -24,7 +24,7 @@ import { UserEntry } from "@earendil-works/pi-durable";
 import { captureThreadState } from "../chats/thread-state.js";
 import { waitFor } from "./support/wait.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 
 beforeAll(async () => {
@@ -34,7 +34,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
   await stack.env.app.listen({ port, host: "127.0.0.1" });

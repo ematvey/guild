@@ -4,16 +4,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
-import { createM5TestEnv, type M5TestEnv } from "./m5-harness.js";
+import { createHubTestEnv, type HubTestEnv } from "../support/hub-env.js";
 import { MachineStore } from "../../platform/store/machines.js";
 
-let env: M5TestEnv;
+let env: HubTestEnv;
 let store: MachineStore;
 let orgId: string;
 let userId: string;
 
 beforeAll(async () => {
-  env = await createM5TestEnv();
+  env = await createHubTestEnv();
   store = new MachineStore(env.db);
   await env.db.query("INSERT INTO orgs (id, name) VALUES (gen_random_uuid(), 'm5-store-org')");
   await env.db.query(
