@@ -1,0 +1,3 @@
+# Mechanical format passes; `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+# biome format of the TypeScript tree (2026-11-03)
+b06ba5cc6250348f84cefdb460b037f334f7c0c9
