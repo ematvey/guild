@@ -27,6 +27,17 @@ export class KeyedChain {
     return next;
   }
 
+  /** Whether any chain holds a queued or running step. */
+  get active(): boolean {
+    return this.chains.size > 0;
+  }
+
+  /** Resolves once every chain is empty, steps appended while it waits
+   *  included. */
+  async idle(): Promise<void> {
+    while (this.chains.size > 0) await Promise.all([...this.chains.values()]);
+  }
+
   stop(): void {
     this.stopped = true;
   }

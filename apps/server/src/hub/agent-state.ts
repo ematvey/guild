@@ -92,6 +92,21 @@ export class AgentStateFeed {
     this.bursts.clear();
   }
 
+  /** Resolves once no push is queued or running; FeedForwarder.idle(). */
+  idle(): Promise<void> {
+    return this.chains.idle();
+  }
+
+  /** True while a push is queued or running. */
+  pushing(): boolean {
+    return this.chains.active;
+  }
+
+  /** True while a write burst waits for its quiet window. */
+  coalescing(): boolean {
+    return this.bursts.size > 0;
+  }
+
   /** Runs `push` once per write burst on `key` (BURST_QUIET_MS after the
    *  latest call, at most BURST_MAX_MS after the first). */
   private coalesce(key: string, push: () => Promise<void>): void {

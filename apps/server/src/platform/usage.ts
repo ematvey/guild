@@ -42,8 +42,17 @@ export async function primaryTeamId(pool: PlatformPool | null, userId: string, o
 export class UsageSink {
   private pool: PlatformPool | null = null;
   private ready: Promise<void> | null = null;
+  /** Records started and not yet settled (they never reject). */
+  private readonly writes = new Set<Promise<void>>();
 
   constructor(readonly client: ClickhouseClient) {}
+
+  /** Resolves once every record started before (or while) it waits has
+   *  landed or been dropped. Tests read usage rows after it instead of
+   *  sleeping. */
+  async idle(): Promise<void> {
+    while (this.writes.size > 0) await Promise.all([...this.writes]);
+  }
 
   attachPool(pool: PlatformPool): void {
     this.pool = pool;
@@ -60,7 +69,14 @@ export class UsageSink {
   /** Records one event; team attribution fills the user's earliest team.
    *  Every failure is logged and dropped (spec: ClickHouse unavailability
    *  never breaks a model call). */
-  async record(event: UsageEvent): Promise<void> {
+  record(event: UsageEvent): Promise<void> {
+    const write = this.write(event);
+    this.writes.add(write);
+    void write.then(() => this.writes.delete(write));
+    return write;
+  }
+
+  private async write(event: UsageEvent): Promise<void> {
     try {
       let teamId = event.team_id;
       if (teamId === null) teamId = await primaryTeamId(this.pool, event.user_id, event.org_id);

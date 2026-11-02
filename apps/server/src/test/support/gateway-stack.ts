@@ -269,7 +269,7 @@ export interface GatewayStack {
     rows?: number;
     provider?: string;
   }): Promise<void>;
-  /** Waits for ClickHouse to make a direct insert visible. */
+  /** Waits for the app's pending usage and trace inserts to land. */
   drain(): Promise<void>;
   usageRows(): Promise<Record<string, unknown>[]>;
   close(): Promise<void>;
@@ -401,17 +401,10 @@ export async function setupGatewayStack(
       if (!res.ok) throw new Error(`usage seed failed: ${await res.text()}`);
     },
     async drain() {
-      // Wait for the usage sink's async inserts to land: fixed sleeps race
-      // under parallel-suite load — poll until the org's row count is
-      // stable across two consecutive reads (bounded).
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      let last = -1;
-      for (let i = 0; i < 20; i++) {
-        const rows = await this.usageRows();
-        if (rows.length === last) return;
-        last = rows.length;
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      }
+      // The usage and trace sinks' fire-and-forget inserts settle; ClickHouse
+      // inserts are synchronous, so the rows are readable after.
+      const { platform } = env.app;
+      await Promise.all([platform.usage.idle(), platform.trace.idle()]);
     },
     async usageRows() {
       const res = await fetch(`${TEST_CLICKHOUSE_URL}/?database=${env.clickhouseDatabase}`, {

@@ -147,10 +147,13 @@ describe("MachineStore.upsertConnected", () => {
 
   it("lastSeen refreshes; listForUser and bindable scope to the user/org", async () => {
     await store.upsertConnected(orgId, userId, "ls-machine", "LS", null, null, null, null, null);
+    // Age the stamp so the refresh below moves it whatever the clock's resolution.
+    await env.db.query(
+      "UPDATE machines SET last_seen_at = last_seen_at - interval '1 minute' WHERE machine_id = 'ls-machine'",
+    );
     const before = (
       await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")
     ).rows[0]!.last_seen_at;
-    await new Promise((r) => setTimeout(r, 30));
     await store.lastSeen("ls-machine");
     const after = (
       await env.db.query<{ last_seen_at: Date }>("SELECT last_seen_at FROM machines WHERE machine_id = 'ls-machine'")

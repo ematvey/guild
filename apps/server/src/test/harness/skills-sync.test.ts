@@ -102,9 +102,9 @@ function makeFixture(options: { selfBaseUrl?: string } = {}): Fixture {
   return fx;
 }
 
-/** Drains the fire-and-forget push chains (their warnings land on the next
- *  macrotask). */
-const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+/** Drains the fire-and-forget push chains: the in-memory fixture settles
+ *  them in microtasks, and the next macrotask turn runs after all of them. */
+const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 describe("skills syncUser", () => {
   it("pushes the full desired state to every online machine, skipping offline ones", async () => {

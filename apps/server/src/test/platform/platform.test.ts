@@ -13,6 +13,7 @@ import { pgTimestampToRfc3339, uuidv7, isUuid } from "../../platform/time.js";
 import { safeFilename } from "../../platform/store/attachments.js";
 import { resolveOidcUser } from "../../platform/http/oidc.js";
 import { ApiError } from "../../platform/errors.js";
+import { waitFor } from "../support/wait.js";
 
 const PASSWORD = "hunter226";
 
@@ -467,8 +468,7 @@ describe("events feed", () => {
     try {
       await ctx.events.emit(orgId, "chat.created", { chat_id: "x" });
       await ctx.events.emit(orgId, "member.joined", { email: memberEmail, user_id: memberId });
-      await new Promise((r) => setTimeout(r, 150));
-      expect(notifications.length).toBeGreaterThanOrEqual(2);
+      await waitFor(() => notifications.length >= 2, 5_000, 10);
       expect(notifications.at(-1)).toMatchObject({ org_id: orgId, kind: "member.joined" });
 
       const res = await env.app.inject({

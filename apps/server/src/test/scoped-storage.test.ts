@@ -137,6 +137,14 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
 
     try {
       const scopedA = new ScopedDurableStorage(unscoped, convA as ConversationId);
+      // The scheduler's adoption scans, as they return to the harness.
+      const scanned: number[][] = [];
+      const scanTasks = scopedA.scanTasks.bind(scopedA);
+      scopedA.scanTasks = async (...args: Parameters<typeof scanTasks>) => {
+        const page = await scanTasks(...args);
+        scanned.push(page.items.map((task) => task.conversationId));
+        return page;
+      };
       const harness = await Harness.open(
         scopedA,
         { models: {} as never, registry: createRegistry(), onReport: () => {} },
@@ -147,7 +155,12 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
         // it can only reach convA's task. convB's row must remain exactly
         // as seeded — untouched by this harness.
         harness.resume();
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // The open's adoption scans surfaced only convA: the scheduler never
+        // learned of convB's task. Closing the harness joins every drive
+        // resume() started, so the rows read below are final.
+        expect(scanned.flat()).toContain(convA);
+        expect(scanned.flat().every((conversationId) => conversationId === convA)).toBe(true);
+        await harness.close(BACKGROUND_CONTEXT);
 
         const rows = await stack.env.db.query<{ id: string; status: string; conversation_id: string }>(
           "SELECT id, status, conversation_id FROM tasks WHERE id = ANY($1::bigint[])",

@@ -105,6 +105,7 @@ const config = () =>
 
 describe("worker readiness and recovery", () => {
   it("all concurrent callers await one successful ready handshake", async () => {
+    vi.useFakeTimers();
     const child = new Child();
     const supervisor = new ForkSupervisor(config(), log, async () => false, undefined, {
       spawn: (() => child) as unknown as typeof fork,
@@ -112,7 +113,7 @@ describe("worker readiness and recovery", () => {
     try {
       const a = supervisor.submit("chat", input),
         b = supervisor.submit("chat", input);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await vi.advanceTimersByTimeAsync(10);
       expect(child.sent).toHaveLength(0);
       child.emit("message", { t: "ready" });
       expect(await Promise.all([a, b])).toEqual([1, 1]);
@@ -122,6 +123,7 @@ describe("worker readiness and recovery", () => {
     }
   });
   it("does not expire readiness after the handshake succeeded", async () => {
+    vi.useFakeTimers();
     const child = new Child();
     const supervisor = new ForkSupervisor(config(), log, async () => false, undefined, {
       spawn: (() => {
@@ -132,7 +134,7 @@ describe("worker readiness and recovery", () => {
     });
     try {
       await supervisor.submit("chat", input);
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await vi.advanceTimersByTimeAsync(25);
       expect(child.killed).toBe(false);
     } finally {
       await supervisor.close();
@@ -155,6 +157,7 @@ describe("worker readiness and recovery", () => {
     }
   });
   it("retries unavailable work lookup and preserves backoff across child replacement", async () => {
+    vi.useFakeTimers();
     const children: Child[] = [];
     let probes = 0;
     const probe = vi.fn(async () => {
@@ -177,8 +180,10 @@ describe("worker readiness and recovery", () => {
       await vi.waitFor(() => expect(children).toHaveLength(2), { timeout: 1000, interval: 5 });
       expect(probe).toHaveBeenCalledTimes(2);
       children[1]!.kill();
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      // The second respawn waits the ladder's 20 ms step, not the first 5.
+      await vi.advanceTimersByTimeAsync(15);
       expect(children).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(5);
       await vi.waitFor(() => expect(children).toHaveLength(3), { timeout: 1000, interval: 5 });
     } finally {
       await supervisor.close();
@@ -194,6 +199,12 @@ it("attributes simultaneous provider calls by durable session identity", async (
       body: 'data: {"choices":[{"delta":{"role":"assistant","content":"ok"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
     },
   ]);
+  // Session A's headers resolve only after session B's: the two calls
+  // finish out of order.
+  let releaseA: () => void = () => {};
+  const bResolved = new Promise<void>((resolve) => {
+    releaseA = resolve;
+  });
   try {
     const models = createModels();
     const routes = [
@@ -212,7 +223,8 @@ it("attributes simultaneous provider calls by durable session identity", async (
         selfBaseUrl: upstream.url,
         internalKey: "test",
         traceHeaders: async (sessionId) => {
-          await new Promise((resolve) => setTimeout(resolve, sessionId === "session-a" ? 15 : 1));
+          if (sessionId === "session-a") await bResolved;
+          else releaseA();
           return { "x-guild-chat-id": sessionId === "session-a" ? "chat-a" : "chat-b" };
         },
       },

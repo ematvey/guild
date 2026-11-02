@@ -10,6 +10,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
+import { waitFor } from "../support/wait.js";
 
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
@@ -66,16 +67,21 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
   }
 
   async function toolResult(chatId: string): Promise<{ content: string; is_error: boolean }> {
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      const all = await events(chatId);
-      const result = all.find((e) => e.event["type"] === "tool_result");
-      const last = all[all.length - 1]?.event as { type?: string; blocks?: Array<{ type: string }> } | undefined;
-      const settled = last?.type === "assistant_message" && (last.blocks?.some((b) => b.type === "text") ?? false);
-      if (result !== undefined && settled) return result.event as unknown as { content: string; is_error: boolean };
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    throw new Error("turn did not settle");
+    let found: { content: string; is_error: boolean } | undefined;
+    await waitFor(
+      async () => {
+        const all = await events(chatId);
+        const result = all.find((e) => e.event["type"] === "tool_result");
+        const last = all[all.length - 1]?.event as { type?: string; blocks?: Array<{ type: string }> } | undefined;
+        const settled = last?.type === "assistant_message" && (last.blocks?.some((b) => b.type === "text") ?? false);
+        if (result !== undefined && settled) found = result.event as unknown as { content: string; is_error: boolean };
+        return found !== undefined;
+      },
+      120_000,
+      200,
+      "turn did not settle",
+    );
+    return found!;
   }
 
   it("plain chat: shell and file tools run inside the gVisor sandbox", async () => {

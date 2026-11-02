@@ -200,10 +200,14 @@ dbDescribe("AgentStore", () => {
     const chat = await env!.db.query("SELECT title FROM chats WHERE id = $1", [extra.chat_id]);
     expect(chat.rows[0]!.title).toBe("Renamed");
 
-    const before = renamed.last_activity_at;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Age the stamp so the touch moves it whatever the clock's resolution.
+    await env!.db.query(
+      "UPDATE agent_threads SET last_activity_at = last_activity_at - interval '1 minute' WHERE id = $1",
+      [extra.id],
+    );
+    const before = (await store.threads.getThread(agent.id, owner.id, extra.id)).last_activity_at;
     await store.threads.touchThread(agent.id, extra.id);
-    expect((await store.threads.getThread(agent.id, owner.id, extra.id)).last_activity_at >= before).toBe(true);
+    expect((await store.threads.getThread(agent.id, owner.id, extra.id)).last_activity_at > before).toBe(true);
   });
 
   it("keeps each user's threads private inside a shared agent", async () => {

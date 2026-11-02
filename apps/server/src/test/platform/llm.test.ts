@@ -585,7 +585,7 @@ describe("LLM gateway endpoints", () => {
       headers: { authorization: `Bearer ${stack.adminToken}`, "content-type": "application/json" },
       payload: { model: "m-midstream", provider: "midstream-upstream", price_in: 0, price_out: 0 },
     });
-    const before = (await stack.usageRows()).length;
+    const before = new Set((await stack.usageRows()).map((row) => row["request_id"]));
     const res = await stack.env.app.inject({
       method: "POST",
       url: "/openai/v1/chat/completions",
@@ -602,9 +602,10 @@ describe("LLM gateway endpoints", () => {
       error: { message: "provider error: mid-stream failure", type: "provider_error" },
     });
     await stack.drain();
-    const rows = await stack.usageRows();
-    expect(rows).toHaveLength(before + 1);
-    expect(rows.at(-1)!["model"]).toBe("m-midstream");
+    // Rows sharing a second order by request id: find the new one by id.
+    const added = (await stack.usageRows()).filter((row) => !before.has(row["request_id"]));
+    expect(added).toHaveLength(1);
+    expect(added[0]!["model"]).toBe("m-midstream");
     await scripted.stop();
   });
 
