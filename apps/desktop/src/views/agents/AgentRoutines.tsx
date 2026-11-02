@@ -18,7 +18,6 @@ import {
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import {
-  EmptyState,
   ErrorState,
   InlineLoading,
   LoadingRows,
@@ -27,6 +26,7 @@ import {
   Section,
   ToneBadge,
 } from "./agent-ui";
+import { EmptyState } from "@guild/ui/components/empty-state";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -157,9 +157,9 @@ function RoutineList({
       {routines === null && <LoadingRows rows={3} />}
       {routines !== null && routines.length === 0 && (
         <EmptyState
-          icon={<Clock className="size-5" />}
+          icon={Clock}
           title="No routines yet"
-          body="Start a chat with the agent and describe what should run, when, and in which timezone."
+          hint="Start a chat with the agent and describe what should run, when, and in which timezone."
           action={
             <Button size="sm" onClick={() => void start()} disabled={starting}>
               {starting ? <Loader2 className="animate-spin" /> : <Plus />}

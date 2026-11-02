@@ -50,7 +50,6 @@ import type { AgentRun } from "./agents-api";
 import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import {
   AgentGlyph,
-  EmptyState,
   ErrorState,
   InlineLoading,
   LoadingRows,
@@ -61,6 +60,7 @@ import {
 } from "./agent-ui";
 import { count } from "../../lib/format";
 import { compact, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
+import { EmptyState } from "@guild/ui/components/empty-state";
 
 const PERIODS: ReadonlyArray<readonly [ActivityPeriod, string]> = [
   ["24h", "24h"],
@@ -428,9 +428,9 @@ function TracesTable({
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={<Activity className="size-5" />}
+        icon={Activity}
         title="No traces yet"
-        body="A trace appears when an agent run starts. Silent runs are recorded too."
+        hint="A trace appears when an agent run starts. Silent runs are recorded too."
       />
     );
   }
@@ -526,9 +526,9 @@ function CallsTable({
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={<MessageSquare className="size-5" />}
+        icon={MessageSquare}
         title="No model calls in this window"
-        body="Model calls are recorded on every gateway model request and approval judge verdict."
+        hint="Model calls are recorded on every gateway model request and approval judge verdict."
       />
     );
   }
@@ -615,9 +615,9 @@ function ChatsTable({
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={<MessageSquare className="size-5" />}
+        icon={MessageSquare}
         title="No chats in this window"
-        body="A chat is one conversation: every trace and call inside it shares the chat id."
+        hint="A chat is one conversation: every trace and call inside it shares the chat id."
       />
     );
   }

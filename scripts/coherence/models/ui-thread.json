@@ -368,7 +368,7 @@
   ],
   "no_concept": [
     {
-      "where": "apps/desktop/src/views/settings/components/empty-state.tsx",
+      "where": "packages/ui/src/components/empty-state.tsx",
       "reason": "presentational"
     },
     {

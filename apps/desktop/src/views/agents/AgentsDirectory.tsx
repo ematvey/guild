@@ -12,11 +12,11 @@ import { ModelName } from "./agent-model";
 import {
   AgentGlyph,
   AgentStatusBadge,
-  EmptyState,
   LoadingRows,
   PageBody,
   PageHeader,
 } from "./agent-ui";
+import { EmptyState } from "@guild/ui/components/empty-state";
 
 export function filterAgents(agents: Agent[], query: string): Agent[] {
   const needle = query.trim().toLowerCase();
@@ -89,9 +89,9 @@ export function AgentsDirectory({
         {agents === null && <LoadingRows rows={5} />}
         {agents !== null && visible.length === 0 && (
           <EmptyState
-            icon={<Bot className="size-5" />}
+            icon={Bot}
             title={query.trim() === "" ? "No agents yet" : `No agents match "${query.trim()}"`}
-            body={
+            hint={
               query.trim() === ""
                 ? "Create an agent to give it instructions, tools and a durable workspace."
                 : "Try a name, owner, model or visibility."

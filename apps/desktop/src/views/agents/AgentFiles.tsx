@@ -37,12 +37,12 @@ import {
 } from "./agents-route";
 import { formatBytes } from "../../lib/format";
 import {
-  EmptyState,
   ErrorState,
   InlineLoading,
   Mono,
   Section,
 } from "./agent-ui";
+import { EmptyState } from "@guild/ui/components/empty-state";
 
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -405,9 +405,9 @@ export function AgentFiles({
           {error === null && shownEntries !== null && shownEntries.length === 0 && (
             <div className="p-3">
               <EmptyState
-                icon={<Folder className="size-5" />}
+                icon={Folder}
                 title="This folder is empty"
-                body="The agent creates files here when it works."
+                hint="The agent creates files here when it works."
               />
             </div>
           )}
@@ -522,7 +522,7 @@ export function AgentFiles({
               {shownPreviewError === null && !shownPreviewLoading && !inlinePreview && shownPreview === null && (
                 <EmptyState
                   title="No preview"
-                  body="Download the file to inspect it."
+                  hint="Download the file to inspect it."
                   action={
                     <Button variant="outline" size="sm" onClick={download}>
                       <Download />

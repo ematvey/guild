@@ -3,7 +3,7 @@
 // design system.
 
 import type { ReactNode } from "react";
-import { AlertTriangle, Inbox, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "@guild/ui/components/badge";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -186,31 +186,6 @@ export function PageBody({
       <div className={`mx-auto w-full max-w-[64rem] px-4 pb-16 pt-5 sm:px-6 ${className}`}>
         {children}
       </div>
-    </div>
-  );
-}
-
-export function EmptyState({
-  icon,
-  title,
-  body,
-  action,
-}: {
-  icon?: ReactNode;
-  title: string;
-  body?: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center">
-      <div className="mb-3 flex size-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
-        {icon ?? <Inbox className="size-5" />}
-      </div>
-      <p className="text-sm font-medium">{title}</p>
-      {body !== undefined && (
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
-      )}
-      {action !== undefined && <div className="mt-4">{action}</div>}
     </div>
   );
 }

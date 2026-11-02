@@ -18,7 +18,7 @@ import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
-import { EmptyState } from "../components/empty-state";
+import { EmptyState } from "@guild/ui/components/empty-state";
 
 import {
   CategoryBadges,

@@ -12,7 +12,7 @@ import { Blocks, Plus, Waypoints } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { PageHeader } from "../components/page-header";
-import { EmptyState } from "../components/empty-state";
+import { EmptyState } from "@guild/ui/components/empty-state";
 import {
   Chip,
   fmtUsd,

@@ -41,7 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
-import { EmptyState } from "../components/empty-state";
+import { EmptyState } from "@guild/ui/components/empty-state";
 import { FactCard, FactGrid } from "../components/fact-card";
 
 interface UserRow {
