@@ -259,6 +259,17 @@ export interface RoutePatch {
   usage?: UsageQuery;
 }
 
+/** Leaves any chat, project and overlay: the base a top-level surface
+ *  (skills, agents) patches onto. */
+export const SURFACE_BASE = { chatId: null, projectId: null, overlay: null } as const satisfies RoutePatch;
+
+/** The chat root: no chat, project, page or overlay open. */
+export const CHAT_ROOT = {
+  ...SURFACE_BASE,
+  skills: null,
+  newChat: false,
+} as const satisfies RoutePatch;
+
 /** The route a navigation lands on: history and route state move together,
  *  so the URL always reflects what is on screen. Pure for tests. */
 export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute => {

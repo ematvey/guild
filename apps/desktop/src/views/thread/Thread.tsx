@@ -108,7 +108,7 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { ThreadOverlays } from "./ThreadOverlays";
 import { agentDeleting, busyFrom, composerAgent, offlineMachine, pruneStopping, remoteMachine, sendButtonState, tabPaneLayout, threadAccess, threadFacts, workingForChat } from "./status";
-import { canonicalSurfacePath, isImeEnter } from "./route";
+import { CHAT_ROOT, SURFACE_BASE, canonicalSurfacePath, isImeEnter } from "./route";
 import { canonicalSettings } from "../settings/section-nav";
 import type { RenderBlock } from "../../lib/thread-reducer";
 import { useThreadRoute } from "./hooks/use-thread-route";
@@ -451,7 +451,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   // to the pre-login view.
   useEffect(() => {
     if (onboarded || route.overlay?.kind === "onboard") return;
-    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } });
+    pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } });
   }, [onboarded, route.overlay, pushRoute]);
 
 
@@ -503,7 +503,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const deleteChatRow = useCallback((id: string) => {
     void deleteChat(id);
     if (viewChatId === id) {
-      pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+      pushRoute(CHAT_ROOT);
     }
   }, [deleteChat, pushRoute, viewChatId]);
   const openCreateProject = useCallback(() => setCreateProjectOpen(true), []);
@@ -682,7 +682,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       return;
     }
     await archiveChat(viewChatId);
-    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+    pushRoute(CHAT_ROOT);
   }, [viewChatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
   // Deletion is not archiving: the thread leaves every list, so the view
   // navigates away. A confirmation gates the click.
@@ -691,7 +691,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
     setDeleteOpen(false);
     if (!viewChatId) return;
     await deleteChat(viewChatId);
-    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+    pushRoute(CHAT_ROOT);
   }, [viewChatId, deleteChat, pushRoute]);
   // View entries: each contiguous thinking/tool run becomes one
   // WorkedForBlock; everything else (user, text, errors, compaction cards,
@@ -883,15 +883,15 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       isMobile,
     );
     if (tab === "skills") {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
+      pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG });
       return;
     }
     if (tab === "agents") {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY });
+      pushRoute({ ...SURFACE_BASE, skills: null, agents: AGENTS_DIRECTORY });
       return;
     }
     if (tab === "activity") {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_ACTIVITY });
+      pushRoute({ ...SURFACE_BASE, skills: null, agents: AGENTS_ACTIVITY });
       return;
     }
     // Panel tabs navigate too: each owns its address, back/forward walks
@@ -1064,7 +1064,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
       <SkillsPanel
         me={{ email, displayName: displayName ?? undefined, role }}
         route={skillsRoute}
-        onNavigate={(next) => pushRoute({ chatId: null, projectId: null, overlay: null, skills: next })}
+        onNavigate={(next) => pushRoute({ ...SURFACE_BASE, skills: next })}
       />
     </div>
   ) : null;
@@ -1074,7 +1074,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
   const agentsRoute = route.agents;
   const agentsNavigate = useCallback(
     (next: AgentsRoute, options?: { replace?: boolean }) =>
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: next }, options),
+      pushRoute({ ...SURFACE_BASE, skills: null, agents: next }, options),
     [pushRoute],
   );
   const inlineAgents = agentsRoute !== null ? (
@@ -1098,7 +1098,7 @@ function ThreadView({ email, role = "member", displayName, avatarUrl, onSignOut,
           activeTab={railTab}
           onTabChange={switchTab}
           onOpenHelp={() =>
-            pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } })
+            pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } })
           }
           email={email}
           displayName={displayName}
