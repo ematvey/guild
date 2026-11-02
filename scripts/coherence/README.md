@@ -6,9 +6,10 @@ It grows only when the system changes. A frozen system does not decay.
 This directory holds two mechanisms.
 
 **A floor.** Committed counters that may go down, never up. This stops the
-cheap rot: more shims, more copies, more undeclared seams, more unmapped
-code. Size (files, lines, tests) is reported beside the floor, with its
-delta, but never gated: growth is not decoherence.
+cheap rot: more shims, more copies, more undeclared seams, more unmodeled
+types, more milestone labels in comments. Size (files, lines, tests) and the
+unmapped-file backlog are reported beside the floor, with their delta, but
+never gated: growth is not decoherence.
 
 **A model.** A committed map of the domain: one record per concept, its
 canonical home, every place it appears, and how those places convert. This
@@ -46,7 +47,7 @@ Gated (stored under `counts` in `floor.json`; a rise fails `check`):
 | `duplicate_files` | Two files with identical content. One design kept in two places. |
 | `translation_gaps` | Representations of a concept with no declared conversion. |
 | `unmodeled_types` | Exported types under `model_roots` that no concept owns. |
-| `unmapped_files` | Source files that no concept names and no `no_concept` entry excuses. |
+| `milestone_tags` | Comment lines naming a milestone (`M3`, `M7`). Comments say what the code is now; milestone labels narrate history. |
 
 Reported (stored under `report` in `floor.json`; `check` prints each value
 with its delta against the last `update` and never fails on them):
@@ -57,7 +58,7 @@ with its delta against the last `update` and never fails on them):
 | `loc` | Non-blank lines in production sources. |
 | `test_files` | Test sources: `*.test.ts(x)`, anything under `src/test/`, and `crates/*/tests/`. Inline Rust `#[cfg(test)]` modules count as production. |
 | `test_loc` | Non-blank lines in test sources. |
-| `milestone_tags` | Comment lines naming a milestone (`M3`, `M7`). Comments say what the code is now; milestone labels narrate history. |
+| `unmapped_files` | Source files that no concept names and no `no_concept` entry excuses. |
 
 `duplicate_files` counts the *extra* copies, not the groups.
 
@@ -66,7 +67,10 @@ counter that measures how much of the domain is still unmapped.
 
 `unmapped_files` is the reading backlog. It falls as concepts gain
 representations. It is the honest number: the model is complete when this
-reaches zero, and not before.
+reaches zero, and not before. It is reported, not gated: every new source
+file starts unmapped, and a gate on it would make each new file pay for a
+model edit in the same commit. The floor on the model is `unmodeled_types`,
+which covers every exported type under `model_roots`.
 
 ## The model
 
@@ -198,7 +202,7 @@ switched off.
 - `.agents/skills/decoherence-fix/` — load to clean up. Reads the code, builds
   the model, and finds the contradictions.
 
-## Findings
+## History
 
-`findings.md` is the running record: what was read, what the model now holds,
-what was fixed, and what needs a human decision.
+The one-off sweep that built the model — its plan, lane prompts and reports,
+findings and decisions — is archived in `docs/archive/coherence/`.
