@@ -312,8 +312,8 @@ describe("worker-per-chat (fork supervisor)", () => {
   }, 120_000);
 
   it("a machine-bound chat dispatches its tool through the IPC proxy to the hub", async () => {
-    const platformOf = (): import("../platform/root-context.js").PlatformContext =>
-      (stack.env.app as unknown as { platform: import("../platform/root-context.js").PlatformContext }).platform;
+    const platformOf = (): import("../composition.js").PlatformContext =>
+      (stack.env.app as unknown as { platform: import("../composition.js").PlatformContext }).platform;
 
     // The fake daemon speaks the shipped-client executor contract against
     // the PARENT's hub; the worker reaches it only through the proxy.

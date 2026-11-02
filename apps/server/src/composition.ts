@@ -1,52 +1,54 @@
-// Platform root context: the composition root. It builds the per-process
-// Postgres pool, object store, ClickHouse usage sink and typed store facades
-// once, then hands each route group a narrow slice from route-contexts.ts.
+// The composition root. It builds the per-process Postgres pool, object
+// store, ClickHouse usage sink, typed store facades and the services above
+// them (runtime, hub, feed, scheduler, push) once, then hands each route
+// group a narrow slice from platform/route-contexts.ts. It sits above every
+// layer, so platform/ never imports the services it wires.
 
 import { timingSafeEqual } from "node:crypto";
-import type { Config } from "../config.js";
-import { createPlatformPool, type PlatformPool } from "./db.js";
-import { ObjectStore } from "./s3.js";
-import { pendingWorkQuery } from "./store/work.js";
-import { IdentityStore } from "./store/identity.js";
-import { PairingStore } from "./store/pairing.js";
-import { EventStore } from "./store/events.js";
-import { AttachmentStore } from "./store/attachments.js";
-import { OrgStore } from "./store/orgs.js";
-import { OidcStore } from "./store/oidc.js";
-import { ApiKeyStore } from "./store/api_keys.js";
-import { GatewayStore } from "./store/gateway.js";
-import { MachineStore } from "./store/machines.js";
-import { RegistryStore } from "./store/registry.js";
-import { SkillStore } from "./store/skills.js";
-import { ReleaseStore } from "./store/releases.js";
-import { ProjectStore } from "./store/projects.js";
-import { TeamStore } from "./store/teams.js";
-import { OrgKvStore, KvStore } from "./store/org_kv.js";
-import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
-import { UserMcpStore } from "./store/userMcp.js";
-import { PushStore } from "./store/push.js";
-import { PushNotifier } from "../push/notifier.js";
-import { webPushSender } from "../push/sender.js";
-import { pushSubject, vapidKeys, type VapidKeys } from "../push/vapid.js";
-import { LiveHub } from "../hub/live.js";
-import { TicketStore } from "../hub/tickets.js";
-import { ChatStore } from "./store/chats.js";
-import { ThreadStore } from "./store/thread.js";
-import { TurnCommandStore } from "./store/turn_commands.js";
-import { ToolArtifactStore } from "./store/toolArtifacts.js";
-import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
-import { GuildRuntime } from "../harness/runtime.js";
-import { AgentScheduler } from "../agents/scheduler.js";
-import { ForkSupervisor } from "../worker/supervisor.js";
-import { NotifyHub } from "./notify.js";
-import { FeedForwarder } from "../hub/feed.js";
-import { ClickhouseClient } from "./clickhouse.js";
-import { SkillReadSink } from "./skillReads.js";
-import { UsageSink } from "./usage.js";
-import { TraceStore } from "./trace.js";
-import { ApiError } from "./errors.js";
-import type { GatewayCredential } from "./llm-gateway.js";
-import type { ChatsCtx } from "./route-contexts.js";
+import type { Config } from "./config.js";
+import { createPlatformPool, type PlatformPool } from "./platform/db.js";
+import { ObjectStore } from "./platform/s3.js";
+import { pendingWorkQuery } from "./platform/store/work.js";
+import { IdentityStore } from "./platform/store/identity.js";
+import { PairingStore } from "./platform/store/pairing.js";
+import { EventStore } from "./platform/store/events.js";
+import { AttachmentStore } from "./platform/store/attachments.js";
+import { OrgStore } from "./platform/store/orgs.js";
+import { OidcStore } from "./platform/store/oidc.js";
+import { ApiKeyStore } from "./platform/store/api_keys.js";
+import { GatewayStore } from "./platform/store/gateway.js";
+import { MachineStore } from "./platform/store/machines.js";
+import { RegistryStore } from "./platform/store/registry.js";
+import { SkillStore } from "./platform/store/skills.js";
+import { ReleaseStore } from "./platform/store/releases.js";
+import { ProjectStore } from "./platform/store/projects.js";
+import { TeamStore } from "./platform/store/teams.js";
+import { OrgKvStore, KvStore } from "./platform/store/org_kv.js";
+import { IntegrationStore, IntegrationSecretStore } from "./platform/store/integrations.js";
+import { UserMcpStore } from "./platform/store/userMcp.js";
+import { PushStore } from "./platform/store/push.js";
+import { PushNotifier } from "./push/notifier.js";
+import { webPushSender } from "./push/sender.js";
+import { pushSubject, vapidKeys, type VapidKeys } from "./push/vapid.js";
+import { LiveHub } from "./hub/live.js";
+import { TicketStore } from "./hub/tickets.js";
+import { ChatStore } from "./platform/store/chats.js";
+import { ThreadStore } from "./platform/store/thread.js";
+import { TurnCommandStore } from "./platform/store/turn_commands.js";
+import { ToolArtifactStore } from "./platform/store/toolArtifacts.js";
+import { machineDispatch, type MachineDispatch } from "./machines/dispatch.js";
+import { GuildRuntime } from "./harness/runtime.js";
+import { AgentScheduler } from "./agents/scheduler.js";
+import { ForkSupervisor } from "./worker/supervisor.js";
+import { NotifyHub } from "./platform/notify.js";
+import { FeedForwarder } from "./hub/feed.js";
+import { ClickhouseClient } from "./platform/clickhouse.js";
+import { SkillReadSink } from "./platform/skillReads.js";
+import { UsageSink } from "./platform/usage.js";
+import { TraceStore } from "./platform/trace.js";
+import { ApiError } from "./platform/errors.js";
+import type { GatewayCredential } from "./platform/llm-gateway.js";
+import type { ChatsCtx } from "./platform/route-contexts.js";
 import type { Logger } from "pino";
 
 // Fixed identities for the config-minted internal gateway key (spec

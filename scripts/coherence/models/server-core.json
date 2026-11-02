@@ -692,7 +692,7 @@
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/platform/root-context.ts",
+      "where": "apps/server/src/composition.ts",
       "reason": "infrastructure"
     },
     {

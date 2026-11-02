@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 import { captureThreadState, THREAD_STATE_EVENT_LIMIT } from "../chats/thread-state.js";
 import { uuidv7 } from "../platform/time.js";
 

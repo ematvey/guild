@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 
 const TEST_TIMEOUT = 30_000;
 

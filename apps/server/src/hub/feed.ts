@@ -13,7 +13,7 @@
 // Agent and skill state rides the same LISTEN through AgentStateFeed.
 
 import type { Logger } from "pino";
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { captureThreadState, threadStateMsg, threadStateWire } from "../chats/thread-state.js";
 import { chatSubagentNodes, chatTreeFacts, chatTreeMsg, subagentTreeMsg } from "../agents/tree.js";

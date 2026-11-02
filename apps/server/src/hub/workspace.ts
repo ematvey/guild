@@ -2,7 +2,7 @@
 // archived chats, projects, the machine registry and the model list. The feed pushes them
 // together on every workspace change, so no client reads them over HTTP.
 
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type { MachineRow } from "../platform/store/machines.js";
 import type { ProjectRow } from "../platform/store/projects.js";

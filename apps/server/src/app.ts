@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import type { Config } from "./config.js";
-import { PlatformContext } from "./platform/root-context.js";
+import { PlatformContext } from "./composition.js";
 import { registerPlatformRoutes } from "./platform/http/register.js";
 import { attachWsUpgrade } from "./http/ws.js";
 import { wireWsSync } from "./chats/ws-sync.js";

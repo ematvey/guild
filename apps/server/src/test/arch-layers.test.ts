@@ -120,7 +120,7 @@ describe("arch layers", () => {
       const rel = path.relative(SRC, file);
       if (rel === "platform/http/register.ts") continue;
       const targets = importSpecifiers(readFileSync(file, "utf8")).map((s) => resolveImport(s, file));
-      if (targets.includes("platform/context.ts")) found.push(rel);
+      if (targets.includes("composition.ts")) found.push(rel);
     }
     expect(found.sort()).toEqual([]);
   });

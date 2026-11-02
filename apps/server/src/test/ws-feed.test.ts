@@ -13,7 +13,7 @@ import { setupM2Stack, startMockUpstream, type M2Stack } from "./platform/m2-har
 import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
 import { notifySubagentTree } from "../agents/tree.js";
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 import { FeedForwarder } from "../hub/feed.js";
 import type { NotifyHandler } from "../platform/notify.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";

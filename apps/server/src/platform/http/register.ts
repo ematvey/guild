@@ -4,7 +4,7 @@
 // stay scoped to it.
 
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../root-context.js";
+import type { PlatformContext } from "../../composition.js";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError, TextError } from "../errors.js";
 import { JSON_REJECTION_PREFIX } from "../llm-gateway.js";

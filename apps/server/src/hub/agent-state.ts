@@ -12,7 +12,7 @@
 // only when it differs from the one that socket holds: a write another member
 // cannot see sends that member nothing.
 
-import type { PlatformContext } from "../platform/root-context.js";
+import type { PlatformContext } from "../composition.js";
 import { AgentStore } from "../agents/store.js";
 import type { Agent as StoreAgent, AgentRoutine as StoreRoutine, AgentRun as StoreRun } from "../agents/types.js";
 import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
