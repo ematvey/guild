@@ -50,6 +50,24 @@ export async function submitTurn(
   // with the agent's model and tools, and the run lifecycle closes the run.
   const chat = preloadedChat ?? (await chats.chats.getOwnChat(user.org_id, chatId, user));
   const requestedAgent = typeof body["agent_id"] === "string" ? body["agent_id"] : null;
+  const messages = body["messages"] as { role?: unknown; content?: unknown }[];
+  if (body["client_tools"] !== undefined && typeof body["client_tools"] !== "boolean") {
+    throw ApiError.badRequest("client_tools must be a boolean");
+  }
+  if (body["send_mode"] !== undefined && body["send_mode"] !== null && typeof body["send_mode"] !== "string") {
+    throw ApiError.badRequest("send_mode must be a string");
+  }
+
+  const commandId =
+    body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));
+  // The idempotency check runs before any binding: a duplicate delivery must
+  // not move the chat to another agent, change the project binding or steer
+  // another running command. The material is the request as sent (requested
+  // model and agent), so it does not depend on what the binding resolves.
+  const request = canonicalChatRequest(body, chatId, commandId);
+  const existing = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
+  if (existing) return commandAck(existing);
+
   const adopted =
     requestedAgent === null
       ? await chats.runtime.adoptChatAgent(chatId, user.org_id, user.id, chat.title ?? "")
@@ -66,25 +84,6 @@ export async function submitTurn(
     user.org_id,
     adopted === null ? (body["model"] as string) : adopted.model,
   );
-  const messages = body["messages"] as { role?: unknown; content?: unknown }[];
-  if (body["client_tools"] !== undefined && typeof body["client_tools"] !== "boolean") {
-    throw ApiError.badRequest("client_tools must be a boolean");
-  }
-  if (body["send_mode"] !== undefined && body["send_mode"] !== null && typeof body["send_mode"] !== "string") {
-    throw ApiError.badRequest("send_mode must be a string");
-  }
-
-  const commandId =
-    body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));
-  // The canonical re-serialization of ChatCompletionRequest (struct order,
-  // defaults filled, None skipped) — the idempotency key material.
-  const request = canonicalChatRequest(body, chatId, model, commandId);
-  const existing = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
-  if (existing) {
-    // A duplicate delivery must not change the project binding or steer
-    // another running command.
-    return commandAck(existing);
-  }
 
   const userMessage =
     [...messages].reverse().find((m) => m?.role === "user")?.content ?? "";
@@ -251,14 +250,17 @@ async function resolveTurnModel(gateway: GatewayCtx, orgId: string, requested: s
 
 /** The request in canonical form (fixed field order, defaults filled,
  *  absent optionals skipped) — the turn-command idempotency material. A
- *  retry with the same id must produce identical material. */
-function canonicalChatRequest(body: Record<string, unknown>, chatId: string, model: string, commandId: string): unknown {
+ *  retry with the same id must produce identical material. The model is the
+ *  one requested, not the one the agent binding resolves, and the requested
+ *  agent rides along, so the same id sent to another agent conflicts. */
+function canonicalChatRequest(body: Record<string, unknown>, chatId: string, commandId: string): unknown {
   const messages = (body["messages"] as unknown[] | undefined)?.map((m) => sortedJson(m)) ?? [];
   const out: Record<string, unknown> = {};
   // The resolved id (client-sent or minted) always rides the material.
   out.user_message_id = commandId;
   out.chat_id = chatId;
-  out.model = model;
+  out.model = body["model"];
+  if (typeof body["agent_id"] === "string") out.agent_id = body["agent_id"].toLowerCase();
   out.messages = messages;
   if (body["tools"] !== undefined && body["tools"] !== null) out.tools = sortedJson(body["tools"]);
   if (body["system"] !== undefined && body["system"] !== null) out.system = body["system"];
