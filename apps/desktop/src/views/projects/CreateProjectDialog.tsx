@@ -33,7 +33,7 @@ export function CreateProjectDialog({
   onOpenChange,
   machines,
   localMachineId,
-  isTauri,
+  hasEngine,
   projects,
   onCreated,
 }: {
@@ -41,7 +41,7 @@ export function CreateProjectDialog({
   onOpenChange: (open: boolean) => void;
   machines: MachineInfo[] | null;
   localMachineId: string;
-  isTauri: boolean;
+  hasEngine: boolean;
   /** The caller's project list — a picked folder that is already a project
    * opens it instead of creating a duplicate. */
   projects: Project[] | null;
@@ -80,14 +80,14 @@ export function CreateProjectDialog({
       setDistros(null);
       return;
     }
-    if (isTauri) {
+    if (hasEngine) {
       void listWslDistros()
         .then(setDistros)
         .catch(() => setDistros([]));
     } else {
       setDistros([]);
     }
-  }, [open, isTauri]);
+  }, [open, hasEngine]);
 
   /** The project already bound to this machine + folder, if any. Windows
    *  and WSL folder identity ignores case and trailing separators; Linux
@@ -189,7 +189,7 @@ export function CreateProjectDialog({
                 Add a folder on {localLabel}
               </p>
               <div className="space-y-1.5">
-                {isTauri && (
+                {hasEngine && (
                   <button
                     type="button"
                     onClick={() => void pickNativeFolder()}
@@ -227,7 +227,7 @@ export function CreateProjectDialog({
                     </button>
                   );
                 })}
-                {distros === null && isTauri && (
+                {distros === null && hasEngine && (
                   <div className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left text-muted-foreground">
                     <Spinner className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1 text-sm">
@@ -236,10 +236,10 @@ export function CreateProjectDialog({
                     </span>
                   </div>
                 )}
-                {distros !== null && distros.length === 0 && isTauri && (
+                {distros !== null && distros.length === 0 && hasEngine && (
                   <p className="text-sm text-muted-foreground">No WSL distros found on {localLabel}.</p>
                 )}
-                {!isTauri && (
+                {!hasEngine && (
                   <p className="text-sm text-muted-foreground">
                     Folder picking needs the desktop app — choose an existing project or install Guild on your machine.
                   </p>

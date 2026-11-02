@@ -134,7 +134,7 @@ export function ThreadOverlays({
         onOpenChange={onCloseCreateProject}
         machines={machines}
         localMachineId={machineId()}
-        isTauri={HAS_ENGINE}
+        hasEngine={HAS_ENGINE}
         projects={projects}
       />
     </>

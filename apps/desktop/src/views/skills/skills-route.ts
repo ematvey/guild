@@ -43,6 +43,6 @@ export function skillsPageState(route: SkillsRoute): {
 /** The "machine" tab needs the desktop fs bridge, so a web deep link to
  *  /skills/machine falls back to the catalog view (the URL follows on the
  *  next navigation). */
-export function clampSkillsRoute(route: SkillsRoute, isTauri: boolean): SkillsRoute {
-  return !isTauri && route.view === "machine" ? { ...route, view: "catalog" } : route;
+export function clampSkillsRoute(route: SkillsRoute, hasEngine: boolean): SkillsRoute {
+  return !hasEngine && route.view === "machine" ? { ...route, view: "catalog" } : route;
 }

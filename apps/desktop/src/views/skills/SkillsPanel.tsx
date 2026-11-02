@@ -176,12 +176,12 @@ export function skillsEmptyState(query: string, count: number, filtered = false)
  *  needs the desktop fs bridge). */
 export type SkillsTab = "catalog" | "activity" | "machine";
 
-export function panelTabs(isTauri: boolean): ReadonlyArray<readonly [SkillsTab, string]> {
+export function panelTabs(hasEngine: boolean): ReadonlyArray<readonly [SkillsTab, string]> {
   const tabs: Array<readonly [SkillsTab, string]> = [
     ["catalog", "Catalog"],
     ["activity", "Activity"],
   ];
-  if (isTauri) tabs.push(["machine", "On this machine"]);
+  if (hasEngine) tabs.push(["machine", "On this machine"]);
   return tabs;
 }
 
@@ -189,7 +189,7 @@ export function panelTabs(isTauri: boolean): ReadonlyArray<readonly [SkillsTab, 
  *  search input, filter + sort selects, New skill action and the tab bar —
  *  and deliberately no collapse control: this is a full page, not a
  *  sidebar panel. */
-export function skillsPageHeader(isTauri: boolean): {
+export function skillsPageHeader(hasEngine: boolean): {
   title: string;
   searchPlaceholder: string;
   newSkill: boolean;
@@ -200,7 +200,7 @@ export function skillsPageHeader(isTauri: boolean): {
     title: "Skills",
     searchPlaceholder: "Search skills",
     newSkill: true,
-    tabs: panelTabs(isTauri),
+    tabs: panelTabs(hasEngine),
     collapseButton: false,
   };
 }
