@@ -277,6 +277,54 @@ describe("agent picker", () => {
   }, 40_000);
 });
 
+describe("turn idempotency and agent binding", () => {
+  it("a retry naming another agent conflicts and leaves the chat on its agent", async () => {
+    const make = async (name: string): Promise<string> => {
+      const res = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/agents",
+        headers: auth(),
+        payload: { name, model: "GLM-Test-Model", visibility: "org" },
+      });
+      return (JSON.parse(res.body) as { agent: { id: string } }).agent.id;
+    };
+    const first = await make("Retry first agent");
+    const second = await make("Retry second agent");
+    const chat = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(),
+      payload: { title: "Retry chat" },
+    });
+    const chatId = (JSON.parse(chat.body) as { id: string }).id;
+    const userMessageId = crypto.randomUUID();
+    const send = (agentId: string) =>
+      stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chatId}/turns`,
+        headers: auth(),
+        payload: {
+          model: "GLM-Test-Model",
+          agent_id: agentId,
+          user_message_id: userMessageId,
+          messages: [{ role: "user", content: "Once only" }],
+        },
+      });
+    expect((await send(first)).statusCode).toBe(200);
+    const retry = await send(second);
+    expect(retry.statusCode).toBe(409);
+    expect(JSON.parse(retry.body)).toMatchObject({ error: { code: "command_id_conflict" } });
+    const bound = await stack.env.db.query<{ agent_id: string }>(
+      "SELECT agent_id FROM agent_threads WHERE chat_id = $1",
+      [chatId],
+    );
+    expect(bound.rows[0]!.agent_id).toBe(first);
+    const same = await send(first);
+    expect(same.statusCode).toBe(200);
+    expect((JSON.parse(same.body) as { user_message_id: string }).user_message_id).toBe(userMessageId);
+  }, 40_000);
+});
+
 describe("an agent being deleted", () => {
   it("refuses turns into its threads and new bindings with 409", async () => {
     const created = await stack.env.app.inject({
