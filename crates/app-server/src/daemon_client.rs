@@ -49,27 +49,16 @@ impl DaemonClient {
         Ok(Some(serde_json::from_str(line.trim())?))
     }
 
+    /// Sends the request and returns its result once the response for this
+    /// request id arrives. Event lines (`rpc.error` for an unparseable
+    /// line) are skipped.
     pub fn call(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
-        self.call_streaming(method, params, |_| {})
-    }
-
-    /// Sends the request, pumps events to `on_event`, returns when the
-    /// response for this request id arrives. Events that arrive after the
-    /// response stay buffered for later calls to drain (see
-    /// `call_until_event` when a trailing event is the thing you wait for).
-    pub fn call_streaming(
-        &mut self,
-        method: &str,
-        params: Value,
-        mut on_event: impl FnMut(Value),
-    ) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
         self.write_req(id, method, &params)?;
         loop {
             let v = self.read_line()?.context("daemon closed the connection")?;
             if v.get("event").is_some() {
-                on_event(v);
                 continue;
             }
             if v["id"].as_u64() == Some(id) {
@@ -85,51 +74,6 @@ impl DaemonClient {
             // that is in flight; anything else is a protocol violation.
             anyhow::bail!("unexpected response id {} for request {id}", v["id"]);
         }
-    }
-
-    /// Like `call_streaming`, but keeps reading past the response until
-    /// `stop_event` arrives; returns (response, events in arrival order).
-    pub fn call_until_event(
-        &mut self,
-        method: &str,
-        params: Value,
-        stop_event: &str,
-    ) -> anyhow::Result<(Value, Vec<Value>)> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write_req(id, method, &params)?;
-        let mut events = Vec::new();
-        let response = loop {
-            let v = self.read_line()?.context("daemon closed the connection")?;
-            if v.get("event").is_some() {
-                events.push(v);
-                continue;
-            }
-            if v["id"].as_u64() == Some(id) {
-                break match v.get("error") {
-                    Some(err) => Err(anyhow::anyhow!(err["message"]
-                        .as_str()
-                        .unwrap_or("rpc error")
-                        .to_string())),
-                    None => Ok(v["result"].clone()),
-                };
-            }
-            anyhow::bail!("unexpected response id {} for request {id}", v["id"]);
-        };
-        let response = response?;
-        while events
-            .last()
-            .map(|v| v["event"].as_str() != Some(stop_event))
-            .unwrap_or(true)
-        {
-            let v = self
-                .read_line()?
-                .with_context(|| format!("daemon closed before {stop_event}"))?;
-            if v.get("event").is_some() {
-                events.push(v);
-            }
-        }
-        Ok((response, events))
     }
 }
 
@@ -167,64 +111,24 @@ mod tests {
         let _ = rd.read_to_end(&mut Vec::new());
     }
 
-    /// A response for the request id ends call_streaming; events after it
-    /// stay buffered and are drained by the next call.
+    /// Each call returns its own response; an event line in between is
+    /// skipped.
     #[test]
-    fn demux_responses_and_events() {
+    fn calls_match_responses_and_skip_events() {
         let (server_side, client_side) = std::os::unix::net::UnixStream::pair().unwrap();
         std::thread::spawn(move || {
             fake_server(
                 server_side,
                 &[
-                    r#"{"protocol":1,"event":"chat.delta","payload":{"content":"hi"}}"#.into(),
-                    r#"{"jsonrpc":"2.0","id":0,"protocol":1,"result":{"ok":true}}"#.into(),
-                    r#"{"protocol":1,"event":"chat.done","payload":{}}"#.into(),
-                    r#"{"jsonrpc":"2.0","id":1,"protocol":1,"result":{"ok":true}}"#.into(),
+                    r#"{"protocol":1,"event":"rpc.error","payload":{"message":"bad line"}}"#.into(),
+                    r#"{"jsonrpc":"2.0","id":0,"protocol":1,"result":{"n":0}}"#.into(),
+                    r#"{"jsonrpc":"2.0","id":1,"protocol":1,"result":{"n":1}}"#.into(),
                 ],
             )
         });
         let mut client = client_with_timeout(client_side);
-        let mut events = Vec::new();
-        let res = client
-            .call_streaming("chat.send", json!({"text": "x"}), |ev| events.push(ev))
-            .unwrap();
-        assert_eq!(res["ok"], true);
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["event"], "chat.delta");
-
-        // the buffered chat.done is drained by the next call, ahead of its
-        // own response
-        let mut seen = Vec::new();
-        let res2 = client
-            .call_streaming("session.info", json!({}), |ev| seen.push(ev))
-            .unwrap();
-        assert_eq!(res2["ok"], true);
-        assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0]["event"], "chat.done");
-    }
-
-    /// call_until_event waits for the named event even after the response.
-    #[test]
-    fn call_until_event_waits_for_trailing_event() {
-        let (server_side, client_side) = std::os::unix::net::UnixStream::pair().unwrap();
-        std::thread::spawn(move || {
-            fake_server(
-                server_side,
-                &[
-                    r#"{"jsonrpc":"2.0","id":0,"protocol":1,"result":{"chat_id":"c"}}"#.into(),
-                    r#"{"protocol":1,"event":"chat.delta","payload":{"content":"hello"}}"#.into(),
-                    r#"{"protocol":1,"event":"chat.done","payload":{}}"#.into(),
-                ],
-            )
-        });
-        let mut client = client_with_timeout(client_side);
-        let (res, events) = client
-            .call_until_event("chat.send", json!({"text": "x"}), "chat.done")
-            .unwrap();
-        assert_eq!(res["chat_id"], "c");
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0]["payload"]["content"], "hello");
-        assert_eq!(events.last().unwrap()["event"], "chat.done");
+        assert_eq!(client.call("session.info", json!({})).unwrap()["n"], 0);
+        assert_eq!(client.call("session.info", json!({})).unwrap()["n"], 1);
     }
 
     /// An error response surfaces as Err with the server's message.

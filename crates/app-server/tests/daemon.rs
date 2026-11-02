@@ -172,7 +172,6 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
             None,
             None,
         ),
-        ..EngineState::default()
     };
     let dpath = path.clone();
     let daemon = tokio::spawn(async move { run_daemon_shared(dpath, Shared::new(session)).await });

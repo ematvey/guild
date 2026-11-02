@@ -196,8 +196,10 @@ impl CloudClient {
         .await
     }
 
-    /// Generic streaming completion; agent sessions pass tools + system.
-    pub async fn stream_completion(
+    /// Submits one turn (`POST /api/v1/gateway/chat`) and streams the
+    /// generation's live frames from the member socket, subscribed before
+    /// the submit so no frame is missed.
+    async fn stream_completion(
         &self,
         req: ChatCompletionRequest,
     ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
@@ -468,7 +470,33 @@ fn parse_pairing_code(code: &str) -> Result<(String, String), CloudError> {
     if parts.next().is_some() {
         return Err(CloudError::Request("malformed pairing code".into()));
     }
+    check_pairing_transport(
+        base_url,
+        std::env::var("GUILD_ALLOW_INSECURE_PAIRING").is_ok_and(|v| v == "1"),
+    )?;
     Ok((base_url.to_string(), secret.to_string()))
+}
+
+/// The pairing code names the server, so a pasted code decides where the
+/// session token is sent: plain `http://` is refused unless the host is
+/// loopback (the local dev stack) or `allow_insecure`
+/// (`GUILD_ALLOW_INSECURE_PAIRING=1`, a LAN test server).
+fn check_pairing_transport(base_url: &str, allow_insecure: bool) -> Result<(), CloudError> {
+    let url = url::Url::parse(base_url)
+        .map_err(|e| CloudError::Request(format!("pairing code: bad server url: {e}")))?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    if url.scheme() == "https" || loopback || allow_insecure {
+        return Ok(());
+    }
+    Err(CloudError::Request(format!(
+        "pairing code: refusing plain http to {} — the session token would cross the network unencrypted (set GUILD_ALLOW_INSECURE_PAIRING=1 to allow)",
+        url.host_str().unwrap_or("?")
+    )))
 }
 
 #[cfg(test)]
@@ -493,6 +521,32 @@ mod pairing_tests {
             "",
         ] {
             assert!(parse_pairing_code(bad).is_err(), "should reject: {bad}");
+        }
+    }
+
+    #[test]
+    fn plain_http_pairs_only_with_loopback_or_the_override() {
+        use super::check_pairing_transport as check;
+        for ok in [
+            "https://guild.corp",
+            "http://localhost:18080",
+            "http://LOCALHOST",
+            "http://127.0.0.1:18080",
+            "http://[::1]:18080",
+        ] {
+            assert!(check(ok, false).is_ok(), "{ok}");
+        }
+        for refused in [
+            "http://guild.corp",
+            "http://192.168.1.5:18080",
+            "http://localhost.evil.com",
+        ] {
+            let err = check(refused, false).unwrap_err().to_string();
+            assert!(
+                err.contains("GUILD_ALLOW_INSECURE_PAIRING"),
+                "{refused}: {err}"
+            );
+            assert!(check(refused, true).is_ok(), "{refused} with the override");
         }
     }
 }

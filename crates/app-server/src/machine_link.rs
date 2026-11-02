@@ -25,7 +25,6 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use url::Url;
-use uuid::Uuid;
 
 /// Heartbeat cadence and the dead-link verdict: the server pings every
 /// socket ~15 s, so a link with no inbound frame for IDLE_SECS is a
@@ -190,11 +189,13 @@ async fn ws_session(
     let pull_cloud = cloud.clone();
     tokio::spawn(async move {
         match pull_skills(&pull_cloud).await {
-            Ok(summary) => crate::dtrace::dtrace(&format!(
+            Ok(summary) => crate::trace!(
                 "skills connect pull: updated={:?} removed={:?} failed={:?}",
-                summary["updated"], summary["removed"], summary["failed"]
-            )),
-            Err(e) => crate::dtrace::dtrace(&format!("skills connect pull failed: {e}")),
+                summary["updated"],
+                summary["removed"],
+                summary["failed"]
+            ),
+            Err(e) => crate::trace!("skills connect pull failed: {e}"),
         }
     });
     let mut executions = ToolExecutions::default();
@@ -255,12 +256,9 @@ async fn ws_session(
                         ServerFrame::ToolCancel { call_id } => executions.cancel(&call_id),
                         ServerFrame::MachineRequest { request_id, op, payload } => {
                             let outbound = outbound_tx.clone();
-                            let hooks = hooks.clone();
                             let cloud = cloud.clone();
                             tokio::spawn(async move {
-                                let result = if op == "artifact.prefetch_v1" {
-                                    prefetch_artifact(&payload, &hooks).await
-                                } else if op == "skills.sync_v1" {
+                                let result = if op == "skills.sync_v1" {
                                     sync_skills(&payload, &cloud).await
                                 } else {
                                     machine_request_result(&op, &payload).await
@@ -292,9 +290,9 @@ async fn ws_session(
                             // anyway. One transient error must not tear the
                             // link down and leave in-flight results with an
                             // unknown outcome.
-                            crate::dtrace::dtrace(&format!(
+                            crate::trace!(
                                 "machine link server error: {message}"
-                            ));
+                            );
                         }
                         ServerFrame::Other => {} // display frames and unknown variants: not ours
                     },
@@ -328,9 +326,8 @@ async fn ws_session(
 }
 
 /// Cap on `fs_list` entries: the folder browse is a user-driven paginated
-/// view, never a bulk export — an uncapped directory (node_modules,
-/// /usr/lib) shipped its entire listing as one giant frame. Mirrors
-/// read_file's truncation marker.
+/// view, never a bulk export — a huge directory (node_modules, /usr/lib)
+/// answers its first entries with `truncated: true`.
 const FS_LIST_MAX_ENTRIES: usize = 1000;
 
 /// Fills each sync entry's bundle URL when the server omitted it: the
@@ -371,7 +368,7 @@ fn valid_version(version: &str) -> bool {
 /// One `skills.sync_v1` request over the link: fills in each entry's
 /// bundle URL when the server omitted it, then converges the home skill
 /// scope. The bearer-auth fetch path is the machine link's own cloud
-/// client, exactly like artifact prefetch.
+/// client, the same one dispatched tools fetch artifacts with.
 async fn sync_skills(
     payload: &serde_json::Value,
     cloud: &CloudClient,
@@ -436,70 +433,25 @@ async fn pull_skills_at(cloud: &CloudClient, root: &Path) -> Result<serde_json::
     .await
 }
 
-/// One `artifact.prefetch_v1` request: records the artifact's path→id
-/// mapping and materializes it in the project directory ahead of the
-/// first tool touch.
-async fn prefetch_artifact(
-    payload: &serde_json::Value,
-    hooks: &guild_core::tools::artifacts::ArtifactHooks,
-) -> Result<serde_json::Value, String> {
-    use guild_core::tools::artifacts::{materialize, ArtifactPath};
-    let workdir = Path::new(payload["workdir"].as_str().ok_or("missing workdir")?);
-    if !workdir.is_absolute() || !workdir.is_dir() {
-        return Err("invalid project directory".into());
-    }
-    let chat_id =
-        serde_json::from_value::<Uuid>(payload["chat_id"].clone()).map_err(|e| e.to_string())?;
-    let artifact_id = serde_json::from_value::<Uuid>(payload["artifact_id"].clone())
-        .map_err(|e| e.to_string())?;
-    let filename = payload["filename"].as_str().ok_or("missing filename")?;
-    if filename.is_empty()
-        || filename.len() > 1024
-        || filename.contains(['/', '\\'])
-        || matches!(filename, "." | "..")
-    {
-        return Err("invalid artifact filename".into());
-    }
-    hooks.index.record(chat_id, filename, artifact_id);
-    let artifact = ArtifactPath {
-        chat_id,
-        filename: filename.into(),
-    };
-    let path = materialize(workdir, &artifact, &hooks.index, hooks.fetcher.as_ref())
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({"path": path}))
-}
+/// What this engine serves: the `machine_request` ops (`skills.sync_v1`,
+/// `fs_home`, `fs_list`) and the raw file ops that ride `tool_dispatch`.
+const CAPABILITIES: &[&str] = &[
+    "skills.sync_v1",
+    "fs_home",
+    "fs_list",
+    RAW_READ_OP,
+    RAW_STAT_OP,
+];
 
 /// Control-plane ops the server sends over the executor socket: capability
-/// discovery, turn-context preparation, and the read-only directory browse
-/// behind the desktop's remote folder picker (`fs_home`, `fs_list` on
-/// absolute paths).
+/// discovery and the read-only directory browse behind the desktop's
+/// remote folder picker (`fs_home`, `fs_list` on absolute paths).
 async fn machine_request_result(
     op: &str,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match op {
-        "capabilities" => Ok(
-            serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1", "skills.sync_v1", "fs_home", "fs_list"]}),
-        ),
-        "context.prepare_v1" => {
-            let project = payload["project_dir"]
-                .as_str()
-                .ok_or("missing project_dir")?;
-            let prompt = payload["prompt"].as_str().unwrap_or_default();
-            if project.len() > 32768 || prompt.len() > 1024 * 1024 {
-                return Err("context request exceeds limit".into());
-            }
-            let project = std::path::PathBuf::from(project);
-            let prompt = prompt.to_string();
-            let result = tokio::task::spawn_blocking(move || {
-                crate::remote_context::prepare(&project, &prompt)
-            })
-            .await
-            .map_err(|e| e.to_string())??;
-            serde_json::to_value(result).map_err(|e| e.to_string())
-        }
+        "capabilities" => Ok(serde_json::json!({ "operations": CAPABILITIES })),
         "fs_home" => Ok(serde_json::json!({
             "home": crate::fs_bridge::home_dir().to_string_lossy()
         })),
@@ -550,8 +502,7 @@ async fn machine_request_result(
     }
 }
 
-/// The builtin tool registry is immutable once built; building it per
-/// dispatch re-allocated the whole map on every tool call.
+/// The builtin tool registry, built once per process (it is immutable).
 fn builtin_registry() -> &'static guild_core::tools::ToolRegistry {
     static REGISTRY: std::sync::OnceLock<guild_core::tools::ToolRegistry> =
         std::sync::OnceLock::new();
@@ -567,6 +518,57 @@ struct ExecOutcome {
     images: Vec<String>,
 }
 
+/// The raw file ops behind the server's machine file adapter
+/// (`apps/server/src/machines/dispatch.ts`). They ride `tool_dispatch`
+/// like the model tools but are never declared to the model: the adapter
+/// needs exact bytes and metadata, which the model-facing `read_file`
+/// (paged, text-only, capped) cannot carry. Both take `{"path"}` scoped
+/// like `read_file`; a failure's content is `{"code", "message"}`.
+const RAW_READ_OP: &str = "fs.read_raw_v1";
+const RAW_STAT_OP: &str = "fs.stat_v1";
+
+const NO_WORKDIR: &str = "no workspace folder is set for this chat — pick a project with 'Choose project' in the composer";
+
+/// The read roots of a dispatch: the workspace plus its discovered skill
+/// dirs.
+async fn read_roots(dir: &str) -> Result<Vec<PathBuf>, String> {
+    let project = PathBuf::from(dir);
+    tokio::task::spawn_blocking(move || crate::remote_context::skill_read_roots(&project))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn execute_raw_file_op(name: &str, arguments: &str, workdir: Option<&str>) -> ExecOutcome {
+    use guild_core::tools::fs::{read_raw, stat_raw, RawFsError, MAX_RAW_READ_BYTES};
+    let result: Result<serde_json::Value, serde_json::Value> = async {
+        let invalid = |m: String| serde_json::json!({ "code": "invalid", "message": m });
+        let dir = workdir.ok_or_else(|| invalid(NO_WORKDIR.to_string()))?;
+        let args: serde_json::Value = serde_json::from_str(arguments)
+            .map_err(|e| invalid(format!("invalid tool arguments: {e}")))?;
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| invalid("missing path".into()))?;
+        let roots = read_roots(dir).await.map_err(invalid)?;
+        let out = if name == RAW_READ_OP {
+            read_raw(Path::new(dir), &roots, path, MAX_RAW_READ_BYTES).await
+        } else {
+            stat_raw(Path::new(dir), &roots, path).await
+        };
+        out.map_err(|e: RawFsError| e.to_json())
+    }
+    .await;
+    let (value, is_error) = match result {
+        Ok(v) => (v, false),
+        Err(v) => (v, true),
+    };
+    ExecOutcome {
+        content: value.to_string(),
+        is_error,
+        meta: None,
+        images: Vec::new(),
+    }
+}
+
 /// Runs one builtin tool call in the dispatch's workspace folder.
 async fn execute_client_tool(
     name: &str,
@@ -574,22 +576,29 @@ async fn execute_client_tool(
     workdir: Option<&str>,
     hooks: Option<Arc<guild_core::tools::artifacts::ArtifactHooks>>,
 ) -> ExecOutcome {
+    if matches!(name, RAW_READ_OP | RAW_STAT_OP) {
+        return execute_raw_file_op(name, arguments, workdir).await;
+    }
     let result = async {
-        let dir = workdir.ok_or_else(|| "no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string())?;
-        let args: serde_json::Value = serde_json::from_str(arguments).map_err(|e| format!("invalid tool arguments: {e}"))?;
+        let dir = workdir.ok_or_else(|| NO_WORKDIR.to_string())?;
+        let args: serde_json::Value =
+            serde_json::from_str(arguments).map_err(|e| format!("invalid tool arguments: {e}"))?;
         let custom_registry;
         let registry = if name == "read_file" {
-            let project = PathBuf::from(dir);
-            let roots = tokio::task::spawn_blocking(move || crate::remote_context::skill_read_roots(&project))
-                .await.map_err(|e| e.to_string())?;
-            custom_registry = guild_core::tools::ToolRegistry::builtins_with_read_roots(roots);
+            custom_registry =
+                guild_core::tools::ToolRegistry::builtins_with_read_roots(read_roots(dir).await?);
             &custom_registry
-        } else { builtin_registry() };
+        } else {
+            builtin_registry()
+        };
         // Artifact fetch uses the authenticated cloud session for this link,
         // including results spilled earlier in this same turn.
-        registry.run(name, Path::new(dir), args, hooks.as_deref())
-            .await.map_err(|e| e.to_string())
-    }.await;
+        registry
+            .run(name, Path::new(dir), args, hooks.as_deref())
+            .await
+            .map_err(|e| e.to_string())
+    }
+    .await;
     match result {
         Ok(out) => ExecOutcome {
             content: out.output_for_model,
@@ -650,7 +659,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 }
             }
         };
-        crate::dtrace::dtrace(&format!("machine-link connecting as {}", cfg.machine_id));
+        crate::trace!("machine-link connecting as {}", cfg.machine_id);
         let started = tokio::time::Instant::now();
         let end = ws_session(
             &shared,
@@ -666,7 +675,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
         }
         match end {
             LinkEnd::Displaced => {
-                crate::dtrace::dtrace("machine link ended: displaced");
+                crate::trace!("machine link ended: displaced");
                 // A newer connection took the slot — often the same
                 // install's GUI-embedded daemon. Retry after a long backoff:
                 // the displacer may close (GUI quit), and a genuinely
@@ -677,7 +686,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 }
             }
             LinkEnd::AuthRequired => {
-                crate::dtrace::dtrace("machine link ended: auth_required");
+                crate::trace!("machine link ended: auth_required");
                 // The session token was rejected — could be a transient
                 // 401 during a server deploy just as well as a revoked
                 // token. Retry on a slow cadence; a real sign-out republishes
@@ -692,9 +701,9 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
             // reconnect unless the host was retired.
             LinkEnd::Closed | LinkEnd::Failed(_) => {
                 if let LinkEnd::Failed(reason) = &end {
-                    crate::dtrace::dtrace(&format!("machine link: {reason}"));
+                    crate::trace!("machine link: {reason}");
                 } else {
-                    crate::dtrace::dtrace("machine link ended: closed");
+                    crate::trace!("machine link ended: closed");
                 }
                 let delay = reconnect_delay(attempt, jitter_unit());
                 attempt = attempt.saturating_add(1);
@@ -823,8 +832,7 @@ impl LinkRegistry {
     pub fn current(&self, base_url: &str) -> Option<MachineLinkConfig> {
         let key = session_store::normalize_base(base_url);
         self.channels
-            .lock()
-            .unwrap()
+            .guard()
             .get(&key)
             .map(|e| e.tx.borrow().clone())
             .unwrap_or(None)
@@ -866,11 +874,7 @@ impl LinkRegistry {
     /// the receiver to a fresh link task).
     pub fn subscribe(&self, base_url: &str) -> Option<watch::Receiver<Option<MachineLinkConfig>>> {
         let key = session_store::normalize_base(base_url);
-        self.channels
-            .lock()
-            .unwrap()
-            .get(&key)
-            .map(|e| e.tx.subscribe())
+        self.channels.guard().get(&key).map(|e| e.tx.subscribe())
     }
 }
 
@@ -1049,13 +1053,10 @@ pub async fn watch_token_store(
         {
             // The in-memory session follows the store too: the daemon built
             // its engine state's auth at boot, and the unit's CLI verbs
-            // (chat.send, registry.*) read it — a re-pair must not leave stale auth.
-            // Memory-only: no persist, and the link send below keeps its
-            // dedup. A different principal (sign-out, or another account's
-            // login) resets the account-owned execution state like an
-            // in-process transition.
+            // (session.info, registry.*) read it — a re-pair must not leave
+            // stale auth. Memory-only: no persist, and the link send below
+            // keeps its dedup.
             let mut s = session.guard();
-            let previous = crate::jsonrpc_loop::principal_of(&s);
             match stored {
                 Some(stored) => {
                     let cfg = config_from_stored(stored.clone());
@@ -1077,7 +1078,6 @@ pub async fn watch_token_store(
                     }
                 }
             }
-            crate::jsonrpc_loop::reset_if_principal_changed(&mut s, previous);
         }
     }
 }
@@ -1111,6 +1111,7 @@ pub struct IdentifyParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[cfg(unix)]
     #[tokio::test]
@@ -1165,13 +1166,13 @@ mod tests {
 
     /// The machine link against a hand-rolled mock hub: the hub mints a
     /// ticket, upgrades the machine socket, relays `machine_request` frames
-    /// (capabilities, context preparation, artifact prefetch) to the
-    /// connected machine and returns its `machine_response` frames, and
-    /// serves the authenticated artifact endpoint the machine's prefetch
-    /// fetcher downloads from. The hub's own routing and displacement
-    /// semantics are server-side behavior, owned and tested there.
+    /// (capabilities, skills sync) to the connected machine and returns its
+    /// `machine_response` frames, and serves the authenticated bundle
+    /// endpoint the sync downloads from. The hub's own routing and
+    /// displacement semantics are server-side behavior, owned and tested
+    /// there.
     #[tokio::test]
-    async fn remote_context_and_prefetch_roundtrip_on_mock_hub_socket() {
+    async fn machine_requests_roundtrip_on_mock_hub_socket() {
         ensure_crypto_provider();
         use futures::{SinkExt, StreamExt};
         let (req_tx, req_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -1204,47 +1205,28 @@ mod tests {
                     axum::Json(serde_json::json!({"ticket":"fixture"}))
                 }),
             )
-            .route(
-                "/api/v1/tool_artifacts/{artifact}",
+            .route("/api/v1/registry/skill/{slug}/{version}/bundle", {
+                let sync_bundle = sync_bundle.clone();
                 axum::routing::get(
-                    |headers: axum::http::HeaderMap, artifact: axum::extract::Path<String>| async move {
+                    move |headers: axum::http::HeaderMap,
+                          axum::extract::Path((slug, version)): axum::extract::Path<(
+                        String,
+                        String,
+                    )>| async move {
                         if headers
                             .get(axum::http::header::AUTHORIZATION)
                             .and_then(|v| v.to_str().ok())
                             != Some("Bearer tok")
                         {
-                            return (axum::http::StatusCode::UNAUTHORIZED, String::new());
+                            return (axum::http::StatusCode::UNAUTHORIZED, Vec::new());
                         }
-                        let _ = artifact;
-                        (
-                            axum::http::StatusCode::OK,
-                            "prefetched before first touch".to_string(),
-                        )
+                        if slug != "demo-skill" || version != "v2" {
+                            return (axum::http::StatusCode::NOT_FOUND, Vec::new());
+                        }
+                        (axum::http::StatusCode::OK, sync_bundle.guard().clone())
                     },
-                ),
-            )
-            .route(
-                "/api/v1/registry/skill/{slug}/{version}/bundle",
-                {
-                    let sync_bundle = sync_bundle.clone();
-                    axum::routing::get(
-                        move |headers: axum::http::HeaderMap,
-                              axum::extract::Path((slug, version)): axum::extract::Path<(String, String)>| async move {
-                            if headers
-                                .get(axum::http::header::AUTHORIZATION)
-                                .and_then(|v| v.to_str().ok())
-                                != Some("Bearer tok")
-                            {
-                                return (axum::http::StatusCode::UNAUTHORIZED, Vec::new());
-                            }
-                            if slug != "demo-skill" || version != "v2" {
-                                return (axum::http::StatusCode::NOT_FOUND, Vec::new());
-                            }
-                            (axum::http::StatusCode::OK, sync_bundle.guard().clone())
-                        },
-                    )
-                },
-            )
+                )
+            })
             .route(
                 "/api/v1/ws",
                 axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
@@ -1252,11 +1234,7 @@ mod tests {
                     let resp_tx = resp_tx.clone();
                     async move {
                         ws.on_upgrade(move |socket| async move {
-                            let mut req_rx = req_rx
-                                .lock()
-                                .unwrap()
-                                .take()
-                                .expect("one machine connection");
+                            let mut req_rx = req_rx.guard().take().expect("one machine connection");
                             let resp_tx = resp_tx.guard().take().unwrap();
                             let (mut tx, mut rx) = socket.split();
                             // The machine identifies itself in the URL query;
@@ -1344,22 +1322,8 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|v| v == "context.prepare_v1"));
-        let context = hub_request(
-            &req_tx,
-            &mut resp_rx,
-            "ctx",
-            "context.prepare_v1",
-            serde_json::json!({"project_dir": child, "prompt":"/socket-demo"}),
-        )
-        .await
-        .unwrap();
-        let context: protocol::ws::MachineContext = serde_json::from_value(context).unwrap();
-        let docs = context.instructions.unwrap();
-        assert!(docs.find("SOCKET-ROOT").unwrap() < docs.find("SOCKET-CHILD").unwrap());
-        assert!(!docs.contains("OUTSIDE-PROJECT"));
-        assert!(context.skill_expansions.contains("SOCKET-SKILL"));
-        assert!(context.skills_index.contains("socket-demo"));
+            .any(|v| v == RAW_READ_OP));
+        // A discovered skill dir outside the workspace is readable.
         let read = execute_client_tool(
             "read_file",
             &serde_json::json!({"path": ancestor_skill}).to_string(),
@@ -1385,48 +1349,6 @@ mod tests {
         )
         .await;
         assert!(outside.is_error);
-
-        // Artifact prefetch: the machine downloads the artifact from the
-        // hub's authenticated endpoint and materializes it in the workspace.
-        let chat_id = Uuid::now_v7();
-        let artifact_id = Uuid::now_v7();
-        let artifact = hub_request(
-            &req_tx,
-            &mut resp_rx,
-            "prefetch",
-            "artifact.prefetch_v1",
-            serde_json::json!({
-                "workdir": child,
-                "chat_id": chat_id,
-                "artifact_id": artifact_id,
-                "filename": "immediate.txt"
-            }),
-        )
-        .await
-        .unwrap();
-        let artifact_path = child.join(artifact["path"].as_str().unwrap());
-        assert_eq!(
-            std::fs::read_to_string(&artifact_path).unwrap(),
-            "prefetched before first touch"
-        );
-        // Path guards remain active on prefetch.
-        let denied = hub_request(
-            &req_tx,
-            &mut resp_rx,
-            "escape",
-            "artifact.prefetch_v1",
-            serde_json::json!({
-                "workdir": child,
-                "chat_id": chat_id,
-                "artifact_id": artifact_id,
-                "filename": "../escape"
-            }),
-        )
-        .await;
-        assert!(
-            matches!(&denied, Err(e) if e.contains("invalid artifact filename")),
-            "path escape must be rejected, got {denied:?}"
-        );
 
         // Skills sync: the machine downloads the payload's bundle URL with
         // its own bearer credentials, converges the home skill scope, and
@@ -1640,24 +1562,66 @@ mod tests {
         assert_eq!(
             caps["operations"],
             serde_json::json!([
-                "context.prepare_v1",
-                "artifact.prefetch_v1",
                 "skills.sync_v1",
                 "fs_home",
-                "fs_list"
+                "fs_list",
+                "fs.read_raw_v1",
+                "fs.stat_v1"
             ])
         );
-        assert!(
-            machine_request_result("context.prepare_v2", &serde_json::json!({}))
-                .await
-                .is_err()
-        );
-        assert!(machine_request_result(
+        for retired in [
             "context.prepare_v1",
-            &serde_json::json!({"project_dir":"relative"})
-        )
-        .await
-        .is_err());
+            "artifact.prefetch_v1",
+            "skills.sync_v2",
+        ] {
+            assert!(
+                machine_request_result(retired, &serde_json::json!({}))
+                    .await
+                    .is_err(),
+                "{retired}"
+            );
+        }
+    }
+
+    /// The raw file ops over the dispatch path: exact bytes (CRLF, no final
+    /// newline, past read_file's 2000-line and 64 KB limits), stat, and
+    /// `{"code","message"}` failures.
+    #[tokio::test]
+    async fn raw_file_ops_dispatch_exact_bytes_and_coded_errors() {
+        use base64::Engine as _;
+        let dir = temp_scoped_dir("raw-ops");
+        let text = (0..3000)
+            .map(|i| format!("row {i} padded to push past the model read cap"))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        std::fs::write(dir.join("big.txt"), &text).unwrap();
+        let workdir = dir.to_string_lossy().to_string();
+        let args = serde_json::json!({"path": "big.txt"}).to_string();
+        let read = execute_client_tool(RAW_READ_OP, &args, Some(&workdir), None).await;
+        assert!(!read.is_error, "{}", read.content);
+        let value: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(value["data_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, text.as_bytes());
+
+        let stat = execute_client_tool(RAW_STAT_OP, &args, Some(&workdir), None).await;
+        let value: serde_json::Value = serde_json::from_str(&stat.content).unwrap();
+        assert_eq!(value["kind"], "file");
+        assert_eq!(value["size"], text.len());
+
+        let missing = serde_json::json!({"path": "nope.txt"}).to_string();
+        let read = execute_client_tool(RAW_READ_OP, &missing, Some(&workdir), None).await;
+        assert!(read.is_error);
+        let value: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        assert_eq!(value["code"], "not_found");
+        let stat = execute_client_tool(RAW_STAT_OP, &missing, Some(&workdir), None).await;
+        assert!(!stat.is_error);
+        assert_eq!(stat.content, r#"{"exists":false}"#);
+
+        let none = execute_client_tool(RAW_READ_OP, &args, None, None).await;
+        assert!(none.is_error);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]
@@ -2136,10 +2100,9 @@ mod tests {
     }
 
     /// Another process switches token.json from account A to B while the
-    /// daemon holds the link: the daemon session drops A's chat/model/
-    /// pending state and bumps the epoch, exactly like an in-process switch.
+    /// daemon holds the link: the daemon session adopts B.
     #[tokio::test]
-    async fn token_store_watcher_account_switch_resets_account_state() {
+    async fn token_store_watcher_account_switch_adopts_the_new_principal() {
         let dir = std::env::temp_dir().join(format!("guild-link-switch-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("token.json");
@@ -2156,8 +2119,6 @@ mod tests {
         session_store::save(&path, &store("ta", "a@b")).unwrap();
         let mut initial = crate::jsonrpc_loop::EngineState::default();
         initial.auth.adopt_stored(&store("ta", "a@b"));
-        initial.chat_id = Some(uuid::Uuid::now_v7());
-        initial.model = "m".into();
         let session = Arc::new(std::sync::Mutex::new(initial));
         let links = LinkRegistry::new();
         let mut rx = links.subscribe_or_create("http://x");
@@ -2169,16 +2130,12 @@ mod tests {
             shutdown_rx,
             Duration::from_millis(20),
         ));
-        // First poll adopts the same principal: nothing resets.
+        // First poll adopts the same principal.
         tokio::time::timeout(Duration::from_secs(5), rx.changed())
             .await
             .unwrap()
             .unwrap();
-        {
-            let s = session.guard();
-            assert!(s.chat_id.is_some(), "same principal keeps its chat");
-            assert_eq!(s.epoch, 0);
-        }
+        assert_eq!(session.guard().auth.email(), Some("a@b"));
         session_store::save(&path, &store("tb", "b@b")).unwrap();
         tokio::time::timeout(Duration::from_secs(5), rx.changed())
             .await
@@ -2187,9 +2144,7 @@ mod tests {
         {
             let s = session.guard();
             assert_eq!(s.auth.email(), Some("b@b"));
-            assert!(s.chat_id.is_none(), "A's chat survived the external switch");
-            assert!(s.model.is_empty());
-            assert_eq!(s.epoch, 1);
+            assert_eq!(s.auth.cloud().map(|c| c.token.as_str()), Some("tb"));
         }
         shutdown_tx.send(true).ok();
         let _ = std::fs::remove_dir_all(&dir);
@@ -2199,6 +2154,7 @@ mod tests {
 #[cfg(test)]
 mod error_frame_tests {
     use super::*;
+    use uuid::Uuid;
 
     /// A server Error frame (rejected ToolResult, feed resync, thread_list
     /// failure) is non-terminal: the link must stay up — the session loop

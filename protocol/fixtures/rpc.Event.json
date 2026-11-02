@@ -1,9 +1,9 @@
 [
   {
     "protocol": 1,
-    "event": "chat.delta",
+    "event": "rpc.error",
     "payload": {
-      "content": "hi"
+      "message": "invalid request: expected value"
     }
   }
 ]

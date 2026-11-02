@@ -12,6 +12,8 @@
 //! bootstrap), and retries the command once.
 
 use super::{resolve_scoped, truncate, Tool, ToolFailure, ToolOutcome};
+#[cfg(windows)]
+use crate::sync::LockExt;
 use async_trait::async_trait;
 use protocol::api::ToolSpec;
 use serde_json::Value;
@@ -284,7 +286,7 @@ fn wsl_child(argv: &[String]) -> tokio::process::Command {
 #[cfg(windows)]
 async fn wsl_heal_interop(distro: &str) -> bool {
     {
-        let last = LAST_WSL_HEAL.lock().unwrap();
+        let last = LAST_WSL_HEAL.guard();
         if let Some(t) = *last {
             if t.elapsed() < WSL_HEAL_MIN_INTERVAL {
                 return false;
@@ -308,7 +310,7 @@ async fn wsl_heal_interop(distro: &str) -> bool {
         Err(_) => false,
     };
     if ok {
-        *LAST_WSL_HEAL.lock().unwrap() = Some(std::time::Instant::now());
+        *LAST_WSL_HEAL.guard() = Some(std::time::Instant::now());
     }
     ok
 }

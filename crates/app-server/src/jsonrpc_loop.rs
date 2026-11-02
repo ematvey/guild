@@ -1,13 +1,13 @@
 //! JSON-RPC line loop — the dispatch surface of the local engine, served
 //! to the desktop webview in-process and to CLI verbs over the local socket.
 //! Agent turns run server-side; the engine owns the session, the machine
-//! link (dispatched tools, context prepare, skills sync), and the local file
-//! bridge.
+//! link (dispatched tools, skills sync), and the local file bridge.
 //!
 //! Methods: `login`, `pair`, `session.*`, `workspace.*`, `machine.identify`,
-//! `chat.send` (plain chat over the gateway workflow, the CLI's `chat`
-//! verb), `registry.*`, `fs.*` (the file bridge), `daemon.hello` /
-//! `daemon.shutdown`. Streaming arrives as events.
+//! `registry.*`, `fs.*` (the file bridge), `daemon.hello` /
+//! `daemon.shutdown`. The method contract is `protocol/rpc.schema.json`.
+//! Every call is request/response; the only event is `rpc.error` for a
+//! line that carries no request id.
 
 use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
@@ -15,17 +15,34 @@ use crate::machine_link::LinkRegistry;
 use crate::sync::LockExt;
 use anyhow::Context as _;
 use guild_core::tools::artifacts::ArtifactIndex;
-use protocol::api::Message;
 use protocol::rpc::{Request, Response, RpcError, PROTOCOL_VERSION};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
-/// The model a `chat.send` uses when neither the request nor the session
-/// names one.
-pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
+/// Every method `dispatch` serves; `protocol/rpc.schema.json` declares
+/// each one's params and result.
+pub const METHODS: &[&str] = &[
+    "login",
+    "pair",
+    "session.info",
+    "session.clear",
+    "workspace.list",
+    "workspace.switch",
+    "machine.identify",
+    "daemon.hello",
+    "daemon.shutdown",
+    "registry.publish",
+    "registry.install",
+    "registry.uninstall",
+    "fs.scopes",
+    "fs.read_text",
+    "fs.list_dir",
+    "fs.exists",
+    "fs.write_text",
+];
 
 #[derive(Default)]
 pub struct EngineState {
@@ -33,14 +50,6 @@ pub struct EngineState {
     /// machine identity. Owned by `auth_state`: reads through its
     /// accessors, every mutation through `AuthState::transition`.
     pub auth: AuthState,
-    pub model: String,
-    pub chat_id: Option<Uuid>,
-    pub project_dir: Option<PathBuf>,
-    /// Bumped on every principal change (sign-out, account switch): async
-    /// turn tasks capture it at start and discard their session writes
-    /// when it moved — a response that arrives after a clear must not
-    /// restore the previous account's state.
-    pub epoch: u64,
 }
 
 enum Incoming {
@@ -55,19 +64,12 @@ enum Incoming {
 }
 
 /// Engine state shared by every client connection: one engine state, one
-/// event fan-out, one JoinSet of in-flight chat streams, one shutdown flag.
+/// artifact index, one shutdown flag, one link registry.
 #[derive(Clone)]
 pub struct Shared {
     pub session: Arc<Mutex<EngineState>>,
-    /// Broadcast channel for protocol events (chat.*). Every
-    /// connected client receives every event. Capacity 256.
-    pub events: tokio::sync::broadcast::Sender<Value>,
-    /// In-flight `chat.send` streams, owned by the engine (they outlive
-    /// the requesting connection). tokio Mutex because we hold the guard
-    /// across `.await` while draining.
-    pub streams: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
-    /// Path→artifact-id index shared by every run of this engine process
-    /// (tool artifacts: touch-time lookups hit what prefetch learned).
+    /// Path→artifact-id index shared by every dispatched tool call of this
+    /// engine process (touch-time lookups hit what earlier calls learned).
     pub artifacts: Arc<ArtifactIndex>,
     /// Set true by `daemon.shutdown`; the daemon's accept loop watches it.
     pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
@@ -84,12 +86,9 @@ pub struct Shared {
 
 impl Shared {
     pub fn new(session: EngineState) -> Self {
-        let (events, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel(false);
         Self {
             session: Arc::new(Mutex::new(session)),
-            events,
-            streams: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
             links: LinkRegistry::new(),
@@ -110,11 +109,9 @@ impl Shared {
 /// app restart or a GUI engine re-spawn keeps auth. Thin wrapper over
 /// `AuthState::restored` (the auth-state module owns the store).
 pub async fn restored_session() -> anyhow::Result<EngineState> {
-    let session = EngineState {
+    Ok(EngineState {
         auth: AuthState::restored().await?,
-        ..EngineState::default()
-    };
-    Ok(session)
+    })
 }
 
 fn line_to_incoming(line: &str) -> Incoming {
@@ -143,9 +140,9 @@ fn response_value(id: u64, resp: anyhow::Result<Response>) -> Value {
     }
 }
 
-/// Reads requests until EOF, handles them, writes responses/events to the
-/// writer. Returns the (mutated) session and the writer back. Thin wrapper:
-/// one Shared, one connection.
+/// Reads requests until EOF, handles them, writes responses to the writer.
+/// Returns the (mutated) session and the writer back. Thin wrapper: one
+/// Shared, one connection.
 pub async fn serve<R, W>(
     reader: R,
     writer: W,
@@ -156,18 +153,7 @@ where
     W: std::io::Write + Send + 'static,
 {
     let shared = Shared::new(session);
-    let mut writer = run_connection(&shared, reader, writer).await?;
-    // The client has EOF'd; in-flight runs must still get their events
-    // written. run_connection forwards the events its own subscriber
-    // buffered around EOF (its join blocks until the tasks holding its
-    // sender finish). Subscribing here as well, BEFORE draining, covers any
-    // run still alive past run_connection, so its events are buffered
-    // instead of dropped; drain the JoinSet, then forward whatever was
-    // buffered to the writer.
-    let mut event_rx = shared.events.subscribe();
-    // tokio Mutex: the guard is held across .await here.
-    while shared.streams.lock().await.join_next().await.is_some() {}
-    drain_events(&mut event_rx, &mut writer);
+    let writer = run_connection(&shared, reader, writer).await?;
     let session = match Arc::try_unwrap(shared.session) {
         Ok(m) => m.into_inner().expect("session lock"),
         Err(_) => anyhow::bail!("session references still alive"),
@@ -187,7 +173,7 @@ where
     // Reader thread → request channel (unbounded send is sync-safe).
     let (req_tx, mut req_rx) = mpsc::unbounded_channel::<Incoming>();
     std::thread::spawn(move || {
-        crate::dtrace::dtrace("conn: reader thread started");
+        crate::trace!("conn: reader thread started");
         let reader = std::io::BufReader::new(reader);
         use std::io::BufRead;
         for line in reader.lines() {
@@ -195,50 +181,53 @@ where
             if line.trim().is_empty() {
                 continue;
             }
-            crate::dtrace::dtrace(&format!(
+            let incoming = line_to_incoming(&line);
+            crate::trace!(
                 "conn: reader got {} bytes: {}",
                 line.len(),
-                crate::dtrace::redacted_frame_summary(&line, 120)
-            ));
-            if req_tx.send(line_to_incoming(&line)).is_err() {
+                match &incoming {
+                    Incoming::Request(req) => format!("{} id={}", req.method, req.id),
+                    Incoming::Malformed { id, .. } => format!("malformed id={id:?}"),
+                }
+            );
+            if req_tx.send(incoming).is_err() {
                 break;
             }
         }
-        crate::dtrace::dtrace("conn: reader thread exited (EOF or error)");
+        crate::trace!("conn: reader thread exited (EOF or error)");
     });
 
-    // Single ordered writer: responses and events both flow through here.
+    // Single ordered writer: every response flows through here.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
     let writer_thread = std::thread::spawn(move || {
         let mut w = writer;
-        crate::dtrace::dtrace("conn: writer thread started");
+        crate::trace!("conn: writer thread started");
         while let Some(v) = out_rx.blocking_recv() {
-            crate::dtrace::dtrace(&format!(
-                "conn: writer writing {} bytes: {}",
-                v.to_string().len(),
-                crate::dtrace::redacted_frame_summary(&v.to_string(), 120)
-            ));
+            crate::trace!(
+                "conn: writer writing id={} error={}",
+                v["id"],
+                v.get("error").is_some()
+            );
             let t0 = std::time::Instant::now();
             let r = writeln!(w, "{v}");
             let f = w.flush();
-            crate::dtrace::dtrace(&format!(
+            crate::trace!(
                 "conn: writer done in {:?} writeln={:?} flush={:?}",
                 t0.elapsed(),
                 r.is_ok(),
                 f.is_ok()
-            ));
+            );
         }
-        crate::dtrace::dtrace("conn: writer thread exiting (out_tx dropped)");
+        crate::trace!("conn: writer thread exiting (out_tx dropped)");
         w
     });
 
     // Per-connection ordered queue: requests that read or change the
     // session run one after another in arrival order (a login lands before
-    // the chat.send that follows it). Long phases — a chat's stream — are
-    // spawned by their handlers, so the queue only waits
-    // for each request's session-touching part. The select loop below never
-    // awaits a handler: events keep flowing and out-of-band requests
-    // (hello, shutdown) answer at once.
+    // the registry call that follows it). Network-bound handlers
+    // (identify, registry) are spawned, so the queue only waits for each
+    // request's session-touching part. The loop below never awaits a queued
+    // handler: out-of-band requests (hello, shutdown) answer at once.
     let (ordered_tx, mut ordered_rx) = mpsc::unbounded_channel::<Request>();
     let ordered = {
         let shared = shared.clone();
@@ -250,104 +239,57 @@ where
         })
     };
 
-    let mut event_rx = shared.events.subscribe();
-    let mut events_open = true;
-    loop {
-        tokio::select! {
-            biased;
-            inc = req_rx.recv() => match inc {
-                None => break,
-                Some(Incoming::Malformed { id: Some(id), message }) => {
-                    let _ = out_tx.send(
-                        serde_json::to_value(Response::err(
-                            id,
-                            RpcError::new(RpcError::INVALID_REQUEST, message),
-                        ))
-                        .expect("error response serializes"),
-                    );
-                }
-                Some(Incoming::Malformed { id: None, message }) => {
-                    let _ = out_tx.send(json!({
-                        "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                        "payload": {"message": message},
-                    }));
-                }
-                Some(Incoming::Request(req)) if is_out_of_band(&req.method) => {
-                    dispatch(shared.clone(), req, out_tx.clone()).await;
-                }
-                Some(Incoming::Request(req)) => {
-                    let _ = ordered_tx.send(req);
-                }
-            },
-            ev = event_rx.recv(), if events_open => match ev {
-                Ok(v) => { let _ = out_tx.send(v); }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    let _ = out_tx.send(lagged_event(skipped));
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    // sender dropped (only possible while Shared is being torn
-                    // down in serve()): stop consuming events, keep serving
-                    // requests until EOF
-                    events_open = false;
-                }
-            },
+    while let Some(inc) = req_rx.recv().await {
+        match inc {
+            Incoming::Malformed {
+                id: Some(id),
+                message,
+            } => {
+                let _ = out_tx.send(
+                    serde_json::to_value(Response::err(
+                        id,
+                        RpcError::new(RpcError::INVALID_REQUEST, message),
+                    ))
+                    .expect("error response serializes"),
+                );
+            }
+            Incoming::Malformed { id: None, message } => {
+                let _ = out_tx.send(json!({
+                    "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                    "payload": {"message": message},
+                }));
+            }
+            Incoming::Request(req) if is_out_of_band(&req.method) => {
+                dispatch(shared.clone(), req, out_tx.clone()).await;
+            }
+            Incoming::Request(req) => {
+                let _ = ordered_tx.send(req);
+            }
         }
     }
     drop(ordered_tx);
     let _ = ordered.await;
     drop(out_tx);
-    let mut writer = writer_thread.join().expect("writer thread");
-    // Post-EOF event delivery: the join above blocks until in-flight tasks
-    // finish (they hold out_tx clones), and those tasks broadcast events
-    // after EOF with this connection's subscriber no longer polled — the
-    // events sit unread in event_rx's buffer. Forward them before returning
-    // the writer.
-    drain_events(&mut event_rx, &mut writer);
-    Ok(writer)
+    // The join blocks until in-flight handlers finish (they hold out_tx
+    // clones), so their responses are written before the writer returns.
+    Ok(writer_thread.join().expect("writer thread"))
 }
 
 /// Requests answered straight from the connection loop, outside the
 /// ordered queue: none of them waits on the session order, and each must
-/// answer while a queued request (a login, a chat's prelude) is in flight.
+/// answer while a queued request (a login) is in flight.
 fn is_out_of_band(method: &str) -> bool {
     matches!(method, "daemon.hello" | "daemon.shutdown")
-}
-
-/// The event a client receives when its subscriber fell behind the
-/// broadcast buffer and `skipped` events were dropped for it.
-fn lagged_event(skipped: u64) -> Value {
-    serde_json::to_value(protocol::rpc::Event::new(
-        "rpc.lagged",
-        json!({ "skipped": skipped }),
-    ))
-    .unwrap_or(Value::Null)
-}
-
-/// Writes every event still buffered in `event_rx` to `writer`, with a
-/// lag event in place of any dropped run.
-fn drain_events(event_rx: &mut broadcast::Receiver<Value>, writer: &mut impl std::io::Write) {
-    loop {
-        let v = match event_rx.try_recv() {
-            Ok(v) => v,
-            Err(broadcast::error::TryRecvError::Lagged(skipped)) => lagged_event(skipped),
-            Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {
-                break
-            }
-        };
-        let _ = writeln!(writer, "{v}");
-        let _ = writer.flush();
-    }
 }
 
 async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let t0 = std::time::Instant::now();
     let method = req.method.clone();
     let rid = req.id;
-    crate::dtrace::dtrace(&format!("dispatch: START {} id={:?}", method, rid));
+    crate::trace!("dispatch: START {} id={:?}", method, rid);
     match req.method.as_str() {
         "login" => login_task(shared.clone(), req, out_tx).await,
         "pair" => pair_task(shared.clone(), req, out_tx).await,
-        "chat.send" => chat_send_task(shared.clone(), req, out_tx).await,
         "session.info" => {
             let s = shared.session.guard();
             let result = match s.auth.cloud() {
@@ -404,7 +346,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             tokio::spawn(registry_install(shared.session.clone(), req, out_tx));
         }
         "registry.uninstall" => {
-            tokio::spawn(registry_uninstall(shared.session.clone(), req, out_tx));
+            tokio::spawn(registry_uninstall(req, out_tx));
         }
         "fs.scopes" => {
             let _ = out_tx.send(response_value(
@@ -434,13 +376,13 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             );
         }
     }
-    crate::dtrace::dtrace(&format!("dispatch: END {} in {:?}", method, t0.elapsed()));
+    crate::trace!("dispatch: END {} in {:?}", method, t0.elapsed());
 }
 
 /// The fs.* file bridge (fs_bridge.rs): primitive allowlisted operations
 /// the webview uses for context assembly. The project folder arrives per
-/// call — the webview owns the project binding (and thus the trust in it),
-/// the same as every other client-owned request field.
+/// call and the allowlist derives from it, so the roots catch webview
+/// logic bugs, not a hostile caller (see the fs_bridge module doc).
 fn fs_bridge_call(req: &Request) -> anyhow::Result<Response> {
     let project_dir = req.params["project_dir"].as_str().map(PathBuf::from);
     let path = req.params["path"]
@@ -481,14 +423,15 @@ fn optional_param(req: &Request, key: &str) -> Option<String> {
 /// Applies one auth transition to the session's auth state, persisting to
 /// the default token.json path. The injectable-store variant is for tests.
 fn auth_change(shared: &Shared, change: AuthChange) -> anyhow::Result<()> {
-    auth_change_with_store(
-        shared,
-        change,
-        shared
-            .store_path
-            .clone()
-            .or_else(|| crate::session_store::default_path().ok()),
-    )
+    auth_change_with_store(shared, change, store_path(shared))
+}
+
+/// The token.json path: the injected test store, else the default.
+fn store_path(shared: &Shared) -> Option<PathBuf> {
+    shared
+        .store_path
+        .clone()
+        .or_else(|| crate::session_store::default_path().ok())
 }
 
 fn auth_change_with_store(
@@ -496,43 +439,15 @@ fn auth_change_with_store(
     change: AuthChange,
     store: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let mut s = shared.session.guard();
-    let previous = principal_of(&s);
-    // The in-memory transition applies even when persistence fails, so the
-    // account-state reset runs before the persistence error propagates.
-    let result = s.auth.transition(change, store.as_deref(), &shared.links);
-    reset_if_principal_changed(&mut s, previous);
-    result
-}
-
-/// Resets the account-owned execution state when the session's principal
-/// differs from `previous` (a sign-out, a login as someone else, or an
-/// external token.json switch). The previous account's execution state must
-/// not leak into a new principal (or the signed-out state): a retained chat
-/// id would send the next user's turns into the old chat under the new
-/// credential — authz failures at best, another member's conversation at
-/// worst. In-flight requests keep their own cloud client and fail on their
-/// revoked bearer; the epoch bump makes their late writes stale.
-pub(crate) fn reset_if_principal_changed(s: &mut EngineState, previous: Option<(String, String)>) {
-    if principal_of(s) != previous {
-        s.chat_id = None;
-        s.project_dir = None;
-        s.model = String::new();
-        s.epoch = s.epoch.wrapping_add(1);
-    }
-}
-
-/// The account a session's execution state belongs to: server + email.
-pub(crate) fn principal_of(s: &EngineState) -> Option<(String, String)> {
-    let cloud = s.auth.cloud()?;
-    Some((cloud.base_url.clone(), s.auth.email()?.to_string()))
+    shared
+        .session
+        .guard()
+        .auth
+        .transition(change, store.as_deref(), &shared.links)
 }
 
 async fn machine_identify(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let path = shared
-        .store_path
-        .clone()
-        .or_else(|| crate::session_store::default_path().ok());
+    let path = store_path(&shared);
     machine_identify_with_store(shared, req, out_tx, path).await;
 }
 
@@ -601,7 +516,7 @@ fn workspace_list(shared: &Shared, req_id: u64) -> anyhow::Result<Response> {
 }
 
 /// Makes an existing workspace active. Thin over `AuthState::transition`
-/// (the principal-change guard resets the account-owned execution state);
+/// (mutate ⇒ persist ⇒ publish);
 /// answers with the same shape as `session.info` so the webview can mirror
 /// the new active session in one step.
 async fn workspace_switch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
@@ -647,15 +562,7 @@ async fn adopt_login_with_identity(
     )?;
     let machine_id = machine_id
         .filter(|id| !id.is_empty())
-        .or_else(|| {
-            shared
-                .session
-                .lock()
-                .unwrap()
-                .auth
-                .machine_id()
-                .map(str::to_owned)
-        })
+        .or_else(|| shared.session.guard().auth.machine_id().map(str::to_owned))
         .unwrap_or_else(|| Uuid::now_v7().to_string());
     auth_change_with_store(shared, AuthChange::Identify { machine_id }, store.clone())?;
     // The switcher's identity data (name + logo) rides the fresh token;
@@ -664,13 +571,7 @@ async fn adopt_login_with_identity(
     // holding it across the network await parks a worker thread that every
     // other task needs (the daemon runs two workers), which wedges the
     // daemon until restart.
-    let cloud = shared
-        .session
-        .lock()
-        .unwrap()
-        .auth
-        .cloud_of(&base_url)
-        .cloned();
+    let cloud = shared.session.guard().auth.cloud_of(&base_url).cloned();
     if let Some(cloud) = cloud {
         if let Ok((name, logo)) = cloud.org_settings().await {
             let mut session = shared.session.guard();
@@ -694,7 +595,7 @@ async fn login_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<
             token,
             user.email.clone(),
             optional_param(&req, "machine_id"),
-            crate::session_store::default_path().ok(),
+            store_path(&shared),
         )
         .await?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
@@ -715,87 +616,13 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
             token,
             user.email.clone(),
             optional_param(&req, "machine_id"),
-            crate::session_store::default_path().ok(),
+            store_path(&shared),
         )
         .await?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
     let _ = out_tx.send(response_value(req.id, result));
-}
-
-/// The effective model for a `chat.send`: an explicit `params.model`
-/// overrides the session's current model; without
-/// one, the session model stands, falling back to the default.
-fn resolve_chat_model(session_model: &str) -> String {
-    if session_model.is_empty() {
-        DEFAULT_MODEL.to_string()
-    } else {
-        session_model.to_string()
-    }
-}
-
-/// `chat.send`: resolves the session's cloud, model, and chat (creating
-/// one on first send) in the connection's ordered queue, then streams the
-/// turn on a task of its own — the queue does not wait for the reply.
-async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let prelude = async {
-        let text = param(&req, "text")?.to_string();
-        let (cloud, existing_chat, model, epoch) = {
-            let mut s = shared.session.guard();
-            let cloud = s
-                .auth
-                .cloud()
-                .cloned()
-                .context("not logged in — call login first")?;
-            if let Some(m) = req.params["model"].as_str() {
-                s.model = m.to_string();
-            }
-            s.model = resolve_chat_model(&s.model);
-            (cloud, s.chat_id, s.model.clone(), s.epoch)
-        };
-        let chat_id = match existing_chat {
-            Some(c) => c,
-            None => {
-                let c = cloud.create_chat(None).await?;
-                // Principal/epoch guard: a create_chat response released
-                // after a sign-out or account switch must not restore the
-                // old account's chat id on the new (or signed-out) session.
-                let mut s = shared.session.guard();
-                if s.epoch == epoch && s.chat_id.is_none() {
-                    s.chat_id = Some(c);
-                }
-                c
-            }
-        };
-        Ok::<_, anyhow::Error>((cloud, chat_id, model, text))
-    }
-    .await;
-    let (cloud, chat_id, model, text) = match prelude {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = out_tx.send(response_value(req.id, Err(e)));
-            return;
-        }
-    };
-    let events = shared.events.clone();
-    shared.streams.lock().await.spawn(async move {
-        // History lives in the server's thread journal; the client sends
-        // only the new user message.
-        let result = async {
-            let stream = cloud
-                .chat_stream(chat_id, &model, &[Message::user(text)])
-                .await?;
-            let (message_id, cost_usd, tokens_in, tokens_out) =
-                crate::chat_stream::drive_chat(events, stream).await?;
-            Ok(Response::ok(
-                req.id,
-                json!({"chat_id": chat_id, "message_id": message_id, "cost_usd": cost_usd, "tokens_in": tokens_in, "tokens_out": tokens_out}),
-            ))
-        }
-        .await;
-        let _ = out_tx.send(response_value(req.id, result));
-    });
 }
 
 async fn registry_publish(
@@ -805,8 +632,7 @@ async fn registry_publish(
 ) {
     let result = async {
         let cloud = session
-            .lock()
-            .unwrap()
+            .guard()
             .auth
             .cloud()
             .cloned()
@@ -831,34 +657,19 @@ async fn registry_install(
 ) {
     let result = async {
         let cloud = session
-            .lock()
-            .unwrap()
+            .guard()
             .auth
             .cloud()
             .cloned()
             .context("not logged in — call login first")?;
         let slug = param(&req, "slug")?.to_string();
         let version = req.params["version"].as_str().map(String::from);
-        if let Some(d) = req.params["project_dir"].as_str() {
-            session.guard().project_dir = Some(PathBuf::from(d));
-        }
-        let project_dir = session
-            .lock()
-            .unwrap()
-            .project_dir
-            .clone()
-            .context("missing project_dir — pass it in registry.install params")?;
+        let project_dir = optional_param(&req, "project_dir").map(PathBuf::from);
         let global = req.params["global"].as_bool().unwrap_or(false);
-        let publisher = session
-            .lock()
-            .unwrap()
-            .auth
-            .email()
-            .unwrap_or_default()
-            .to_string();
+        let publisher = session.guard().auth.email().unwrap_or_default().to_string();
         let entry = crate::registry_client::install_skill(
             &cloud,
-            &project_dir,
+            project_dir.as_deref(),
             &slug,
             version.as_deref(),
             global,
@@ -875,25 +686,14 @@ async fn registry_install(
 }
 
 /// `registry.uninstall`: removes a Guild-installed skill from the project
-/// (or, with `global`, the home) skill scope.
-async fn registry_uninstall(
-    session: Arc<Mutex<EngineState>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
+/// (or, with `global`, the home) skill scope. `project_dir` is per call
+/// and required for the project scope.
+async fn registry_uninstall(req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let slug = param(&req, "slug")?.to_string();
-        if let Some(d) = req.params["project_dir"].as_str() {
-            session.guard().project_dir = Some(PathBuf::from(d));
-        }
-        let project_dir = session
-            .lock()
-            .unwrap()
-            .project_dir
-            .clone()
-            .context("missing project_dir — pass it in registry.uninstall params")?;
+        let project_dir = optional_param(&req, "project_dir").map(PathBuf::from);
         let global = req.params["global"].as_bool().unwrap_or(false);
-        crate::registry_client::uninstall_skill(&project_dir, &slug, global)?;
+        crate::registry_client::uninstall_skill(project_dir.as_deref(), &slug, global)?;
         Ok(Response::ok(req.id, json!({"uninstalled": slug})))
     }
     .await;
@@ -916,24 +716,6 @@ mod machine_link_tests {
         }
     }
 
-    pub(crate) fn logged_in_shared_at(base_url: &str) -> Shared {
-        let session = EngineState {
-            auth: crate::auth_state::AuthState::from_parts(
-                Some(CloudClient {
-                    base_url: base_url.to_string(),
-                    token: "tok".into(),
-                }),
-                Some("a@b".into()),
-                None,
-                None,
-            ),
-            ..Default::default()
-        };
-        let mut shared = Shared::new(session);
-        shared.store_path = Some(tmp_token_dir());
-        shared
-    }
-
     fn logged_in_shared() -> Shared {
         let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
@@ -945,7 +727,6 @@ mod machine_link_tests {
                 None,
                 None,
             ),
-            ..Default::default()
         };
         let mut shared = Shared::new(session);
         shared.store_path = Some(tmp_token_dir());
@@ -1190,166 +971,110 @@ mod machine_link_tests {
         assert_eq!(resp["result"]["workspaces"].as_array().unwrap().len(), 1);
     }
 
-    /// `chat.send --model X` applies even when the session already has a
-    /// model — the explicit request wins, and a
-    /// send without a model keeps the session's standing model.
-    #[test]
-    fn chat_send_model_applies_over_an_existing_session_model() {
-        assert_eq!(resolve_chat_model("kept"), "kept");
-        assert_eq!(resolve_chat_model(""), DEFAULT_MODEL);
-        // the same override logic chat_send_task applies under the lock:
-        let mut session_model = "m1".to_string();
-        let requested: Option<&str> = Some("m2");
-        if let Some(m) = requested {
-            session_model = m.to_string();
-        }
-        session_model = resolve_chat_model(&session_model);
-        assert_eq!(session_model, "m2");
-        let requested: Option<&str> = None;
-        if let Some(m) = requested {
-            session_model = m.to_string();
-        }
-        session_model = resolve_chat_model(&session_model);
-        assert_eq!(
-            session_model, "m2",
-            "no model param keeps the session model"
+    /// `registry.uninstall` takes its project per call: a project-scope
+    /// call without `project_dir` fails instead of reusing an earlier
+    /// call's project.
+    #[tokio::test]
+    async fn registry_uninstall_needs_its_own_project_dir() {
+        let project =
+            std::env::temp_dir().join(format!("guild-rpc-proj-{}", Uuid::now_v7().simple()));
+        let skill = project.join(".agents/skills/demo");
+        std::fs::create_dir_all(&skill).unwrap();
+        crate::registry_client::write_sidecar(
+            &skill,
+            &crate::registry_client::SkillProvenance {
+                source: "registry".into(),
+                slug: "demo".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let call = |id: u64, params: Value| async move {
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            registry_uninstall(Request::new(id, "registry.uninstall", params), out_tx).await;
+            out_rx.recv().await.unwrap()
+        };
+        let missing = call(1, json!({ "slug": "demo" })).await;
+        assert!(
+            missing["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("project_dir")),
+            "{missing}"
         );
+        assert!(skill.exists());
+        let ok = call(2, json!({ "slug": "demo", "project_dir": project })).await;
+        assert_eq!(ok["result"]["uninstalled"], "demo", "{ok}");
+        assert!(!skill.exists());
+        std::fs::remove_dir_all(&project).unwrap();
     }
 
-    /// Sign-out and a principal switch reset the account-owned session
-    /// state: a retained chat id would send the next account's turns into
-    /// the previous account's chat under the new credential.
+    /// The dispatch table and `METHODS` agree: every listed method is
+    /// routed (never METHOD_NOT_FOUND), and an unlisted one is not.
     #[tokio::test]
-    async fn sign_out_and_account_switch_reset_account_owned_session_state() {
-        let shared = logged_in_shared();
-        {
-            let mut s = shared.session.guard();
-            s.chat_id = Some(Uuid::now_v7());
-            s.project_dir = Some(std::path::PathBuf::from("/tmp/a"));
-            s.model = "m".into();
+    async fn every_listed_method_is_dispatched() {
+        let mut shared = Shared::new(EngineState::default());
+        shared.store_path = Some(tmp_token_dir());
+        for (id, method) in METHODS.iter().enumerate() {
+            // Network- and process-touching verbs are routed without being
+            // executed here: their own tests cover them.
+            if matches!(
+                *method,
+                "login" | "pair" | "daemon.shutdown" | "registry.publish" | "registry.install"
+            ) {
+                continue;
+            }
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            dispatch(
+                shared.clone(),
+                Request::new(id as u64, *method, json!({})),
+                out_tx,
+            )
+            .await;
+            let resp = tokio::time::timeout(std::time::Duration::from_secs(5), out_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_ne!(
+                resp["error"]["code"],
+                json!(RpcError::METHOD_NOT_FOUND),
+                "{method}: {resp}"
+            );
         }
-
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-        session_clear(shared.clone(), identify_req(6, ""), out_tx).await;
-        let _ = out_rx.recv().await.unwrap();
-        {
-            let s = shared.session.guard();
-            assert!(s.chat_id.is_none());
-            assert!(s.project_dir.is_none());
-            assert!(s.model.is_empty());
-        }
-
-        // Logging back in as a DIFFERENT account starts clean too.
-        adopt_login_with_identity(
-            &shared,
-            "http://srv".into(),
-            "tok2".into(),
-            "b@b".into(),
-            Some("machine-4".into()),
-            None,
-        )
-        .await
-        .unwrap();
-        let s = shared.session.guard();
-        assert!(s.chat_id.is_none());
-        assert!(s.project_dir.is_none());
-    }
-
-    /// A re-login of the SAME account keeps the session's state (a fresh
-    /// token must not discard the working chat).
-    #[tokio::test]
-    async fn relogin_of_the_same_principal_keeps_session_state() {
-        let shared = logged_in_shared();
-        let chat = Uuid::now_v7();
-        shared.session.guard().chat_id = Some(chat);
-        adopt_login_with_identity(
-            &shared,
-            "http://srv".into(),
-            "tok-fresh".into(),
-            "a@b".into(),
-            Some("machine-4".into()),
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(shared.session.guard().chat_id, Some(chat));
+        dispatch(shared, Request::new(99, "chat.send", json!({})), out_tx).await;
+        let resp = out_rx.recv().await.unwrap();
+        assert_eq!(resp["error"]["code"], json!(RpcError::METHOD_NOT_FOUND));
     }
 }
 
 #[cfg(test)]
-mod session_epoch_tests {
+mod connection_tests {
     use super::*;
 
-    /// The verifier's interleaving against the REAL caller: a chat.send
-    /// whose create_chat response is withheld across a session.clear (or a
-    /// full account switch) must not restore the previous account's chat id
-    /// when the response is finally released. The epoch guard discards the
-    /// stale write; the run itself dies on its revoked bearer.
-    #[tokio::test]
-    async fn a_released_create_chat_response_after_sign_out_restores_nothing() {
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/api/v1/chats"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({
-                        "id": Uuid::now_v7(),
-                        "org_id": Uuid::now_v7(),
-                        "user_id": Uuid::now_v7(),
-                        "created_at": "2026-01-01T00:00:00Z"
-                    }))
-                    .set_delay(std::time::Duration::from_millis(800)),
-            )
-            .mount(&server)
-            .await;
-        let shared = machine_link_tests::logged_in_shared_at(&server.uri());
-
-        let req = Request {
-            jsonrpc: "2.0".into(),
-            id: 1,
-            protocol: protocol::rpc::PROTOCOL_VERSION,
-            method: "chat.send".into(),
-            params: serde_json::json!({ "text": "hello" }),
-        };
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-        tokio::spawn(chat_send_task(shared.clone(), req, out_tx));
-        // The task is now parked inside the withheld create_chat await.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        // Sign out through the REAL handler: the epoch bumps.
-        let clear = Request {
-            jsonrpc: "2.0".into(),
-            id: 2,
-            protocol: protocol::rpc::PROTOCOL_VERSION,
-            method: "session.clear".into(),
-            params: serde_json::json!({}),
-        };
-        let (clear_tx, mut clear_rx) = mpsc::unbounded_channel();
-        session_clear(shared.clone(), clear, clear_tx).await;
-        let _ = clear_rx.recv().await.unwrap();
-        {
-            let s = shared.session.guard();
-            assert!(s.chat_id.is_none());
-            assert!(s.auth.cloud().is_none(), "signed out");
-        }
-        // The old response is released: the stale write must be discarded.
-        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
-        {
-            let s = shared.session.guard();
-            assert!(
-                s.chat_id.is_none(),
-                "the released create_chat response restored the old chat id"
-            );
-        }
-        let _ = out_rx.try_recv();
+    /// `METHODS` is exactly the method table of the rpc contract.
+    #[test]
+    fn methods_match_the_rpc_contract() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../protocol/rpc.schema.json")).unwrap();
+        let mut from_schema: Vec<&str> = schema["methods"]
+            .as_object()
+            .expect("rpc.schema.json has a methods table")
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !k.starts_with('$'))
+            .collect();
+        from_schema.sort_unstable();
+        let mut dispatched = METHODS.to_vec();
+        dispatched.sort_unstable();
+        assert_eq!(dispatched, from_schema);
     }
 
-    /// A login whose server reply is withheld blocks neither the connection's
-    /// out-of-band requests nor its event stream: hello answers and a
-    /// broadcast event arrives while the login is still in flight.
+    /// A login whose server reply is withheld does not block the
+    /// connection's out-of-band requests: hello answers while the login is
+    /// still in flight.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_slow_login_blocks_neither_hello_nor_events() {
+    async fn a_slow_login_does_not_block_hello() {
         use std::io::{BufRead as _, Write as _};
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1379,8 +1104,6 @@ mod session_epoch_tests {
         )
         .unwrap();
         writeln!(writer, "{}", line(2, "daemon.hello", json!({}))).unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let _ = shared.events.send(json!({"event": "probe"}));
         let started = std::time::Instant::now();
         let seen = tokio::task::spawn_blocking(move || {
             client
@@ -1388,7 +1111,7 @@ mod session_epoch_tests {
                 .unwrap();
             let mut reader = std::io::BufReader::new(client);
             let mut seen = Vec::new();
-            while seen.len() < 3 {
+            while seen.len() < 2 {
                 let mut buf = String::new();
                 if reader.read_line(&mut buf).unwrap_or(0) == 0 {
                     break;
@@ -1402,9 +1125,8 @@ mod session_epoch_tests {
         .unwrap();
         let position = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(|(v, _)| pred(v));
         let hello = position(&|v| v["id"] == 2).expect("hello answered");
-        let probe = position(&|v| v["event"] == "probe").expect("event delivered");
         let login = position(&|v| v["id"] == 1).expect("login answered");
-        assert!(hello < login && probe < login, "{seen:?}");
+        assert!(hello < login, "{seen:?}");
         assert!(
             seen[hello].1 < std::time::Duration::from_secs(2),
             "hello waited for the login: {seen:?}"
@@ -1412,10 +1134,9 @@ mod session_epoch_tests {
     }
 
     /// A login whose token.json write fails still changes the in-memory
-    /// principal: the previous account's state is reset before the error
-    /// propagates, and a retry succeeds.
+    /// principal, and a retry succeeds.
     #[test]
-    fn a_failed_persist_during_an_account_switch_still_resets_account_state() {
+    fn a_failed_persist_during_an_account_switch_still_switches_in_memory() {
         let session = EngineState {
             auth: crate::auth_state::AuthState::from_parts(
                 Some(CloudClient {
@@ -1426,9 +1147,6 @@ mod session_epoch_tests {
                 None,
                 None,
             ),
-            chat_id: Some(Uuid::now_v7()),
-            model: "m".into(),
-            ..Default::default()
         };
         let shared = Shared::new(session);
         let login = || AuthChange::Login {
@@ -1441,13 +1159,7 @@ mod session_epoch_tests {
         std::fs::write(&blocker, "x").unwrap();
         let bad = blocker.join("token.json");
         assert!(auth_change_with_store(&shared, login(), Some(bad)).is_err());
-        {
-            let s = shared.session.guard();
-            assert_eq!(s.auth.email(), Some("b@b"));
-            assert!(s.chat_id.is_none(), "A's chat survived the switch");
-            assert!(s.model.is_empty());
-            assert_eq!(s.epoch, 1);
-        }
+        assert_eq!(shared.session.guard().auth.email(), Some("b@b"));
         let good = std::env::temp_dir().join(format!("guild-token-{}.json", Uuid::now_v7()));
         auth_change_with_store(&shared, login(), Some(good.clone())).unwrap();
         let _ = std::fs::remove_file(&blocker);

@@ -3,9 +3,10 @@
 //! files at `<workdir>/.guild/artifacts/<chat_id>/<filename>`. This module
 //! owns the model-facing path contract, the path→artifact-id index built
 //! from `tool_result` thread events, and the fetch-and-write materialization
-//! step used by both touch-time and prefetch paths.
+//! step a dispatched tool call runs on first touch.
 
 use super::ToolFailure;
+use crate::sync::LockExt;
 use async_trait::async_trait;
 use protocol::api::ThreadEvent;
 use serde_json::Value;
@@ -158,7 +159,7 @@ fn scan_value(workdir: &Path, v: &Value, out: &mut Vec<ArtifactPath>) {
 
 /// chat_id + filename → artifact id, built from `tool_result` thread events
 /// whose `meta.card` is an artifact card. Shared by every run of a chat so
-/// touch-time lookups hit what prefetch already learned.
+/// touch-time lookups hit what earlier calls already learned.
 #[derive(Default)]
 pub struct ArtifactIndex {
     entries: Mutex<HashMap<(Uuid, String), Uuid>>,
@@ -171,15 +172,13 @@ impl ArtifactIndex {
 
     pub fn record(&self, chat_id: Uuid, filename: &str, artifact_id: Uuid) {
         self.entries
-            .lock()
-            .unwrap()
+            .guard()
             .insert((chat_id, filename.to_string()), artifact_id);
     }
 
     pub fn lookup(&self, chat_id: Uuid, filename: &str) -> Option<Uuid> {
         self.entries
-            .lock()
-            .unwrap()
+            .guard()
             .get(&(chat_id, filename.to_string()))
             .copied()
     }
@@ -241,7 +240,7 @@ impl Drop for StagedArtifact {
 }
 
 /// Writes complete bytes under a unique sibling before atomic publication.
-/// Concurrent prefetch and first-touch readers never observe a partial file.
+/// Concurrent materializations and readers never observe a partial file.
 pub async fn write_bytes(
     workdir: &Path,
     artifact: &ArtifactPath,
@@ -562,8 +561,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_prefetch_and_first_touch_publish_only_complete_files() {
-        let dir = workdir("atomic-prefetch");
+    async fn concurrent_materialize_and_first_touch_publish_only_complete_files() {
+        let dir = workdir("atomic-materialize");
         let index = ArtifactIndex::new();
         index.record(CHAT, "large.bin", ART);
         let mut fetcher = FakeFetcher::new();
@@ -589,12 +588,12 @@ mod tests {
             }
         };
         let args = serde_json::json!({"path": artifact.rel_path()});
-        let (prefetch, touch, ()) = tokio::join!(
+        let (direct, touch, ()) = tokio::join!(
             materialize(&dir, &artifact, &index, &fetcher),
             prepare_args(&index, &fetcher, &dir, &args),
             observe,
         );
-        prefetch.unwrap();
+        direct.unwrap();
         touch.unwrap();
         let mut entries = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
         let mut names = Vec::new();
