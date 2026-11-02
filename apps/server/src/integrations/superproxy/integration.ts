@@ -1,5 +1,6 @@
 import { secretOrNull, superproxyBaseUrl, configString } from "../shared.js";
-import { fetchTimeout, probe } from "../probe.js";
+import { PROBE_TIMEOUT_MS, probe } from "../probe.js";
+import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { superproxyExecute } from "./execute.js";
@@ -70,7 +71,7 @@ const plugin: IntegrationPlugin = {
     const token = secretOrNull(secrets, "token") ?? configString(config, "token");
     const headers: Record<string, string> = {};
     if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
-    await probe(fetch(url, fetchTimeout({ headers })), "superproxy");
+    await probe(fetch(url, fetchTimeout(PROBE_TIMEOUT_MS, { headers })), "superproxy");
   },
   execute: superproxyExecute,
 };

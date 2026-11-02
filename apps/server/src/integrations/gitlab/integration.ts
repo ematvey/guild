@@ -1,5 +1,6 @@
 import { gitlabBaseUrl, secret } from "../shared.js";
-import { fetchTimeout, probe } from "../probe.js";
+import { PROBE_TIMEOUT_MS, probe } from "../probe.js";
+import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { gitlabExecute } from "./execute.js";
@@ -108,7 +109,7 @@ const plugin: IntegrationPlugin = {
   async testConnection(config: JsonObject, secrets) {
     const token = secret(secrets, "token");
     await probe(
-      fetch(`${gitlabBaseUrl(config)}/user`, fetchTimeout({ headers: { authorization: `Bearer ${token}` } })),
+      fetch(`${gitlabBaseUrl(config)}/user`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${token}` } })),
       "gitlab",
     );
   },

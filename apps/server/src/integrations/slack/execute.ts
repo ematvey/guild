@@ -1,22 +1,17 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, fetchTimeout, transportCause, clampNumber, callVendorApi, slackBaseUrl } from "../shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secret, requestJson, clampNumber, callVendorApi, slackBaseUrl, type JsonRequestErrors } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- slack ----------
 
+const SLACK_ERRORS: JsonRequestErrors = {
+  unreachable: (cause) => `slack unreachable: ${cause}`,
+  unreadable: () => "slack returned bad json",
+  status: (status) => `slack returned ${status}`,
+  badJson: () => "slack returned bad json",
+};
+
 async function slackApi(url: string, init: RequestInit): Promise<JsonObject> {
-  let res: Response;
-  try {
-    res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init));
-  } catch (error) {
-    throw new Error(`slack unreachable: ${transportCause(error)}`);
-  }
-  if (!res.ok) throw new Error(`slack returned ${res.status}`);
-  let body: JsonObject;
-  try {
-    body = (await res.json()) as JsonObject;
-  } catch {
-    throw new Error("slack returned bad json");
-  }
+  const body = await requestJson(url, init, LIST_TIMEOUT_MS, SLACK_ERRORS);
   if (body["ok"] !== true) {
     throw new Error(`slack api error: ${typeof body["error"] === "string" ? body["error"] : "unknown"}`);
   }

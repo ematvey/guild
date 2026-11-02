@@ -1,5 +1,6 @@
 import { slackBaseUrl, secret } from "../shared.js";
-import { fetchTimeout } from "../probe.js";
+import { PROBE_TIMEOUT_MS } from "../probe.js";
+import { fetchTimeout, readBodyCapped } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { slackExecute } from "./execute.js";
@@ -96,7 +97,7 @@ const plugin: IntegrationPlugin = {
     // revoked token: the body verdict decides, not the status.
     let res: Response;
     try {
-      res = await fetch(`${base}/auth.test`, fetchTimeout({
+      res = await fetch(`${base}/auth.test`, fetchTimeout(PROBE_TIMEOUT_MS, {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
       }));
@@ -106,7 +107,7 @@ const plugin: IntegrationPlugin = {
     }
     let body: JsonObject = {};
     try {
-      body = (await res.json()) as JsonObject;
+      body = JSON.parse((await readBodyCapped(res, 64 * 1024)).text) as JsonObject;
     } catch {
       body = {};
     }

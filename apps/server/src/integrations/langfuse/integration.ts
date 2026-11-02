@@ -1,5 +1,6 @@
 import { langfuseBaseUrl, secret } from "../shared.js";
-import { fetchTimeout, probe } from "../probe.js";
+import { PROBE_TIMEOUT_MS, probe } from "../probe.js";
+import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "../types.js";
 import { langfuseExecute } from "./execute.js";
@@ -93,7 +94,7 @@ const plugin: IntegrationPlugin = {
     const secret_key = secret(secrets, "secret_key");
     const basic = Buffer.from(`${public_key}:${secret_key}`).toString("base64");
     await probe(
-      fetch(`${base}/api/public/projects`, fetchTimeout({ headers: { authorization: `Basic ${basic}` } })),
+      fetch(`${base}/api/public/projects`, fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Basic ${basic}` } })),
       "langfuse",
     );
   },

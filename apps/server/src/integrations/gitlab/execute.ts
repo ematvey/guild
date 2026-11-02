@@ -1,4 +1,4 @@
-import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, fetchTimeout, transportCause, excerpt, clampNumber, callVendorApi, gitlabBaseUrl } from "../shared.js";
+import { LIST_TIMEOUT_MS, VENDOR_API_MAX_CHARS, secretOrNull, pathSegment, requestJson, excerpt, clampNumber, callVendorApi, gitlabBaseUrl, type JsonRequestErrors } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
 
 // ---------- gitlab ----------
@@ -20,28 +20,15 @@ function gitlabMapError(status: number, body: string): string {
   }
 }
 
-async function gitlabSend(url: string, init: RequestInit): Promise<JsonObject> {
-  let res: Response;
-  try {
-    res = await fetch(url, fetchTimeout(LIST_TIMEOUT_MS, init));
-  } catch (error) {
-    throw new Error(`gitlab unreachable: ${transportCause(error)}`);
-  }
-  const status = res.status;
-  let body: string;
-  try {
-    body = await res.text();
-  } catch {
-    throw new Error("gitlab returned an unreadable body");
-  }
-  if (!(status >= 200 && status < 300)) {
-    throw new Error(gitlabMapError(status, body));
-  }
-  try {
-    return JSON.parse(body) as JsonObject;
-  } catch {
-    throw new Error("gitlab returned bad json");
-  }
+const GITLAB_ERRORS: JsonRequestErrors = {
+  unreachable: (cause) => `gitlab unreachable: ${cause}`,
+  unreadable: () => "gitlab returned an unreadable body",
+  status: gitlabMapError,
+  badJson: () => "gitlab returned bad json",
+};
+
+function gitlabSend(url: string, init: RequestInit): Promise<JsonObject> {
+  return requestJson(url, init, LIST_TIMEOUT_MS, GITLAB_ERRORS);
 }
 
 function gitlabGet(base: string, token: string, path: string, query: [string, string][]): Promise<JsonObject> {
