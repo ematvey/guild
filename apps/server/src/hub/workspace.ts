@@ -2,21 +2,37 @@
 // archived chats, projects, the machine registry and the model list. The feed pushes them
 // together on every workspace change, so no client reads them over HTTP.
 
-import type { PlatformContext } from "../composition.js";
+import type { Config } from "../config.js";
 import type { UserRow } from "../platform/store/identity.js";
-import type { MachineRow } from "../platform/store/machines.js";
-import type { ProjectRow } from "../platform/store/projects.js";
+import type { MachineRow, MachineStore } from "../platform/store/machines.js";
+import type { ProjectRow, ProjectStore } from "../platform/store/projects.js";
+import type { ChatStore } from "../platform/store/chats.js";
+import type { OrgStore } from "../platform/store/orgs.js";
+import type { OrgKvStore } from "../platform/store/org-kv.js";
+import type { GatewayStore } from "../platform/store/gateway.js";
 import type { Chat, MachineInfo } from "@guild/wire/rest";
 import type { ModelOption } from "@guild/wire/types";
-import { servedWebBundle } from "../http/web.js";
-import { chatWire } from "../chats/chat-wire.js";
+import { servedWebBundle } from "../platform/web-bundle.js";
+import { chatWire, type ChatWireHub } from "../chats/chat-wire.js";
 import { DEFAULT_CONTEXT_WINDOW } from "../chats/context-usage.js";
 
 type Caller = Pick<UserRow, "org_id" | "id">;
 
+/** The stores and hub reads the workspace snapshots take. */
+export interface WorkspaceReads {
+  readonly config: Pick<Config, "webDistDir">;
+  readonly hub: ChatWireHub;
+  readonly chats: Pick<ChatStore, "listChats" | "listArchivedChats">;
+  readonly projects: Pick<ProjectStore, "list" | "listArchived">;
+  readonly orgs: Pick<OrgStore, "get">;
+  readonly orgKv: Pick<OrgKvStore, "telemetryEnabled">;
+  readonly gatewayStore: Pick<GatewayStore, "listModels">;
+  readonly machines: Pick<MachineStore, "listForUser">;
+}
+
 /** The caller's active chats, newest activity first. */
 export async function threadListSnapshot(
-  ctx: PlatformContext,
+  ctx: Pick<WorkspaceReads, "hub" | "chats">,
   user: Caller,
 ): Promise<Chat[]> {
   const rows = await ctx.chats.listChats(user.org_id, user.id);
@@ -25,7 +41,7 @@ export async function threadListSnapshot(
 
 /** The caller's archived chats, same row shape as the active list. */
 export async function archivedThreadListSnapshot(
-  ctx: PlatformContext,
+  ctx: Pick<WorkspaceReads, "hub" | "chats">,
   user: Caller,
 ): Promise<Chat[]> {
   const rows = await ctx.chats.listArchivedChats(user.org_id, user.id);
@@ -34,7 +50,7 @@ export async function archivedThreadListSnapshot(
 
 /** Active and archived project rows. */
 export async function projectListSnapshot(
-  ctx: PlatformContext,
+  ctx: Pick<WorkspaceReads, "projects">,
   user: Caller,
 ): Promise<{ projects: ProjectRow[]; archived_projects: ProjectRow[] }> {
   const [projects, archived] = await Promise.all([
@@ -48,7 +64,7 @@ export async function projectListSnapshot(
  *  in its title, the admin-controlled telemetry switch the clients obey,
  *  and the identity of the web bundle this server serves. */
 export async function workspaceIdentitySnapshot(
-  ctx: PlatformContext,
+  ctx: Pick<WorkspaceReads, "orgs" | "orgKv" | "config">,
   orgId: string,
 ): Promise<{ name: string; logo_url?: string; telemetry: boolean; web_bundle?: string }> {
   const [org, telemetry] = await Promise.all([
@@ -66,7 +82,7 @@ export async function workspaceIdentitySnapshot(
 
 /** The org's enabled chat models with their display names and context
  *  windows. */
-export async function modelListSnapshot(ctx: PlatformContext, orgId: string): Promise<ModelOption[]> {
+export async function modelListSnapshot(ctx: Pick<WorkspaceReads, "gatewayStore">, orgId: string): Promise<ModelOption[]> {
   const rows = await ctx.gatewayStore.listModels(orgId);
   return rows.map((row) => ({
     id: row.model,
@@ -93,7 +109,7 @@ export function machineInfo(row: MachineRow, connected: boolean): MachineInfo {
 
 /** The caller's registry rows, connected first, then by last seen. */
 export async function machineListSnapshot(
-  ctx: PlatformContext,
+  ctx: Pick<WorkspaceReads, "hub" | "machines">,
   user: Caller,
 ): Promise<MachineInfo[]> {
   const rows = await ctx.machines.listForUser(user.org_id, user.id);

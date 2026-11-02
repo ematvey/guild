@@ -1,11 +1,9 @@
-// M1 platform test harness: disposable Postgres database (verbatim Rust
-// migrations applied in order) + disposable S3 bucket + a built app
-// instance. Database name is namespaced `guild_m1_test_*` so the durable
-// storage suite (guild_durable_test_*) can run concurrently.
+// Platform test env: a disposable database with every migration applied
+// (`guild_platform_test_*`), a disposable S3 bucket, and a built app.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { createTestDatabase, testSuffix, TEST_ADMIN_URL } from "./postgres.js";
 import path from "node:path";
-import pg from "pg";
+import type pg from "pg";
 import {
   CreateBucketCommand,
   DeleteBucketCommand,
@@ -13,31 +11,22 @@ import {
   ListObjectsV2Command,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
 import { testClickhousePassword, testClickhouseUser, testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
 
-// vitest runs with cwd = apps/server; the migrations live in the Rust tree
-// (the historical record the TS schema ports verbatim).
+// vitest runs with cwd = apps/server.
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
 export const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
 
-export const TEST_ADMIN_URL =
-  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
+export { TEST_ADMIN_URL };
 export const TEST_S3_URL = process.env.GUILD_TEST_S3_URL ?? "http://localhost:9950";
 export const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_TEST_S3_ACCESS_KEY_ID");
 export const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_TEST_S3_SECRET_ACCESS_KEY");
 export const TEST_CLICKHOUSE_USER = testClickhouseUser();
 export const TEST_CLICKHOUSE_PASSWORD = testClickhousePassword();
 
-function randomSuffix(): string {
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export interface M1TestEnv {
+export interface PlatformTestEnv {
   databaseName: string;
   databaseUrl: string;
   bucketName: string;
@@ -48,27 +37,13 @@ export interface M1TestEnv {
   cleanup(): Promise<void>;
 }
 
-export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
-  const suffix = randomSuffix();
-  const databaseName = `guild_m1_test_${suffix}`;
-  const bucketName = `guild-m1-test-${suffix}`;
-
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-  await adminPool.query(`CREATE DATABASE "${databaseName}"`);
-  await adminPool.end();
-  const databaseUrl = new URL(TEST_ADMIN_URL);
-  databaseUrl.pathname = `/${databaseName}`;
-
-  // Seeding/preparation pool on the disposable database — never on the
-  // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-
-  // Apply the verbatim Rust migrations in order (plain SQL files).
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-  // The production startup path (applyPlatformMigrations): same filename
-  // order, same schema_history tracking hand-run deployments use.
-  await applyPlatformMigrations(migrationPool);
-  await migrationPool.end();
+export async function createPlatformTestEnv(logLevel = "error"): Promise<PlatformTestEnv> {
+  const suffix = testSuffix();
+  const database = await createTestDatabase("guild_platform_test_", { suffix, poolMax: 2 });
+  const databaseName = database.name;
+  const databaseUrl = new URL(database.url);
+  const dbPool = database.pool;
+  const bucketName = `guild-platform-test-${suffix}`;
 
   const s3 = new S3Client({
     endpoint: TEST_S3_URL,
@@ -85,7 +60,7 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
     GUILD_S3_ACCESS_KEY_ID: TEST_S3_ACCESS_KEY_ID,
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     GUILD_MASTER_KEY_HEX: "11".repeat(32),
-    GUILD_JWT_SECRET: "m1-test-jwt-secret",
+    GUILD_JWT_SECRET: "platform-test-jwt-secret",
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_POOL_MAX: "5",
@@ -99,7 +74,6 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
     if (done) return;
     done = true;
     await app.close();
-    await dbPool.end();
     // Best-effort bucket wipe, then drop the database.
     try {
       const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucketName }));
@@ -111,12 +85,7 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
       // cleanup is best-effort; the DB drop below is the important part
     }
     s3.destroy();
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-    try {
-      await dropTestDatabase(dropper, databaseName);
-    } finally {
-      await dropper.end();
-    }
+    await database.drop();
   };
 
   return { databaseName, databaseUrl: databaseUrl.toString(), bucketName, db: dbPool, app, config, cleanup };

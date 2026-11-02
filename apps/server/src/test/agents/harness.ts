@@ -1,8 +1,9 @@
-// Agents test harness: the shared disposable database/app, plus a clean
-// skip when the local Postgres cannot be reached. Only connection-level
-// error codes skip; a migration or query failure fails the suite.
+// Agents test harness: the shared disposable database/app. An unreachable
+// Postgres fails the suite like every other database suite; with
+// GUILD_TEST_SKIP_DB=1 it skips instead. Only connection-level error codes
+// count as unreachable; a migration or query failure always fails.
 
-import type { M5TestEnv } from "../platform/m5-harness.js";
+import type { HubTestEnv } from "../support/hub-env.js";
 
 const UNAVAILABLE_CODES = new Set([
   "ECONNREFUSED",
@@ -23,13 +24,14 @@ function isUnavailable(error: unknown): boolean {
   return false;
 }
 
-/** Returns the shared test env, or null when Postgres is not available. */
-export async function createAgentsTestEnv(): Promise<M5TestEnv | null> {
+/** Returns the shared test env, or null when Postgres is unreachable and
+ *  GUILD_TEST_SKIP_DB=1 asks for a skip. */
+export async function createAgentsTestEnv(): Promise<HubTestEnv | null> {
   try {
-    const { createM5TestEnv } = await import("../platform/m5-harness.js");
-    return await createM5TestEnv("silent");
+    const { createHubTestEnv } = await import("../support/hub-env.js");
+    return await createHubTestEnv("silent");
   } catch (error) {
-    if (isUnavailable(error)) {
+    if (isUnavailable(error) && process.env.GUILD_TEST_SKIP_DB === "1") {
       console.warn(`agents tests skipped: ${(error as Error).message}`);
       return null;
     }

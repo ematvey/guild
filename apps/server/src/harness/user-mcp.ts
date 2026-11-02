@@ -20,10 +20,10 @@ import { toolSchema } from "./tool-schema.js";
 import { userMcpToolName } from "../platform/domain/mcp.js";
 export { userMcpToolName } from "../platform/domain/mcp.js";
 import type { Logger } from "pino";
-import { mcpConnect } from "../platform/integrations/mcp.js";
-import { validateUrl } from "../platform/integrations/mcp-url.js";
+import { mcpConnect } from "../integrations/mcp.js";
+import { validateUrl } from "../integrations/mcp-url.js";
 import type { JsonObject } from "../integrations/shared.js";
-import type { UserMcpStore } from "../platform/store/userMcp.js";
+import type { UserMcpStore } from "../platform/store/user-mcp.js";
 import type { TurnPreparation } from "./integrations.js";
 
 interface ResolvedTool {

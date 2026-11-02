@@ -3,15 +3,15 @@
 // session revocation → AuthRequired, displaced notices over real sockets.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createM5TestEnv, type M5TestEnv } from "./m5-harness.js";
+import { createHubTestEnv, type HubTestEnv } from "../support/hub-env.js";
 import { ScriptedClient } from "./ws-driver.js";
 import crypto from "node:crypto";
 
-let env: M5TestEnv;
+let env: HubTestEnv;
 let base: string;
 
 beforeAll(async () => {
-  env = await createM5TestEnv();
+  env = await createHubTestEnv();
   base = await env.listen();
 }, 60_000);
 

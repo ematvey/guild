@@ -4,7 +4,7 @@
 // tools/call (the tool call maps the peer's content blocks to the
 // integration outcome contract, mcp_call_tool).
 
-import type { JsonObject } from "../../integrations/shared.js";
+import type { JsonObject } from "./shared.js";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 /** rmcp's default request timeout. */

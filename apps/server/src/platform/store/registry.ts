@@ -41,7 +41,7 @@ export interface StoredVersion {
   bundle_sha256: string | null;
 }
 
-/** Struct-serialized shape (serde declaration order) for the wire. */
+/** The wire shape, fields in wire order. */
 function itemRow(r: Record<string, unknown>): RegistryItemRow {
   return {
     slug: r.slug as string,

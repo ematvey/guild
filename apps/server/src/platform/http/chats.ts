@@ -28,7 +28,8 @@ import {
 import type { UserRow } from "../store/identity.js";
 import type { Chat } from "@guild/wire/rest";
 import { chatWire } from "../../chats/chat-wire.js";
-import { DEFAULT_CONTEXT_WINDOW } from "../../chats/context-usage.js";
+import { DEFAULT_CONTEXT_WINDOW, contextUsage } from "../../chats/context-usage.js";
+import { compactionStatus } from "../../chats/compaction.js";
 import { ThreadAgentLocked } from "../../harness/runtime.js";
 import { optionalUuidField, submitTurn } from "../../chats/submit-turn.js";
 
@@ -149,7 +150,7 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
-    const usage = await chats.threads.contextUsage(user.org_id, chatId);
+    const usage = await contextUsage(chats.pool, user.org_id, chatId);
     const model = queryParam(req, "model") || usage?.model || null;
     const max = model === null ? null :
       (await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW;
@@ -460,7 +461,7 @@ export function registerChatsRoutes(
     if (!/^\d+$/.test(rawTaskId) || !Number.isSafeInteger(taskId) || taskId < 1) {
       throw ApiError.badRequest("invalid compaction task ID");
     }
-    const status = await chats.chats.compactionStatus(chatId, taskId);
+    const status = await compactionStatus(chats.pool, chatId, taskId);
     if (!status) throw ApiError.notFound("no such compaction");
     return reply.send(status);
   });

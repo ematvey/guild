@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
-import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "./support/postgres.js";
 let database: DisposableDatabase;
 beforeAll(async () => { database = await createDisposableDatabase(); });
 afterAll(async () => { await dropDisposableDatabase(database.name); });

@@ -1,74 +1,123 @@
-import { ApiError } from "../platform/errors.js";
 // One forked worker process: owns one chat's conversation end to end —
 // scoped durable harness, bridge, codemode sandbox, executor envs — and
 // serves admission, control, and live frames over the supervisor's IPC
 // protocol. Transcript rows and approval decisions cross through Postgres.
+// This is the worker process's composition root: it builds its runtime
+// from the same parts the server's does, scoped to its chat.
 
 import pino from "pino";
 import { ObjectStore } from "../platform/s3.js";
 import { createPlatformPool } from "../platform/db.js";
-import { GuildRuntime } from "../harness/runtime.js";
-import { loadConfig } from "../config.js";
-import type { BufferUpdate, SubmitTurnWireInput, WorkerRequest, WorkerResponse } from "./protocol.js";
+import { createStores } from "../platform/stores.js";
+import { masterKeyBytes } from "../platform/crypto.js";
+import { clickhouseFromConfig } from "../platform/clickhouse.js";
+import { TraceStore } from "../platform/trace.js";
+import { AgentStore } from "../agents/store.js";
+import { GuildRuntime, type SubmitTurnInput } from "../harness/runtime.js";
+import { loadWorkerConfig } from "../config.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 import { IpcMachineDispatch } from "./dispatch-proxy.js";
-import { ClickhouseClient } from "../platform/clickhouse.js";
-import { TraceStore } from "../platform/trace.js";
+import { failure, failureError, type BufferUpdate, type ServerToWorker, type WorkerToServer } from "./protocol.js";
 
-const config = loadConfig(process.env);
+/** How long a worker waits for the server to answer one of its requests. */
+const REMOTE_TIMEOUT_MS = 120_000;
+
+const { config, chatId } = loadWorkerConfig(process.env);
 const log = pino({ level: config.logLevel });
-
-const chatId = process.env.GUILD_WORKER_CHAT_ID;
-if (!chatId) throw new Error("GUILD_WORKER_CHAT_ID is not set — this entry is forked by the supervisor only");
 
 const pool = createPlatformPool(config.databaseUrl, config.poolMax);
 const objects = new ObjectStore(config);
+const stores = createStores(pool);
+const secretsKey = masterKeyBytes(config.masterKeyHex);
+
+function send(message: WorkerToServer): void {
+  if (process.connected) process.send!(message);
+}
+
+// The worker's own requests (dispatch, remote admission) share one ref
+// space, answered by the server's `reply` frames.
+let workerRef = 0;
+const nextRef = (): number => (workerRef += 1);
 // The worker has no hub connection: machine-tool dispatch proxies to the
 // server over the fork IPC channel (worker/dispatch-proxy.ts).
-const ipcDispatch = new IpcMachineDispatch((message) => send(message));
-const remotePending = new Map<number, { resolve: (value: number) => void; reject: (error: Error) => void }>();
-let remoteSeq = 0;
-const remoteSubmit = (targetChatId: string, _orgId: string, input: SubmitTurnWireInput): Promise<number> => {
-  const ref = 1_000_000 + (remoteSeq += 1);
-  return new Promise<number>((resolve, reject) => {
-    remotePending.set(ref, { resolve, reject });
-    send({ t: "remote-submit", ref, chatId: targetChatId, input });
+const ipcDispatch = new IpcMachineDispatch((message) => send(message), nextRef);
+const remotePending = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+>();
+
+/** One worker request to the server, rejected when it times out or the
+ *  channel closes. */
+function remote(message: Extract<WorkerToServer, { t: "remote-submit" | "remote-deliver-steer" }>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      remotePending.delete(message.ref);
+      reject(new Error(`server did not answer ${message.t} in time`));
+    }, REMOTE_TIMEOUT_MS);
+    timer.unref?.();
+    remotePending.set(message.ref, { resolve, reject, timer });
+    if (!process.connected) {
+      rejectRemote(new Error("worker channel is closed"));
+      return;
+    }
+    send(message);
   });
-};
-const remoteDeliverSteer = (targetChatId: string, orgId: string, text: string, model: string | null): Promise<void> => {
-  const ref = 1_000_000 + (remoteSeq += 1);
-  return new Promise<void>((resolve, reject) => {
-    remotePending.set(ref, { resolve: () => resolve(), reject });
-    send({ t: "remote-deliver-steer", ref, chatId: targetChatId, orgId, text, model });
-  });
-};
+}
+
+function rejectRemote(error: Error): void {
+  for (const pending of remotePending.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+  remotePending.clear();
+}
+
 // The worker owns its chat's run lifecycle and tool calls, so it writes the
 // same traces and spans the server does (the gateway writes the LLM spans).
-const clickhouse = new ClickhouseClient({
-  url: config.clickhouseUrl,
-  database: config.clickhouseDatabase,
-  user: config.clickhouseUser,
-  password: config.clickhousePassword,
-});
-const trace = new TraceStore(clickhouse, config.tracePayloads);
-const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, trace, undefined, {
-  chatId,
-  dispatch: ipcDispatch,
-  remoteSubmit,
-  remoteDeliverSteer,
+const trace = new TraceStore(clickhouseFromConfig(config), config.tracePayloads);
+const runtime = new GuildRuntime({
+  config,
+  pool,
+  log,
+  stores,
+  agents: new AgentStore(pool, trace, config.agentWorkspaceWriteRoot),
+  masterKey: () => secretsKey,
+  objects,
+  trace,
+  placement: {
+    kind: "worker",
+    chatId,
+    dispatch: ipcDispatch,
+    remote: {
+      submit: async (targetChatId: string, _orgId: string, input: SubmitTurnInput) =>
+        Number(await remote({ t: "remote-submit", ref: nextRef(), chatId: targetChatId, input })),
+      deliverSteer: async (targetChatId, orgId, text, model) => {
+        await remote({ t: "remote-deliver-steer", ref: nextRef(), chatId: targetChatId, orgId, text, model });
+      },
+    },
+  },
 });
 let mirrored: LiveBuffers = { text: "", thinking: "" };
 const bufferUpdate = (previous: string, current: string): BufferUpdate | undefined =>
-  previous === current ? undefined : current.startsWith(previous)
-    ? { append: current.slice(previous.length) } : { replace: current };
+  previous === current
+    ? undefined
+    : current.startsWith(previous)
+      ? { append: current.slice(previous.length) }
+      : { replace: current };
 runtime.setStreamSink({
   open(_chat, generationId) {
     mirrored = { text: "", thinking: "" };
     send({ t: "stream", action: "open", generationId });
   },
-  event(_chat, event) { send({ t: "stream", action: "event", event }); },
-  dirty() { send({ t: "stream", action: "dirty" }); },
-  close() { send({ t: "stream", action: "close" }); },
+  event(_chat, event) {
+    send({ t: "stream", action: "event", event });
+  },
+  dirty() {
+    send({ t: "stream", action: "dirty" });
+  },
+  close() {
+    send({ t: "stream", action: "close" });
+  },
   buffers(_chat, current) {
     const text = bufferUpdate(mirrored.text, current.text);
     const thinking = bufferUpdate(mirrored.thinking, current.thinking);
@@ -77,16 +126,17 @@ runtime.setStreamSink({
   },
 });
 
-runtime.setTurnEnded(async (chatId, failed) => {
-  send({ t: "turn-ended", chatId, failed });
+runtime.setTurnEnded(async (endedChatId, failed) => {
+  send({ t: "turn-ended", chatId: endedChatId, failed });
 });
 
 let heartbeat: NodeJS.Timeout | undefined;
 
 async function shutdown(): Promise<void> {
   if (heartbeat) clearInterval(heartbeat);
-  await runtime.close().catch(() => {});
-  await pool.end().catch(() => {});
+  rejectRemote(new Error("worker is shutting down"));
+  await runtime.close().catch((error: unknown) => log.warn({ err: error, chatId }, "runtime close failed"));
+  await pool.end().catch((error: unknown) => log.warn({ err: error, chatId }, "pool close failed"));
   process.exit(0);
 }
 
@@ -97,10 +147,6 @@ process.on("disconnect", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());
 
-function send(message: unknown): void {
-  if (process.connected) process.send!(message);
-}
-
 async function main(): Promise<void> {
   await runtime.start();
   heartbeat = setInterval(() => send({ t: "heartbeat" }), 15_000);
@@ -110,21 +156,22 @@ async function main(): Promise<void> {
 }
 
 process.on("message", (raw: unknown) => {
-  const message = raw as WorkerRequest | WorkerResponse;
+  const message = raw as ServerToWorker;
   if (!message || typeof message !== "object" || !("t" in message)) return;
-  // A dispatch reply (the server answering a worker-initiated proxy call).
-  if (message.t === "result") {
+  // The server answering one of this worker's requests.
+  if (message.t === "reply") {
     const pending = remotePending.get(message.ref);
-    if (pending) {
+    if (pending !== undefined) {
       remotePending.delete(message.ref);
-      if (message.ok) pending.resolve(Number(message.data));
-      else pending.reject(new Error(message.error));
+      clearTimeout(pending.timer);
+      if (message.ok) pending.resolve(message.data);
+      else pending.reject(failureError(message));
       return;
     }
-    ipcDispatch.onResponse(message as WorkerResponse);
+    ipcDispatch.onReply(message);
     return;
   }
-  const request = message as WorkerRequest;
+  const request = message;
   void (async () => {
     try {
       let data: unknown;
@@ -152,13 +199,7 @@ process.on("message", (raw: unknown) => {
       }
       send({ t: "result", ref: request.ref, ok: true, data });
     } catch (error) {
-      send({
-        t: "result",
-        ref: request.ref,
-        ok: false,
-        error: (error as Error)?.message ?? String(error),
-        ...(error instanceof ApiError ? { status: error.status, code: error.code } : {}),
-      });
+      send({ t: "result", ref: request.ref, ...failure(error) });
       log.error({ err: error, chatId, kind: request.t }, "worker request failed");
     }
   })();

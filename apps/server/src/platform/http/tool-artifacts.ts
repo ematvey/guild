@@ -7,7 +7,7 @@ import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireUser, sendJson } from "./error.js";
-import { toolArtifactObjectKey } from "../store/toolArtifacts.js";
+import { toolArtifactObjectKey } from "../store/tool-artifacts.js";
 import type { UserRow } from "../store/identity.js";
 
 export function registerToolArtifactRoutes(
@@ -22,7 +22,7 @@ export function registerToolArtifactRoutes(
   app.get("/api/v1/chats/:chatId/tool_artifacts", async (req, reply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "chatId");
-    await readableByExecutor(chats, infra.pool, user.org_id, chatId, user);
+    await readableByExecutor(chats, user.org_id, chatId, user);
     const rows = await chats.toolArtifacts.listForChat(user.org_id, chatId);
     // Rows render with sorted keys at every level.
     return sendJson(reply, rows.map((r) => sortedJson(r)));
@@ -36,7 +36,7 @@ export function registerToolArtifactRoutes(
     // The artifact rides a chat, so the chat's owner predicate applies (the
     // same check as the attachments download); the chat's executor machine
     // also reads — spill prefetch and first-touch fetch.
-    await readableByExecutor(chats, infra.pool, user.org_id, row.chat_id, user);
+    await readableByExecutor(chats, user.org_id, row.chat_id, user);
     const key = toolArtifactObjectKey(row.org_id, row.id, row.filename);
     let bytes: Buffer;
     try {
@@ -55,18 +55,14 @@ export function registerToolArtifactRoutes(
 /** The chat's bound machine (project machine first, else the chat's) reads
  *  with its owner's member token; everyone else passes the chat's read
  *  gate. */
-async function readableByExecutor(chats: ChatsCtx, pool: InfraContext["pool"], orgId: string, chatId: string, user: UserRow): Promise<void> {
-  const res = await pool.query<{ machine_id: string | null }>(
-    "SELECT COALESCE(pr.machine_id, c.machine_id) AS machine_id FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.org_id = $1 AND c.id = $2",
-    [orgId, chatId],
-  );
-  const machineId = res.rows[0]?.machine_id ?? null;
+async function readableByExecutor(chats: ChatsCtx, orgId: string, chatId: string, user: UserRow): Promise<void> {
+  const machineId = await chats.chats.executorMachineOf(orgId, chatId);
   if (machineId !== null) {
     try {
       const owner = await chats.machines.ownerOf(machineId);
       if (owner !== null && owner[0] === user.id && owner[1] === orgId) return;
     } catch (error) {
-      chats.wsLog?.(`machine read gate failed for ${machineId}: ${String(error)}`);
+      chats.sockets.log(`machine read gate failed for ${machineId}: ${String(error)}`);
     }
   }
   await chats.chats.getChat(orgId, chatId, user);

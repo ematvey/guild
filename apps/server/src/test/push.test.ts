@@ -3,16 +3,16 @@
 // so the test asserts what the server decides, not what a push service does.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { PushStore } from "../platform/store/push.js";
 import { PushNotifier, pushTopic, turnEndedPayload } from "../push/notifier.js";
 import { isPushServiceEndpoint, type PushResult, type PushSender } from "../push/sender.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let store: PushStore;
 
 beforeAll(async () => {
-  stack = await setupM2Stack({}, { dbPrefix: "guild_push_test_" });
+  stack = await setupGatewayStack({}, { dbPrefix: "guild_push_test_" });
   store = new PushStore(stack.env.db);
 });
 

@@ -5,8 +5,9 @@
 // machine binding, the approval-mode override, and the generating flag with
 // its same-transaction `guild_chat_status` notify.
 
-import { generationWorkSql } from "./work.js";
+import { generationWorkSql } from "../../storage/postgres/queries.js";
 import { ApiError } from "../errors.js";
+import { readsWholeOrg } from "../domain/access.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
@@ -39,10 +40,13 @@ export interface ChatOwner {
   role: string;
 }
 
-export type CompactionStatus =
-  | { status: "running" }
-  | { status: "completed"; compacted: boolean }
-  | { status: "failed"; error: string };
+/** A chat's tenant, owner, machine binding and archive state. */
+export interface ChatIdentity {
+  org_id: string;
+  user_id: string;
+  machine_id: string | null;
+  archived: boolean;
+}
 
 export interface ChatListRow {
   id: string;
@@ -127,11 +131,10 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
   ) le ON true`;
 
-/** Routine runs and delegation children are execution transcripts, not
- *  conversations: they stay out of the sidebar lists. The HTTP lists and the
- *  WebSocket thread_list push share this one predicate. */
-/** A sidebar row is a user conversation: subagent and routine threads are
- *  execution transcripts, reachable by direct link but never listed. */
+/** A sidebar row is a user conversation: routine runs and delegation
+ *  children are execution transcripts, reachable by direct link but never
+ *  listed. The HTTP lists and the socket's thread_list push share this one
+ *  predicate. */
 export const USER_THREAD = `NOT EXISTS (
     SELECT 1 FROM agent_threads xt
     WHERE xt.chat_id = c.id AND xt.type <> 'user'
@@ -188,44 +191,6 @@ function withStatusNotify(update: string): string {
 
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
-
-  /** A manual compaction can finish successfully without appending a summary. */
-  async compactionStatus(chatId: string, taskId: number): Promise<CompactionStatus | null> {
-    // Records are JSON text; parse here instead of casting them to jsonb.
-    const result = await this.pool.query<{ status: string; record: string }>(
-      `SELECT t.status,t.record FROM tasks t
-       JOIN chat_conversations c ON c.conversation_id=t.conversation_id
-       WHERE c.chat_id=$1 AND t.id=$2 AND t.kind='"pi.compaction"'`,
-      [chatId, taskId],
-    );
-    const row = result.rows[0];
-    if (!row) return null;
-    const outcome = (JSON.parse(row.record) as {
-      state?: { outcome?: { status: string; result?: { entryId?: number; submissionId?: number }; error?: { message?: string }; reason?: string } };
-    }).state?.outcome ?? null;
-    if (row.status !== "terminal") return { status: "running" };
-    if (outcome?.status === "completed") {
-      const submissionId = outcome.result?.submissionId;
-      if (submissionId !== undefined) {
-        const placed = await this.pool.query<{ status: string; record: string }>(
-          `SELECT s.status,s.record FROM submissions s
-           JOIN chat_conversations c ON c.conversation_id=s.conversation_id
-           WHERE c.chat_id=$1 AND s.id=$2`,
-          [chatId, submissionId],
-        );
-        const placedRow = placed.rows[0];
-        const placedRecord = placedRow === undefined
-          ? undefined
-          : (JSON.parse(placedRow.record) as { type?: string; reason?: string });
-        const write = placedRecord?.type === "write" ? placedRow : undefined;
-        if (write?.status === "queued") return { status: "running" };
-        if (write?.status === "done") return { status: "completed", compacted: true };
-        return { status: "failed", error: placedRecord?.reason === "aborted" ? "Compaction was cancelled" : "Compaction summary was superseded or could not be applied" };
-      }
-      return { status: "completed", compacted: outcome.result?.entryId !== undefined };
-    }
-    return { status: "failed", error: outcome?.error?.message ?? outcome?.reason ?? "Compaction did not complete" };
-  }
 
   /** The chat's org and owner (the agent tools' caller identity: the
    *  conversation → chat → owner mapping), with the owner's account fields.
@@ -363,10 +328,9 @@ export class ChatStore {
    *  not read other members' threads. A deleted chat still resolves (its
    *  transcript stays reachable by link). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
-    const isAdmin = caller.role === "admin";
     const res = await this.pool.query<Record<string, unknown>>(
       `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)`,
-      [orgId, chatId, caller.id, isAdmin],
+      [orgId, chatId, caller.id, readsWholeOrg(caller)],
     );
     const row = res.rows[0];
     if (!row) throw ApiError.notFound("no such chat");
@@ -634,6 +598,15 @@ export class ChatStore {
     return res.rows[0]!.approval ?? null;
   }
 
+  /** The chat's generating flag in the org; null when no such chat. */
+  async generatingOf(orgId: string, chatId: string): Promise<boolean | null> {
+    const res = await this.pool.query<{ generating: boolean }>(
+      "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
+      [chatId, orgId],
+    );
+    return res.rows[0]?.generating ?? null;
+  }
+
   /** The chat's generating flag (the approval route's live-turn check). */
   async isGenerating(orgId: string, chatId: string): Promise<boolean> {
     const res = await this.pool.query<{ generating: boolean }>(
@@ -746,12 +719,6 @@ export class ChatStore {
     ]);
   }
 
-  /** Marks the chat read for the caller: the marker moves to the newest
-   *  thread event's `seq` (migration 0066 shape — event ids cannot order
-   *  events; the BIGSERIAL write order is the comparison space). The marker
-   *  only ever moves forward: a read frame that arrives late, or a repeat
-   *  sent after a reconnect, cannot resurrect an already-cleared dot. A chat
-   *  with no events has nothing unread — no marker. */
   /** The seq of the chat's newest durable event; null for an empty log. */
   async lastEventSeq(chatId: string): Promise<number | null> {
     const res = await this.pool.query<{ seq: string }>(
@@ -770,22 +737,90 @@ export class ChatStore {
     return res.rows[0] === undefined ? null : Number(res.rows[0].last_read_seq);
   }
 
+  /** Marks the chat read for the caller: the marker moves to the newest
+   *  thread event's `seq` (the BIGSERIAL write order is the comparison
+   *  space; event ids cannot order events). The marker only ever moves
+   *  forward: a read frame that arrives late, or a repeat sent after a
+   *  reconnect, cannot resurrect an already-cleared dot. A chat with no
+   *  events has nothing unread — no marker. A marker that moved pushes the
+   *  user's workspace lists in the same statement (every other open client
+   *  of this user clears the dot); a read that moves nothing notifies no
+   *  one. */
   async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
     await this.getChat(orgId, chatId, caller);
     const lastReadSeq = await this.lastEventSeq(chatId);
     if (lastReadSeq === null) return;
     await this.pool.query(
-      `INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
-       ON CONFLICT (chat_id, user_id) DO UPDATE
-         SET last_read_seq = GREATEST(chat_reads.last_read_seq, EXCLUDED.last_read_seq)`,
-      [chatId, caller.id, lastReadSeq],
+      `WITH moved AS (
+         INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
+         ON CONFLICT (chat_id, user_id) DO UPDATE
+           SET last_read_seq = EXCLUDED.last_read_seq
+           WHERE chat_reads.last_read_seq < EXCLUDED.last_read_seq
+         RETURNING 1
+       )
+       SELECT pg_notify('guild_workspace', $4) FROM moved`,
+      [
+        chatId,
+        caller.id,
+        lastReadSeq,
+        JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId, parts: CHAT_LIST_PARTS }),
+      ],
     );
-    // The marker is sidebar state: every other open client of this user
-    // must clear the dot, so the read write pushes the workspace lists.
-    await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId, parts: CHAT_LIST_PARTS }),
-    ]);
   }
+
+  /** The chat's tenant, owner, machine binding and archive state; null
+   *  when the chat is gone. */
+  async identityOf(chatId: string): Promise<ChatIdentity | null> {
+    const res = await this.pool.query<ChatIdentity>(
+      "SELECT org_id, user_id, machine_id, archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
+      [chatId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /** Where a machine-bound chat's tools run: the machine, its label, the
+   *  org, and the project folder; null when the chat is gone or has no
+   *  machine. */
+  async machineBinding(
+    chatId: string,
+  ): Promise<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null } | null> {
+    const res = await this.pool.query<{
+      machine_id: string | null;
+      machine_label: string | null;
+      org_id: string;
+      project_folder: string | null;
+    }>(
+      `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
+       FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
+      [chatId],
+    );
+    const row = res.rows[0];
+    return row === undefined || row.machine_id === null ? null : { ...row, machine_id: row.machine_id };
+  }
+
+  /** The machine a chat's tools run on: its project's machine first, else
+   *  its own binding; null for a server-side chat or a missing one. */
+  async executorMachineOf(orgId: string, chatId: string): Promise<string | null> {
+    const res = await this.pool.query<{ machine_id: string | null }>(
+      "SELECT COALESCE(pr.machine_id, c.machine_id) AS machine_id FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.org_id = $1 AND c.id = $2",
+      [orgId, chatId],
+    );
+    return res.rows[0]?.machine_id ?? null;
+  }
+
+  /** The chat's org; null when the chat is gone. */
+  async orgOf(chatId: string): Promise<string | null> {
+    const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+    return res.rows[0]?.org_id ?? null;
+  }
+
+  /** The chat's org; throws when the chat is gone. */
+  async requireOrgOf(chatId: string): Promise<string> {
+    const orgId = await this.orgOf(chatId);
+    if (orgId === null) throw ApiError.notFound(`chat ${chatId} not found`);
+    return orgId;
+  }
+
 }
 
 function rowToList(r: Record<string, unknown>): ChatListRow {

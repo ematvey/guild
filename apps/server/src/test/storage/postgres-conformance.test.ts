@@ -9,7 +9,7 @@ import {
   dropDisposableDatabase,
   resetDurableTables,
   type DisposableDatabase,
-} from "../../storage/postgres/test-support.js";
+} from "../support/postgres.js";
 
 const shared: { database: DisposableDatabase | undefined } = { database: undefined };
 

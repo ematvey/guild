@@ -81,6 +81,10 @@
         {
           "where": "apps/server/src/harness/runtime.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/store/conversations.ts",
+          "role": "domain"
         }
       ],
       "translations": [
@@ -201,6 +205,10 @@
         {
           "where": "apps/server/src/worker/protocol.ts",
           "role": "wire"
+        },
+        {
+          "where": "apps/server/src/harness/turn-backend.ts",
+          "role": "domain"
         }
       ],
       "translations": [
@@ -320,15 +328,31 @@
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/storage/postgres/benchmark.ts",
+      "where": "apps/server/src/test/storage/benchmark.ts",
       "reason": "infrastructure"
     },
     {
-      "where": "apps/server/src/storage/postgres/test-support.ts",
+      "where": "apps/server/src/test/support/postgres.ts",
       "reason": "infrastructure"
     },
     {
       "where": "apps/server/vitest.config.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/hub/keyed-chain.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/domain/access.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/stores.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/server/src/platform/web-bundle.ts",
       "reason": "infrastructure"
     }
   ],

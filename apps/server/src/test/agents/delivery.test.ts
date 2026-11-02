@@ -13,7 +13,7 @@ import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
 import { pgTimestampToRfc3339 } from "../../platform/time.js";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
 const answer = {
   body:
@@ -31,7 +31,7 @@ async function until(probe: () => Promise<boolean>, timeout = 25_000): Promise<v
 }
 
 describe("child result delivery", () => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
   let store: AgentStore;
   let threads: ThreadStore;
   let lifecycle: AgentRunLifecycle;
@@ -42,7 +42,7 @@ describe("child result delivery", () => {
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = (probe.address() as AddressInfo).port;
     await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
-    stack = await setupM2Stack({
+    stack = await setupGatewayStack({
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_ALLOW_SHELL_TOOLS: "1",
     });

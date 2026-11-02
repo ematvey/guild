@@ -1,9 +1,9 @@
-// M7 suites: the script-facing integration tool API, the admin integration
-// save path (config validation, secret merge, connection tests against local
-// fake connector/MCP servers), the tools listing, and the /api/v1/me/approval
-// policy surface — against a disposable guild_m7_test_* database. The Rust
-// wire shapes are pinned by fixtures/m7-rust-capture.json (captured from a
-// local build of the real Rust server).
+// Integration admin: the script-facing integration tool API, the admin
+// integration save path (config validation, secret merge, connection tests
+// against local fake connector/MCP servers), the tools listing, and the
+// /api/v1/me/approval policy surface — against a disposable database. The
+// wire shapes are pinned by the fixed capture in
+// platform/fixtures/integration-admin-capture.json.
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
@@ -12,11 +12,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { InjectPayload } from "light-my-request";
-import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./platform/object-store-stack.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
 
 const PASSWORD = "hunter227";
 const CAPTURE = JSON.parse(
-  readFileSync(path.join(process.cwd(), "src/test/platform/fixtures/m7-rust-capture.json"), "utf8"),
+  readFileSync(path.join(process.cwd(), "src/test/platform/fixtures/integration-admin-capture.json"), "utf8"),
 ) as Record<string, { status: number; body: string }>;
 
 interface Env {

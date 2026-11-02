@@ -1,14 +1,15 @@
-import { TranscriptProjection } from "./projection.js";
-import { canonicalJson } from "../platform/domain/json.js";
 // The event bridge: pi-durable `watchEvents()` streams → thread_events rows
 // + generating flag + turn-command settlement, with the exact thread-event
-// frame contract (turn/step numbering, UsagePayload fields, serde-ordered
+// frame contract (turn/step numbering, UsagePayload fields, field-ordered
 // wire rows — see platform/domain/thread-events.ts).
 //
 // Turn semantics: one Guild turn = one client request = one pi-durable run
 // (turn number derived from the log at each run_start, so restarts cannot
 // drift); steered inputs join the running turn, follow-ups start the next.
-// Steps count model calls within the turn, exactly like the ChatRunner.
+// Steps count model calls within the turn.
+
+import { TranscriptProjection, type ProjectionState } from "./projection.js";
+import { canonicalJson } from "../platform/domain/json.js";
 
 import type { Conversation, EntryId, SnapshotEvent, SubmissionRecord, JsonObject } from "@earendil-works/pi-durable";
 import type { AgentEvent } from "@earendil-works/pi-durable";
@@ -17,10 +18,10 @@ import type { Logger } from "pino";
 import type { StreamWireEvent } from "../hub/protocol.js";
 import { uuidv7 } from "../platform/time.js";
 import type { ObjectStore } from "../platform/s3.js";
-import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import type { TurnCommandStore } from "../platform/store/turn_commands.js";
+import type { TurnCommandStore } from "../platform/store/turn-commands.js";
 import { turnErrorEvent, type MessageAttachment, type ThreadEventRow } from "../platform/domain/thread-events.js";
 
 export interface LiveBuffers {
@@ -71,13 +72,9 @@ export interface BridgeDeps {
   log: Logger;
 }
 
-interface BridgeState {
-  chatId: string;
-  orgId: string;
-  turn: number;
-  step: number;
+/** The projection's per-conversation state plus the live turn's. */
+interface BridgeState extends ProjectionState {
   handledEntries: Set<string>;
-  currentModel: string | null;
   buffers: LiveBuffers;
   /** The open generation's identity (live_frame generation_id) — the run's
    *  originating command id; null until a run starts. */
@@ -87,11 +84,6 @@ interface BridgeState {
   /** The run's failure message (pi.generation task_failed) — Error terminal
    *  at run end. */
   failure: string | null;
-  /** Last appended assistant row id (the stop epilogue's Done message_id). */
-  lastEventId: string | null;
-  /** Spilled pointer text per tool call id (the ToolCompleted stream card
-   *  carries the pointer). */
-  spilled: Map<string, string>;
   /** Answer text has streamed for the current assistant message. Some
    *  backends (local vLLM) emit a trailing reasoning delta after the answer
    *  has begun; streaming it live would split the thought block into
@@ -99,7 +91,6 @@ interface BridgeState {
    *  buffers.thinking and lands in the durable reasoning block at the turn
    *  boundary, so live frames stop at the first text delta. */
   textStarted: boolean;
-  legacyThrough?: number;
 }
 
 function invocationOf(submissionId: number): string {

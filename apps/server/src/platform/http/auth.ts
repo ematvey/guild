@@ -1,11 +1,14 @@
 // Auth API — managed accounts: bootstrap, login, me, refresh, logout,
-// pairing. Opaque random
-// bearer tokens stored as sha256; sessions stamp the auth_generation of the
-// credential that minted them.
+// pairing. Opaque random bearer tokens stored as sha256; sessions stamp the
+// auth_generation of the credential that minted them. Also the LLM
+// gateway's credential: a gk_… key or the config-minted internal key.
 
+import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { Config } from "../../config.js";
+import type { ApiKeyStore } from "../store/api-keys.js";
+import type { GatewayCredential } from "../llm-gateway.js";
 import type { IdentityCtx } from "../route-contexts.js";
-import type { PlatformPool } from "../db.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam, sendJson } from "./error.js";
@@ -13,6 +16,64 @@ import { secretFromCode } from "../store/pairing.js";
 import { addressThrottle, loginThrottle } from "./login-throttle.js";
 import type { UserRow } from "../store/identity.js";
 import type { UserInfo } from "@guild/wire/rest";
+
+// Fixed identities for the config-minted internal gateway key. Usage rows
+// for internal calls stay distinct through them: the synthetic caller id
+// belongs to no user row, so per-user breakdowns show it separately
+// (unknown ids keep the raw value in the UI). The constants are pinned
+// (sha256("guild-internal-caller")/sha256("guild-internal-key"), formatted
+// as UUIDs).
+const INTERNAL_CALLER_UUID = "084e9c72-8c73-636b-f784-132bbeaf766e";
+const INTERNAL_KEY_UUID = "bf14cf48-bd7d-5fb6-6c0f-9047919fb0d8";
+
+/** Byte-wise comparison with no early exit; unequal lengths are unequal. */
+function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/** Resolves a gateway bearer token (gk_… key or the config-minted internal
+ *  key) to the credential the LLM gateway endpoints meter against. The
+ *  internal key never exists as a row: it is org-scoped via the
+ *  x-guild-org-id request header the harness sends, with optional
+ *  x-guild-user-id / x-guild-session-id attribution overrides. */
+export async function gatewayCredential(
+  ctx: { readonly apiKeys: Pick<ApiKeyStore, "authenticate">; readonly config: Pick<Config, "internalKey"> },
+  req: { headers: Record<string, unknown> },
+): Promise<GatewayCredential> {
+  const header = req.headers["authorization"];
+  const bearer = typeof header === "string" && header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+  const xApiKey = typeof req.headers["x-api-key"] === "string" ? (req.headers["x-api-key"] as string) : null;
+  const token = [bearer, xApiKey].find((t) => t !== null && t !== "") ?? null;
+  if (token === null) throw ApiError.unauthorized("missing api key");
+  const row = await ctx.apiKeys.authenticate(token);
+  if (row !== null) {
+    // Usage belongs to the key's owner when user-minted, else to the
+    // admin who created the org key.
+    return { orgId: row.org_id, userId: row.user_id ?? row.created_by, sessionId: row.id, internal: false };
+  }
+  const internalKey = ctx.config.internalKey;
+  if (internalKey !== null && constantTimeEquals(token, internalKey)) {
+    const headerOr = (name: string): string | null => {
+      const value = req.headers[name];
+      return typeof value === "string" && value !== "" ? value : null;
+    };
+    const orgId = headerOr("x-guild-org-id");
+    // The gateway surfaces' request-error code: both renderers map it to
+    // their invalid-request type.
+    if (orgId === null) {
+      throw new ApiError(400, "invalid_request_error", "internal key requires the x-guild-org-id header");
+    }
+    return {
+      orgId,
+      userId: headerOr("x-guild-user-id") ?? INTERNAL_CALLER_UUID,
+      sessionId: headerOr("x-guild-session-id") ?? INTERNAL_KEY_UUID,
+      internal: true,
+    };
+  }
+  throw ApiError.unauthorized("invalid api key");
+}
 
 /** UserInfo in protocol::api field order (direct struct serialization). */
 export function userInfo(u: UserRow): UserInfo {
@@ -49,7 +110,7 @@ function attemptKeys(req: FastifyRequest, email: string): { emailKey: string; ad
   };
 }
 
-export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool: PlatformPool): void {
+export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   // The first org + admin user; the bootstrap credential is often the org's
   // only admin, so the same 8-char minimum as admin-created accounts applies.
   app.post("/api/v1/auth/bootstrap", async (req, reply) => {
@@ -65,8 +126,8 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
     if (loginThrottle.isLimited(emailKey) || addressThrottle.isLimited(addressKey)) {
       throw tooManyAttempts(Math.max(loginThrottle.retryAfterSeconds(emailKey), addressThrottle.retryAfterSeconds(addressKey)));
     }
-    const anyUsers = await pool.query<{ count: number }>("SELECT COUNT(*) AS count FROM users");
-    if (anyUsers.rows[0]!.count > 0) {
+    const userCount = await ctx.identity.userCount();
+    if (userCount > 0) {
       throw ApiError.conflict("already_bootstrapped", "org already has users");
     }
     await ctx.identity.ensureBootstrapAdmin(email, password);

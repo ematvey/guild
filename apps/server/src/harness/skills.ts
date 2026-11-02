@@ -28,7 +28,7 @@ import { BundleWriteError, publishRegistryBundle } from "../platform/registry-pu
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillSearchRow } from "../platform/store/registry.js";
 import { nextVersion } from "../platform/store/registry.js";
-import type { SkillReadEvent, SkillReadSink } from "../platform/skillReads.js";
+import type { SkillReadEvent, SkillReadSink } from "../platform/skill-reads.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { RegistryStore } from "../platform/store/registry.js";
 import type { MachineRow, MachineStore } from "../platform/store/machines.js";

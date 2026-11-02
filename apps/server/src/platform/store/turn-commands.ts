@@ -5,6 +5,7 @@
 // flips running/completed from run_start/run_end — no outbox pump, the
 // admission is synchronous and durable).
 
+import { submissionRequestId } from "../../storage/postgres/queries.js";
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText, jsonValue } from "../domain/text.js";
@@ -48,7 +49,7 @@ export class TurnCommandStore {
       row.chat_id !== chat ||
       !deepEq(row.request, jsonValue(request))
     ) {
-      throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
+      throw ApiError.conflict("command_id_conflict", "message ID was already used for a different command");
     }
     return row;
   }
@@ -106,7 +107,7 @@ export class TurnCommandStore {
       if (!chatRow.rows[0]) throw ApiError.notFound("no such chat");
       const current = chatRow.rows[0];
       if (current.archived_at !== null) {
-        throw new ApiError(409, "chat_archived", "chat is archived — unarchive it to send");
+        throw ApiError.conflict("chat_archived", "chat is archived — unarchive it to send");
       }
       const payloadObj = payload as Record<string, unknown>;
       if ((request as Record<string, unknown>)["project_id"] === undefined) {
@@ -126,7 +127,7 @@ export class TurnCommandStore {
       // The stored row holds the sanitized form, so a retry compares against
       // that form. A NUL must not turn a valid retry into a conflict.
       if (row.org_id !== org || row.user_id !== user || row.chat_id !== chat || !deepEq(row.request, jsonValue(request))) {
-        throw new ApiError(409, "command_id_conflict", "message ID was already used for a different command");
+        throw ApiError.conflict("command_id_conflict", "message ID was already used for a different command");
       }
       if (inserted.rowCount === 1) {
         if (binding) {
@@ -153,7 +154,7 @@ export class TurnCommandStore {
           [id, chat, eventPayload],
         );
         if (eventRes.rowCount !== 1) {
-          throw new ApiError(409, "command_id_conflict", "message ID already identifies a thread event");
+          throw ApiError.conflict("command_id_conflict", "message ID already identifies a thread event");
         }
         await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chat]);
       }
@@ -211,13 +212,14 @@ export class TurnCommandStore {
     });
   }
 
-  /** Request identity is durable before the HTTP acknowledgement updates invocation_id. */
+  /** The chat's command a submission's request id names. Request identity
+   *  is durable before the HTTP acknowledgement updates invocation_id. */
   async forSubmission(chatId: string, submissionId: number): Promise<TurnCommand[]> {
+    const requestId = await submissionRequestId(this.pool, submissionId);
+    if (requestId === null) return [];
     const result = await this.pool.query<TurnCommand>(
-      `SELECT tc.* FROM turn_commands tc
-      JOIN submissions s ON s.id=$2 AND s.request_id::jsonb #>> '{}' = tc.id::text
-      WHERE tc.chat_id=$1`,
-      [chatId, submissionId],
+      "SELECT tc.* FROM turn_commands tc WHERE tc.chat_id=$1 AND tc.id::text=$2",
+      [chatId, requestId],
     );
     return result.rows;
   }
@@ -309,7 +311,7 @@ export class TurnCommandStore {
   }
 }
 
-/** serde_json::Value equality: structural, object keys unordered. */
+/** JSON value equality: structural, object keys unordered. */
 function deepEq(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;

@@ -23,7 +23,10 @@ export interface ProjectionState {
   turn: number;
   step: number;
   currentModel: string | null;
+  /** Last appended assistant row id (the stop epilogue's Done message_id). */
   lastEventId: string | null;
+  /** Spilled pointer text per tool call id (the ToolCompleted stream card
+   *  carries the pointer). */
   spilled: Map<string, string>;
   legacyThrough?: number;
 }

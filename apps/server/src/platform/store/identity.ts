@@ -57,6 +57,12 @@ export class IdentityStore {
    *  user (reconnect flow); refuses new emails once users exist. The
    *  check-and-insert runs under an advisory lock inside one transaction:
    *  two concurrent bootstraps must not both pass the "no users yet" check. */
+  /** How many user rows exist (across orgs). */
+  async userCount(): Promise<number> {
+    const res = await this.pool.query<{ count: string }>("SELECT COUNT(*) AS count FROM users");
+    return Number(res.rows[0]?.count ?? 0);
+  }
+
   async ensureBootstrapAdmin(email: string, password: string): Promise<string> {
     return withTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('guild:bootstrap'))");
@@ -112,6 +118,16 @@ export class IdentityStore {
     );
     if (res.rows.length === 0) throw ApiError.notFound("no such user");
     return res.rows[0]!;
+  }
+
+  /** The rows of the given users that exist, in one read. */
+  async getUsers(ids: readonly string[]): Promise<UserRow[]> {
+    if (ids.length === 0) return [];
+    const res = await this.pool.query<UserRow>(
+      `SELECT ${USER_COLUMNS} FROM users WHERE id = ANY($1::uuid[])`,
+      [ids],
+    );
+    return res.rows;
   }
 
   /** The user's approval policy. "no such user" (404) is distinct from

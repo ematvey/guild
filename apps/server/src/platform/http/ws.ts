@@ -15,15 +15,15 @@ import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { ChatsCtx, IdentityCtx } from "../platform/route-contexts.js";
-import { ApiError } from "../platform/errors.js";
-import { requireUser } from "../platform/http/error.js";
-import type { UserRow } from "../platform/store/identity.js";
-import { uuidv7, isUuid } from "../platform/time.js";
-import { LiveHub, type LiveMember } from "../hub/live.js";
-import { SocketSink } from "../hub/sink.js";
-import { parseClientMsg, serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
-import type { TicketIdentity } from "../hub/tickets.js";
+import type { ChatsCtx, IdentityCtx } from "../route-contexts.js";
+import { ApiError } from "../errors.js";
+import { requireUser } from "./error.js";
+import type { UserRow } from "../store/identity.js";
+import { uuidv7, isUuid } from "../time.js";
+import { LiveHub, type LiveMember } from "../../hub/live.js";
+import { SocketSink } from "../../hub/sink.js";
+import { DEFERRED_UNTIL_SYNC, parseClientMsg, serializeServerMsg, type WsServerMsg } from "../../hub/protocol.js";
+import type { TicketIdentity } from "../../hub/tickets.js";
 
 // A socket that cannot flush its terminal notice within this deadline is
 // treated as dead. No socket write may delay eviction beyond this bound.
@@ -34,6 +34,8 @@ export const LAST_SEEN_REFRESH_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const SESSION_WATCH_INTERVAL_MS = 5_000;
+/** How long one client-message revalidation (session + user row) holds. */
+const REVALIDATE_CACHE_MS = 5_000;
 const PONG_POLL_MS = 50;
 
 export interface MachineConnectMeta {
@@ -145,10 +147,11 @@ function ipOf(req: IncomingMessage): string | null {
   return address !== null && address !== "" ? address : null;
 }
 
-/** Axum-shaped upgrade rejections: the JSON error envelope over a real HTTP
- *  response, then the socket dies. */
+/** Upgrade rejections: the API error envelope over a real HTTP response,
+ *  then the socket dies. */
 function rejectUpgrade(socket: Duplex, status: number, message: string): void {
-  const body = JSON.stringify({ error: { code: status === 401 ? "unauthorized" : "bad_request", message } });
+  const error = status === 401 ? ApiError.unauthorized(message) : ApiError.badRequest(message);
+  const body = JSON.stringify(error.envelope());
   const reason = status === 401 ? "Unauthorized" : "Bad Request";
   socket.write(
     `HTTP/1.1 ${status} ${reason}\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
@@ -226,7 +229,7 @@ async function machineSlotOwned(chats: ChatsCtx, user: UserRow, machineId: strin
     const owner = await chats.machines.ownerOf(machineId);
     return owner === null || owner[0] === user.id;
   } catch (error) {
-    chats.wsLog?.(`machine ownership gate failed for ${machineId}: ${errorMessage(error)}`);
+    chats.sockets.log(`machine ownership gate failed for ${machineId}: ${errorMessage(error)}`);
     return false;
   }
 }
@@ -248,7 +251,7 @@ async function registerMachineRecord(
   sessionHash: string,
   hub: LiveHub,
 ): Promise<void> {
-  chats.wsLog?.(
+  chats.sockets.log(
     `ws machine connect machine_id=${machineId} app_version=${meta.app_version ?? ""} label=${meta.label ?? ""} fingerprint=${meta.fingerprint ?? ""} client_id=${clientId}`,
   );
   try {
@@ -268,12 +271,12 @@ async function registerMachineRecord(
       // The re-key left any live registration under the old id without a
       // registry identity: displace it per the singleton rule.
       const displaced = hub.displaceMachine(outcome.adopted_from);
-      chats.wsLog?.(
+      chats.sockets.log(
         `machine re-pair adoption machine_id=${machineId} old_machine_id=${outcome.adopted_from} displaced=${displaced}`,
       );
     }
   } catch (error) {
-    chats.wsLog?.(`machine registry upsert failed for ${machineId}: ${errorMessage(error)}`);
+    chats.sockets.log(`machine registry upsert failed for ${machineId}: ${errorMessage(error)}`);
   }
 }
 
@@ -282,25 +285,13 @@ class SocketGate {
   private syncDepth = 0;
   private deferred: WsServerMsg[] = [];
 
-  private static isLive(message: WsServerMsg): boolean {
-    return (
-      message.type === "live_frame" ||
-      message.type === "chat_status" ||
-      message.type === "subagent_tree" ||
-      message.type === "chat_tree" ||
-      message.type === "context_usage" ||
-      message.type === "org_event" ||
-      message.type === "error"
-    );
-  }
-
   push(output: { kind: string; msg?: WsServerMsg }): WsServerMsg[] {
     if (output.kind === "sync_start") {
       this.syncDepth += 1;
       return [];
     }
     const message = output.msg!;
-    if (output.kind !== "sync_message" && this.syncDepth > 0 && SocketGate.isLive(message)) {
+    if (output.kind !== "sync_message" && this.syncDepth > 0 && DEFERRED_UNTIL_SYNC[message.type]) {
       this.deferred.push(message);
       return [];
     }
@@ -358,7 +349,7 @@ async function driveSocket(
       if (registration.kind === "foreign_owner") {
         await sendTerminal(socket, { type: "error", message: "machine belongs to another user" });
       } else if (registration.kind === "displaced") {
-        chats.wsLog?.(
+        chats.sockets.log(
           `ws machine connect rejected: slot held by a live link machine_id=${machineId} instance_id=${query.instance_id}`,
         );
         await sendTerminal(socket, { type: "displaced" });
@@ -392,7 +383,7 @@ async function driveSocket(
   const finish = (reason: SocketExitReason): void => {
     if (finished) return;
     finished = true;
-    chats.wsLog?.(
+    chats.sockets.log(
       `ws link ended conn_id=${connId} machine_id=${machineId ?? ""} instance_id=${query.instance_id ?? ""} reason=${reason}`,
     );
     unregister();
@@ -453,33 +444,43 @@ async function driveSocket(
   void writerLoop.then(() => finish("writer"));
 
   // --- client-message processing (serialized) --------------------------------
+  // Per-message revalidation: an expired or revoked session, a deleted user,
+  // or an org switch ends processing. One check holds for
+  // REVALIDATE_CACHE_MS, so a burst of frames costs one session read and
+  // one user read.
+  let validated: { user: UserRow; at: number } | null = null;
+  const currentUser = async (): Promise<UserRow | null> => {
+    if (validated !== null && Date.now() - validated.at < REVALIDATE_CACHE_MS) return validated.user;
+    validated = null;
+    if (!(await sessionValid(auth, sessionHash))) return null;
+    let current: UserRow;
+    try {
+      current = await auth.identity.getUser(user.id);
+    } catch {
+      return null;
+    }
+    if (current.org_id !== user.org_id) return null;
+    validated = { user: current, at: Date.now() };
+    return current;
+  };
   let processing: Promise<void> = Promise.resolve();
   const processClient = (message: NonNullable<ReturnType<typeof parseClientMsg>>): void => {
     processing = processing.then(async () => {
       if (finished) return;
-      // Per-message revalidation: an expired or revoked
-      // session, a deleted user, or an org switch ends processing.
-      if (!(await sessionValid(auth, sessionHash))) return;
-      let current: UserRow;
-      try {
-        current = await auth.identity.getUser(user.id);
-      } catch {
-        return;
-      }
-      if (current.org_id !== user.org_id) return;
+      const current = await currentUser();
+      if (current === null) return;
 
       if (message.type === "sync") {
-        // The socket now displays this chat (or none): the feed routes the
-        // chat's view frames here from this point, before the capture, so
-        // nothing committed after the capture read is missed.
-        sink.view = message.chat_id;
-        if (message.chat_id !== null) {
-          // The gate opens only after validation: an early return above must
-          // never leave an unmatched sync_start behind. The writer owns a
-          // failed enqueue; the socket teardown follows.
-          if (!sink.startSync()) return;
-          await runSyncStarted(chats, current, message.chat_id, sink);
+        if (message.chat_id === null) {
+          // The socket displays no chat: no chat's view frames reach it.
+          sink.view = null;
+          return;
         }
+        // The gate opens only after validation: an early return above must
+        // never leave an unmatched sync_start behind. The writer owns a
+        // failed enqueue; the socket teardown follows.
+        if (!sink.startSync()) return;
+        await runSyncStarted(chats, current, message.chat_id, sink);
         return;
       }
       if (message.type === "read") {
@@ -505,9 +506,7 @@ async function driveSocket(
         return;
       }
       if (message.type === "tool_result") {
-        // The owns_pending_tool + complete_tool path is the dispatch lane's;
-        // without the handler wired, results are dropped.
-        await chats.wsToolResult?.({ member, user: current, frame: message });
+        await chats.sockets.toolResult({ member, user: current, frame: message });
       }
     });
   };
@@ -530,15 +529,14 @@ async function driveSocket(
   socket.on("pong", (data: Buffer) => {
     sink.notifyPong(data);
   });
-  socket.on("close", (code, reason) => { chats.wsLog?.(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
-  socket.on("error", (err) => { chats.wsLog?.(`ws socket error: ${err.message}`); finish("reader"); });
+  socket.on("close", (code, reason) => { chats.sockets.log(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
+  socket.on("error", (err) => { chats.sockets.log(`ws socket error: ${err.message}`); finish("reader"); });
 
   // --- connect bootstrap ------------------------------------------------------
   sink.send({ type: "hello" });
   if (machineId !== null) {
-    // reconcile_machine_tools (the uncertain-execution sweep) is the
-    // dispatch lane's; a no-op until wired.
-    await chats.wsMachineReconcile?.(machineId, connId);
+    // The dispatch lane's uncertain-execution sweep for this machine.
+    await chats.sockets.machineReconcile(machineId, connId);
   }
   // The first paint: the same serialized workspace push every later change
   // rides. It sends the legacy thread_list plus the archived, project and
@@ -560,7 +558,7 @@ async function driveSocket(
         try {
           await chats.machines.lastSeen(machineId);
         } catch (error) {
-          chats.wsLog?.(`last_seen refresh failed for ${machineId}: ${errorMessage(error)}`);
+          chats.sockets.log(`last_seen refresh failed for ${machineId}: ${errorMessage(error)}`);
         }
         lastRefresh = Date.now();
       }
@@ -573,7 +571,7 @@ async function driveSocket(
   const sessionLoop = (async (): Promise<void> => {
     while (!finished) {
       if (Date.now() >= expiresAt.getTime() - 60_000 || !(await sessionValid(auth, sessionHash))) {
-        chats.wsLog?.("ws link: session expired or revoked, requesting re-auth");
+        chats.sockets.log("ws link: session expired or revoked, requesting re-auth");
         sink.send({ type: "auth_required" });
         await sleep(TERMINAL_WRITE_TIMEOUT_MS * 2);
         return;
@@ -661,10 +659,12 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
   return false;
 }
 
-/** One chat's state-sync bracket: SyncBegin, the subtree (small,
- *  independent, behind the chat's read gate), the authoritative snapshot (the chats
- *  lane's capture via the ctx seam), then SyncDone — errors ride an Error
- *  frame inside the bracket. */
+/** One chat's state-sync bracket: SyncBegin, the read gate (owner or org
+ *  admin), the subtree (small, independent), the authoritative snapshot,
+ *  then SyncDone — errors ride an Error frame inside the bracket. The socket
+ *  displays the chat from the moment the gate passes, before the capture
+ *  reads, so nothing committed after the capture read is missed; a chat the
+ *  caller cannot read leaves the socket displaying none. */
 async function runSyncStarted(
   chats: ChatsCtx,
   user: UserRow,
@@ -673,31 +673,37 @@ async function runSyncStarted(
 ): Promise<void> {
   sink.sendSync({ type: "sync_begin", chat_id: chatId });
   try {
+    try {
+      await chats.chats.getChat(user.org_id, chatId, user);
+    } catch (error) {
+      sink.view = null;
+      throw error;
+    }
+    sink.view = chatId;
     // Both reads start together; the tree is small and is sent as soon as it
     // lands, so the running-subagent block does not wait for the full thread
     // capture. The tree is auxiliary: its failure leaves the transcript sync
     // intact.
-    const treeRead = chats.wsSubagentTree?.({ chatId, user, sink });
-    const stateRead = chats.wsSync?.({ chatId, user, sink });
+    const treeRead = chats.sockets.subagentTree({ chatId, user, sink });
+    const stateRead = chats.sockets.sync({ chatId, user, sink });
     // The state read may reject while the tree is still awaited: attach a
     // handler now so that rejection is not unhandled. The await below still
     // rethrows through this bracket's catch.
-    stateRead?.catch(() => {});
+    stateRead.catch(() => {});
     try {
-      for (const frame of (await treeRead) ?? []) sink.sendSync(frame);
+      for (const frame of await treeRead) sink.sendSync(frame);
     } catch {
       // The child tree is auxiliary; the authoritative state still goes.
     }
-    const snapshot = await stateRead;
-    if (snapshot !== undefined && snapshot !== null) sink.sendSync(snapshot);
-    else if (chats.wsSync === undefined) {
-      sink.sendSync({ type: "error", message: "sync unavailable" });
-    }
+    sink.sendSync(await stateRead);
   } catch (error) {
-    sink.sendSync({
-      type: "error",
-      message: error instanceof ApiError ? error.message : "internal server error",
-    });
+    sink.sendSync(errorFrame(error));
   }
   sink.sendSync({ type: "sync_done", chat_id: chatId });
+}
+
+/** The error frame for a failure inside a sync bracket: an ApiError's
+ *  message, else a generic one. */
+function errorFrame(error: unknown): WsServerMsg {
+  return { type: "error", message: error instanceof ApiError ? error.message : "internal server error" };
 }

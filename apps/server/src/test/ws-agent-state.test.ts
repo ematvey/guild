@@ -7,13 +7,13 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import crypto from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
 import type { PlatformContext } from "../composition.js";
 
 const TEST_TIMEOUT = 30_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let base: string;
 
 beforeAll(async () => {
@@ -21,7 +21,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_agent_state_test_" });
+  stack = await setupGatewayStack({ GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}` }, { dbPrefix: "guild_agent_state_test_" });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   base = `http://127.0.0.1:${port}`;
   await stack.routeModel("GLM-Test-Model");

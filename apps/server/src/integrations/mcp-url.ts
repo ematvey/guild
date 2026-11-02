@@ -4,7 +4,7 @@
 // connect, so a name later re-pointed at a private service is refused too.
 
 import { lookup } from "node:dns/promises";
-import { ApiError } from "../errors.js";
+import { ApiError } from "../platform/errors.js";
 
 /** Whether the host string is a private/loopback/link-local IP literal
  *  (IPv4 dotted quad + the ranges below, or IPv6 in brackets or bare). */

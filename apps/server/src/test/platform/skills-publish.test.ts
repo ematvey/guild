@@ -5,7 +5,7 @@
 // leave the catalog.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./object-store-stack.js";
+import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "../support/object-store-stack.js";
 import { hashPassword } from "../../platform/crypto.js";
 import { RegistryStore } from "../../platform/store/registry.js";
 import { TeamStore } from "../../platform/store/teams.js";

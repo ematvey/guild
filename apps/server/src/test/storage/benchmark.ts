@@ -1,5 +1,5 @@
 // Storage benchmark runner against a real Postgres.
-// Usage: npx tsx src/storage/postgres/benchmark.ts
+// Usage: npx tsx src/test/storage/benchmark.ts
 // Creates a disposable database, seeds with the shared storage-benchmark
 // helpers, times every read/write benchmark, and drops the database.
 import { performance } from "node:perf_hooks";
@@ -12,8 +12,8 @@ import {
   seedStorageWriteBenchmark,
 } from "@earendil-works/pi-durable/testing";
 import pg from "pg";
-import { PgPoolDatabase, PostgresDurableStorage } from "./index.js";
-import { createDisposableDatabase, dropDisposableDatabase, resetDurableTables } from "./test-support.js";
+import { PgPoolDatabase, PostgresDurableStorage } from "../../storage/postgres/index.js";
+import { createDisposableDatabase, dropDisposableDatabase, resetDurableTables } from "../support/postgres.js";
 
 const context = BACKGROUND_CONTEXT;
 const READ_ITERATIONS = 50;

@@ -17,7 +17,7 @@ import {
   dropDisposableDatabase,
   resetDurableTables,
   type DisposableDatabase,
-} from "../storage/postgres/test-support.js";
+} from "./support/postgres.js";
 
 let database: DisposableDatabase | undefined;
 

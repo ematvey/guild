@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { InboxDoc } from "@earendil-works/pi-durable";
 import type { GuildRuntime } from "../harness/runtime.js";
 import { appendToPendingSteer } from "../harness/inbox-merge.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 
 const answer = {
   body:
@@ -27,14 +27,14 @@ async function until(probe: () => Promise<boolean>, timeout = 25_000) {
 }
 
 describe("pending steer content merge", () => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
   const auth = () => ({ authorization: `Bearer ${stack.memberToken}`, "content-type": "application/json" });
   beforeAll(async () => {
     const probe = createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = (probe.address() as AddressInfo).port;
     await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
-    stack = await setupM2Stack({
+    stack = await setupGatewayStack({
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_ALLOW_SHELL_TOOLS: "1",
     });

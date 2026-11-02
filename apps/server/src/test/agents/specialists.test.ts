@@ -7,18 +7,18 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 import { AgentStore } from "../../agents/store.js";
 import { SPECIALIST_PACK, installSpecialists } from "../../agents/specialists.js";
 import { AGENTS_TEMPLATE } from "../../agents/templates.js";
 import { agentWorkspaceDir } from "../../agents/workspace-config.js";
 import type { UserRow } from "../../platform/store/identity.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 const root = mkdtempSync(path.join(tmpdir(), "guild-specialists-"));
 
 beforeAll(async () => {
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_AGENT_WORKSPACE_ROOT: root,
     GUILD_AGENT_WORKSPACE_WRITE_ROOT: root,
   });

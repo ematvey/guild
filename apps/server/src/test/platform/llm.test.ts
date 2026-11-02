@@ -4,14 +4,14 @@
 // client-disconnect billing path.
 
 import { describe, expect, it } from "vitest";
-import { startMockUpstream, setupM2Stack, type M2Stack } from "./m2-harness.js";
+import { startMockUpstream, setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
-describe("M2 LLM gateway endpoints", () => {
-  let stack: M2Stack;
+describe("LLM gateway endpoints", () => {
+  let stack: GatewayStack;
   // Shared stack (setup in beforeAll via the module-level hooks below).
 
   it("setup", async () => {
-    stack = await setupM2Stack();
+    stack = await setupGatewayStack();
   }, 120_000);
 
   it("openai non-stream: text + usage recorded with key-owner attribution", async () => {
@@ -560,7 +560,7 @@ describe("M2 LLM gateway endpoints", () => {
 
   it("audio input is rejected on anthropic-protocol routes before the upstream call", async () => {
     const { anthropicProvider } = await import("../../platform/provider/anthropic.js");
-    const { startMockUpstream: startMock } = await import("./m2-harness.js");
+    const { startMockUpstream: startMock } = await import("../support/gateway-stack.js");
     const upstream = await startMock([{ body: 'data: {"type":"message_stop"}\n\n' }]);
     let error: Error | null = null;
     try {

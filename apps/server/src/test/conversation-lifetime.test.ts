@@ -9,7 +9,7 @@ import { ConversationHost } from "../harness/conversation-host.js";
 import { ConversationAdmissions } from "../harness/operations.js";
 import { ForkSupervisor } from "../worker/supervisor.js";
 import { loadConfig } from "../config.js";
-import { userMcpToolName } from "../harness/userMcp.js";
+import { userMcpToolName } from "../harness/user-mcp.js";
 import { toolSchema, toolDetails } from "../harness/tool-schema.js";
 
 const log = pino({ level: "silent" });
@@ -187,7 +187,7 @@ describe("worker readiness and recovery", () => {
 });
 
 it("attributes simultaneous provider calls by durable session identity", async () => {
-  const { startMockUpstream } = await import("./platform/m2-harness.js");
+  const { startMockUpstream } = await import("./support/gateway-stack.js");
   const { ensureOrgProvider, guildProviderId } = await import("../harness/models.js");
   const upstream = await startMockUpstream([
     {

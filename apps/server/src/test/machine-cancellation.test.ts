@@ -75,13 +75,14 @@ describe("machine tool lifetime", () => {
 
   it("carries cancellation over worker IPC before accepting any late response", async () => {
     const messages: unknown[] = [];
-    const proxy = new IpcMachineDispatch(message => messages.push(message));
+    let ref = 0;
+    const proxy = new IpcMachineDispatch(message => messages.push(message), () => (ref += 1));
     const controller = new AbortController();
     const call = { machineId: "machine", orgId: "org", chatId: "chat", name: "execute", args: {}, workdir: "/tmp", timeoutMs: 1000 };
     const pending = proxy.dispatch(call, controller.signal);
     controller.abort();
     expect((await pending).is_error).toBe(true);
     expect(messages).toEqual([{ t: "dispatch", ref: 1, call }, { t: "dispatch_cancel", ref: 1 }]);
-    expect(proxy.onResponse({ t: "result", ref: 1, ok: true, data: {} })).toBe(false);
+    expect(proxy.onReply({ t: "reply", ref: 1, ok: true, data: {} })).toBe(false);
   });
 });

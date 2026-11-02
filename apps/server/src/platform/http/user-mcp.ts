@@ -17,8 +17,8 @@ import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { requireUser, parseUuidParam, requireJsonBody, sendJson } from "./error.js";
-import { mcpConnect } from "../integrations/mcp.js";
-import { validateUrl } from "../integrations/mcp-url.js";
+import { mcpConnect } from "../../integrations/mcp.js";
+import { validateUrl } from "../../integrations/mcp-url.js";
 import { userMcpToolName } from "../domain/mcp.js";
 import type { JsonObject } from "../../integrations/shared.js";
 

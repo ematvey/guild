@@ -5,11 +5,11 @@
 // re-resolved at call time.
 
 import { randomUUID } from "node:crypto";
-import { integrationByName, traitForTool, type IntegrationToolSpec } from "../integration-catalog.js";
-import { traitSpec } from "../../integrations/traits.js";
-import { manifestToolClass, toolClassOf } from "../domain/tool-class.js";
+import { integrationByName, traitForTool, type IntegrationToolSpec } from "./loader.js";
+import { traitSpec } from "./traits.js";
+import { manifestToolClass, toolClassOf } from "../platform/domain/tool-class.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
-import type { JsonObject } from "../../integrations/shared.js";
+import type { JsonObject } from "./shared.js";
 
 /** The narrow store surface the dispatcher re-resolves secrets through
  *  (structurally the GatewayCtx slice; no store values ride the snapshot). */

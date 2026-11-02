@@ -1,8 +1,9 @@
-// M8 chat-loop registration: the integrations runtime against the real app
-// + harness + mock provider. Per turn the runtime installs the org's
-// integration extension (list_tools/guide autos + curated connector tools)
-// into the durable conversation, the scripted model drives discovery and a
-// real connector tool against a local mock backend, and the audit event lands.
+// Integrations chat-loop registration: the integrations runtime against
+// the real app + harness + mock provider. Per turn the runtime installs the
+// org's integration extension (list_tools/guide autos + curated connector
+// tools) into the durable conversation, the scripted model drives discovery
+// and a real connector tool against a local mock backend, and the audit
+// event lands.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
@@ -10,12 +11,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
 const TEST_TIMEOUT = 120_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 let orgId: string;
 let memberToken: string;
@@ -82,7 +83,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack(
+  stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_SANDBOX_ROOT: sandboxRoot,
@@ -91,7 +92,7 @@ beforeAll(async () => {
       GUILD_APPROVAL_TIMEOUT_MS: "3000",
       GUILD_CLIENT_TOOL_TIMEOUT_MS: "8000",
     },
-    { dbPrefix: "guild_m8_chat_test", logLevel: process.env.M8_TEST_LOG ?? "error" },
+    { dbPrefix: "guild_integrations_chat_test", logLevel: process.env.INTEGRATIONS_TEST_LOG ?? "error" },
   );
   await stack.env.app.listen({ port, host: "127.0.0.1" });
   await stack.routeModel("GLM-Test-Model");

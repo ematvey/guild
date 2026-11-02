@@ -7,7 +7,7 @@
 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { isPrivateIpLiteral } from "../platform/integrations/mcp-url.js";
+import { isPrivateIpLiteral } from "./mcp-url.js";
 
 /** Host names that always mean this machine or the cloud metadata service. */
 const BLOCKED_HOSTS = new Set(["localhost", "metadata", "metadata.google.internal", "instance-data"]);

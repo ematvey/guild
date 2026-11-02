@@ -30,13 +30,15 @@ import type { ToolCall } from "@earendil-works/pi-ai";
 import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
+import { taskAbortRequested } from "../storage/postgres/queries.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "../platform/domain/thread-events.js";
 import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
 import type { TraceStore } from "../platform/trace.js";
-import { APPROVAL_POLICY_PROMPT_KEY } from "../platform/store/org_kv.js";
+import { APPROVAL_POLICY_PROMPT_KEY, type OrgKvStore } from "../platform/store/org-kv.js";
+import type { ChatStore } from "../platform/store/chats.js";
 import { clientToolClass } from "../platform/domain/tool-class.js";
 
 export { APPROVAL_POLICY_PROMPT_KEY };
@@ -67,6 +69,10 @@ import { AGENT_TOOL_NAMES } from "./agent-tools.js";
 export interface ApprovalGateDeps {
   pool: PlatformPool;
   threads: ThreadStore;
+  /** The chat's tenant and owner (the policy read). */
+  chats: Pick<ChatStore, "identityOf">;
+  /** The org's approval-policy prompt. */
+  orgKv: Pick<OrgKvStore, "get">;
   log: Logger;
   execPolicy: ExecPolicy;
   approvalTimeoutMs: number;
@@ -170,11 +176,7 @@ async function judgeVerdict(
   let responsePayload: string | null = null;
   let attempted = false;
   try {
-    const promptRes = await deps.pool.query<{ value: string | null }>(
-      "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
-      [orgId, APPROVAL_POLICY_PROMPT_KEY],
-    );
-    const prompt = promptRes.rows[0]?.value?.trim() || DEFAULT_APPROVAL_POLICY_PROMPT;
+    const prompt = (await deps.orgKv.get(orgId, APPROVAL_POLICY_PROMPT_KEY))?.trim() || DEFAULT_APPROVAL_POLICY_PROMPT;
     const action = canonicalJson({ tool: call.name, arguments: call.arguments });
     const body = {
       model,
@@ -438,10 +440,8 @@ async function waitForApproval(
   } catch (error) {
     // Close/failure preserves pending work. Only persisted abort intent
     // represents a cancelled action; a transport/read error is no decision.
-    const task = await deps.pool
-      .query<{ abort_requested: boolean }>("SELECT abort_requested FROM tasks WHERE id = $1", [runtime.taskId])
-      .catch(() => undefined);
-    if (task?.rows[0]?.abort_requested === true) {
+    const abortRequested = await taskAbortRequested(deps.pool, Number(runtime.taskId)).catch(() => null);
+    if (abortRequested === true) {
       const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
       await deps.threads
         .appendEvent(chatId, approvalDecisionEvent(call.id, false, "aborted before decision"), decisionId)
@@ -533,13 +533,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
 
       // 3. Approval policy: chat mode wins; unset resolves through the
       //    account policy or the AI judge.
-      const chat = await deps.pool.query<{ org_id: string; user_id: string }>(
-        "SELECT org_id, user_id FROM chats WHERE id = $1",
-        [chatId],
-      );
-      const orgId = chat.rows[0]?.org_id;
-      if (orgId === undefined) return undefined;
-      const chatOwnerId = chat.rows[0]?.user_id ?? null;
+      const chat = await deps.chats.identityOf(chatId);
+      if (chat === null) return undefined;
+      const orgId = chat.org_id;
+      const chatOwnerId = chat.user_id;
       const { chat_mode, user_policy } = await readChatPolicy(deps, chatId);
       let decision: "allow" | "ask" | "never";
       if (chat_mode === "approve_for_me") {

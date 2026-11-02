@@ -1,7 +1,7 @@
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { NotifyHub } from "../platform/notify.js";
-import { TEST_ADMIN_URL } from "./platform/harness.js";
+import { TEST_ADMIN_URL } from "./support/platform-env.js";
 
 async function until(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -29,7 +29,7 @@ describe("NotifyHub", () => {
     let reconnects = 0;
     hub.subscribe(
       (channel, payload) => {
-        if (channel === "guild_org") payloads.push(payload);
+        if (channel === "guild_workspace_identity") payloads.push(payload);
       },
       () => {
         reconnects += 1;
@@ -37,7 +37,7 @@ describe("NotifyHub", () => {
     );
     const marker = `first-${Date.now()}`;
     await until(async () => {
-      await admin.query("SELECT pg_notify('guild_org', $1)", [marker]);
+      await admin.query("SELECT pg_notify('guild_workspace_identity', $1)", [marker]);
       return payloads.includes(marker);
     });
     expect(reconnects).toBe(0);
@@ -51,7 +51,7 @@ describe("NotifyHub", () => {
 
     const after = `second-${Date.now()}`;
     await until(async () => {
-      await admin.query("SELECT pg_notify('guild_org', $1)", [after]);
+      await admin.query("SELECT pg_notify('guild_workspace_identity', $1)", [after]);
       return payloads.includes(after);
     });
   });

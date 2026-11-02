@@ -8,11 +8,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 import { agentWorkspaceSubpath } from "../../agents/workspace.js";
 import { waitFor } from "../support/wait.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 /** Agent workspaces land here, so the test can inspect what a turn wrote. */
 const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-agent-root-"));
@@ -22,7 +22,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
     GUILD_AGENT_WORKSPACE_ROOT: agentRoot,
   });

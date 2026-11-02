@@ -4,23 +4,15 @@
 
 import type { ConversationId, SubmissionRecord } from "@earendil-works/pi-durable";
 import { withTransaction, type PlatformPool } from "../platform/db.js";
+import { changedSubmissions, unprojectedFailedGenerations } from "../storage/postgres/queries.js";
 
 /** Incremental platform reconciliation, independent of bounded live events. */
 export class ConversationRecovery {
   constructor(private readonly pool: PlatformPool) {}
 
   async submissions(chatId: string, conversationId: ConversationId): Promise<SubmissionRecord[]> {
-    const result = await this.pool.query<{ record: string }>(
-      `SELECT record FROM (
-        SELECT s.id,s.record FROM submissions s WHERE s.conversation_id=$1
-          AND s.id>COALESCE((SELECT submission_id FROM chat_reconciliation_cursors WHERE chat_id=$2 AND conversation_id=$1),0)
-        UNION
-        SELECT s.id,s.record FROM chat_submission_projections p JOIN submissions s ON s.id=p.submission_id
-          WHERE p.chat_id=$2 AND p.status IN ('queued','placed') AND s.status<>p.status
-      ) changed ORDER BY id`,
-      [conversationId, chatId],
-    );
-    return result.rows.map((row) => JSON.parse(row.record) as SubmissionRecord);
+    const records = await changedSubmissions(this.pool, chatId, conversationId);
+    return records.map((record) => JSON.parse(record) as SubmissionRecord);
   }
 
   async acknowledge(chatId: string, records: readonly SubmissionRecord[]): Promise<void> {
@@ -55,14 +47,7 @@ export class ConversationRecovery {
     conversationId: ConversationId,
     persist: (taskId: number, message: string) => Promise<unknown>,
   ): Promise<void> {
-    const result = await this.pool.query<{ id: number; record: string }>(
-      `SELECT t.id,t.record FROM tasks t
-      WHERE t.conversation_id=$1 AND t.kind='"pi.generation"' AND t.status='terminal'
-        AND t.outcome_status IN ('failed','faulted','orphaned')
-        AND NOT EXISTS(SELECT 1 FROM chat_task_projections p WHERE p.task_id=t.id) ORDER BY t.id`,
-      [conversationId],
-    );
-    for (const row of result.rows) {
+    for (const row of await unprojectedFailedGenerations(this.pool, conversationId)) {
       const record = JSON.parse(row.record) as {
         state: { outcome: { error?: { message?: string }; reason?: string } };
       };

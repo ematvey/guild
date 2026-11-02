@@ -15,7 +15,7 @@ import { registerEventRoutes } from "./events.js";
 import { registerAttachmentRoutes } from "./attachments.js";
 import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
-import { registerApiKeyRoutes } from "./api_keys.js";
+import { registerApiKeyRoutes } from "./api-keys.js";
 import { registerPushRoutes } from "./push.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerActivityRoutes } from "./activity.js";
@@ -23,16 +23,16 @@ import { registerChatsRoutes } from "./chats.js";
 import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
-import { registerMachineRoutes } from "../../http/machines.js";
-import { registerWsRoutes } from "../../http/ws.js";
+import { registerMachineRoutes } from "./machines.js";
+import { registerWsRoutes } from "./ws.js";
 import { registerRegistryRoutes } from "./registry.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerReleaseRoutes } from "./releases.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
-import { registerIntegrationToolRoutes } from "./integration_tools.js";
-import { registerUserMcpRoutes } from "./user_mcp.js";
+import { registerIntegrationToolRoutes } from "./integration-tools.js";
+import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -58,7 +58,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
       done(null, body);
     });
 
-    registerAuthRoutes(scope, auth, ctx.pool);
+    registerAuthRoutes(scope, auth);
     registerOrgRoutes(scope, auth, ctx.objects);
     registerEventRoutes(scope, auth);
     registerAttachmentRoutes(scope, auth, infra, chats.chats);

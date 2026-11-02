@@ -7,10 +7,10 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 
 beforeAll(async () => {
@@ -20,7 +20,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve, reject) =>
     probe.close((error) => (error === undefined ? resolve() : reject(error))),
   );
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
   await stack.env.app.listen({ port, host: "127.0.0.1" });
@@ -37,8 +37,8 @@ const auth = (token: string): Record<string, string> => ({
 });
 
 interface RuntimeInternals {
-  runIdCache: Map<string, unknown>;
-  materializedTurns: Map<string, string>;
+  orgModels: { runIds: Map<string, unknown> };
+  executors: { materializedTurns: Map<string, string> };
   registry: { snapshot(): { extension(name: string): unknown } };
 }
 
@@ -83,7 +83,7 @@ describe("restart resume (full durability)", () => {
     });
     // The run's end drops the chat's per-run caches.
     const internals = stack.env.app.platform.runtime as unknown as RuntimeInternals;
-    await waitFor(async () => !internals.runIdCache.has(idle.id) && !internals.materializedTurns.has(idle.id));
+    await waitFor(async () => !internals.orgModels.runIds.has(idle.id) && !internals.executors.materializedTurns.has(idle.id));
 
     // A stream slow enough to still be running when the process dies.
     stack.mock.setResponses([

@@ -4,7 +4,7 @@
 // subscriptions keep working.
 
 import webpush from "web-push";
-import type { KvStore } from "../platform/store/org_kv.js";
+import type { KvStore } from "../platform/store/org-kv.js";
 
 /** server_kv keys holding the push identity. */
 export const VAPID_PUBLIC_KEY = "push_vapid_public_key";

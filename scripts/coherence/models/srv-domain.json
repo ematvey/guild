@@ -42,6 +42,10 @@
         {
           "where": "apps/server/src/platform/domain/thread-type.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/thread-binding.ts",
+          "role": "domain"
         }
       ],
       "translations": [
@@ -251,7 +255,7 @@
     },
     {
       "id": "workspace-snapshot",
-      "definition": "One user's sidebar state \u2014 active chats, archived chats, projects, and the machine registry \u2014 built as wire rows for the workspace push on the member socket.",
+      "definition": "One user's sidebar state — active chats, archived chats, projects, and the machine registry — built as wire rows for the workspace push on the member socket.",
       "canonical": "apps/server/src/hub/workspace.ts",
       "aliases": [
         "sidebar-snapshot",

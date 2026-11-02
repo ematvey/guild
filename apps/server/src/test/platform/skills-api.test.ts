@@ -3,7 +3,7 @@
 // activity feed — plus the member download lift for kind=skill (§1.3).
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createObjectStoreStack, type ObjectStoreStack } from "./object-store-stack.js";
+import { createObjectStoreStack, type ObjectStoreStack } from "../support/object-store-stack.js";
 import { hashPassword } from "../../platform/crypto.js";
 import { packBundle } from "../../platform/bundle.js";
 

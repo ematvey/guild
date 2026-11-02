@@ -13,6 +13,7 @@
 // role-filtered tool allow-list (`pi.agent`). The tool calls ride the
 // existing durable turn stream untouched.
 
+import type { ChatStore } from "../platform/store/chats.js";
 import type { Context } from "@earendil-works/chord";
 import { toolSchema, toolDetails } from "./tool-schema.js";
 import { readGuideText } from "./guide-text.js";
@@ -27,20 +28,20 @@ import type { Extension } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
-import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
-import { callPlugin } from "../platform/integrations/execute.js";
+import { callPlugin } from "../integrations/execute.js";
 import type { JsonObject, ToolOutcome } from "../integrations/shared.js";
-import type { IntegrationGateway } from "../platform/integrations/plugins.js";
+import type { IntegrationGateway } from "../integrations/plugins.js";
 import {
   namespacedTool,
   resolveIntegrations,
   unnamespacedTool,
   type IntegrationToolInfo,
   type IntegrationTurn,
-} from "../platform/integrations/plugins.js";
-import { toolAllowed, toolCurate } from "../platform/integrations/policy.js";
+} from "../integrations/plugins.js";
+import { toolAllowed, toolCurate } from "../integrations/policy.js";
 
 /** The coding tools every chat carries (pi-durable CodingTools); the
  *  per-conversation tool allow-list must name them explicitly. */
@@ -71,6 +72,8 @@ export interface IntegrationsRuntimeDeps {
    *  without one — the guide degrades, the spill falls back inline. */
   objects: ObjectStore | undefined;
   pool: PlatformPool;
+  /** The chat's org (the per-turn snapshot's tenant). */
+  chats: Pick<ChatStore, "orgOf" | "ownerOf">;
   log: Logger;
   chatOfConversation(conversationId: number): Promise<string | null>;
 }
@@ -219,12 +222,8 @@ export class IntegrationsRuntime {
   /** Resolve the chat owner's current role and acting identity. */
   private async chatCaller(chatId: string): Promise<IntegrationCaller | null> {
     try {
-      const res = await this.deps.pool.query<{ id: string; email: string | null; role: string }>(
-        "SELECT u.id, u.email, u.role FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
-        [chatId],
-      );
-      const row = res.rows[0];
-      return row ? { userId: row.id, email: row.email, role: row.role } : null;
+      const owner = await this.deps.chats.ownerOf(chatId);
+      return owner === null ? null : { userId: owner.user_id, email: owner.email, role: owner.role };
     } catch (error) {
       this.warn(`chat caller resolution failed: ${(error as Error).message}`);
       throw error;
@@ -371,8 +370,7 @@ export class IntegrationsRuntime {
     if (chatId === null) return undefined;
     let orgId: string | null = null;
     try {
-      const res = await this.deps.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-      orgId = res.rows[0]?.org_id ?? null;
+      orgId = await this.deps.chats.orgOf(chatId);
     } catch {
       orgId = null;
     }
@@ -527,9 +525,8 @@ export class IntegrationsRuntime {
     return { content: outcome.content, isError: false, meta: outcome.meta };
   }
 
-  private async orgIdOfChat(chatId: string): Promise<string | null> {
-    const res = await this.deps.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-    return res.rows[0]?.org_id ?? null;
+  private orgIdOfChat(chatId: string): Promise<string | null> {
+    return this.deps.chats.orgOf(chatId);
   }
 
   /** Fetches and unpacks the guide body (SKILL.md, falling back to

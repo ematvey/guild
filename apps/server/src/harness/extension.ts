@@ -14,10 +14,8 @@ import { createDownloadAttachmentTool } from "./attachment-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
-import { ASSISTANT_PROMPT_KEY } from "../platform/store/org_kv.js";
 import type { ObjectStore } from "../platform/s3.js";
 
-export { ASSISTANT_PROMPT_KEY };
 
 export const DEFAULT_PERSONA =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";

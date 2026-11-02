@@ -2,12 +2,12 @@
 // every migration applied (`guild_<prefix>_test_*`), a fresh rustfs bucket,
 // and the app built against both.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { createTestDatabase, testSuffix } from "./postgres.js";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import * as tar from "tar";
-import pg from "pg";
+import type pg from "pg";
 import {
   CreateBucketCommand,
   DeleteBucketCommand,
@@ -18,23 +18,13 @@ import {
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
 
-// vitest runs with cwd = apps/server; the migrations live in the Rust tree
-// (the historical record the TS schema ports verbatim).
-import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { testClickhousePassword, testClickhouseUser, testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
 
-const TEST_ADMIN_URL = process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
 const TEST_S3_URL = process.env.GUILD_TEST_S3_URL ?? "http://localhost:9950";
 const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_TEST_S3_ACCESS_KEY_ID");
 const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_TEST_S3_SECRET_ACCESS_KEY");
 const TEST_CLICKHOUSE_USER = testClickhouseUser();
 const TEST_CLICKHOUSE_PASSWORD = testClickhousePassword();
-
-function randomSuffix(): string {
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 export interface ObjectStoreStack {
   databaseName: string;
@@ -52,24 +42,12 @@ export async function createObjectStoreStack(
   extraEnv: Record<string, string> = {},
   prefix = "stack",
 ): Promise<ObjectStoreStack> {
-  const suffix = randomSuffix();
-  const databaseName = `guild_${prefix.replaceAll("-", "_")}_test_${suffix}`;
+  const suffix = testSuffix();
+  const database = await createTestDatabase(`guild_${prefix.replaceAll("-", "_")}_test_`, { suffix, poolMax: 2 });
+  const databaseName = database.name;
+  const databaseUrl = new URL(database.url);
+  const dbPool = database.pool;
   const bucketName = `guild-${prefix.replaceAll("_", "-")}-test-${suffix}`;
-
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
-  await adminPool.query(`CREATE DATABASE "${databaseName}"`);
-  const databaseUrl = new URL(TEST_ADMIN_URL);
-  databaseUrl.pathname = `/${databaseName}`;
-
-  // Seeding/preparation pool on the disposable database — never on the
-  // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
-
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
-  // The production startup path (applyPlatformMigrations): same filename
-  // order, same schema_history tracking hand-run deployments use.
-  await applyPlatformMigrations(migrationPool);
-  await migrationPool.end();
 
   const s3 = new S3Client({
     endpoint: TEST_S3_URL,
@@ -100,7 +78,6 @@ export async function createObjectStoreStack(
     if (done) return;
     done = true;
     await app.close();
-    await dbPool.end();
     try {
       const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucketName }));
       for (const obj of listed.Contents ?? []) {
@@ -111,13 +88,7 @@ export async function createObjectStoreStack(
       // cleanup is best-effort; the DB drop below is the important part
     }
     s3.destroy();
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
-    try {
-      await dropTestDatabase(dropper, databaseName);
-    } finally {
-      await dropper.end();
-    }
-    await adminPool.end();
+    await database.drop();
   };
 
   return { databaseName, databaseUrl: databaseUrl.toString(), bucketName, db: dbPool, app, config, cleanup };

@@ -5,6 +5,7 @@
 // platform/errors.ts — stores and services import from there, never from
 // this module.
 
+import { AdmissionCancelled } from "../../harness/operations.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { isUuid } from "../time.js";
 import { ApiError, TextError } from "../errors.js";
@@ -135,7 +136,7 @@ export function installErrorHandling(
   app: FastifyInstance,
   renderApiError: (error: ApiError, path: string) => { status: number; body: string } = (error) => ({
     status: error.status,
-    body: JSON.stringify({ error: { code: error.code, message: error.message } }),
+    body: JSON.stringify(error.envelope()),
   }),
 ): void {
   app.setErrorHandler((error: unknown, req, reply) => {
@@ -146,6 +147,9 @@ export function installErrorHandling(
     if (error instanceof ApiError) {
       if (error.status === 500) req.log.error(error);
       return send(error);
+    }
+    if (error instanceof AdmissionCancelled) {
+      return send(ApiError.conflict("cancelled", error.message));
     }
     if (error instanceof TextError) {
       return reply.status(error.status).type("text/plain; charset=utf-8").send(error.body);

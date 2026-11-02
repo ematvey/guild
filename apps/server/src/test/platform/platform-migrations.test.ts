@@ -5,7 +5,7 @@
 // re-application is a no-op. Failure is
 // loud: a pending migration that throws aborts startup.
 
-import { dropTestDatabase } from "../../storage/postgres/test-support.js";
+import { dropTestDatabase } from "../support/postgres.js";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import path from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyPlatformMigrations } from "../../platform/migrations.js";
-import { TEST_ADMIN_URL } from "./harness.js";
+import { TEST_ADMIN_URL } from "../support/platform-env.js";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
 const REAL_MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
