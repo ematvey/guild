@@ -38,7 +38,7 @@ export class ExecPolicy {
     return new ExecPolicy([]);
   }
 
-  /** Builds from parsed rule specs (the build.rs JSON reconstruction shape). */
+  /** Builds from parsed rule specs. */
   static fromSpecs(specs: PrefixRuleSpec[]): ExecPolicy {
     return new ExecPolicy(specs.map((s) => ({ ...s })));
   }
@@ -318,7 +318,7 @@ export function evaluateExecute(policy: ExecPolicy, args: unknown): ExecPolicyDe
 }
 
 // ---------------------------------------------------------------------------
-// Static loading (build.rs shape): base rules + optional deployment-local
+// Static loading: base rules + optional deployment-local
 // layer; a broken local layer degrades to base-only with a warning.
 // ---------------------------------------------------------------------------
 
@@ -351,13 +351,14 @@ export function defaultRulesPath(): string {
   return process.env.GUILD_EXEC_POLICY_RULES ?? path.resolve(process.cwd(), "assets/exec_policy_base.rules");
 }
 
-let cached: ExecPolicy | null = null;
+const cached = new Map<string, ExecPolicy>();
 
-/** The process-wide policy (base + optional local layer), loaded once.
- *  Missing/unparsable base rules are a startup error (the Rust build fails
- *  on a broken base file); a broken local layer degrades to base-only. */
+/** The policy for one base rules file (base + optional local layer),
+ *  loaded once per path. Missing or unparsable base rules are a startup
+ *  error; a broken local layer degrades to base-only. */
 export function execPolicy(rulesPath: string = defaultRulesPath()): ExecPolicy {
-  if (cached !== null) return cached;
+  const hit = cached.get(rulesPath);
+  if (hit !== undefined) return hit;
   const baseSrc = readFileSync(rulesPath, "utf8");
   const base = parseRulesFile(baseSrc);
   const rules = [...base.rules];
@@ -371,8 +372,8 @@ export function execPolicy(rulesPath: string = defaultRulesPath()): ExecPolicy {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       if ((error as NodeJS.ErrnoException).code === undefined) {
-        // A parse error in the local layer: degrade to base-only, like
-        // build.rs's fallback (never a startup failure).
+        // A parse error in the local layer: degrade to base-only (never a
+        // startup failure).
         console.warn(`local exec policy rules do not parse, using base rules only: ${String(error)}`);
       } else {
         throw error;
@@ -381,11 +382,11 @@ export function execPolicy(rulesPath: string = defaultRulesPath()): ExecPolicy {
   }
   const policy = ExecPolicy.fromSpecs(rules);
   validateExamples(validations, rulesPath);
-  cached = policy;
+  cached.set(rulesPath, policy);
   return policy;
 }
 
 /** Test seam: resets the process-wide cache. */
 export function resetExecPolicyCache(): void {
-  cached = null;
+  cached.clear();
 }

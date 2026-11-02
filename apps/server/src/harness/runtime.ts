@@ -1078,6 +1078,9 @@ export class GuildRuntime {
    *  state, provisioned tool snapshots and the chat-scoped extensions. */
   private forgetConversation(chatId: string, conversationId: number): void {
     this.bridge.forget(String(conversationId));
+    for (const [sessionId, source] of this.providerChats) {
+      if (source.conversationId === conversationId) this.providerChats.delete(sessionId);
+    }
     this.integrationsRuntime.forget(conversationId);
     this.userMcpRuntime.forget(conversationId);
     this.skillsRuntime.forget(conversationId);
@@ -1187,8 +1190,10 @@ export class GuildRuntime {
         // Keep the watch alive. A bounded event stream may coalesce while
         // storage is unavailable; immutable backfill and a fresh snapshot
         // restore everything needed without replaying partial deltas.
+        let retryDelayMs = 250;
         while (!this.stopped && !closed && this.harness === harness) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
           try {
             await recover();
             const current = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
