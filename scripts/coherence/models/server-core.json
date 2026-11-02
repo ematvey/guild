@@ -163,6 +163,10 @@
         {
           "where": "apps/server/src/platform/http/releases.ts",
           "role": "ui"
+        },
+        {
+          "where": "apps/server/src/platform/registry-publish.ts",
+          "role": "domain"
         }
       ],
       "translations": [

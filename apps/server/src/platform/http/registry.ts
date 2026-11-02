@@ -4,13 +4,13 @@
 // disabled MCP-plugin integration row (routines are dropped — 2026-10-04
 // decision: the feature is out of scope, automation bundles are rejected).
 
-import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { requireUser, requireAdminUser, queryParam, sendJson, bodyBytes, pathParam } from "./error.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
+import { BundleWriteError, publishRegistryBundle } from "../registry-publish.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -22,22 +22,9 @@ function validKind(kind: string): void {
   }
 }
 
-/** Content-addressed: a republish with different bundle bytes lands at a
- *  new key, so superseded and supersede-attempt bundles are never
- *  overwritten in place. (Shared with the skills editor path, which
- *  re-publishes server-assembled bundles.) */
-export function objectKey(orgId: string, kind: string, slug: string, version: string, sha256: string): string {
-  return `registry/${orgId}/${kind}/${slug}/${version}/${sha256}.tar.gz`;
-}
-
-export function sha256Hex(data: Buffer): string {
-  return createHash("sha256").update(data).digest("hex");
-}
-
-/** The shared publish body (the registry route and the skills editor both
- *  land here): content-addressed key, publish gate re-checked inside
- *  upsertVersion's FOR UPDATE transaction, SKILL.md projection for skills,
- *  object put, and the org event (first publish vs republish). */
+/** The registry route's and the skills editor's publish: the shared
+ *  publish (platform/registry-publish.ts) with an HTTP error for a failed
+ *  object write. */
 export async function publishBundleBytes(
   gateway: GatewayCtx,
   auth: IdentityCtx,
@@ -50,71 +37,21 @@ export async function publishBundleBytes(
   manifest: unknown,
   bytes: Buffer,
 ): Promise<void> {
-  const sha256 = sha256Hex(bytes);
-  const key = objectKey(user.org_id, kind, slug, version, sha256);
-
-  // Pre-read for the team-membership input; the authoritative gate decision
-  // happens inside upsertVersion's row-lock transaction.
-  const control = await gateway.registry.itemControl(user.org_id, kind, slug);
-  const isTeamMember =
-    control?.owner_team_id != null
-      ? await auth.teams.isMember(user.org_id, control.owner_team_id, user.id)
-      : false;
-
-  // Skill projection (spec §1.2/§1.3): SKILL.md text + the file list with
-  // per-file hashes, stored on the version row for the panel/editor.
-  let skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null;
-  if (kind === "skill") {
-    const parsed = await parseBundle(bytes);
-    skill = {
-      md_text: readBundleFile(parsed, "SKILL.md")!.toString("utf8"),
-      files: parsed.entries
-        .filter((e) => e.file)
-        .map((en) => ({ path: en.path, size: en.content!.length, sha256: sha256Hex(en.content!) })),
-    };
-  }
-
-  // Metadata first: only an accepted upsert (new version, unchanged
-  // republish) commits a row — a superseded publish is refused before any
-  // bundle bytes land, so the old release's object stays intact.
-  await gateway.registry.upsertVersion(
-    user.org_id,
-    kind,
-    slug,
-    version,
-    description,
-    manifest,
-    key,
-    sha256,
-    user.id,
-    skill,
-    { userId: user.id, role: user.role, isTeamMember },
-  );
-  // The content-addressed key was accepted by upsertVersion; the bytes
-  // are immutable and idempotent to re-write, so a failed put only leaves
-  // the object missing until the publish is retried.
   try {
-    await objects.put(key, bytes);
-  } catch (error) {
-    throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
-  }
-  // org event: first publish vs republish (the activity feed treats
-  // them as distinct kinds); best-effort. Skill payloads carry the
-  // publisher's identity (label = display name or email, matching the
-  // actorLabel convention on the skill routes); mcp/integration
-  // emissions keep the exact pre-fix payload shape.
-  const actorPayload =
-    kind === "skill"
-      ? { user_id: user.id, actor: user.display_name && user.display_name !== "" ? user.display_name : user.email }
-      : {};
-  try {
-    await auth.events.emit(
-      user.org_id,
-      control !== null ? "registry.updated" : "registry.published",
-      { kind, slug, version, ...actorPayload },
+    await publishRegistryBundle(
+      { registry: gateway.registry, teams: auth.teams, events: auth.events, objects },
+      {
+        orgId: user.org_id,
+        userId: user.id,
+        role: user.role,
+        label: user.display_name && user.display_name !== "" ? user.display_name : user.email,
+      },
+      { kind, slug, version, description, manifest },
+      bytes,
     );
-  } catch {
-    // best-effort
+  } catch (error) {
+    if (error instanceof BundleWriteError) throw ApiError.internal(error.message);
+    throw error;
   }
 }
 

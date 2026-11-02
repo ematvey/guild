@@ -107,7 +107,7 @@ function fakeDeps(options: FakeOptions): SkillRuntimeDeps {
     objects: undefined,
     skillReads: undefined,
     chatOfConversation: async () => "chat-1",
-    chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member" }),
+    chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member", label: "Member" }),
     executorKind: async () => null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
   };

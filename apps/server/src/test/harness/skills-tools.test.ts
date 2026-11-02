@@ -136,7 +136,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
       },
     },
     chatOfConversation: async () => CHAT,
-    chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member" }),
+    chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member", label: "Member" }),
     executorKind: async () => options.executor ?? null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: options.dir ?? "/nonexistent" }),
     materialize: async (args) => {

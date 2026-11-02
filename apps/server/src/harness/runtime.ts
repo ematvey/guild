@@ -373,7 +373,8 @@ export class GuildRuntime {
       chatOwner: async (chatId) => {
         const owner = await this.chats.ownerOf(chatId);
         if (owner === null) return null;
-        return { orgId: owner.org_id, userId: owner.user_id, role: owner.role };
+        const label = owner.display_name !== null && owner.display_name !== "" ? owner.display_name : owner.email;
+        return { orgId: owner.org_id, userId: owner.user_id, role: owner.role, label };
       },
       executorKind: (conversationId) => this.executorKind(conversationId),
       conversationEnv: (conversationId, orgId) => this.envForConversation(conversationId, orgId),

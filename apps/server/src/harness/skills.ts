@@ -6,11 +6,8 @@
 // hook (the fleet push over the hub).
 //
 // Tool failures are RESULTS the model sees (isError text), never thrown
-// 403/404s. The publish path mirrors the HTTP publish internals
-// (platform/http/registry.ts publishBundleBytes): content-addressed key,
-// the gate re-checked inside upsertVersion's row-lock transaction, object
-// put, and the org event — the arch layers forbid importing the HTTP
-// module from a service, so the shape is kept in step by convention.
+// 403/404s. push_skill publishes through the same registry publish as the
+// HTTP route (platform/registry-publish.ts).
 
 import path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -27,6 +24,7 @@ import {
 import { ApiError } from "../platform/errors.js";
 import { packBundle, parseBundle, readBundleFile, type ParsedBundle } from "../platform/bundle.js";
 import { singleLineDescription, validateManifest, type Manifest } from "../platform/registry-manifest.js";
+import { BundleWriteError, publishRegistryBundle } from "../platform/registry-publish.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillSearchRow } from "../platform/store/registry.js";
 import { nextVersion } from "../platform/store/registry.js";
@@ -61,8 +59,9 @@ export interface SkillRuntimeDeps {
   skillReads: Pick<SkillReadSink, "record"> | undefined;
   /** conversationId → chat id (the chat mapping). */
   chatOfConversation(conversationId: number): Promise<string | null>;
-  /** chatId → the owner's org/user/role (the tool caller's identity). */
-  chatOwner(chatId: string): Promise<{ orgId: string; userId: string; role: string } | null>;
+  /** chatId → the owner's org/user/role and display label (the tool
+   *  caller's identity). */
+  chatOwner(chatId: string): Promise<{ orgId: string; userId: string; role: string; label: string } | null>;
   /** Where the conversation's tools execute (machine dispatch vs the
    *  server-side workspace/sandbox). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
@@ -105,6 +104,7 @@ interface ChatIdentity {
   orgId: string;
   userId: string;
   role: string;
+  label: string;
 }
 
 const INDEX_LIMIT = 200;
@@ -658,7 +658,7 @@ export class SkillRuntime {
     if (chatId === null) return null;
     const owner = await this.deps.chatOwner(chatId);
     if (owner === null) return null;
-    return { chatId, orgId: owner.orgId, userId: owner.userId, role: owner.role };
+    return { chatId, orgId: owner.orgId, userId: owner.userId, role: owner.role, label: owner.label };
   }
 
   private textResult(text: string, isError = false): ToolExecutionResult {
@@ -894,37 +894,17 @@ export class SkillRuntime {
       "manifest.json": Buffer.from(JSON.stringify(manifest)),
       ...Object.fromEntries(collected),
     };
-    const mdText = collected.get("SKILL.md")!.toString("utf8");
     const bundle = packBundle(files);
-    const sha256 = createHash("sha256").update(bundle).digest("hex");
-    // Content-addressed key, same shape as the HTTP publish internals — a
-    // republish with different bytes never overwrites a superseded release.
-    const key = `registry/${orgId}/skill/${slug}/${version}/${sha256}.tar.gz`;
-    const skill = {
-      md_text: mdText,
-      files: Object.entries(files).map(([p, content]) => ({
-        path: p,
-        size: content.length,
-        sha256: createHash("sha256").update(content).digest("hex"),
-      })),
-    };
-    await this.deps.registry.upsertVersion(
-      orgId,
-      "skill",
-      slug,
-      version,
-      description,
-      manifest,
-      key,
-      sha256,
-      userId,
-      skill,
-      { userId, role, isTeamMember },
-    );
     try {
-      await objects.put(key, bundle);
+      await publishRegistryBundle(
+        { registry: this.deps.registry, teams: this.deps.teams, events: this.deps.events, objects },
+        { orgId, userId, role, label: id.label },
+        { kind: "skill", slug, version, description, manifest },
+        bundle,
+      );
     } catch (error) {
-      return this.errorResult(`object store write failed: ${(error as Error).message}`);
+      if (error instanceof BundleWriteError) return this.errorResult(error.message);
+      throw error;
     }
     // Publishing auto-installs for the pusher — unpinned, so the row
     // follows the latest version like any other install; the same record a
@@ -935,16 +915,6 @@ export class SkillRuntime {
       await this.deps.events.emit(orgId, "skill.installed", { slug, version, user_id: userId });
     } catch (error) {
       this.deps.log.warn(`push auto-install failed for ${slug}: ${(error as Error).message}`);
-    }
-    try {
-      await this.deps.events.emit(orgId, control !== null ? "registry.updated" : "registry.published", {
-        kind: "skill",
-        slug,
-        version,
-        user_id: userId,
-      });
-    } catch (error) {
-      this.deps.log.warn(`registry.updated emit failed: ${(error as Error).message}`);
     }
     await this.syncUser(orgId, userId);
     if (control === null) {
