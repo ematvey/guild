@@ -21,7 +21,6 @@ import { registerUsageRoutes } from "./usage.js";
 import { registerActivityRoutes } from "./activity.js";
 import { registerChatsRoutes } from "./chats.js";
 import { registerToolArtifactRoutes } from "./tool-artifacts.js";
-import { registerThreadStreamRoute } from "./thread-stream.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
 import { registerMachineRoutes } from "../../http/machines.js";
@@ -75,7 +74,6 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerWsRoutes(scope, chats, auth);
     registerChatsRoutes(scope, chats, gateway, auth, ctx.objects);
     registerToolArtifactRoutes(scope, chats, auth, infra);
-    registerThreadStreamRoute(scope, chats, auth, ctx.pool);
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
     registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
       onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),

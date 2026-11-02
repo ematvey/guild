@@ -482,16 +482,6 @@
    "role": "wire"
   },
   {
-   "where": "apps/server/src/platform/http/thread-stream.ts",
-   "concept": "thread-state",
-   "role": "wire"
-  },
-  {
-   "where": "apps/server/src/platform/http/thread-stream.ts",
-   "concept": "chat",
-   "role": "wire"
-  },
-  {
    "where": "apps/server/src/platform/integrations/execute.ts",
    "concept": "integration",
    "role": "domain"

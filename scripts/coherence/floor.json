@@ -3,18 +3,18 @@
   "updated": "2026-11-02",
   "counts": {
     "seams": 11,
-    "shims": 18,
+    "shims": 17,
     "duplicate_files": 0,
     "translation_gaps": 18,
     "unmodeled_types": 0,
     "unmapped_files": 2
   },
   "report": {
-    "files": 417,
-    "loc": 91185,
-    "test_files": 167,
-    "test_loc": 32883,
-    "milestone_tags": 28
+    "files": 425,
+    "loc": 92649,
+    "test_files": 181,
+    "test_loc": 34930,
+    "milestone_tags": 27
   },
   "declared_seams": 11
 }

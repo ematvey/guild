@@ -9,8 +9,7 @@
 // write goes through the owner-only, not-deleted write gate.
 //
 // Thread events stream over the member WS (ThreadState / SyncBegin /
-// LiveFrame frames); GET /api/v1/threads/{id}/stream serves the same
-// ThreadState frames over SSE.
+// LiveFrame frames).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../route-contexts.js";

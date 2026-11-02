@@ -1,9 +1,8 @@
-// ThreadState capture + wire rendering: the authoritative atomic view the
-// member socket syncs with and the SSE thread-stream endpoint
-// pushes. Frame bytes match `serde_json::to_value(WsServerMsg::ThreadState)`
-//: internally-tagged
-// snake_case enum, fields in variant declaration order, `None` project
-// fields skipped, `has_more_events` always present.
+// ThreadState capture + wire rendering: the authoritative view the member
+// socket syncs with and pushes. Frame bytes match the Rust
+// `WsServerMsg::ThreadState` serialization: an internally-tagged snake_case
+// enum, fields in variant declaration order, absent project fields skipped,
+// `has_more_events` always present.
 
 import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import type { ChatsCtx } from "../platform/route-contexts.js";

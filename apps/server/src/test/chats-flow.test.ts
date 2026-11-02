@@ -1,7 +1,6 @@
 // M3 chats/turns flow against the real app + harness + mock provider: the
 // chat CRUD wire, the gateway/chat turn path (pi-durable → bridge →
-// thread_events), the SSE thread-stream endpoint, stop/compact/approval
-// routes, and the gateway metering of harness calls (internal key over
+// thread_events), stop/compact/approval routes, and the gateway metering of harness calls (internal key over
 // loopback).
 
 import { createServer } from "node:http";
@@ -587,91 +586,6 @@ describe("gateway/chat turn flow", () => {
       expect(JSON.parse(res.body)).toMatchObject({ error: { code: "bad_request" } });
     }
   });
-
-  it("streams ThreadState frames over the SSE endpoint while a turn runs", async () => {
-    const created = await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/chats",
-      headers: auth(stack.memberToken),
-      payload: { title: "sse chat" },
-    });
-    const chat = JSON.parse(created.body) as { id: string };
-
-    // Real HTTP listener (inject cannot stream hijacked replies).
-    const controller = new AbortController();
-    const response = await fetch(`http://127.0.0.1:${port}/api/v1/chats/${chat.id}/thread/stream`, {
-      headers: { authorization: `Bearer ${stack.memberToken}` },
-      signal: controller.signal,
-    });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    const frames: string[] = [];
-    let pumpError: unknown = undefined;
-    // Continuous pump: frames accumulate while the test waits on them.
-    let buffer = "";
-    const pump = (async (): Promise<void> => {
-      try {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let index: number;
-          while ((index = buffer.indexOf("\n\n")) >= 0) {
-            frames.push(buffer.slice(0, index + 2));
-            buffer = buffer.slice(index + 2);
-          }
-        }
-      } catch (error) {
-        pumpError = error; // the abort at test end
-      }
-    })();
-    const readFrames = async (count: number): Promise<void> => {
-      const deadline = Date.now() + 15000;
-      while (frames.length < count && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (frames.length < count) throw new Error(`only ${frames.length}/${count} SSE frames`);
-    };
-
-    // Initial frame: the atomic view (empty thread).
-    await readFrames(1);
-    const initial = JSON.parse(frames[0]!.replace(/^data: /, "").trim()) as Record<string, unknown>;
-    expect(initial["type"]).toBe("thread_state");
-    expect(initial["chat_id"]).toBe(chat.id);
-    expect(Array.isArray(initial["events"])).toBe(true);
-    expect(frames[0]!.startsWith("data: ")).toBe(true);
-    expect(frames[0]!.endsWith("\n\n")).toBe(true);
-
-    // Submit a turn; the committed events + generating flips republish.
-    await stack.env.app.inject({
-      method: "POST",
-      url: "/api/v1/gateway/chat",
-      headers: auth(stack.memberToken),
-      payload: { chat_id: chat.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "stream me" }] },
-    });
-    await readFrames(3);
-    await waitFor(async () => {
-      // The last frame must show the completed turn (assistant persisted,
-      // generating false).
-      const last = JSON.parse((frames[frames.length - 1]!.replace(/^data: /, "")).trim()) as {
-        generating: boolean;
-        events: { event: { type: string } }[];
-      };
-      return !last.generating && last.events.some((e) => e.event.type === "assistant_message");
-    }, 15000);
-    const final = JSON.parse((frames[frames.length - 1]!.replace(/^data: /, "")).trim()) as {
-      seq: number;
-      events: { seq: number }[];
-      generating: boolean;
-    };
-    // Watermark strictly newer than every row it carries.
-    expect(final.seq).toBeGreaterThan(Math.max(...final.events.map((e) => e.seq)));
-    controller.abort();
-    void pump;
-    void pumpError;
-  }, TEST_TIMEOUT);
 
   it("a queued send's echo delivers even when the run closes within one watch batch", async () => {
     const created = await stack.env.app.inject({
