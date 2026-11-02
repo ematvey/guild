@@ -12,14 +12,14 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { startMcpFixtureServer } from "./fixtures/mcp-server.mjs";
-import { setupM2Stack, TEST_PASSWORD, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, TEST_PASSWORD, type GatewayStack } from "./support/gateway-stack.js";
 import { UserMcpStore } from "../platform/store/user-mcp.js";
 import { encryptSecret, masterKeyBytes } from "../platform/crypto.js";
 import { waitFor } from "./support/wait.js";
 
 const TEST_TIMEOUT = 120_000;
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let fixture: Server;
 let fixtureBase = "";
 let port: number;
@@ -62,7 +62,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack(
+  stack = await setupGatewayStack(
     {
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_SANDBOX_ROOT: sandboxRoot,

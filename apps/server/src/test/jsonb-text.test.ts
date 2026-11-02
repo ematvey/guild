@@ -3,7 +3,8 @@
 // time.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import pg from "pg";
+import type pg from "pg";
+import { createTestDatabase, type TestDatabase } from "./support/postgres.js";
 import { jsonbText } from "../platform/domain/text.js";
 
 describe("jsonbText", () => {
@@ -29,36 +30,18 @@ describe("jsonbText", () => {
   });
 });
 
-const ADMIN_URL =
-  process.env.GUILD_TEST_PG_URL ?? "postgres://guild:guild@localhost:5432/guild";
-
-function suffix(): string {
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 describe("jsonbText against Postgres", () => {
-  let admin: pg.Pool;
+  let database: TestDatabase;
   let db: pg.Pool;
-  let databaseName: string;
 
   beforeAll(async () => {
-    databaseName = `guild_jsonb_test_${suffix()}`;
-    admin = new pg.Pool({ connectionString: ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-    await admin.query(`CREATE DATABASE "${databaseName}"`);
-    const url = new URL(ADMIN_URL);
-    url.pathname = `/${databaseName}`;
-    db = new pg.Pool({ connectionString: url.toString(), max: 1, idleTimeoutMillis: 2000 });
+    database = await createTestDatabase("guild_jsonb_test_", { migrate: false, poolMax: 1 });
+    db = database.pool;
     await db.query("CREATE TABLE probe (v jsonb NOT NULL)");
   });
 
   afterAll(async () => {
-    await db?.end();
-    if (databaseName !== undefined) {
-      await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
-    }
-    await admin?.end();
+    await database?.drop();
   });
 
   it("rejects the raw JSON.stringify escape and accepts jsonbText", async () => {

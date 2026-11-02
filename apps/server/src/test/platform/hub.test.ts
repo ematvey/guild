@@ -1,6 +1,5 @@
-// Hub semantics: the 0.5.25 live-slot rule,
-// socket caps, ownership gates, dispatch correlation — ported from the Rust
-// hub's own test expectations.
+// Hub semantics: the live-slot rule, socket caps, ownership gates and
+// dispatch correlation.
 
 import { describe, it, expect } from "vitest";
 import { LiveHub, MAX_SOCKETS_PER_USER, type LiveMember } from "../../hub/live.js";

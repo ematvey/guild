@@ -4,7 +4,7 @@
 // (installed with pin/update markers, then uninstalled clipped with the
 // (org) marker), the 8192-byte budget with the search_skills overflow line,
 // and null only when both halves are empty. Plus the submitTurn plumbing
-// (POST /gateway/chat → noteTurnInput) against the full M2 stack.
+// (POST /gateway/chat → noteTurnInput) against the full gateway stack.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +15,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createGuildExtension, type GuildExtensionDeps } from "../../harness/extension.js";
 import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 import type { GuildRuntime } from "../../harness/runtime.js";
 
 const ORG = "org-1";
@@ -267,13 +267,13 @@ describe("guild extension skills section", () => {
 // --------------------------------------------------- turn plumbing (full stack)
 
 describe("submitTurn skills_index plumbing", () => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
   let memberToken: string;
   let runtime: GuildRuntime;
   const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-skills-index-"));
 
   beforeAll(async () => {
-    stack = await setupM2Stack(
+    stack = await setupGatewayStack(
       { GUILD_SANDBOX_ROOT: sandboxRoot },
       { dbPrefix: "guild_skills_index_test" },
     );

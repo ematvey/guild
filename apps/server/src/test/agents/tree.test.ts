@@ -5,9 +5,9 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "../platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 
 const auth = (): Record<string, string> => ({
   authorization: `Bearer ${stack.memberToken}`,
@@ -26,7 +26,7 @@ async function insertChat(title: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  stack = await setupM2Stack();
+  stack = await setupGatewayStack();
 }, 60_000);
 
 afterAll(async () => {

@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 
 const failure = { status: 404, contentType: "application/json", body: '{"detail":"Not Found"}' };
 const answer = {
@@ -17,14 +17,14 @@ async function until(probe: () => Promise<boolean>, timeout = 25_000) {
 }
 
 describe.each(["off", "on"])("failed-run queue recovery (worker mode %s)", (mode) => {
-  let stack: M2Stack;
+  let stack: GatewayStack;
   const auth = () => ({ authorization: `Bearer ${stack.memberToken}`, "content-type": "application/json" });
   beforeAll(async () => {
     const probe = createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = (probe.address() as AddressInfo).port;
     await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
-    stack = await setupM2Stack({
+    stack = await setupGatewayStack({
       GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
       GUILD_WORKER_MODE: mode,
       GUILD_ALLOW_SHELL_TOOLS: "1",

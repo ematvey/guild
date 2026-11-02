@@ -1,8 +1,8 @@
-// Worker-per-chat (M2, fork implementation): the server holds no harness;
-// each chat's admission runs in its own forked worker over IPC. Gates:
-// a turn completes through a forked worker; two chats run in two workers
-// and killing one worker mid-turn (SIGKILL) leaves the other streaming and
-// the dead one's turn resumed by the respawn.
+// Worker-per-chat: the server holds no harness; each chat's admission runs
+// in its own forked worker over IPC. A turn completes through a forked
+// worker; two chats run in two workers and killing one worker mid-turn
+// (SIGKILL) leaves the other streaming and the dead one's turn resumed by
+// the respawn.
 
 import { createServer } from "node:http";
 import crypto from "node:crypto";
@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { StreamWireEvent, WsServerMsg } from "../hub/protocol.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { createSession, InboxDoc, AssistantEntry, UserEntry, type ConversationId } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -19,7 +19,7 @@ import { PgPoolDatabase } from "../storage/postgres/pg.js";
 import { masterKeyBytes, encryptSecret } from "../platform/crypto.js";
 import { waitFor } from "./support/wait.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let port: number;
 
 beforeAll(async () => {
@@ -27,7 +27,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
-  stack = await setupM2Stack({
+  stack = await setupGatewayStack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
     GUILD_WORKER_MODE: "on",
   });

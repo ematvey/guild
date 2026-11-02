@@ -6,15 +6,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, Harness, type ConversationId, type TaskId } from "@earendil-works/pi-durable";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import { PostgresDurableStorage } from "../storage/postgres/storage.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 
 beforeAll(async () => {
-  stack = await setupM2Stack({});
+  stack = await setupGatewayStack({});
 });
 afterAll(async () => {
   await stack.close();

@@ -1,7 +1,7 @@
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { NotifyHub } from "../platform/notify.js";
-import { TEST_ADMIN_URL } from "./platform/harness.js";
+import { TEST_ADMIN_URL } from "./support/platform-env.js";
 
 async function until(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

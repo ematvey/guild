@@ -1,14 +1,14 @@
-// Shape fidelity of the ThreadState surface against the LIVE Rust member
-// socket: frames captured from the running :18080 stack (disposable chat +
-// one real GLM-5.3-Flash turn; see M3-REPORT.md §SSE fixtures). These tests
-// compare parsed JSON, so key order and float text are not pinned.
+// Shape fidelity of the ThreadState surface against fixed captured member
+// socket frames (fixtures/thread-state-capture: one disposable chat and one
+// real model turn). These tests compare parsed JSON, so key order and float
+// text are not pinned.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { normalizeThreadEvent, threadEventRowWire, threadEventWire } from "../platform/domain/thread-events.js";
 import { threadStateWire } from "../chats/thread-state.js";
 
-const FINAL_FRAME = readFileSync(new URL("./fixtures/m3-live/final-thread-state.txt", import.meta.url), "utf8").trim();
+const FINAL_FRAME = readFileSync(new URL("./fixtures/thread-state-capture/final-thread-state.txt", import.meta.url), "utf8").trim();
 
 interface ParsedRow {
   id: string;
@@ -38,7 +38,7 @@ function parseFrame(frame: string): ParsedFrame {
   return JSON.parse(json) as ParsedFrame;
 }
 
-describe("ThreadState wire fidelity (live Rust bytes)", () => {
+describe("ThreadState wire fidelity (captured frames)", () => {
   it("re-renders every captured event row as the same parsed row", () => {
     expect(FRAME.type).toBe("thread_state");
     for (const [index, row] of FRAME.events.entries()) {
@@ -79,7 +79,7 @@ describe("ThreadState wire fidelity (live Rust bytes)", () => {
   });
 
   it("the REST GET /thread body carries the same rows (semantic)", () => {
-    const thread = JSON.parse(readFileSync(new URL("./fixtures/m3-live/thread.json", import.meta.url), "utf8")) as {
+    const thread = JSON.parse(readFileSync(new URL("./fixtures/thread-state-capture/thread.json", import.meta.url), "utf8")) as {
       context: { max: number; model: string | null; tokens: number };
       events: ParsedRow[];
     };

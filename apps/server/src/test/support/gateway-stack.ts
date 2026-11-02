@@ -1,17 +1,15 @@
-// M2 gateway test harness: disposable Postgres database (verbatim Rust
-// migrations applied in order, namespaced `guild_m2_test_*` so the M1 and
-// durable-storage suites coexist) + a disposable ClickHouse database on the
-// same server (usage/quota tests) + a scripted mock provider upstream and a
-// built app instance.
+// Gateway test stack: a disposable database with every migration applied
+// (`guild_gateway_test_*` unless the suite names its own prefix), a
+// disposable ClickHouse database on the same server (usage/quota tests), a
+// scripted mock provider upstream, and a built app.
 
-import { dropTestDatabase } from "../support/postgres.js";
+import { createTestDatabase, testSuffix } from "./postgres.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pg from "pg";
 import { buildApp } from "../../app.js";
-import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { loadConfig } from "../../config.js";
 import {
   MIGRATIONS_DIR,
@@ -19,7 +17,7 @@ import {
   TEST_S3_ACCESS_KEY_ID,
   TEST_S3_SECRET_ACCESS_KEY,
   TEST_S3_URL,
-} from "./harness.js";
+} from "./platform-env.js";
 
 const TEST_CLICKHOUSE_URL =
   process.env.GUILD_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
@@ -27,13 +25,7 @@ const TEST_CLICKHOUSE_USER = process.env.GUILD_TEST_CLICKHOUSE_USER ?? "ch_user"
 const TEST_CLICKHOUSE_PASSWORD =
   process.env.GUILD_TEST_CLICKHOUSE_PASSWORD ?? "ch_test_pass";
 
-function randomSuffix(): string {
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export interface M2TestEnv {
+export interface GatewayTestEnv {
   databaseName: string;
   clickhouseDatabase: string;
   /** Pool on the DISPOSABLE database (seeding/preparation). */
@@ -45,7 +37,7 @@ export interface M2TestEnv {
 
 /** Creates a disposable ClickHouse database and returns its name. */
 async function createClickhouseDatabase(dbPrefix: string): Promise<string> {
-  const name = `${dbPrefix}${randomSuffix()}`;
+  const name = `${dbPrefix}${testSuffix()}`;
   const res = await fetch(TEST_CLICKHOUSE_URL, {
     method: "POST",
     headers: {
@@ -73,34 +65,23 @@ async function dropClickhouseDatabase(name: string): Promise<void> {
   }
 }
 
-export async function createM2TestEnv(
+export async function createGatewayTestEnv(
   withClickhouse = true,
   logLevel = "error",
   configOverrides: Record<string, string> = {},
-  dbPrefix = "guild_m2_test_",
-): Promise<M2TestEnv> {
-  const suffix = randomSuffix();
-  const databaseName = `${dbPrefix}${suffix}`;
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-  await adminPool.query(`CREATE DATABASE "${databaseName}"`);
-  await adminPool.end();
-  const databaseUrl = new URL(TEST_ADMIN_URL);
-  databaseUrl.pathname = `/${databaseName}`;
-
-  // Seeding/preparation pool on the disposable database — never on the
-  // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4, idleTimeoutMillis: 2000 });
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-  // The production startup path (applyPlatformMigrations): same filename
-  // order, same schema_history tracking hand-run deployments use.
-  await applyPlatformMigrations(migrationPool);
-  await migrationPool.end();
+  dbPrefix = "guild_gateway_test_",
+): Promise<GatewayTestEnv> {
+  const suffix = testSuffix();
+  const database = await createTestDatabase(dbPrefix, { suffix });
+  const databaseName = database.name;
+  const databaseUrl = new URL(database.url);
+  const dbPool = database.pool;
 
   const clickhouseDatabase = withClickhouse ? await createClickhouseDatabase(dbPrefix) : "guild";
 
   // The usage_events table: created eagerly in the disposable database with
-  // the same DDL the sink issues on connect (the Rust sink creates it on
-  // AppState::usage() — before any seeded usage the quota tests read).
+  // the same DDL the sink issues on connect, before any seeded usage the
+  // quota tests read.
   const { ClickhouseClient } = await import("../../platform/clickhouse.js");
   const ch = new ClickhouseClient({
     url: TEST_CLICKHOUSE_URL,
@@ -110,11 +91,11 @@ export async function createM2TestEnv(
   });
   await ch.ensureUsageTable();
 
-  const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-m2-agents-"));
+  const agentRoot = mkdtempSync(path.join(tmpdir(), "guild-gateway-agents-"));
   const config = loadConfig({
     GUILD_DATABASE_URL: databaseUrl.toString(),
     GUILD_MASTER_KEY_HEX: "22".repeat(32),
-    GUILD_JWT_SECRET: "m2-test-jwt-secret",
+    GUILD_JWT_SECRET: "gateway-test-jwt-secret",
     GUILD_API_URL: "http://localhost:18080",
     GUILD_LOG_LEVEL: logLevel,
     GUILD_CLICKHOUSE_URL: TEST_CLICKHOUSE_URL,
@@ -143,16 +124,12 @@ export async function createM2TestEnv(
     if (done) return;
     done = true;
     await app.close();
-    // A test that simulated a hard process stop may have ended the pool
-    // already; a second end must not fail the cleanup.
-    await dbPool.end().catch(() => {});
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
-    try {
-      await dropTestDatabase(dropper, databaseName);
-    } finally {
-      await dropper.end();
-    }
+    // A test that simulated a hard process stop may have ended the pool
+    // already; the drop tolerates that.
+    await database.drop().catch(async (error: unknown) => {
+      if (!String(error).includes("Called end on pool more than once")) throw error;
+    });
   };
 
   return {
@@ -268,8 +245,8 @@ export async function startMockUpstream(
 
 export const TEST_PASSWORD = "m2-test-Pw1!";
 
-export interface M2Stack {
-  env: M2TestEnv;
+export interface GatewayStack {
+  env: GatewayTestEnv;
   orgId: string;
   adminEmail: string;
   adminToken: string;
@@ -302,16 +279,16 @@ export interface M2Stack {
 /** Full stack: disposable PG + CH + app + org/users/session/key + mock
  *  provider. The provider row is registered against the mock upstream.
  *  `configOverrides` pass through to loadConfig (e.g. GUILD_SELF_BASE_URL). */
-export async function setupM2Stack(
+export async function setupGatewayStack(
   configOverrides: Record<string, string> = {},
   opts: { dbPrefix?: string; logLevel?: string } = {},
-): Promise<M2Stack> {
-  const env = await createM2TestEnv(true, opts.logLevel ?? "error", configOverrides, opts.dbPrefix);
+): Promise<GatewayStack> {
+  const env = await createGatewayTestEnv(true, opts.logLevel ?? "error", configOverrides, opts.dbPrefix);
   const db = env.db;
   const orgId = crypto.randomUUID();
-  const adminEmail = `m2-admin-${randomSuffix()}@example.test`;
-  const memberEmail = `m2-member-${randomSuffix()}@example.test`;
-  await db.query("INSERT INTO orgs (id, name) VALUES ($1, 'm2 test org')", [orgId]);
+  const adminEmail = `gateway-admin-${testSuffix()}@example.test`;
+  const memberEmail = `gateway-member-${testSuffix()}@example.test`;
+  await db.query("INSERT INTO orgs (id, name) VALUES ($1, 'gateway test org')", [orgId]);
   // Seed users with argon2 hashes computed through the platform crypto
   // (same algorithm login verify uses).
   const { hashPassword } = await import("../../platform/crypto.js");
@@ -349,7 +326,7 @@ export async function setupM2Stack(
     },
   ]);
 
-  const stack: M2Stack = {
+  const stack: GatewayStack = {
     env,
     orgId,
     adminEmail,
@@ -461,7 +438,7 @@ export async function setupM2Stack(
   return stack;
 }
 
-async function login(env: M2TestEnv, email: string): Promise<string> {
+async function login(env: GatewayTestEnv, email: string): Promise<string> {
   const res = await env.app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
@@ -472,6 +449,6 @@ async function login(env: M2TestEnv, email: string): Promise<string> {
   return (JSON.parse(res.body) as { token: string }).token;
 }
 
-// The plain M1 harness module is re-used for MIGRATIONS_DIR/TEST_ADMIN_URL;
-// its own test env builder stays M1-specific.
+// The platform env's migration dir and admin URL, for suites built on
+// this stack.
 export { MIGRATIONS_DIR, TEST_ADMIN_URL };

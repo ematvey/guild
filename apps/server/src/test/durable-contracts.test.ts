@@ -34,13 +34,13 @@ import { AgentStore } from "../agents/store.js";
 import { TurnCommandStore } from "../platform/store/turn-commands.js";
 import { approvalDecisionEvent, assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { PostgresDurableStorage } from "../storage/postgres/storage.js";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let threads: ThreadStore;
 const log = pino({ level: "silent" });
 beforeAll(async () => {
-  stack = await setupM2Stack({ GUILD_WORKER_MODE: "off" });
+  stack = await setupGatewayStack({ GUILD_WORKER_MODE: "off" });
   threads = new ThreadStore(stack.env.db);
 });
 afterAll(async () => {

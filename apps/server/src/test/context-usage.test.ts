@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { contextUsage } from "../chats/context-usage.js";
 
-let stack: M2Stack;
+let stack: GatewayStack;
 let chatId: string;
 const headers = () => ({ authorization: `Bearer ${stack.memberToken}` });
 const url = () => `/api/v1/threads/${chatId}/context?model=Context-Test`;
 
 beforeAll(async () => {
-  stack = await setupM2Stack();
+  stack = await setupGatewayStack();
   await stack.routeModel("Context-Test");
   await stack.env.db.query("UPDATE model_routes SET context_window = 500000, alias = 'Context Alias' WHERE org_id = $1", [stack.orgId]);
   await stack.routeModel("Context-Small");

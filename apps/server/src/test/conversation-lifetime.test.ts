@@ -187,7 +187,7 @@ describe("worker readiness and recovery", () => {
 });
 
 it("attributes simultaneous provider calls by durable session identity", async () => {
-  const { startMockUpstream } = await import("./platform/m2-harness.js");
+  const { startMockUpstream } = await import("./support/gateway-stack.js");
   const { ensureOrgProvider, guildProviderId } = await import("../harness/models.js");
   const upstream = await startMockUpstream([
     {

@@ -14,9 +14,9 @@ import {
   sendAgentMessage,
 } from "../../agents/tools.js";
 import { createAgentsTestEnv } from "./harness.js";
-import type { M5TestEnv } from "../platform/m5-harness.js";
+import type { HubTestEnv } from "../support/hub-env.js";
 
-const env: M5TestEnv | null = await createAgentsTestEnv();
+const env: HubTestEnv | null = await createAgentsTestEnv();
 const dbDescribe = env === null ? describe.skip : describe;
 
 dbDescribe("agent conversation tools", () => {
