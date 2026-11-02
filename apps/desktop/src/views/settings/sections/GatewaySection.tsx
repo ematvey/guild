@@ -31,22 +31,14 @@ import {
 import { serverUrl } from "../../../lib/session";
 import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../lib/api/models";
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
-import { registerSessionReset } from "../../../lib/session-reset";
+import { createStore } from "../../../lib/store";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../components/page-header";
 
-let lastKeys: ApiKeyInfo[] | null = null;
-// Generation of the in-flight key refresh; clearGatewayCache bumps it so a
-// response landing after sign-out is dropped instead of repopulating.
-let keysEpoch = 0;
-
-/** Drops the cached key list and invalidates the in-flight refresh. */
-function clearGatewayKeys(): void {
-  keysEpoch++;
-  lastKeys = null;
-}
-
-registerSessionReset(clearGatewayKeys);
+/** The member's API keys as last read or written: a revisit renders them at
+ *  once while the fresh read lands. Sign-out resets it (createStore), and
+ *  the settings cache epoch drops a read that lands after that. */
+const keysStore = createStore<ApiKeyInfo[] | null>(null);
 
 function Snippet({ label, code }: { label: string; code: string }) {
   return (
@@ -75,7 +67,7 @@ function Snippet({ label, code }: { label: string; code: string }) {
 const SURFACES = ["OpenAI", "Anthropic"] as const;
 
 export function GatewaySection() {
-  const [keys, setKeys] = useState<ApiKeyInfo[] | null>(lastKeys);
+  const keys = keysStore.use();
   const [loadError, setLoadError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -93,8 +85,7 @@ export function GatewaySection() {
         toast.error("Could not load API keys");
         return;
       }
-      lastKeys = k;
-      setKeys(k);
+      keysStore.set(k);
     });
   }, []);
 
@@ -199,8 +190,7 @@ console.log(msg.content[0].text);`,
       toast.error("Could not create API key");
       return;
     }
-    lastKeys = [...(lastKeys ?? []), res.key];
-    setKeys(lastKeys);
+    keysStore.update((prev) => [...(prev ?? []), res.key]);
     setIssued(res.plaintext);
     setCreating(false);
     setName("");
@@ -216,10 +206,9 @@ console.log(msg.content[0].text);`,
       toast.error("Could not revoke API key");
       return;
     }
-    lastKeys = (lastKeys ?? []).map((k) =>
+    keysStore.update((prev) => (prev ?? []).map((k) =>
       k.id === revokeTarget.id ? { ...k, revoked_at: new Date().toISOString() } : k,
-    );
-    setKeys(lastKeys);
+    ));
     setRevokeTarget(null);
     toast.success("API key revoked");
   }
