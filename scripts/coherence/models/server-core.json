@@ -631,6 +631,10 @@
         {
           "where": "apps/server/src/harness/userMcp.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/platform/integrations/mcp-url.ts",
+          "role": "domain"
         }
       ],
       "translations": [

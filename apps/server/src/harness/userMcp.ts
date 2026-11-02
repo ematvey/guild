@@ -21,6 +21,7 @@ import { userMcpToolName } from "../platform/domain/mcp.js";
 export { userMcpToolName } from "../platform/domain/mcp.js";
 import type { Logger } from "pino";
 import { mcpConnect } from "../platform/integrations/mcp.js";
+import { validateUrl } from "../platform/integrations/mcp-url.js";
 import type { JsonObject } from "../integrations/shared.js";
 import type { UserMcpStore } from "../platform/store/userMcp.js";
 import type { TurnPreparation } from "./integrations.js";
@@ -139,6 +140,7 @@ export class UserMcpRuntime {
           const server = { id: row.id, name: row.name, url: row.url, headersEnc: row.headers_enc };
 
           try {
+            await validateUrl(row.url);
             const peer = await mcpConnect(
               row.url,
               this.deps.store.resolveHeaders(row.headers_enc, masterKey),
@@ -290,6 +292,7 @@ export class UserMcpRuntime {
       return { content: `MCP server ${server.name} is no longer enabled`, isError: true };
     }
     try {
+      await validateUrl(row.url);
       const peer = await mcpConnect(
         row.url,
         this.deps.store.resolveHeaders(row.headers_enc, this.deps.masterKey()),

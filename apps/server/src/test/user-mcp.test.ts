@@ -168,9 +168,9 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
   return events.filter((e) => (e.event as { type?: string }).type === "tool_result");
 }
 
-/** Seeds one user_mcp_servers row directly (bypasses the route validation —
- *  the runtime tests exercise 127.0.0.1 fixture URLs the guard rejects on
- *  the create path). */
+/** Seeds one user_mcp_servers row directly (bypasses the route validation:
+ *  the runtime tests use 127.0.0.1 fixture URLs, with the guard opened by
+ *  GUILD_MCP_ALLOW_PRIVATE). */
 async function seedServer(opts: {
   name: string;
   url: string;
@@ -414,6 +414,15 @@ describe("user mcp routes", () => {
 // ---------- chat runtime ----------
 
 describe("user mcp chat runtime", () => {
+  // The runtime re-checks the SSRF guard on every connect; the fixture
+  // server listens on 127.0.0.1.
+  beforeAll(() => {
+    process.env.GUILD_MCP_ALLOW_PRIVATE = "1";
+  });
+  afterAll(() => {
+    delete process.env.GUILD_MCP_ALLOW_PRIVATE;
+  });
+
   it(
     "declares the fixture server's tools, executes a call, and carries the prompt index",
     async () => {
