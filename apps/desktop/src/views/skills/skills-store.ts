@@ -4,7 +4,8 @@
 // Skill activity rides the `org_event` frame; the activity feed prepends the
 // events it shows.
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
+import { createStore } from "../../lib/store";
 import type { EventRow } from "@guild/wire/rest";
 import type { SkillActivityEvent, SkillInstall, SkillItem } from "./skills-api";
 
@@ -13,38 +14,21 @@ export interface SkillCatalog {
   installs: SkillInstall[];
 }
 
-let catalog: SkillCatalog | null = null;
-const listeners = new Set<() => void>();
+const catalog = createStore<SkillCatalog | null>(null);
 const activityListeners = new Set<(event: SkillActivityEvent) => void>();
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-const getSnapshot = (): SkillCatalog | null => catalog;
-
-function publish(next: SkillCatalog | null): void {
-  catalog = next;
-  for (const listener of listeners) listener();
-}
 
 /** Replaces the catalog and the member's installs (the `skill_catalog`
  *  frame). */
 export function applySkillCatalog(next: SkillCatalog): void {
-  publish(next);
+  catalog.set(next);
 }
 
-/** Drops the catalog; sign-out calls this. */
-export function clearSkillCatalog(): void {
-  publish(null);
-}
+/** Drops the catalog (sign-out resets it with every other store). */
+export const clearSkillCatalog = catalog.reset;
 
 /** The catalog and installs; null until the first push. */
 export function useSkillCatalog(): SkillCatalog | null {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return catalog.use();
 }
 
 /** True for the org events the skills activity feed lists. */

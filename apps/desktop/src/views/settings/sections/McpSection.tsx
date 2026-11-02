@@ -9,7 +9,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { rowDetailCodec } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import { registerCacheClear } from "../use-cached-api";
+import { registerSessionReset } from "../../../lib/session-reset";
 import {
   createMcpServer,
   deleteMcpServer,
@@ -71,7 +71,7 @@ interface ProbeResult {
  *  list's tool-count column reads it; a fresh probe updates it. */
 const toolCounts = new Map<string, number>();
 
-registerCacheClear(() => toolCounts.clear());
+registerSessionReset(() => toolCounts.clear());
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (

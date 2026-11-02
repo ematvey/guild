@@ -6,8 +6,7 @@ import { toast } from "sonner";
 import { startSocket } from "../../../lib/socket-client";
 import { applyMachineList, applyMachineStatus } from "../../../lib/machines-store";
 import { applyModelList } from "../../../lib/models-store";
-import { applyContextUsage, clearContextUsage } from "../../../lib/context-usage-store";
-import { registerCacheClear } from "../../settings/use-cached-api";
+import { applyContextUsage } from "../../../lib/context-usage-store";
 import { applyWorkspaceIdentity } from "../../../lib/workspace-store";
 import type { ChatSummary, ChatSubagentNode } from "../../../lib/api/chats";
 import type { Project } from "../../../lib/api/projects";
@@ -26,8 +25,6 @@ import {
 } from "../../agents/agents-store";
 import { applyOrgEvent, applySkillCatalog } from "../../skills/skills-store";
 import type { ChatTree } from "../../../lib/api/chats";
-
-registerCacheClear(clearContextUsage);
 
 export interface MemberSocketDeps {
   signOut: () => void;

@@ -30,7 +30,8 @@ import {
 } from "@guild/ui/components/alert-dialog";
 import { serverUrl } from "../../../lib/session";
 import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../lib/api/models";
-import { cacheEpochChanged, currentCacheEpoch, registerCacheClear } from "../use-cached-api";
+import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
+import { registerSessionReset } from "../../../lib/session-reset";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../components/page-header";
 
@@ -45,7 +46,7 @@ function clearGatewayKeys(): void {
   lastKeys = null;
 }
 
-registerCacheClear(clearGatewayKeys);
+registerSessionReset(clearGatewayKeys);
 
 function Snippet({ label, code }: { label: string; code: string }) {
   return (

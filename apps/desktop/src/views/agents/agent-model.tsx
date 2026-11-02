@@ -1,9 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { listModels, modelLabel, type ModelOption } from "../../lib/api/models";
-import { clearModelList, modelsSnapshot, seedModelList, subscribeModels } from "../../lib/models-store";
-import { cacheEpochChanged, currentCacheEpoch, registerCacheClear } from "../settings/use-cached-api";
-
-registerCacheClear(clearModelList);
+import { modelsSnapshot, seedModelList, subscribeModels } from "../../lib/models-store";
+import { cacheEpochChanged, currentCacheEpoch } from "../settings/use-cached-api";
 
 /** One HTTP seed per empty store: the member socket pushes the list on
  *  connect, so the read only covers a mount that lands before that frame.

@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "../../lib/api/request";
+import { registerSessionReset } from "../../lib/session-reset";
 
 const cache = new Map<string, unknown>();
 /** Mounted readers per path. */
@@ -27,7 +28,6 @@ export function updateCached<T>(path: string, update: (value: T) => T): void {
 }
 
 /** Section caches that clear with the settings cache (sign-out). */
-const cacheClearers = new Set<() => void>();
 
 // Session generation for every module cache: each clear bumps it, and async
 // writers verify the generation they started under — a response landing
@@ -46,20 +46,14 @@ export function cacheEpochChanged(epoch: number): boolean {
   return epoch !== cacheEpoch;
 }
 
-/** Drops the module cache, invalidates in-flight writers, and runs every
- *  registered section cache clear. Sign-out must call this: the caches
- *  otherwise leak one user's settings data into the next session on the
- *  same browser profile. */
+/** Drops the module cache and invalidates in-flight writers. Sign-out runs
+ *  it through the session reset: the cache otherwise leaks one user's
+ *  settings data into the next session on the same browser profile. */
 export function clearSettingsCaches(): void {
   cacheEpoch++;
   cache.clear();
-  for (const clear of cacheClearers) clear();
 }
-
-/** Registers one section cache's clear function with the settings clear. */
-export function registerCacheClear(clear: () => void): void {
-  cacheClearers.add(clear);
-}
+registerSessionReset(clearSettingsCaches);
 
 /** Last successful response for a GET path, if one is cached. Lets a section
  * initialize non-fetch state (like edit modes) from data before the first

@@ -13,12 +13,8 @@ import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
 import { request } from "./lib/api/request";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
-import { clearSettingsCaches } from "./views/settings/use-cached-api";
-import { clearMachinesCache } from "./lib/machines-store";
-import { clearWorkspaceIdentity } from "./lib/workspace-store";
-import { clearAgentState } from "./views/agents/agents-store";
-import { clearSkillCatalog } from "./views/skills/skills-store";
 import { ThemeProvider } from "./theme";
+import { resetSessionState } from "./lib/session-reset";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
 const BAKED_URL: string =
@@ -362,11 +358,7 @@ function DesktopApp() {
       /* engine unreachable — local sign-out only */
     }
     clearToken();
-    clearSettingsCaches();
-    clearMachinesCache();
-    clearWorkspaceIdentity();
-    clearAgentState();
-    clearSkillCatalog();
+    resetSessionState();
     setUser(null);
     window.location.reload();
   };
@@ -527,11 +519,7 @@ function AppInner() {
     const signOut = async () => {
       await apiLogout();
       clearToken();
-      clearSettingsCaches();
-      clearMachinesCache();
-      clearWorkspaceIdentity();
-      clearAgentState();
-      clearSkillCatalog();
+      resetSessionState();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

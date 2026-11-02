@@ -3,41 +3,26 @@
 // read only seeds a store the socket has not filled yet.
 
 import type { ModelOption } from "./api/models";
+import { createStore } from "./store";
 
-let snapshot: ModelOption[] | null = null;
-const listeners = new Set<() => void>();
+const models = createStore<ModelOption[] | null>(null);
 
-function emit(): void {
-  for (const listener of listeners) listener();
-}
-
-export function subscribeModels(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+export const subscribeModels = models.subscribe;
 
 /** The current list, or null until the first push or seed. */
-export function modelsSnapshot(): ModelOption[] | null {
-  return snapshot;
-}
+export const modelsSnapshot = models.get;
 
 /** Replaces the list (the `model_list` frame). */
-export function applyModelList(models: ModelOption[]): void {
-  snapshot = models;
-  emit();
+export function applyModelList(next: ModelOption[]): void {
+  models.set(next);
 }
 
 /** Fills an empty store from an HTTP read. A pushed list is never
  *  overwritten: it is newer than any read that raced it. */
-export function seedModelList(models: ModelOption[]): void {
-  if (snapshot !== null) return;
-  applyModelList(models);
+export function seedModelList(next: ModelOption[]): void {
+  if (models.get() !== null) return;
+  models.set(next);
 }
 
-/** Drops the list; sign-out clears it so the next session starts empty. */
-export function clearModelList(): void {
-  snapshot = null;
-  emit();
-}
+/** Drops the list (sign-out resets it with every other store). */
+export const clearModelList = models.reset;

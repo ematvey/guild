@@ -9,6 +9,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
+import { registerSessionReset } from "../../lib/session-reset";
 
 type Slice = "runs" | "threads" | "routines";
 
@@ -84,11 +85,12 @@ export function resetAgentSlices(): void {
   emit({ ...state, runs: {}, threads: {}, routines: {}, epoch: state.epoch + 1 });
 }
 
-/** Drops everything; sign-out calls this so one user's agents never reach
+/** Drops everything; sign-out runs it so one user's agents never reach
  *  the next session. */
 export function clearAgentState(): void {
   emit({ ...EMPTY, epoch: state.epoch + 1 });
 }
+registerSessionReset(clearAgentState);
 
 /** Seeds one per-agent slice from its HTTP read, unless a frame got there
  *  first. Runs merge: a pushed row is newer than the read. */
