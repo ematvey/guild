@@ -5,30 +5,7 @@
 
 import { lookup } from "node:dns/promises";
 import { ApiError } from "../platform/errors.js";
-
-/** Whether the host string is a private/loopback/link-local IP literal
- *  (IPv4 dotted quad + the ranges below, or IPv6 in brackets or bare). */
-export function isPrivateIpLiteral(host: string): boolean {
-  const h = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  // IPv4-mapped IPv6 (`::ffff:127.0.0.1`) delegates to the IPv4 rules.
-  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
-  if (mapped !== null) return isPrivateIpLiteral(mapped[1]!);
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (v4 !== null) {
-    const [a, b, c] = [Number(v4[1]), Number(v4[2]), Number(v4[3])];
-    if ([a, b, c, Number(v4[4])].some((n) => n > 255)) return false;
-    if (a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) return true;
-    return false;
-  }
-  if (h === "::1" || h === "::") return true;
-  if (h.includes(":")) {
-    // fe80::/10 and fc00::/7: the first hextet decides.
-    const first = h.split(":")[0] ?? "";
-    const n = parseInt(first, 16);
-    if (!Number.isNaN(n) && ((n >= 0xfe80 && n <= 0xfebf) || (n >= 0xfc00 && n <= 0xfdff))) return true;
-  }
-  return false;
-}
+import { isNonPublicAddress } from "./ip-guard.js";
 
 /** Hostnames allowed to resolve to a private address. The compose deployment
  *  reaches `host.docker.internal`; anything else must resolve public. */
@@ -56,7 +33,7 @@ export async function validateUrl(raw: string): Promise<void> {
   }
   if (url.hostname === "") throw ApiError.badRequest("url must carry a host");
   if (process.env.GUILD_MCP_ALLOW_PRIVATE === "1") return;
-  if (isPrivateIpLiteral(url.hostname)) {
+  if (isNonPublicAddress(url.hostname)) {
     throw ApiError.badRequest("private and loopback addresses are not allowed");
   }
   if (allowedPrivateHosts().has(url.hostname.toLowerCase())) return;
@@ -69,7 +46,7 @@ export async function validateUrl(raw: string): Promise<void> {
   } catch {
     throw ApiError.badRequest("url host does not resolve");
   }
-  if (addresses.some((a) => isPrivateIpLiteral(a.address))) {
+  if (addresses.some((a) => isNonPublicAddress(a.address))) {
     throw ApiError.badRequest("private and loopback addresses are not allowed");
   }
 }

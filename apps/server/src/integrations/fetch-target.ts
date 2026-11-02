@@ -7,34 +7,10 @@
 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { isPrivateIpLiteral } from "./mcp-url.js";
+import { isNonPublicAddress } from "./ip-guard.js";
 
 /** Host names that always mean this machine or the cloud metadata service. */
 const BLOCKED_HOSTS = new Set(["localhost", "metadata", "metadata.google.internal", "instance-data"]);
-
-/** Address ranges beyond the private/loopback/link-local set that a public
- *  fetch never needs: this-network, CGNAT, benchmarking, multicast and
- *  reserved IPv4, and IPv6 multicast. */
-function isNonPublicAddress(address: string): boolean {
-  const h = address.startsWith("[") && address.endsWith("]") ? address.slice(1, -1) : address;
-  // The URL parser writes an IPv4-mapped address in hex (`::ffff:7f00:1`):
-  // back to dotted form, so the IPv4 rules apply to it.
-  const hexMapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h);
-  if (hexMapped !== null) {
-    const hi = parseInt(hexMapped[1]!, 16);
-    const lo = parseInt(hexMapped[2]!, 16);
-    return isNonPublicAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
-  }
-  if (isPrivateIpLiteral(h)) return true;
-  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
-  const v4text = mapped !== null ? mapped[1]! : h;
-  if (isIP(v4text) === 4) {
-    const [a, b] = v4text.split(".").map(Number) as [number, number];
-    return a === 0 || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) || a >= 224;
-  }
-  if (isIP(h) === 6) return /^ff/i.test(h);
-  return false;
-}
 
 /** Refuses a fetch target that is not a public http(s) URL. Resolves the
  *  host and checks every address it maps to. Returns the parsed URL. */
