@@ -752,14 +752,28 @@ export class ChatStore {
    *  only ever moves forward: a read frame that arrives late, or a repeat
    *  sent after a reconnect, cannot resurrect an already-cleared dot. A chat
    *  with no events has nothing unread — no marker. */
-  async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
-    await this.getChat(orgId, chatId, caller);
-    const last = await this.pool.query<{ seq: string }>(
+  /** The seq of the chat's newest durable event; null for an empty log. */
+  async lastEventSeq(chatId: string): Promise<number | null> {
+    const res = await this.pool.query<{ seq: string }>(
       "SELECT seq FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
       [chatId],
     );
-    const lastReadSeq = last.rows[0]?.seq;
-    if (lastReadSeq === undefined) return;
+    return res.rows[0] === undefined ? null : Number(res.rows[0].seq);
+  }
+
+  /** The seq the user's read marker on the chat has reached. */
+  async readSeq(userId: string, chatId: string): Promise<number | null> {
+    const res = await this.pool.query<{ last_read_seq: string }>(
+      "SELECT last_read_seq FROM chat_reads WHERE chat_id = $1 AND user_id = $2",
+      [chatId, userId],
+    );
+    return res.rows[0] === undefined ? null : Number(res.rows[0].last_read_seq);
+  }
+
+  async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
+    await this.getChat(orgId, chatId, caller);
+    const lastReadSeq = await this.lastEventSeq(chatId);
+    if (lastReadSeq === null) return;
     await this.pool.query(
       `INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
        ON CONFLICT (chat_id, user_id) DO UPDATE

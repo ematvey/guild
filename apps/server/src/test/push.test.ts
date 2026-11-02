@@ -75,18 +75,38 @@ describe("the device registry", () => {
   });
 });
 
+/** A notifier whose chat log ends at `end` and whose owner has read
+ *  through `read`, deciding without the production grace period. */
+function notifierWith(sender: PushSender, end: number | null, read: number | null): PushNotifier {
+  return new PushNotifier({
+    store,
+    lastEventSeq: async () => end,
+    readSeq: async () => read,
+    graceMs: 5,
+    sender: async () => sender,
+  });
+}
+
 describe("the notifier", () => {
-  it("pushes nothing while a socket is watching", async () => {
+  it("pushes nothing when the owner read the chat through the turn's end", async () => {
     const { sent, sender } = fakeSender();
-    const notifier = new PushNotifier({ store, isPresent: () => true, sender: async () => sender });
+    const notifier = notifierWith(sender, 12, 12);
     await store.upsert(stack.orgId, stack.memberId, sub("present", "https://push/present"));
     await notifier.turnEnded({ orgId: stack.orgId, userId: stack.memberId, chatId: "chat-1", title: "T", failed: false });
     expect(sent).toEqual([]);
   });
 
+  it("pushes when the read marker stops before the turn's end", async () => {
+    const { sent, sender } = fakeSender();
+    const notifier = notifierWith(sender, 12, 9);
+    await store.upsert(stack.orgId, stack.memberId, sub("behind", "https://push/behind"));
+    await notifier.turnEnded({ orgId: stack.orgId, userId: stack.memberId, chatId: "chat-4", title: "T", failed: false });
+    expect(sent.length).toBeGreaterThan(0);
+  });
+
   it("sends one notification per thread per window", async () => {
     const { sent, sender } = fakeSender();
-    const notifier = new PushNotifier({ store, isPresent: () => false, sender: async () => sender });
+    const notifier = notifierWith(sender, 3, null);
     // One device, so one send per notification.
     for (const row of await store.forUser(stack.adminId)) await store.remove(stack.adminId, row.endpoint);
     await store.upsert(stack.orgId, stack.adminId, sub("away", "https://push/away"));
@@ -100,15 +120,15 @@ describe("the notifier", () => {
 
   it("drops the row when the push service says the endpoint is gone", async () => {
     const { sender } = fakeSender("gone");
-    const notifier = new PushNotifier({ store, isPresent: () => false, sender: async () => sender });
+    const notifier = notifierWith(sender, 3, null);
     await store.upsert(stack.orgId, stack.adminId, sub("gone", "https://push/gone"));
     await notifier.turnEnded({ orgId: stack.orgId, userId: stack.adminId, chatId: "chat-3", title: "T", failed: true });
     expect((await store.forUser(stack.adminId)).map((r) => r.endpoint)).not.toContain("https://push/gone");
   });
 
-  it("a test push ignores presence and reports how many were accepted", async () => {
+  it("a test push skips the read check and reports how many were accepted", async () => {
     const { sent, sender } = fakeSender();
-    const notifier = new PushNotifier({ store, isPresent: () => true, sender: async () => sender });
+    const notifier = notifierWith(sender, 3, 3);
     const delivered = await notifier.test(stack.memberId);
     expect(delivered).toBeGreaterThan(0);
     expect(sent.length).toBe(delivered);

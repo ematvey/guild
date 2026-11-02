@@ -175,8 +175,8 @@ export class PlatformContext {
     this.push = new PushStore(this.pool);
     this.pushNotifier = new PushNotifier({
       store: this.push,
-      // Presence gate: a live member socket already carries the frame.
-      isPresent: (userId) => this.hub.memberSinksOfUser(userId).length > 0,
+      lastEventSeq: (chatId) => this.chats.lastEventSeq(chatId),
+      readSeq: (userId, chatId) => this.chats.readSeq(userId, chatId),
       sender: async () => webPushSender(await this.pushKeys(), pushSubject(this.config)),
       log: (message) => log.warn?.(message),
     });
@@ -249,12 +249,13 @@ export class PlatformContext {
     return vapidKeys(this.kv);
   }
 
-  /** A turn ended for a chat: notify its owner when no socket is watching. */
+  /** A turn ended for a chat: the notifier decides, after its grace period,
+   *  whether the owner needs a push. The turn path does not wait for it. */
   private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
     const owner = await this.chats.ownerOf(chatId);
     if (owner === null) return;
     const chat = await this.chats.getChatInOrg(owner.org_id, chatId).catch(() => null);
-    await this.pushNotifier.turnEnded({
+    void this.pushNotifier.turnEnded({
       orgId: owner.org_id,
       userId: owner.user_id,
       chatId,
