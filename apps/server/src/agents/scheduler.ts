@@ -7,13 +7,14 @@
 import { rm } from "node:fs/promises";
 import type { Logger } from "pino";
 import { withTransaction, type PlatformPool } from "../platform/db.js";
-import { utcText, uuidv7 } from "../platform/time.js";
+import { utcText } from "../platform/time.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Agent, AgentRoutine, AgentRoutineKind, AgentRun } from "./types.js";
 import { AgentStore } from "./store.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { userMessageEvent } from "../platform/domain/thread-events.js";
+import { ApiError } from "../platform/errors.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
+import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
 
 export const SCHEDULER_TICK_MS = 15_000;
@@ -321,43 +322,28 @@ export class AgentScheduler {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
       const userId = row.created_by_user_id ?? row.owner_user_id;
       const thread = await this.deps.store.createThread(row.agent_id, userId, title, "routine");
-      const run = await this.deps.store.createRun({
-        agent_id: row.agent_id,
-        user_id: userId,
-        thread_id: thread.id,
-        routine_id: row.routine_id,
-        trigger: "routine",
-        status: "running",
-        started_at: now.toISOString(),
-        summary: row.routine_name,
-      });
-      runId = run.id;
-      // Link the run first: from here the occurrence settles with the run.
-      await this.deps.pool.query(
-        "UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1",
-        [row.id, run.id],
-      );
-      await this.deps.threads.appendEvent(thread.chat_id, userMessageEvent(row.prompt));
-      await this.deps.runtime.submitTurn(thread.chat_id, row.org_id, {
-        orgId: row.org_id,
-        requestId: uuidv7(),
+      await startThreadRun(this.deps, {
+        agentId: row.agent_id,
+        thread,
         content: row.prompt,
-        images: [],
-        model: row.model,
+        failureCode: "routine_submit_failed",
+        run: {
+          user_id: userId,
+          routine_id: row.routine_id,
+          trigger: "routine",
+          started_at: now.toISOString(),
+          summary: row.routine_name,
+        },
+        // Link the run first: from here the occurrence settles with the run.
+        onRunCreated: async (run) => {
+          runId = run.id;
+          await this.deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [row.id, run.id]);
+        },
       });
     } catch (error) {
       const message = errorText(error);
       this.deps.log.warn({ err: error, occurrenceId: row.id, routineId: row.routine_id }, "routine launch failed");
-      if (runId !== null) {
-        await this.deps.store
-          .updateRun(runId, {
-            status: "failed",
-            error_code: "routine_submit_failed",
-            error_message: message,
-            finished_at: new Date().toISOString(),
-          })
-          .catch(() => {});
-      } else {
+      if (runId === null) {
         await this.deps.pool
           .query(
             `UPDATE agent_routine_occurrences SET status = 'pending', last_error = $2
@@ -442,36 +428,26 @@ export async function runRoutineNow(
   const title = `${routine.name} — ${now.toISOString()}`;
   const userId = routine.created_by_user_id ?? agent.owner_user_id;
   const thread = await deps.store.createThread(agent.id, userId, title, "routine");
-  const run = await deps.store.createRun({
-    agent_id: agent.id,
-    user_id: userId,
-    thread_id: thread.id,
-    routine_id: routine.id,
-    trigger: "manual",
-    status: "running",
-    started_at: now.toISOString(),
-    summary: routine.name,
-  });
-  await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [occurrence.id, run.id]);
-  await deps.threads.appendEvent(thread.chat_id, userMessageEvent(routine.prompt));
   try {
-    await deps.runtime.submitTurn(thread.chat_id, agent.org_id, {
-      orgId: agent.org_id,
-      requestId: uuidv7(),
+    const { run } = await startThreadRun(deps, {
+      agentId: agent.id,
+      thread,
       content: routine.prompt,
-      images: [],
-      model: agent.model,
+      failureCode: "routine_submit_failed",
+      run: {
+        user_id: userId,
+        routine_id: routine.id,
+        trigger: "manual",
+        started_at: now.toISOString(),
+        summary: routine.name,
+      },
+      onRunCreated: async (run) => {
+        await deps.pool.query("UPDATE agent_routine_occurrences SET run_id = $2 WHERE id = $1", [occurrence.id, run.id]);
+      },
     });
+    return run;
   } catch (error) {
-    await deps.store
-      .updateRun(run.id, {
-        status: "failed",
-        error_code: "routine_submit_failed",
-        error_message: errorText(error),
-        finished_at: new Date().toISOString(),
-      })
-      .catch(() => {});
-    throw error;
+    if (error instanceof ThreadRunRefused) throw ApiError.conflict(error.code, error.message);
+    throw error instanceof ThreadRunSubmitFailed ? (error.cause ?? error) : error;
   }
-  return run;
 }
