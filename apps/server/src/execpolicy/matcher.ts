@@ -80,9 +80,9 @@ export class ExecPolicy {
 }
 
 // ---------------------------------------------------------------------------
-// Tokenization (Rust shlex::split): POSIX-ish word splitting with single and
-// double quotes and backslash escapes. An unterminated quote returns null
-// (Rust: shlex::split → None → the gate prompts).
+// Tokenization: POSIX shlex-style word splitting with single and double
+// quotes and backslash escapes. An unterminated quote returns null, and the
+// gate prompts.
 // ---------------------------------------------------------------------------
 
 export function shlexSplit(line: string): string[] | null {
@@ -323,8 +323,8 @@ export function evaluateExecute(policy: ExecPolicy, args: unknown): ExecPolicyDe
 // ---------------------------------------------------------------------------
 
 function validateExamples(validations: RuleMatchExample[], source: string): void {
-  // Rust validate_match_examples / validate_not_match_examples: each
-  // validation runs against a policy built from its own rules only.
+  // Each match / not_match example runs against a policy built from its own
+  // file's rules only.
   for (const v of validations) {
     const scoped = ExecPolicy.fromSpecs(v.rules);
     for (const example of v.matches) {
@@ -344,9 +344,8 @@ function validateExamples(validations: RuleMatchExample[], source: string): void
   }
 }
 
-/** The default rules location: apps/server/assets (relocated out of the
- *  Rust tree ahead of its deletion), resolved from the working directory
- *  (dev and container both run with cwd = apps/server). */
+/** The default rules location, apps/server/assets, resolved from the
+ *  working directory (dev and container both run with cwd = apps/server). */
 export function defaultRulesPath(): string {
   return process.env.GUILD_EXEC_POLICY_RULES ?? path.resolve(process.cwd(), "assets/exec_policy_base.rules");
 }

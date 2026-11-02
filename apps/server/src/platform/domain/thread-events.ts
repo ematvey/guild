@@ -373,7 +373,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
 
 /** Renders the model-facing summary text of a pi-durable CompactionEntry as
  *  the Guild Compaction event's `summary` (strips pi-durable's wrapper when
- *  present; importer-era rows already carry the Rust-style summary). */
+ *  present; older rows carry the bare summary already). */
 export function unwrapCompactionSummary(text: string): string {
   const prefix = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
   const suffix = "\n</summary>";

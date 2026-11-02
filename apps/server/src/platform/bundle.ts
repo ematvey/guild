@@ -2,7 +2,7 @@
 // `manifest.json` at the root. Publish validation and the install path read
 // entries without touching the filesystem; network-delivered bundles are
 // untrusted, so path traversal, duplicates, special entries and
-// decompressed size are all bounded like the Rust extract/read caps.
+// decompressed size are all bounded.
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -60,7 +60,7 @@ export function packBundle(files: Record<string, Buffer | string>): Buffer {
 }
 
 function normalizeEntryPath(raw: string): string {
-  // CurDir components are dropped, like the Rust reader's components filter.
+  // `.` components are dropped.
   // pax/GNU long names are resolved by the tar parser itself.
   return raw
     .split("/")

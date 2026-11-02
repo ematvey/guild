@@ -104,7 +104,7 @@ export class PlatformContext {
   /** The agent trace store (agent_traces + agent_spans + opt-in
    *  llm_payloads; trace.ts). */
   readonly trace: TraceStore;
-  /** The ClickHouse skill-read sink (read_skill analytics; Task 6's
+  /** The ClickHouse skill-read sink (read_skill analytics; the skill
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
   readonly clickhouse: ClickhouseClient;

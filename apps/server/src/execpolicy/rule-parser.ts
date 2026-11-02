@@ -1,14 +1,13 @@
-// Exec-policy rules parser (the Starlark subset and the
-// build.rs loading shape): the base rules load from the static Rust asset
-// (apps/server/assets/exec_policy_base.rules) and an optional deployment
-// local layer (exec_policy_local.rules next to it) merges after it — a
-// broken local layer degrades to base-only with a warning, like build.rs.
+// Exec-policy rules parser (a Starlark subset). The base rules load from
+// apps/server/assets/exec_policy_base.rules and an optional deployment
+// local layer (exec_policy_local.rules next to it) merges after it; a
+// broken local layer degrades to base-only with a warning.
 //
 // The Starlark subset: `prefix_rule(pattern=[…], decision=…,
 // justification=…)` calls with string or string-list pattern elements (a
 // list = alternatives, PatternToken::Alts). `network_rule` and
 // `host_executable` are accepted for forward compatibility and ignored: the
-// gate evaluates prefix rules only, exactly like the Rust runtime path.
+// gate evaluates prefix rules only.
 
 export type DecisionKind = "allow" | "prompt" | "deny";
 
@@ -248,7 +247,7 @@ export interface RuleMatchExample {
 
 /** Parses one policy file into prefix-rule specs. `match`/`not_match`
  *  example validations ride the spec (validated against the matcher after
- *  the file's rules are assembled, like the Rust pending validations). */
+ *  the file's rules are assembled). */
 export function parseRulesFile(src: string): { rules: PrefixRuleSpec[]; validations: RuleMatchExample[] } {
   const rules: PrefixRuleSpec[] = [];
   const validations: RuleMatchExample[] = [];
@@ -295,8 +294,7 @@ export function parseRulesFile(src: string): { rules: PrefixRuleSpec[]; validati
     }
     if (call.name === "network_rule" || call.name === "host_executable") {
       // Accepted for source compatibility; the gate consumes prefix rules
-      // only (Rust runtime path: host_executables drive
-      // resolve_host_executables lookups, which the gate never enables).
+      // only.
       continue;
     }
     throw new RulesParseError(`unknown policy builtin ${call.name}`, call.line);

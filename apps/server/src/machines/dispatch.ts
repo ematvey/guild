@@ -1,9 +1,7 @@
-// Machine-tool dispatch (the M5 dispatch piece on the M4 harness): an
-// ExecutionEnv that proxies FileSystem/exec ops over the hub to the
-// connected daemon. The wire contract is byte-compatible with the shipped
-// desktop client: the server sends a `tool_dispatch` frame
-// (crates/protocol/src/ws.rs ToolDispatch) on the machine's executor socket
-// and the daemon answers a `tool_result` frame — no client update needed.
+// Machine-tool dispatch: an ExecutionEnv that proxies FileSystem/exec ops
+// over the hub to the connected daemon. The server sends a `tool_dispatch`
+// frame (crates/protocol/src/ws.rs ToolDispatch) on the machine's executor
+// socket and the daemon answers a `tool_result` frame.
 //
 // Primitive → daemon mapping (guild-core tool schemas, the machine tool
 // set: read_file/execute/edit_file/write_file):
@@ -13,7 +11,7 @@
 //   fileInfo/exists → `read_file` probe
 // Everything else is not-supported (the machine tool set has no op for it).
 // The machine ToolResult's meta/images have no channel in the
-// ShellExecResult/byte shapes — they are dropped (documented deviation).
+// ShellExecResult/byte shapes, so they are dropped.
 
 import path from "node:path";
 import { err, ok, ExecutionError, FileError, LineScanner, type BinaryReader, type DirReader, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputInfo, type TextLine, type TextLineReader, type WatchChange, type WatchTarget, type FileWatcher } from "@earendil-works/pi-durable/env";
@@ -63,8 +61,7 @@ export class MachineDispatch {
   constructor(private readonly hub: MachineDispatchHost) {}
 
   /** Sends one tool-dispatch frame to the machine's executor socket and
-   *  awaits its result (Rust note_pending_tool + dispatch_pending_tool +
-   *  the durable complete_tool resolution). `offline` = no live slot or a
+   *  awaits its result. `offline` = no live slot or a
    *  dead sink; the call id is a fresh correlation id — the daemon echoes
    *  it verbatim. */
   async dispatch(opts: {
@@ -137,8 +134,7 @@ export class MachineDispatch {
   /** Routes a machine's `tool_result` frame to its waiter (from the socket
    *  inbound path — the ctx.wsToolResult seam). Results from a connection
    *  that no longer holds the machine's slot, or unknown call ids, are
-   *  dropped silently (the Rust server's behavior for a connection that
-   *  owns no pending call). */
+   *  dropped silently. */
   resolveToolResult(member: { conn_id: string; org_id: string }, frame: { call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] }): boolean {
     const pending = this.pending.get(frame.call_id);
     if (!pending) return false;
@@ -304,8 +300,8 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   /** Positional reads over the whole-file `read_file` transfer (the machine
-   *  tool set has no paged binary op; binary fidelity is already a
-   *  documented deviation, and `noFollow` has no channel in the wire
+   *  tool set has no paged binary op, so binary content round-trips as
+   *  text, and `noFollow` has no channel in the wire
    *  contract — a final-component symlink is followed). */
   async openBinaryReader(p: string, _options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
     const text = await this.readTextFile(p, context);

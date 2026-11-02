@@ -1,5 +1,5 @@
-// The member socket's state-sync capture (Rust feed::run_sync_started's
-// capture_thread): one chat's durable history + in-flight buffers as the
+// The member socket's state-sync capture: one chat's durable history and
+// in-flight buffers as the
 // authoritative ThreadState frame, owner/admin gated (the caller argument).
 // The same bracket carries the chat's thread subtree, header facts and
 // context usage, behind the same access gate, so a (re)connect renders the

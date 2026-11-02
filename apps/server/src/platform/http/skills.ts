@@ -18,8 +18,8 @@ import { nextVersion } from "../store/registry.js";
 import { publishBundleBytes } from "./registry.js";
 
 export interface SkillRouteOptions {
-  /** Install/pin changes fan out to the user's machines (Task 8 wires the
-   *  skills runtime's syncUser; unset stays a no-op). */
+  /** Install/pin changes fan out to the user's machines (the skills
+   *  runtime's syncUser; unset is a no-op). */
   onInstallChange?: (orgId: string, userId: string) => void | Promise<void>;
   /** The skills runtime — the connect-time pull route serves its
    *  syncPayload (the machine's desired install list). */

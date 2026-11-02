@@ -70,8 +70,8 @@ export interface SkillRuntimeDeps {
    *  sandbox otherwise), rooted at its cwd; the read/push paths read
    *  `skills/<slug>` under it. */
   conversationEnv(conversationId: number, orgId: string): Promise<ExecutionEnv>;
-  /** Task 7's sandbox materialization (install-on-use, executor
-   *  "server"); absent → skipped. */
+  /** Sandbox materialization (install-on-use, executor "server");
+   *  absent → skipped. */
   materialize?(args: {
     conversationId: number;
     chatId: string;
@@ -448,7 +448,7 @@ export class SkillRuntime {
   }
 
   /** Remembers the index text a turn was prepared with (the guild
-   *  extension's section reuses it; Task 8 diffs it for machine sync). */
+   *  extension's section reuses it; machine sync diffs it). */
   forget(conversationId: number): void {
     this.lastIndex.delete(conversationId as ConversationId);
   }
@@ -716,8 +716,8 @@ export class SkillRuntime {
       await this.deps.skills.install(orgId, userId, slug, null);
       justInstalled = true;
       // Best-effort fan-out: the event feeds the activity feed, syncUser
-      // (Task 8) reaches the user's machines, and Task 7's materialization
-      // (executor "server") drops the files into the current sandbox — a
+      // reaches the user's machines, and materialization (executor
+      // "server") drops the files into the current sandbox — a
       // failure in any of them never blocks the read.
       try {
         await this.deps.events.emit(orgId, "skill.installed", { slug, version, user_id: userId });
