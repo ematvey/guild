@@ -254,4 +254,33 @@ dbDescribe("agent scheduler", () => {
       runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, { ...archived, status: "archived" }, archivedRoutine),
     ).rejects.toThrow(/not active/);
   });
+  it("refuses a routine whose creator can no longer use the agent", async () => {
+    scheduler = makeScheduler();
+    const outsiderId = randomUUID();
+    await env!.db.query(
+      `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
+       VALUES ($1, $2, 'agents-scheduler-outsider@example.test', '', 'member', 'managed')`,
+      [outsiderId, orgId],
+    );
+    // The creator once had access; the agent is the owner's private one.
+    const routine = await store.createRoutine(agent.id, {
+      created_by_user_id: outsiderId,
+      name: "Lost access",
+      kind: "cron",
+      schedule: "0 0 1 1 *",
+      timezone: "UTC",
+      prompt: "Never runs.",
+    });
+    await createOccurrence(env!.db, routine.id, new Date());
+    await scheduler.claimDue(new Date(Date.now() + 10 * 60_000));
+    expect(calls).toHaveLength(0);
+    const occurrence = (await store.listOccurrences(routine.id))[0]!;
+    expect(occurrence.status).toBe("failed");
+    expect(occurrence.run_id).toBeNull();
+
+    await expect(
+      runRoutineNow({ pool: env!.db, store, threads: new ThreadStore(env!.db), runtime }, agent, routine),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(calls).toHaveLength(0);
+  });
 });
