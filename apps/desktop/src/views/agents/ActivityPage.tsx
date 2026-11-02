@@ -54,10 +54,10 @@ import {
   InlineLoading,
   LoadingRows,
   PageBody,
-  PageHeader,
   TabBar,
   ToneBadge,
 } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 import { count } from "../../lib/format";
 import { useDebounced } from "../../lib/use-debounced";
 import { compact, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
@@ -368,7 +368,7 @@ export function ActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Activity"
         description="Agent runs, the LLM calls and tool calls inside them, and the chats they belong to."
         tabs={
@@ -717,7 +717,7 @@ export function ChatActivityPage({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Chat"
         description={chatId}
         actions={

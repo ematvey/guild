@@ -20,7 +20,7 @@ import {
 } from "@guild/ui/components/alert-dialog";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { FactCard, FactGrid } from "../components/fact-card";
 

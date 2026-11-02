@@ -42,7 +42,7 @@ import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "@guild/ui/components/empty-state";
 

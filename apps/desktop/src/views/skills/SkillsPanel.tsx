@@ -32,6 +32,7 @@ import LocalSkills from "./LocalSkills";
 import { skillsPageState, withCatalogQuery, withSkillFile, type SkillsRoute } from "./skills-route";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 import { useSkillCatalog } from "./skills-store";
+import { PageHeader } from "../../components/page-header";
 
 /** One catalog row's view model. */
 export interface SkillRow {
@@ -281,86 +282,89 @@ export function SkillsPanel({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      {/* page header, two rows over one bottom border (prototype layout):
-          row 1 = title + grow + search + New skill; row 2 =
-          underline tabs + grow + filter/sort selects (catalog only) */}
-      <header className="border-b border-border bg-background px-5 pt-3">
-        <div className="flex flex-wrap items-center gap-3 pb-3">
-          <h1 className="text-base font-semibold tracking-[-0.01em]">Skills</h1>
-          <div className="hidden flex-1 sm:block" />
-          <div className="relative w-full sm:w-[280px]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              value={query}
-              placeholder="Search skills"
-              aria-label="Search skills"
-              className="pl-8"
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-          <Button
-            size="sm"
-            aria-label="New skill"
-            onClick={() => onNavigate({ view: "catalog", slug: null, editor: "new" })}
-          >
-            <Plus />
-            New skill
-          </Button>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
-            {panelTabs(HAS_ENGINE).map(([value, label]) => (
-              <button
-                key={value}
-                role="tab"
-                aria-selected={tab === value}
-                aria-label={`${label} tab`}
-                onClick={() => onNavigate({ view: value, slug: null, editor: null })}
-                className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-sm outline-none transition-colors ${
-                  tab === value
-                    ? "border-foreground text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1" />
-          {tab === "catalog" && (
-            <>
-              <Select
-                value={filterKind}
-                onValueChange={(v) => setFilterKind(v as SkillFilterKind)}
-              >
-                <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {skillFilterOptions.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
-                <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {skillSortOptions.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
-          )}
-        </div>
-      </header>
+      {/* Row 1: title, search and New skill; row 2: the underline tabs and
+          the catalog's filter and sort. */}
+      <PageHeader
+        variant="bar"
+        title="Skills"
+        actions={
+          <>
+            <div className="relative w-full sm:w-[280px]">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={query}
+                placeholder="Search skills"
+                aria-label="Search skills"
+                className="pl-8"
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <Button
+              size="sm"
+              aria-label="New skill"
+              onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new" }))}
+            >
+              <Plus />
+              New skill
+            </Button>
+          </>
+        }
+        tabs={
+          <>
+            <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
+              {panelTabs(HAS_ENGINE).map(([value, label]) => (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={tab === value}
+                  aria-label={`${label} tab`}
+                  onClick={() => onNavigate({ view: value, slug: null, editor: null })}
+                  className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-sm outline-none transition-colors ${
+                    tab === value
+                      ? "border-foreground text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1" />
+            {tab === "catalog" && (
+              <>
+                <Select
+                  value={filterKind}
+                  onValueChange={(v) => setFilterKind(v as SkillFilterKind)}
+                >
+                  <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {skillFilterOptions.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
+                  <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {skillSortOptions.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </>
+        }
+      />
       {/* page body: full-width background fill, content capped so the row
           list and detail panes don't stretch absurdly on wide monitors */}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>

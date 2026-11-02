@@ -27,7 +27,8 @@ import {
   type TeamOption,
 } from "./agents-api";
 import type { AgentVisibility, AgentsRoute, CreateStep } from "./agents-route";
-import { ErrorState, PageBody, PageHeader } from "./agent-ui";
+import { ErrorState, PageBody } from "./agent-ui";
+import { PageHeader } from "../../components/page-header";
 
 type Step = CreateStep;
 
@@ -222,7 +223,7 @@ export function AgentCreate({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <PageHeader
+      <PageHeader variant="bar"
         title="Create agent"
         description={`Step ${stepIndex + 1} of ${STEPS.length} · ${STEPS[stepIndex]![1]}`}
         actions={

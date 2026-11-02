@@ -389,23 +389,23 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill, file = "SKI
         No text preview — this file is binary or larger than 256 KiB. Download the bundle to read it.
       </p>
     ) : currentPath !== "SKILL.md" && isMarkdownPath(currentPath) ? (
-      <div className={`px-4 py-3 text-sm leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+      <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {extraBody!}
         </Markdown>
       </div>
     ) : currentPath !== "SKILL.md" ? (
-      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs leading-[1.55] text-foreground">
+      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">
         {extraBody}
       </pre>
     ) : !rawSkillMd ? (
-      <div className={`px-4 py-3 text-sm leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+      <div className={`px-4 py-3 text-sm text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
           {skillMdPreviewBody(source.skill_md)}
         </Markdown>
       </div>
     ) : (
-      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs leading-[1.55] text-foreground">
+      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-xs text-foreground">
         {source.skill_md}
       </pre>
     );

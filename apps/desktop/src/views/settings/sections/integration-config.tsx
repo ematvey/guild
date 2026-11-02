@@ -30,7 +30,7 @@ import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { Field } from "../components/field";
 
 /** One manifest-declared settings field — the detail form is generated

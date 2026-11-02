@@ -20,7 +20,7 @@ import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
-import { PageHeader } from "../components/page-header";
+import { PageHeader } from "../../../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
