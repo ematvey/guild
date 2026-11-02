@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { UserRow } from "../../platform/store/identity.js";
+import { IdentityStore, type UserRow } from "../../platform/store/identity.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { userMessageEvent } from "../../platform/domain/thread-events.js";
 import { AgentStore } from "../../agents/store.js";
@@ -107,6 +107,8 @@ dbDescribe("subagent tree tools", () => {
   }): Promise<SubagentsToolContext> {
     const context = await subagentsContextForChat({
       pool: env!.db,
+      chats: new ChatStore(env!.db),
+      identity: new IdentityStore(env!.db),
       store,
       threads,
       agent: parentAgent,

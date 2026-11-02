@@ -88,6 +88,7 @@ export interface RuntimeDeps {
   readonly stores: Pick<
     PlatformStores,
     | "chats"
+    | "identity"
     | "threads"
     | "turnCommands"
     | "gatewayStore"
@@ -428,6 +429,8 @@ export class GuildRuntime {
       base: () => this.baseConfiguration(),
       agents: this.agents,
       threads: stores.threads,
+      chats: stores.chats,
+      identity: stores.identity,
       attachments: stores.attachments,
       ...(objects === undefined ? {} : { objects }),
       conversations: stores.conversations,

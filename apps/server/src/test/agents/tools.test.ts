@@ -59,7 +59,7 @@ dbDescribe("agent conversation tools", () => {
 
   it("send_message creates a thread, assistant message, unread chat and notice", async () => {
     const result = await sendAgentMessage(
-      { pool: env!.db, store, threads, agent, userId: owner.id },
+      { store, threads, agent, userId: owner.id },
       { text: "The report is ready." },
     );
     const thread = await store.threads.getThread(agent.id, owner.id, result.thread_id);
@@ -80,7 +80,7 @@ dbDescribe("agent conversation tools", () => {
   it("send_message records the calling thread as the delivered thread's origin", async () => {
     const run = await store.threads.createThread(agent.id, owner.id, "Morning email digest — run", "routine");
     const result = await sendAgentMessage(
-      { pool: env!.db, store, threads, agent, userId: owner.id, chatId: run.chat_id },
+      { store, threads, agent, userId: owner.id, chatId: run.chat_id },
       { text: "The digest is ready.", title: "Morning digest" },
     );
     const delivered = await store.threads.getThread(agent.id, owner.id, result.thread_id);
@@ -96,11 +96,11 @@ dbDescribe("agent conversation tools", () => {
       [secondId, orgId],
     );
     const args = { text: "Shared status update.", title: "Status update" };
-    const first = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: owner.id }, args);
-    const second = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: secondId }, args);
+    const first = await sendAgentMessage({ store, threads, agent, userId: owner.id }, args);
+    const second = await sendAgentMessage({ store, threads, agent, userId: secondId }, args);
     expect(second.thread_id).not.toBe(first.thread_id);
     expect((await store.threads.getThread(agent.id, secondId, second.thread_id)).title).toBe("Status update");
-    const repeat = await sendAgentMessage({ pool: env!.db, store, threads, agent, userId: owner.id }, args);
+    const repeat = await sendAgentMessage({ store, threads, agent, userId: owner.id }, args);
     expect(repeat.thread_id).toBe(first.thread_id);
   });
 
@@ -215,9 +215,9 @@ dbDescribe("agent conversation tools", () => {
     expect(hits).toHaveLength(1);
     expect(hits[0]!.thread_id).toBe(ownThread.id);
 
-    const own = await readAgentConversation(env!.db, agent.id, owner.id, { threadId: ownThread.id });
+    const own = await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: ownThread.id });
     expect(own?.thread_title).toBe(ownThread.title);
-    expect(await readAgentConversation(env!.db, agent.id, owner.id, { threadId: otherThread.id })).toBeNull();
+    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: otherThread.id })).toBeNull();
   });
 
   it("search and read never reach another user's threads with a shared agent", async () => {
@@ -240,7 +240,7 @@ dbDescribe("agent conversation tools", () => {
     ]);
     expect(await searchAgentConversations(env!.db, agent.id, owner.id, "harbour")).toEqual([]);
     expect(await searchAgentConversations(env!.db, agent.id, peerId, "harbour")).toHaveLength(1);
-    expect(await readAgentConversation(env!.db, agent.id, owner.id, { threadId: peerThread.id })).toBeNull();
-    expect(await readAgentConversation(env!.db, agent.id, peerId, { threadId: peerThread.id })).not.toBeNull();
+    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, owner.id, { threadId: peerThread.id })).toBeNull();
+    expect(await readAgentConversation({ pool: env!.db, store }, agent.id, peerId, { threadId: peerThread.id })).not.toBeNull();
   });
 });

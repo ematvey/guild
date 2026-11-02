@@ -59,7 +59,7 @@ export interface AgentMessageResult {
  *  thread activity marker and writes the inbox notice. The chat's unread
  *  projection follows from the new assistant event. */
 export async function sendAgentMessage(
-  deps: Pick<AgentToolDeps, "pool" | "store" | "threads" | "agent" | "userId" | "chatId">,
+  deps: Pick<AgentToolDeps, "store" | "threads" | "agent" | "userId" | "chatId">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
@@ -70,20 +70,8 @@ export async function sendAgentMessage(
   // within a minute gets the thread it already opened, not a second one. The
   // match is scoped to this agent, this user and this chat of origin, so two
   // users of a shared agent never receive each other's thread.
-  const existing = await deps.pool.query<{ id: string; chat_id: string }>(
-    `SELECT id, chat_id FROM agent_threads
-     WHERE agent_id = $1 AND user_id = $2 AND title = $3
-       AND origin_thread_id IS NOT DISTINCT FROM $4::uuid
-       AND created_at > now() - interval '1 minute'
-     ORDER BY created_at DESC LIMIT 1`,
-    [deps.agent.id, deps.userId, title, origin?.id ?? null],
-  );
-  if (existing.rows[0] !== undefined) {
-    return {
-      thread_id: existing.rows[0].id,
-      url: `/thread/${existing.rows[0].chat_id}`,
-    };
-  }
+  const existing = await deps.store.threads.recentlyOpened(deps.agent.id, deps.userId, title, origin?.id ?? null);
+  if (existing !== null) return { thread_id: existing.id, url: `/thread/${existing.chat_id}` };
   const thread = await deps.store.threads.createThread(deps.agent.id, deps.userId, title, "user", {
     ...(origin === null ? {} : { originThreadId: origin.id }),
   });
@@ -127,18 +115,14 @@ export type AgentConversationRead = ThreadReadResult;
  *  agent's or another user's thread id is the same not-found answer as a
  *  missing one. */
 export async function readAgentConversation(
-  pool: PlatformPool,
+  deps: { pool: PlatformPool; store: Pick<AgentStore, "threads"> },
   agentId: string,
   userId: string,
   args: { threadId: string; fromSeq?: number; toSeq?: number },
 ): Promise<AgentConversationRead | null> {
-  const owned = await pool.query<{ chat_id: string; title: string }>(
-    `SELECT t.chat_id, t.title FROM agent_threads t
-     WHERE t.id = $1 AND t.agent_id = $2 AND t.user_id = $3`,
-    [args.threadId, agentId, userId],
-  );
-  const thread = owned.rows[0];
-  if (thread === undefined) return null;
+  const { pool } = deps;
+  const thread = await deps.store.threads.findThread(agentId, userId, args.threadId);
+  if (thread === null) return null;
   return readThreadTranscript(pool, {
     threadId: args.threadId,
     chatId: thread.chat_id,
@@ -563,7 +547,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         callers: ["tools"],
         outputLimits: { maxBytes: 32 * 1024 },
         execute: async (args) => {
-          const read = await readAgentConversation(deps.pool, deps.agent.id, deps.userId, {
+          const read = await readAgentConversation(deps, deps.agent.id, deps.userId, {
             threadId: args.thread_id,
             fromSeq: args.from_seq,
             toSeq: args.to_seq,
