@@ -203,3 +203,20 @@ async fn engine_stdio_unknown_method_is_correlated_error() {
     let err = engine.call("nope.method", json!({})).unwrap_err();
     assert!(err.contains("unknown method"), "got: {err}");
 }
+
+/// A request that carries an id but fails validation gets an error
+/// response with that id, not an uncorrelated event.
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_stdio_invalid_request_with_an_id_is_answered() {
+    let mut engine = EngineProc::spawn();
+    writeln!(
+        engine.stdin,
+        r#"{{"jsonrpc":"1.0","id":77,"method":"engine.hello"}}"#
+    )
+    .expect("write to engine stdin");
+    engine.stdin.flush().expect("flush");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let reply = engine.recv_reply(deadline);
+    assert_eq!(reply["id"], 77);
+    assert_eq!(reply["error"]["code"], -32600, "got: {reply}");
+}

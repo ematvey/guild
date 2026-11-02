@@ -49,7 +49,13 @@ pub struct EngineState {
 
 enum Incoming {
     Request(Request),
-    Malformed(String),
+    /// A line that is not a valid request. `id` is its request id when the
+    /// line carried one, so the caller gets an error response instead of
+    /// waiting out its timeout.
+    Malformed {
+        id: Option<u64>,
+        message: String,
+    },
 }
 
 /// Engine state shared by every client connection (daemon groundwork):
@@ -115,10 +121,17 @@ pub async fn restored_session() -> anyhow::Result<EngineState> {
 }
 
 fn line_to_incoming(line: &str) -> Incoming {
-    match serde_json::from_str::<Request>(line.trim()) {
+    let line = line.trim();
+    let malformed = |message: String| Incoming::Malformed {
+        id: serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|v| v.get("id").and_then(Value::as_u64)),
+        message,
+    };
+    match serde_json::from_str::<Request>(line) {
         Ok(req) if req.is_valid() => Incoming::Request(req),
-        Ok(_) => Incoming::Malformed("bad jsonrpc/protocol fields".into()),
-        Err(e) => Incoming::Malformed(format!("unparseable line: {e}")),
+        Ok(_) => malformed("bad jsonrpc/protocol fields".into()),
+        Err(e) => malformed(format!("invalid request: {e}")),
     }
 }
 
@@ -247,10 +260,19 @@ where
             biased;
             inc = req_rx.recv() => match inc {
                 None => break,
-                Some(Incoming::Malformed(msg)) => {
+                Some(Incoming::Malformed { id: Some(id), message }) => {
+                    let _ = out_tx.send(
+                        serde_json::to_value(Response::err(
+                            id,
+                            RpcError::new(RpcError::INVALID_REQUEST, message),
+                        ))
+                        .expect("error response serializes"),
+                    );
+                }
+                Some(Incoming::Malformed { id: None, message }) => {
                     let _ = out_tx.send(json!({
                         "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                        "payload": {"message": msg},
+                        "payload": {"message": message},
                     }));
                 }
                 Some(Incoming::Request(req)) if is_out_of_band(&req.method) => {
@@ -453,10 +475,16 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             let _ = out_tx.send(response_value(req.id, fs_bridge_call(&req)));
         }
         other => {
-            let _ = out_tx.send(response_value(
-                req.id,
-                Err(anyhow::anyhow!("unknown method {other}")),
-            ));
+            let _ = out_tx.send(
+                serde_json::to_value(Response::err(
+                    req.id,
+                    RpcError::new(
+                        RpcError::METHOD_NOT_FOUND,
+                        format!("unknown method {other}"),
+                    ),
+                ))
+                .expect("error response serializes"),
+            );
         }
     }
     crate::dtrace::dtrace(&format!("dispatch: END {} in {:?}", method, t0.elapsed()));
