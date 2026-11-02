@@ -10,6 +10,7 @@ import {
   parseChatRoute,
   type ChatRoute,
   type RoutePatch,
+  writeAddress,
 } from "../route";
 
 export interface RouteNavOptions {
@@ -46,8 +47,7 @@ export function commitRoute(
 ): void {
   const path = routePath(resolved);
   if (current === path) return;
-  if (options?.replace) history.replaceState(null, "", path);
-  else history.pushState(null, "", path);
+  writeAddress(path, options, history);
 }
 
 /** The route state and its one navigation function. `role` decides which

@@ -177,3 +177,27 @@ export interface FsListDirResult {
 export interface FsExistsResult {
   exists: boolean;
 }
+
+/**
+ * The webview methods (`webview: true` in rpc.schema.json `methods`), each
+ * mapped to the `result` of its success reply.
+ */
+export interface WebviewRpcResults {
+  login: LoginResult;
+  pair: LoginResult;
+  "session.info": SessionResult;
+  "session.clear": OkResult;
+  "workspace.list": WorkspaceListResult;
+  "workspace.switch": SessionResult;
+  "machine.identify": OkResult;
+  "registry.publish": RegistryPublishResult;
+  "registry.uninstall": RegistryUninstallResult;
+  "fs.scopes": FsScopesResult;
+  "fs.read_text": FsReadTextResult;
+  "fs.list_dir": FsListDirResult;
+  "fs.exists": FsExistsResult;
+  "fs.write_text": OkResult;
+}
+
+/** A method the desktop webview may call. */
+export type WebviewRpcMethod = keyof WebviewRpcResults;

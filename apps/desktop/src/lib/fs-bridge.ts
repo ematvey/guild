@@ -2,6 +2,8 @@
 //! files. Rust exposes the allowlisted `fs.*` verbs over the app-process
 //! RPC channel; browser mode has no local files and returns empty results.
 
+import type { WebviewRpcMethod } from "@guild/wire/rpc";
+
 /** What a directory entry looks like over the bridge. */
 export interface DirEntry {
   name: string;
@@ -31,7 +33,7 @@ const emptyFs: BridgeFs = {
 
 /** The engine call the bridge rides on (machine-rpc's rpcCall). */
 export type BridgeRpc = (
-  method: string,
+  method: WebviewRpcMethod,
   params: Record<string, unknown>,
   timeoutMs?: number,
 ) => Promise<{ result?: unknown } | null | undefined>;

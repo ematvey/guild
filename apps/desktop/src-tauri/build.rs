@@ -6,7 +6,6 @@ fn main() {
         "check_update_now",
         "start_engine",
         "rpc_submit",
-        "rpc_poll",
         "list_wsl_distros",
         "wsl_home",
         "wsl_pretty_name",

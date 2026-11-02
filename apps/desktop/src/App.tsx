@@ -1,9 +1,10 @@
-import { beginOidcLogin, consumeOidcLogin } from "./lib/oidc-login";
+import { beginOidcLogin } from "./lib/oidc-login";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import Thread from "./views/thread/Thread";
+import { consumeAuthFragment, writeAddress } from "./views/thread/route";
 import { InstallPrompt } from "./views/onboarding";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
@@ -17,7 +18,6 @@ import { toast } from "sonner";
 import { ThemeProvider } from "./theme";
 import { resetSessionState } from "./lib/session-reset";
 import { ThemedToaster } from "@guild/ui/components/toaster";
-import type { LoginResult, SessionResult } from "@guild/wire/rpc";
 
 const BAKED_URL: string = (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
 
@@ -239,7 +239,7 @@ function DesktopApp() {
     (async () => {
       try {
         await timeoutAfter(invoke("start_engine"), 30_000, "attach timed out");
-        const res = await rpcCall<SessionResult>("session.info", {}, 20_000);
+        const res = await rpcCall("session.info", {}, 20_000);
         if (cancelled) return;
         if (res?.result?.email) await afterAuth(res.result.email);
         else setUser(null);
@@ -258,7 +258,7 @@ function DesktopApp() {
   const afterAuth = async (fallbackEmail: string) => {
     // session.info is the source of truth for the connected server URL and
     // token (works for both pairing and manual login).
-    const info = await rpcCall<SessionResult>("session.info", {}, 20_000);
+    const info = await rpcCall("session.info", {}, 20_000);
     const baseUrl = info.result?.base_url ?? url;
     // Machine identity: the daemon's executor link (machine WS + tool
     // execution) keys on the webview's stable per-install id — report it
@@ -315,7 +315,7 @@ function DesktopApp() {
         30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.",
       );
-      const res = await rpcCall<LoginResult>("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
+      const res = await rpcCall("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       if (addWorkspace) {
         setBusy(false);
@@ -339,11 +339,7 @@ function DesktopApp() {
         30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.",
       );
-      const res = await rpcCall<LoginResult>(
-        "login",
-        { base_url: url, email, password, machine_id: machineId() },
-        45_000,
-      );
+      const res = await rpcCall("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
       if (addWorkspace) {
         setBusy(false);
@@ -512,10 +508,10 @@ function AppInner() {
     // web mode: same-origin auth
     // An OIDC callback lands here as #oidc_token=…&email=…; adopt the
     // session and strip the fragment so the token never lingers in the URL.
-    if (window.location.hash.startsWith("#oidc_token=")) {
-      const token = consumeOidcLogin(window.location.hash);
-      history.replaceState(null, "", window.location.pathname + window.location.search);
-      if (token) setToken(token);
+    const callback = consumeAuthFragment(window.location);
+    if (callback) {
+      writeAddress(callback.canonicalUrl, { replace: true });
+      if (callback.token) setToken(callback.token);
     }
     apiMe()
       .then((u) => {
