@@ -127,6 +127,19 @@ first. Code comments describe only the present.
     input, a ref space per direction, error codes kept across the fork,
     timed-out requests and the config passed as JSON; the core turn flow is
     tested in both placements.
+  - *One DAL per lane.* `agents/store/` is the agents lane's data access
+    (bindings, chunks, delivery, events, occurrences, routines, run-finish,
+    stale-runs, tree, workspace-turns beside the store modules); the agents
+    services keep only logic, and the scheduler's claim transaction passes
+    its client down. `arch-layers.test.ts` counts `agents/store/**` as DAL
+    and fails on any platform-table SQL outside the DAL: the allowlist is
+    gone.
+  - *Migrations.* An applied migration is never edited unless
+    `migrations/amended.json` lists the edit with the hashes it replaces;
+    the runner adopts the current hash for those and warns on any other
+    drift, and a test holds every migration shipped with the last client
+    tag to its released bytes. 0022 (comment) and 0092 (fresh-schema guard)
+    are listed.
   - *Agent store.* `AgentStore` keeps the agent rows and the access check
     (`AgentCatalog`) and exposes `grants`, `threads`, `tree`, `runs`,
     `notices` and `lifecycle` from `agents/store/`; callers name the
@@ -160,7 +173,11 @@ first. Code comments describe only the present.
     seed wins; a failed seed is an error with retry. `canonicalRoute` is the
     one address normaliser; the skills route carries the shown file and the
     catalog query; text filters replace the history entry, discrete picks
-    push. A wake resyncs only a dead or stale link.
+    push. A wake resyncs only a dead or stale link. Engine replies reach
+    the webview as an `engine-rpc` event (no `rpc_poll`), with a per-request
+    deadline set in `rpc_submit`; `rpcCall` is typed by method
+    (`WebviewRpcResults`). The OIDC callback fragment is consumed in the
+    route layer, and `writeAddress` in `route.ts` is the only history write.
   - *Gate.* `check.mjs` compares property shapes by name (array elements,
     inline objects, maps) and fails on undeclared types or refs; the release
     script refuses a dirty tree or a moved tag and runs it before building.
@@ -169,7 +186,11 @@ first. Code comments describe only the present.
     fixtures and JSON data are left as written) and typechecks `packages/ui`;
     the desktop targets ES2022 like the server; coherence gates
     `milestone_tags`. Tests share one disposable-database factory under
-    feature names.
+    feature names. A test that something does not happen waits on a
+    barrier, never a fixed delay: `NotifyHub.barrier()`,
+    `FeedForwarder.idle()` and a socket `pingBarrier()` (ping, then its
+    pong) for the feed, `idle()` on the trace and usage sinks, fake timers
+    for windows and backoffs.
 
 - **A first send opens its thread once the server holds it; the keyboard
   never pans the shell (2026-11-02).** The scratch composer stays frozen
