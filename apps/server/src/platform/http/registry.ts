@@ -206,7 +206,7 @@ export function registerRegistryRoutes(
     if (kind !== "skill" && user.role !== "admin") {
       const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null || approved[0] !== version || stored.bundle_sha256 !== approved[1]) {
-        throw ApiError.forbidden();
+        throw ApiError.forbidden("only the approved version can be installed");
       }
     }
     let bytes: Buffer;
@@ -257,7 +257,7 @@ export function registerRegistryRoutes(
     let version = queryParam(req, "version") ?? null;
     if (version === null) {
       const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
-      if (approved === null) throw ApiError.forbidden();
+      if (approved === null) throw ApiError.forbidden("no approved version to install");
       version = approved[0];
     }
     const stored = await gateway.registry.getVersion(user.org_id, kind, slug, version);
@@ -266,7 +266,7 @@ export function registerRegistryRoutes(
     if (user.role !== "admin") {
       const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null || approved[0] !== version || stored.bundle_sha256 !== approved[1]) {
-        throw ApiError.forbidden();
+        throw ApiError.forbidden("only the approved version can be installed");
       }
     }
     let bytes: Buffer;

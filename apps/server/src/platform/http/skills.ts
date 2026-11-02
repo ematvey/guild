@@ -111,7 +111,7 @@ async function assertCanManage(
   ) {
     return;
   }
-  throw ApiError.forbidden();
+  throw ApiError.forbidden("only the skill's owner or its team can change it");
 }
 
 /** Best-effort org event emission (the feed must never fail a route). */
@@ -183,7 +183,7 @@ async function applyOwnerTeam(
 ): Promise<void> {
   if (ownerTeamId === undefined) return;
   if (!(await auth.teams.isMember(user.org_id, ownerTeamId, user.id))) {
-    throw ApiError.forbidden();
+    throw ApiError.forbidden("you are not a member of that team");
   }
   await gateway.registry.setOwnerTeam(user.org_id, "skill", slug, ownerTeamId);
 }

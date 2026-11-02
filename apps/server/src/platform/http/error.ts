@@ -65,7 +65,7 @@ export async function requireUser(ctx: IdentityCtx, req: FastifyRequest): Promis
 /** The authenticated user, who must be an org admin (403 otherwise). */
 export async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest): Promise<UserRow> {
   const user = await requireUser(ctx, req);
-  if (user.role !== "admin") throw ApiError.forbidden();
+  if (user.role !== "admin") throw ApiError.adminRequired();
   return user;
 }
 

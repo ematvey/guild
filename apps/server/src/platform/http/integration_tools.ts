@@ -118,32 +118,32 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
       return callRaw === specRaw;
     });
     if (info === undefined) throw ApiError.notFound("no such tool");
-    if (!toolAllowed(turn, info, caller.role)) throw ApiError.forbidden();
+    if (!toolAllowed(turn, info, caller.role)) throw ApiError.forbidden("this tool is not available to you");
     // The script API is non-interactive: a tool curated to always_ask has no
     // durable card to resolve here, so it is refused rather than silently
     // bypassing the approval (the stored per-tool config is the single
     // source of truth for exposure and approval).
     const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
     if (toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk) {
-      throw ApiError.forbidden();
+      throw ApiError.forbidden("this tool needs an approval and cannot be called from a script");
     }
     // Identity: acting as the caller's own mapped identity; an override to
     // another member's identity is admin-only.
     const overrideHeader = req.headers["x-guild-acting-as"];
     const override = typeof overrideHeader === "string" && overrideHeader !== "" ? overrideHeader : null;
-    const isAdmin = caller.role === "admin" || caller.role === "owner";
+    const isAdmin = caller.role === "admin";
     let actingAs: string | null;
     try {
       actingAs = resolveActingAs(caller.email, override, isAdmin);
     } catch {
-      throw ApiError.forbidden();
+      throw ApiError.forbidden("acting as another member is admin-only");
     }
     // Impersonating connectors (Google domain-wide delegation) mint the
     // token subject from the acting identity — no resolved identity would
     // fall back to the admin subject, i.e. a non-admin reading the admin's
     // mailbox. The call is refused instead of defaulted.
     if (actingAs === null && !isAdmin && turn.slug === "google_workspace") {
-      throw ApiError.forbidden();
+      throw ApiError.forbidden("no identity is mapped for you on this integration");
     }
     // The body is the JSON arguments object (empty body = {}); any JSON
     // value that is not an object is refused.

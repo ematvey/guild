@@ -373,7 +373,7 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     expect(JSON.parse(res.body).ok).toBe(false);
   });
 
-  it("a tool curated to always_ask is refused (the script API is non-interactive), exactly like Rust", async () => {
+  it("a tool curated to always_ask is refused (the script API is non-interactive)", async () => {
     await seedIntegration(
       "slack",
       { base_url: connectorBase(), tools: { post_message: { enabled: true, approval: "always_ask" } } },
@@ -382,7 +382,9 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     );
     const res = await call("POST", "/api/v1/integrations/slack/tools/post_message", e.adminToken, { channel: "C1", text: "hi" });
     expect(res.statusCode).toBe(403);
-    expect(JSON.parse(res.body)).toEqual(JSON.parse(CAPTURE.execute_always_ask.body));
+    expect(JSON.parse(res.body)).toEqual({
+      error: { code: "forbidden", message: "this tool needs an approval and cannot be called from a script" },
+    });
   });
 
   it("a write-class tool is member-forbidden; the raw connector name is accepted alongside the namespaced one", async () => {

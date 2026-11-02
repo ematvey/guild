@@ -35,14 +35,13 @@ export function toolCurate(rowConfig: JsonObject, mcp: boolean, rawTool: string)
   return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false };
 }
 
-/** Classes one role may call. Default policy: member read-only, admin (and
- *  owner — owners are admins) everything; a stored `tool_policy` tightens or
- *  reshapes per role, never past the manifest. */
+/** Classes one role may call. Default policy: member read-only, admin
+ *  everything; a stored `tool_policy` tightens or reshapes per role, never
+ *  past the manifest. */
 function allowedClasses(rowConfig: JsonObject, role: string): string[] {
-  const resolvedRole = role === "owner" ? "admin" : role;
   const policy = rowConfig["tool_policy"];
   if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
-    const tp = (policy as JsonObject)[resolvedRole];
+    const tp = (policy as JsonObject)[role];
     if (Array.isArray(tp)) {
       // A stored policy entry replaces the default for that role — an empty
       // list allows nothing.
@@ -51,17 +50,17 @@ function allowedClasses(rowConfig: JsonObject, role: string): string[] {
         .filter(isToolClass);
     }
   }
-  return resolvedRole === "admin" ? ["read", "write", "admin"] : ["read"];
+  return role === "admin" ? ["read", "write", "admin"] : ["read"];
 }
 
 /** Whether one resolved tool may be called by `role`: per-tool curation
  *  first (a disabled tool is invisible), then the class rule (manifest class
  *  is the floor; a stored `tool_policy` tightens; admin-class tools are
- *  admin-only — owners count as admins). Guards built-in and MCP tools
+ *  admin-only). Guards built-in and MCP tools
  *  alike. */
 export function toolAllowed(turn: IntegrationTurn, info: IntegrationToolInfo, role: string): boolean {
   if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) return false;
-  if (info.class === "admin" && role !== "admin" && role !== "owner") return false;
+  if (info.class === "admin" && role !== "admin") return false;
   return allowedClasses(turn.rowConfig, role).some((c) => classRank(c) >= classRank(info.class));
 }
 

@@ -7,6 +7,8 @@ import { uuidv7 } from "../time.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 
+const MAINTAINERS_ONLY = "only the item's maintainers can publish it";
+
 export interface RegistryItemRow {
   slug: string;
   description: string;
@@ -160,10 +162,10 @@ export class RegistryStore {
       // check-then-publish race is closed by deciding here, on the same
       // snapshot the version insert commits against.
       if (gate !== null && item !== undefined) {
-        if (item.tombstoned_at !== null) throw ApiError.forbidden();
+        if (item.tombstoned_at !== null) throw ApiError.forbidden("this item was unpublished");
         if (item.maintainer_gated && gate.role !== "admin") {
           const owner = item.owner_user_id !== null && item.owner_user_id === gate.userId;
-          if (!owner && !(item.owner_team_id !== null && gate.isTeamMember)) throw ApiError.forbidden();
+          if (!owner && !(item.owner_team_id !== null && gate.isTeamMember)) throw ApiError.forbidden(MAINTAINERS_ONLY);
         }
       }
       if (item !== undefined) {
@@ -386,11 +388,11 @@ export class RegistryStore {
   async publishGate(orgId: string, kind: string, slug: string, userId: string, role: string, isTeamMember: boolean): Promise<void> {
     const item = await this.itemControl(orgId, kind, slug);
     if (item === null) return; // new slug — no gate
-    if (item.tombstoned) throw ApiError.forbidden();
+    if (item.tombstoned) throw ApiError.forbidden("this item was unpublished");
     if (!item.maintainer_gated || role === "admin") return;
     const owner = item.owner_user_id !== null && item.owner_user_id === userId;
     if (owner || (item.owner_team_id !== null && isTeamMember)) return;
-    throw ApiError.forbidden();
+    throw ApiError.forbidden(MAINTAINERS_ONLY);
   }
 
   /** Tombstones the item (unpublish): it leaves the catalog and refuses

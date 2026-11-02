@@ -92,7 +92,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
       itemControl: async () => (control as never) ?? null,
       getVersionMeta: async (_orgId, _kind, _slug, _version) => (meta as never) ?? null,
       publishGate: async () => {
-        if (options.gate === "forbidden") throw ApiError.forbidden();
+        if (options.gate === "forbidden") throw ApiError.forbidden("gated");
       },
       itemVersions: async () => (options.versions ?? [{ version: "v1" }]) as never,
       upsertVersion: async (orgId, kind, slug, version, description) => {

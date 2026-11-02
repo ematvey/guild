@@ -247,7 +247,7 @@ export function registerAgentRoutes(
    *  and new chats resolve to. */
   app.post("/api/v1/agents/specialists", async (req, reply) => {
     const user = await requireUser(auth, req);
-    if (user.role !== "admin" && user.role !== "owner") throw ApiError.forbidden();
+    if (user.role !== "admin") throw ApiError.adminRequired();
     const body = jsonBody(req);
     const requested = optionalString(body, "model");
     if (requested !== undefined && requested.trim() === "") throw ApiError.badRequest("model must not be empty");
@@ -431,7 +431,7 @@ export function registerAgentRoutes(
     if (agent.status !== "deleting") {
       throw ApiError.badRequest("agent is not in the deletion grace period");
     }
-    const force = queryParam(req, "force") === "1" && (user.role === "admin" || user.role === "owner");
+    const force = queryParam(req, "force") === "1" && user.role === "admin";
     const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
     if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
     await store.purge(user, agentId);

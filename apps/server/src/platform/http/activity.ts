@@ -352,7 +352,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
 
   app.get("/api/v1/activity/spans/:id/payloads", async (req) => {
     const user = await requireUser(ctx, req);
-    if (user.role !== "admin") throw ApiError.forbidden();
+    if (user.role !== "admin") throw ApiError.adminRequired();
     const id = (req.params as Record<string, string>)["id"] ?? "";
     if (!isUuid(id)) throw ApiError.badRequest(`invalid span id: ${id}`);
     let rows: Record<string, unknown>[];

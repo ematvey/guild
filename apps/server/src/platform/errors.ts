@@ -28,8 +28,13 @@ export class ApiError extends Error {
     return new ApiError(415, "unsupported_media_type", message);
   }
 
-  static forbidden(): ApiError {
-    return new ApiError(403, "forbidden", "admin role required");
+  static forbidden(message: string): ApiError {
+    return new ApiError(403, "forbidden", message);
+  }
+
+  /** The admin gate's refusal. */
+  static adminRequired(): ApiError {
+    return ApiError.forbidden("admin role required");
   }
 
   static notFound(message: string): ApiError {

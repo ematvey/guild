@@ -138,7 +138,7 @@ export class MachineStore {
         // Same-org machine id claimed by another user: refuse. The
         // fingerprint is plaintext registry metadata any member can read, so
         // the id alone proves nothing about who may connect.
-        throw ApiError.forbidden();
+        throw ApiError.forbidden("this machine belongs to another user");
       }
 
       if (existing !== null) {

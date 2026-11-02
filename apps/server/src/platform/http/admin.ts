@@ -156,19 +156,19 @@ async function setOrgPrompt(
 
 // ---------- integrations (read paths + per-tool curation) ----------
 
-/** Currently approved manifest of one registry integration item, if any. */
+/** Currently approved manifest of one registry integration item, if any.
+ *  The approval covers only the bundle it hashed: a stored bundle that no
+ *  longer matches reads as unapproved. */
 async function latestIntegrationManifest(
   gateway: GatewayCtx,
   orgId: string,
   slug: string,
 ): Promise<Record<string, unknown> | null> {
-  const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
-  if (approved === null) return null;
-  const stored = await gateway.registry.getVersion(orgId, "integration", slug, approved[0]);
-  const manifest = stored.manifest;
-  return manifest !== null && typeof manifest === "object" && !Array.isArray(manifest)
-    ? (manifest as Record<string, unknown>)
-    : null;
+  try {
+    return await registryManifestIfApproved(gateway, orgId, slug);
+  } catch {
+    return null;
+  }
 }
 
 /** Approved manifest for a save: the same approval + bundle-hash check the

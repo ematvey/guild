@@ -584,7 +584,7 @@ export class AgentStore {
   async requireAccess(user: UserRow, agentId: string, mode: "use" | "manage"): Promise<{ agent: Agent; access: AgentAccess }> {
     const agent = await this.get(user, agentId);
     const access = await this.access(user, agent);
-    if (mode === "manage" ? !access.can_manage : !access.can_use) throw ApiError.forbidden();
+    if (mode === "manage" ? !access.can_manage : !access.can_use) throw ApiError.forbidden(mode === "manage" ? "you cannot manage this agent" : "you cannot use this agent");
     return { agent, access };
   }
 
