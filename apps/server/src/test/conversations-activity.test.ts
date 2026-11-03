@@ -65,7 +65,7 @@ async function seedConversation(opts: {
         randomUUID(),
         chatId,
         JSON.stringify({ type: "user_message", content: `question ${i + 1}`, attachments: [] }),
-        start,
+        new Date(base + times[i]! - 1_000).toISOString(),
       ],
     );
     await db.query(
@@ -245,9 +245,15 @@ describe("conversation activity", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as {
       thread: { id: string; parent_chat_id: string | null; parent_title: string | null };
+      run: { steps: { kind: string; detail: string | null }[] };
     };
     expect(body.thread.id).toBe(child.threadId);
     expect(body.thread.parent_chat_id).toBe(mine.chatId);
     expect(body.thread.parent_title).toBe("Member history");
+
+    // The run opens with the user message that started it, even though the
+    // message predates the run's start.
+    const steps = body.run.steps as { kind: string; detail: string | null }[];
+    expect(steps[0]).toMatchObject({ kind: "user", detail: "question 1" });
   });
 });

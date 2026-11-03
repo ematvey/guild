@@ -853,6 +853,10 @@ export function ConversationPage({
               <ArrowLeft />
               Activity
             </Button>
+            <Button variant="ghost" size="sm" aria-label="Refresh conversation" onClick={() => setTick((t) => t + 1)}>
+              <RefreshCw />
+              Refresh
+            </Button>
             {conversation?.thread?.parent_chat_id != null && (
               <Button
                 variant="ghost"

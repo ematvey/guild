@@ -177,6 +177,34 @@ export class AgentRunStore {
           });
         }
       }
+      // The user message that started the run lands just before its start,
+      // so the window above does not hold it. Read the trigger separately
+      // and put it first: the run detail opens with what the run answered.
+      if (!steps.some((step) => step.type === "user_message")) {
+        const trigger = await this.pool.query<{
+          seq: string;
+          payload: Record<string, unknown>;
+          created_at: Date;
+        }>(
+          `SELECT e.seq, e.payload, e.created_at
+           FROM agent_threads t JOIN thread_events e ON e.chat_id = t.chat_id
+           WHERE t.id = $1 AND e.type = 'user_message' AND e.created_at < $2::timestamptz
+           ORDER BY e.seq DESC LIMIT 1`,
+          [run.thread_id, run.started_at ?? run.created_at],
+        );
+        const row = trigger.rows[0];
+        if (row !== undefined) {
+          const text = typeof row.payload.content === "string" ? row.payload.content : "";
+          if (text.trim() !== "") {
+            steps.unshift({
+              type: "user_message",
+              seq: Number(row.seq),
+              ts: row.created_at.toISOString(),
+              text: text.slice(0, 4_000),
+            });
+          }
+        }
+      }
     }
     const files = await this.pool.query<{ paths: string[]; finished_at: Date | null }>(
       `SELECT paths, finished_at FROM agent_workspace_turns WHERE run_id = $1 ORDER BY started_at ASC`,
