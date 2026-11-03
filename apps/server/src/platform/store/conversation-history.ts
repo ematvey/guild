@@ -192,18 +192,24 @@ export function groupConversation(
     }
     if (triggerSeq !== null) claimed.add(triggerSeq);
     let reply = false;
+    let lastReplyAt = 0;
     for (const message of messages) {
       if (message.role !== "assistant" || claimed.has(message.seq)) continue;
       const at = Date.parse(message.ts);
       if (at >= start && at <= end) {
         claimed.add(message.seq);
         reply = true;
+        lastReplyAt = Math.max(lastReplyAt, at);
       }
     }
+    // The run row is a footnote to the turn: it reads under the agent's
+    // last message, not above the first. A run still open sits at its
+    // start so it stays visible while the reply streams in.
+    const ts = run.finished_at ?? (lastReplyAt > 0 ? new Date(lastReplyAt).toISOString() : run.started_at);
     const counts = stepsOf(run.id);
     items.push({
       kind: "run",
-      ts: run.started_at,
+      ts,
       run,
       trigger,
       steps: counts.call_count + counts.tool_count,
@@ -213,8 +219,8 @@ export function groupConversation(
   }
   for (const message of messages) {
     // A claimed user message is the run's trigger and already renders with
-    // it. A claimed assistant message is still the agent's reply: the run
-    // row starts before it, so the timestamp order places it after.
+    // it. A claimed assistant message is still the agent's reply, and the
+    // run row's timestamp follows it.
     if (message.role === "user" && claimed.has(message.seq)) continue;
     items.push({ kind: "message", ...message });
   }

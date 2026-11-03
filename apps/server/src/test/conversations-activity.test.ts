@@ -97,7 +97,7 @@ afterAll(async () => {
 }, 30_000);
 
 describe("groupConversation", () => {
-  it("puts the trigger before its run and the reply after it", () => {
+  it("puts the trigger before the reply and the run row after it", () => {
     const messages = [
       { seq: 1, role: "user" as const, text: "hello", ts: "2026-11-01T10:00:00Z" },
       { seq: 2, role: "assistant" as const, text: "hi", ts: "2026-11-01T10:00:30Z" },
@@ -118,9 +118,9 @@ describe("groupConversation", () => {
       },
     ];
     const items = groupConversation(messages, runs, () => ({ call_count: 2, tool_count: 3 }));
-    expect(items.map((item) => (item.kind === "run" ? "run" : item.role))).toEqual(["run", "assistant", "user"]);
-    const run = items[0];
-    if (run?.kind !== "run") throw new Error("first item is not a run");
+    expect(items.map((item) => (item.kind === "run" ? "run" : item.role))).toEqual(["assistant", "run", "user"]);
+    const run = items[1];
+    if (run?.kind !== "run") throw new Error("second item is not a run");
     expect(run.trigger).toBe("hello");
     expect(run.steps).toBe(5);
     expect(run.reply).toBe(true);
@@ -237,11 +237,11 @@ describe("conversation activity", () => {
     expect(body.conversation.agent.name).toBe("Echo");
     expect(body.has_more).toBe(false);
     const shape = body.items.map((item) => (item.kind === "run" ? "run" : String(item.role)));
-    expect(shape).toEqual(["run", "assistant", "run", "assistant"]);
-    const first = body.items[0]!;
-    expect(first.trigger).toBe("question 1");
-    expect(first.run).toMatchObject({ status: "succeeded", trigger: "message" });
-    expect(body.items[1]!.text).toBe("reply 1");
+    expect(shape).toEqual(["assistant", "run", "assistant", "run"]);
+    const firstRun = body.items[1]!;
+    expect(firstRun.trigger).toBe("question 1");
+    expect(firstRun.run).toMatchObject({ status: "succeeded", trigger: "message" });
+    expect(body.items[0]!.text).toBe("reply 1");
   });
 
   it("hides another member's conversation from a member", async () => {
