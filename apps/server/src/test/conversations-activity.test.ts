@@ -124,6 +124,30 @@ describe("groupConversation", () => {
     expect(run.trigger).toBe("hello");
     expect(run.steps).toBe(5);
   });
+
+  it("keeps an earlier user message standalone when two precede one run", () => {
+    const messages = [
+      { seq: 1, role: "user" as const, text: "first", ts: "2026-11-01T09:59:00Z" },
+      { seq: 2, role: "user" as const, text: "second", ts: "2026-11-01T09:59:30Z" },
+    ];
+    const runs = [
+      {
+        id: "r1",
+        agent_id: "a",
+        agent_name: "Echo",
+        trigger: "message",
+        status: "running",
+        summary: "",
+        error_message: "",
+        tokens: 0,
+        started_at: "2026-11-01T10:00:00Z",
+        finished_at: null,
+      },
+    ];
+    const items = groupConversation(messages, runs, () => ({ call_count: 0, tool_count: 0 }));
+    expect(items.map((item) => (item.kind === "run" ? "run" : item.text))).toEqual(["first", "run"]);
+    expect(items[1]?.kind === "run" && items[1].trigger).toBe("second");
+  });
 });
 
 describe("conversation activity", () => {

@@ -157,13 +157,17 @@ export function groupConversation(
   for (const run of ordered) {
     const start = Date.parse(run.started_at);
     const end = run.finished_at === null ? Number.POSITIVE_INFINITY : Date.parse(run.finished_at);
+    // The trigger is the newest user message before the run. Earlier ones
+    // stay standalone: the reader sees both.
     let trigger: string | null = null;
+    let triggerSeq: number | null = null;
     for (const message of messages) {
       if (message.role !== "user" || claimed.has(message.seq)) continue;
       if (Date.parse(message.ts) > start) break;
       trigger = message.text;
-      claimed.add(message.seq);
+      triggerSeq = message.seq;
     }
+    if (triggerSeq !== null) claimed.add(triggerSeq);
     for (const message of messages) {
       if (message.role !== "assistant" || claimed.has(message.seq)) continue;
       const at = Date.parse(message.ts);
