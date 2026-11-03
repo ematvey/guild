@@ -404,20 +404,6 @@ export interface SpanRow {
   attributes: Record<string, unknown>;
 }
 
-export interface ChatActivityRow {
-  session_id: string;
-  traces: number;
-  calls: number;
-  tool_calls: number;
-  tokens_in: number;
-  tokens_out: number;
-  cost_usd: number;
-  errors: number;
-  started_at: string | null;
-  ended_at: string | null;
-  duration_ms: number;
-}
-
 /** One owner of a conversation (the chat's user). */
 export interface ConversationOwner {
   id: string;
@@ -604,16 +590,6 @@ export async function getTrace(traceId: string): Promise<{
 
 export async function listSpans(filters: ActivityQuery = {}): Promise<{ spans: SpanRow[]; total: number }> {
   return request<{ spans: SpanRow[]; total: number }>("GET", `/api/v1/activity/spans${activityQuery(filters)}`);
-}
-
-export async function listChatActivity(
-  filters: ActivityQuery = {},
-): Promise<{ chats: ChatActivityRow[]; total: number }> {
-  const body = await request<{ sessions: ChatActivityRow[]; total: number }>(
-    "GET",
-    `/api/v1/activity/sessions${activityQuery(filters)}`,
-  );
-  return { chats: body.sessions, total: body.total };
 }
 
 export async function getActivitySummary(filters: ActivityQuery = {}): Promise<ActivitySummary> {
