@@ -360,10 +360,14 @@ isolated config file (`GUILD_CONFIG_ENV`).
   spawned JSON-RPC over stdio) / headless CLI verbs (`login`, `chat`,
   `publish`, `install`, `verify`).
 - Auto-updater: Tauri updater, minisign keypair `~/.tauri/guild.key`
-  (passwordless), pubkey baked into `apps/desktop/src-tauri/tauri.conf.json`;
-  endpoint `http://localhost:18080/api/v1/updates/latest.json` with
-  `dangerousInsecureTransportProtocol: true` (plain HTTP is intentional for
-  this deployment). `createUpdaterArtifacts: true`.
+  (passwordless), pubkey baked into `apps/desktop/src-tauri/tauri.conf.json`.
+  The endpoint is the paired server's: `check_and_prepare_update`
+  (`apps/desktop/src-tauri/src/lib.rs`) builds
+  `<session.base_url>/api/v1/updates/latest.json` and overrides the plugin's
+  configured list at runtime, so one client build follows whichever stack it
+  paired with. The `endpoints` entry in `tauri.conf.json` is a placeholder
+  the runtime replaces. `dangerousInsecureTransportProtocol: true` (plain
+  HTTP is intentional for this deployment). `createUpdaterArtifacts: true`.
 - Two publisher scripts, both **idempotent** (they delete+republish an
   existing version/platform artifact) and both verify the server's sha256
   against the local file:
