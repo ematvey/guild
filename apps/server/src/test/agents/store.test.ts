@@ -119,6 +119,14 @@ dbDescribe("AgentStore", () => {
     expect(access).toMatchObject({ role: "user", can_use: true, can_manage: false });
   });
 
+  it("lets an admin read every agent of the org, personal ones included", async () => {
+    const personal = await store.create(member, { name: "Member Assistant", model: "GLM-Test" });
+    await env!.db.query("UPDATE agents SET is_personal = true WHERE id = $1", [personal.id]);
+    await expect(store.get(owner, personal.id)).rejects.toMatchObject({ status: 404 });
+    expect((await store.list(admin)).map((a) => a.id)).toContain(personal.id);
+    expect((await store.get(admin, personal.id)).id).toBe(personal.id);
+  });
+
   it("resolves org visibility, team grants and admin override", async () => {
     const orgAgent = await store.create(owner, { name: "Org", model: "GLM-Test", visibility: "org" });
     const orgAccess = await store.access(member, await store.get(member, orgAgent.id));
@@ -253,9 +261,10 @@ dbDescribe("AgentStore", () => {
     const memberPersonal = await store.ensurePersonalAgent(member);
     expect(memberPersonal!.id).not.toBe(personal!.id);
 
-    // Another user — even an admin — cannot see or use a personal agent.
-    await expect(store.get(admin, personal!.id)).rejects.toMatchObject({ status: 404 });
-    expect((await store.list(admin)).map((a) => a.id)).not.toContain(personal!.id);
+    // Another member cannot see a personal agent; an admin reads every
+    // agent of the org, personal ones included.
+    await expect(store.get(member, personal!.id)).rejects.toMatchObject({ status: 404 });
+    expect((await store.list(admin)).map((a) => a.id)).toContain(personal!.id);
 
     await expect(store.lifecycle.archive(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
     await expect(store.lifecycle.markDeleted(owner, personal!.id)).rejects.toMatchObject({ status: 400 });

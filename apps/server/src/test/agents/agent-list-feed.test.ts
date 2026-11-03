@@ -144,7 +144,19 @@ dbDescribe("agent list feed", () => {
     expect(names(0)).toEqual(["Archived", "Assistant", "Granted", "Org-wide", "Private", "Team"]);
     expect(names(1)).toEqual(["Archived", "Assistant", "Org-wide", "Team"]);
     expect(names(2)).toEqual(["Archived", "Assistant", "Granted", "Org-wide"]);
-    expect(names(3)).toEqual(["Admin's", "Archived", "Assistant", "Granted", "Org-wide", "Private", "Team"]);
+    expect(names(3)).toEqual([
+      "Admin's",
+      "Archived",
+      "Assistant",
+      "Assistant",
+      "Assistant",
+      "Assistant",
+      "Assistant",
+      "Granted",
+      "Org-wide",
+      "Private",
+      "Team",
+    ]);
     expect(names(4)).toEqual(["Archived", "Assistant", "Org-wide"]);
   });
 });

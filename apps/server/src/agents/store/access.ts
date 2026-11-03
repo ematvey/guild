@@ -24,15 +24,17 @@ export function userViewer(alias: string): ViewerSql {
   return { org: `${alias}.org_id`, admin: `(${alias}.role = 'admin')`, user: `${alias}.id` };
 }
 
-/** Visibility predicate over an `agents` alias. A personal agent belongs to
- *  exactly one user: no admin override, no org or team visibility.
- *  Everything else follows the grant rules. */
+/** Visibility predicate over an `agents` alias. An admin reads every agent
+ *  of the org, personal and private included: the directory is the admin's
+ *  map of who works with what. A member sees their own agents, the `org`
+ *  ones, and the agents granted to them by user or team; a personal agent
+ *  belongs to exactly one user and never reaches another member. */
 export function visiblePredicate(alias: string, viewer: ViewerSql = VIEWER_PARAMS): string {
   return `(${alias}.org_id = ${viewer.org} AND (
     ${alias}.owner_user_id = ${viewer.user}
+    OR ${viewer.admin}
     OR (${alias}.is_personal = false AND (
-      ${viewer.admin}
-      OR ${alias}.visibility = 'org'
+      ${alias}.visibility = 'org'
       OR EXISTS (SELECT 1 FROM agent_grants g
         WHERE g.agent_id = ${alias}.id AND g.user_id = ${viewer.user} AND g.role = '${GRANT_ROLE}')
       OR (${alias}.visibility = 'team' AND EXISTS (

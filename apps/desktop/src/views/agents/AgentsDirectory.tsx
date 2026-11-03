@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, Plus, Search, Sparkles } from "lucide-react";
+import { Bot, Lock, Plus, Search, Sparkles } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { relativeTime } from "../../lib/relative-time";
@@ -9,7 +9,7 @@ import type { Agent } from "./agents-api";
 import { useAgentList } from "./agents-store";
 import { count } from "../../lib/format";
 import { ModelName } from "./agent-model";
-import { AgentGlyph, AgentStatusBadge, LoadingRows, PageBody } from "./agent-ui";
+import { AgentGlyph, AgentStatusBadge, LoadingRows, PageBody, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -153,6 +153,12 @@ export function AgentRow({ agent, onNavigate }: { agent: Agent; onNavigate: (rou
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">{agent.name}</span>
+          {agent.visibility === "private" && (
+            <ToneBadge tone="neutral" title="Only the owner can see and use this agent">
+              <Lock className="size-3" />
+              Private
+            </ToneBadge>
+          )}
           {agent.status !== "active" && <AgentStatusBadge status={agent.status} />}
         </div>
         <p className="mt-0.5 truncate text-2xs text-muted-foreground">
@@ -161,8 +167,12 @@ export function AgentRow({ agent, onNavigate }: { agent: Agent; onNavigate: (rou
         </p>
         {agent.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{agent.description}</p>}
         <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-2xs text-muted-foreground">
-          <span>{VISIBILITY_LABEL[agent.visibility]}</span>
-          <Separator />
+          {agent.visibility !== "private" && (
+            <>
+              <span>{VISIBILITY_LABEL[agent.visibility]}</span>
+              <Separator />
+            </>
+          )}
           <span className="min-w-0 truncate">
             <ModelName id={agent.model} alias={agent.model_alias} />
           </span>
