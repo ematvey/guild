@@ -350,7 +350,9 @@ export async function send(
 /** The directory the caller's user may use: every non-personal agent visible
  *  to that user plus their own personal agent, sorted by name. */
 export async function listAgents(context: SubagentsToolContext): Promise<AgentDirectoryEntry[]> {
-  const agents = await context.store.list(context.requester);
+  const agents = (await context.store.list(context.requester)).filter(
+    (agent) => !agent.is_personal || agent.owner_user_id === context.requester.id,
+  );
   return agents
     .map((agent) => ({
       id: agent.id,
