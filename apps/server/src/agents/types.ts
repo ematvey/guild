@@ -18,6 +18,9 @@ export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "si
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 export type AgentRoutineKind = "cron" | "once";
 export type AgentRoutineContext = "isolated";
+/** Where a routine run's send_message lands: appended to the routine's one
+ *  conversation with the user, or a new conversation per message. */
+export type AgentRoutineDelivery = "thread" | "new_chat";
 export type AgentRoutineOccurrenceStatus = "pending" | "claimed" | "done" | "failed" | "skipped";
 
 /** Built-in agent tools. Integration/MCP tool names are added by the runtime
@@ -170,6 +173,7 @@ export interface AgentRoutine {
   run_at: string | null;
   prompt: string;
   context: AgentRoutineContext;
+  delivery: AgentRoutineDelivery;
   enabled: boolean;
   next_run_at: string | null;
   created_at: string;

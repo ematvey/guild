@@ -192,6 +192,16 @@ export async function listRoutines(id: string): Promise<AgentRoutine[]> {
   return (await request<{ routines: AgentRoutine[] }>("GET", `${agentBase(id)}/routines`)).routines;
 }
 
+/** Sets where a routine's runs deliver. The routine row comes back over the
+ *  member socket's agent_routines frame. */
+export async function setRoutineDelivery(
+  id: string,
+  routineId: string,
+  delivery: AgentRoutine["delivery"],
+): Promise<void> {
+  await request("PATCH", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`, { delivery });
+}
+
 export async function runRoutine(id: string, routineId: string): Promise<AgentRun> {
   return (await request<{ run: AgentRun }>("POST", `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`))
     .run;

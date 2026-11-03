@@ -14,6 +14,7 @@ import {
   sendAgentMessage,
 } from "../../agents/tools.js";
 import { insertChunks } from "../../agents/search.js";
+import { createRoutine } from "../../agents/routines.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
@@ -102,6 +103,103 @@ dbDescribe("agent conversation tools", () => {
     expect((await store.threads.getThread(agent.id, secondId, second.thread_id)).title).toBe("Status update");
     const repeat = await sendAgentMessage({ store, threads, agent, userId: owner.id }, args);
     expect(repeat.thread_id).toBe(first.thread_id);
+  });
+
+  async function routineRun(routineId: string, label: string): Promise<{ id: string; chat_id: string }> {
+    const run = await store.threads.createThread(agent.id, owner.id, label, "routine");
+    await store.runs.createRun({
+      agent_id: agent.id,
+      user_id: owner.id,
+      thread_id: run.id,
+      routine_id: routineId,
+      trigger: "routine",
+      status: "running",
+    });
+    return run;
+  }
+
+  it("send_message from a thread-delivery routine appends every run to one marked chat", async () => {
+    const routine = await createRoutine(env!.db, agent.id, {
+      created_by_user_id: owner.id,
+      name: "Jira digest",
+      kind: "cron",
+      schedule: "every 1 hours",
+      prompt: "Check Jira.",
+    });
+    expect(routine.delivery).toBe("thread");
+    const first = await routineRun(routine.id, "Jira digest — 1");
+    const second = await routineRun(routine.id, "Jira digest — 2");
+    const a = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: first.chat_id },
+      { text: "Two new tasks.", title: "Jira update" },
+    );
+    const b = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: second.chat_id },
+      { text: "One more task.", title: "Jira update" },
+    );
+    expect(b.thread_id).toBe(a.thread_id);
+    const feed = await store.threads.getThread(agent.id, owner.id, a.thread_id);
+    expect(feed.title).toBe("Jira digest");
+    expect(feed.title_locked).toBe(true);
+    expect(feed.origin_thread_id).toBe(second.id);
+    const events = await threads.listEvents(orgId, feed.chat_id);
+    expect(events.filter((row) => row.event.type === "assistant_message")).toHaveLength(2);
+    const row = (await chats.listChats(orgId, owner.id)).find((chat) => chat.id === feed.chat_id);
+    expect(row?.routine).toEqual({ id: routine.id, name: "Jira digest" });
+    expect(row?.unread).toBe(true);
+    const context = await env!.db.query<{ routine_feed: boolean }>(
+      "SELECT routine_feed FROM agent_threads WHERE id = $1",
+      [feed.id],
+    );
+    expect(context.rows[0]?.routine_feed).toBe(true);
+
+    // An archived feed is retired: the next delivery opens a new one.
+    await env!.db.query("UPDATE chats SET archived_at = now() WHERE id = $1", [feed.chat_id]);
+    const third = await routineRun(routine.id, "Jira digest — 3");
+    const c = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: third.chat_id },
+      { text: "Quiet day." },
+    );
+    expect(c.thread_id).not.toBe(a.thread_id);
+    const old = await env!.db.query<{ routine_feed: boolean; routine_id: string }>(
+      "SELECT routine_feed, routine_id FROM agent_threads WHERE id = $1",
+      [feed.id],
+    );
+    expect(old.rows[0]).toEqual({ routine_feed: false, routine_id: routine.id });
+  });
+
+  it("send_message from a new_chat routine opens a marked chat per message", async () => {
+    const routine = await createRoutine(env!.db, agent.id, {
+      created_by_user_id: owner.id,
+      name: "Alerts",
+      kind: "cron",
+      schedule: "every 1 hours",
+      prompt: "Check alerts.",
+      delivery: "new_chat",
+    });
+    const first = await routineRun(routine.id, "Alerts — 1");
+    const second = await routineRun(routine.id, "Alerts — 2");
+    const a = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: first.chat_id },
+      { text: "Disk is full.", title: "Disk alert" },
+    );
+    const b = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: second.chat_id },
+      { text: "CPU is hot.", title: "CPU alert" },
+    );
+    expect(b.thread_id).not.toBe(a.thread_id);
+    const list = await chats.listChats(orgId, owner.id);
+    for (const result of [a, b]) {
+      const chatId = result.url.replace("/thread/", "");
+      expect(list.find((row) => row.id === chatId)?.routine).toEqual({ id: routine.id, name: "Alerts" });
+    }
+  });
+
+  it("a plain send_message chat carries no routine mark", async () => {
+    const result = await sendAgentMessage({ store, threads, agent, userId: owner.id }, { text: "Hello there." });
+    const chatId = result.url.replace("/thread/", "");
+    const row = (await chats.listChats(orgId, owner.id)).find((chat) => chat.id === chatId);
+    expect(row?.routine).toBeNull();
   });
 
   it("registers the routine management tools", () => {

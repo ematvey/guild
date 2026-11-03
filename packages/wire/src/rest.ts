@@ -244,6 +244,9 @@ export interface AgentRoutine {
   run_at: string | null;
   prompt: string;
   context: "isolated";
+  /** Where a run's send_message lands: `thread` appends to the routine's one
+   *  conversation per user; `new_chat` opens a conversation per message. */
+  delivery: "thread" | "new_chat";
   enabled: boolean;
   next_run_at: string | null;
   created_at: string;
@@ -497,6 +500,15 @@ export interface Chat {
   archived: boolean;
   /** The user removed the chat; it drops out of every list. */
   deleted: boolean;
+  /** The routine whose output this chat is (the sidebar's routine mark).
+   *  Omitted for any other chat, and once the routine is deleted. */
+  routine?: ChatRoutine;
+}
+
+/** The routine a chat collects output from. */
+export interface ChatRoutine {
+  id: string;
+  name: string;
 }
 
 /** The signed-in account. */

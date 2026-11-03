@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
-import { listRoutineRuns, runRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import { listRoutineRuns, runRoutine, setRoutineDelivery, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
@@ -232,6 +233,15 @@ function RoutineDetail({
     }
   };
 
+  const changeDelivery = async (delivery: AgentRoutine["delivery"]) => {
+    setActionError(null);
+    try {
+      await setRoutineDelivery(agentId, routineId, delivery);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not change where the routine delivers.");
+    }
+  };
+
   const edit = async () => {
     if (!routine) return;
     setEditing(true);
@@ -294,6 +304,23 @@ function RoutineDetail({
             <dt className="text-xs font-medium text-muted-foreground">Next run</dt>
             <dd className="mt-0.5 text-muted-foreground">
               {routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-medium text-muted-foreground">Messages go to</dt>
+            <dd className="mt-1">
+              <Select
+                value={routine.delivery}
+                onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}
+              >
+                <SelectTrigger className="max-w-72" aria-label="Messages go to">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="thread">One chat for this routine</SelectItem>
+                  <SelectItem value="new_chat">A new chat for each message</SelectItem>
+                </SelectContent>
+              </Select>
             </dd>
           </div>
         </dl>

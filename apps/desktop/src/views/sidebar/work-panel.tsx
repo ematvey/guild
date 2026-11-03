@@ -100,6 +100,7 @@ export const WorkPanel = memo(function WorkPanel({
                 <ChatListItem
                   key={c.id}
                   title={c.title ?? ""}
+                  routine={c.routine?.name}
                   active={c.id === chatId}
                   status={{
                     generating: !!c.generating,

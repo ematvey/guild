@@ -13,6 +13,10 @@ import {
 export interface ThreadInstructionContext {
   type: string;
   routineName: string | null;
+  /** A routine run's delivery mode; absent or null reads as "thread". */
+  routineDelivery?: "thread" | "new_chat" | null;
+  /** The routine whose deliveries this user thread collects. */
+  feedRoutineName?: string | null;
   origin: { thread_id: string; title: string } | null;
 }
 
@@ -75,11 +79,30 @@ export function composeAgentInstructions(
         `<routine_run name="${name}">`,
         "This turn was started by a routine, not by the user. Nobody reads this thread, and its final message is not delivered: the user sees only what you send.",
         "Reach the user with send_message and the full text they should read. When the run found nothing worth reporting, send nothing. Do not restate the result here.",
+        thread.routineDelivery === "new_chat"
+          ? "Each send_message opens its own conversation with the user."
+          : "send_message posts into this routine's one conversation with the user, below the messages earlier runs sent: write each message to stand on its own, and do not repeat what an earlier run already reported.",
         "</routine_run>",
       ].join("\n"),
     );
   }
-  if (thread?.origin !== undefined && thread.origin !== null) {
+  const feedRoutine = thread?.feedRoutineName ?? null;
+  if (feedRoutine !== null) {
+    const name = feedRoutine.replace(/"/g, "&quot;");
+    const latest = thread?.origin ?? null;
+    parts.push(
+      [
+        `<routine_thread name="${name}">`,
+        `This thread collects the messages the routine "${feedRoutine}" sends the user. Its runs post them here; they may not be in your context, so read them with thread_history before you answer about them. The user replies here.`,
+        ...(latest === null
+          ? []
+          : [
+              `The latest message came from run thread ${latest.thread_id}; read the work behind it with conversation_read.`,
+            ]),
+        "</routine_thread>",
+      ].join("\n"),
+    );
+  } else if (thread?.origin !== undefined && thread.origin !== null) {
     const title = thread.origin.title.replace(/"/g, "&quot;");
     const from =
       thread.routineName === null ? "an agent run" : `the routine "${thread.routineName.replace(/"/g, "&quot;")}"`;

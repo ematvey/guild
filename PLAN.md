@@ -86,6 +86,27 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A routine delivers into one chat, marked in the list (2026-11-04).**
+  Every `send_message` from a routine run opened a new chat, so an hourly
+  routine filled the sidebar with near-identical rows. Routine runs already
+  stay hidden and end `silent` when they send nothing; the noise was the
+  delivery. A routine now has a `delivery` (migration 0109):
+  `thread` (the default) appends each message to the routine's feed chat,
+  one per (routine, user), titled after the routine and title-locked;
+  `new_chat` keeps one chat per message. `agent_threads.routine_id` marks
+  any chat a routine delivered into (backfilled from the origin run thread),
+  and `routine_feed` names the feed; a unique partial index keeps one feed,
+  and a concurrent first delivery reads the winner back. A feed whose chat is
+  archived, deleted or closed is retired and the next delivery opens a new
+  one. A feed that is mid-turn gets a separate marked chat, so a delivery
+  never interleaves with a live turn. Delivered messages are journal events,
+  not model context: the feed's prompt block (`<routine_thread>`) tells the
+  agent to read them with `thread_history`, and the run's `<routine_run>`
+  block tells it to write each message to stand on its own. The REST and
+  socket `Chat` row carries `routine: {id, name}` (`ChatRoutine`), and the
+  sidebar row leads with a repeat icon. The routine page sets the delivery
+  mode, and so do `create_routine` and `update_routine`.
+
 - **An OIDC user's account is rechecked at the IdP on activity
   (2026-11-04).** A login proved the account existed; nothing after it
   did. A Google account disabled at the provider kept its Guild session

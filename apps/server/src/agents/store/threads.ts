@@ -119,7 +119,15 @@ export class AgentThreadStore {
     userId: string,
     title: string,
     type: AgentThreadType = "user",
-    options: { originThreadId?: string; isDefault?: boolean } = {},
+    options: {
+      originThreadId?: string;
+      isDefault?: boolean;
+      /** The routine whose output this thread is. */
+      routineId?: string;
+      /** This thread is the routine's feed: thread-mode deliveries append here. */
+      routineFeed?: boolean;
+      titleLocked?: boolean;
+    } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
     const id = uuidv7();
@@ -133,9 +141,22 @@ export class AgentThreadStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id)
-         VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8)`,
-        [id, agentId, userId, chat.id, title, type, options.isDefault === true, options.originThreadId ?? null],
+           (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id,
+            routine_id, routine_feed)
+         VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8, $10, $11)`,
+        [
+          id,
+          agentId,
+          userId,
+          chat.id,
+          title,
+          type,
+          options.isDefault === true,
+          options.originThreadId ?? null,
+          options.titleLocked === true,
+          options.routineId ?? null,
+          options.routineFeed === true,
+        ],
       );
     });
     return this.getThread(agentId, userId, id);
@@ -305,6 +326,59 @@ export class AgentThreadStore {
       [agentId, userId, title, originThreadId],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** The routine behind a routine run thread: the routine of the thread's
+   *  newest run. Null for any other thread, or when the routine is gone. */
+  async routineOfRunThread(
+    threadId: string,
+  ): Promise<{ id: string; name: string; delivery: "thread" | "new_chat" } | null> {
+    const res = await this.pool.query<{ id: string; name: string; delivery: string }>(
+      `SELECT r.id, r.name, r.delivery
+       FROM agent_threads t
+       JOIN LATERAL (
+         SELECT rn.routine_id FROM agent_runs rn
+         WHERE rn.thread_id = t.id AND rn.routine_id IS NOT NULL
+         ORDER BY rn.created_at DESC LIMIT 1
+       ) lr ON true
+       JOIN agent_routines r ON r.id = lr.routine_id
+       WHERE t.id = $1 AND t.type = 'routine'`,
+      [threadId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    return { id: row.id, name: row.name, delivery: row.delivery === "new_chat" ? "new_chat" : "thread" };
+  }
+
+  /** The routine's live feed thread for this user and agent. A feed whose
+   *  chat was archived or deleted, or whose thread was closed, is retired
+   *  here (it stays a routine-output thread, no longer the feed) and null
+   *  is returned. */
+  async routineFeed(
+    agentId: string,
+    userId: string,
+    routineId: string,
+  ): Promise<{ id: string; chat_id: string; generating: boolean } | null> {
+    const res = await this.pool.query<{ id: string; chat_id: string; generating: boolean; live: boolean }>(
+      `SELECT t.id, t.chat_id, c.generating,
+              (c.archived_at IS NULL AND c.deleted_at IS NULL AND t.closed_at IS NULL
+               AND t.agent_id = $1) AS live
+       FROM agent_threads t JOIN chats c ON c.id = t.chat_id
+       WHERE t.routine_id = $3 AND t.user_id = $2 AND t.routine_feed`,
+      [agentId, userId, routineId],
+    );
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    if (!row.live) {
+      await this.pool.query("UPDATE agent_threads SET routine_feed = false WHERE id = $1", [row.id]);
+      return null;
+    }
+    return { id: row.id, chat_id: row.chat_id, generating: row.generating };
+  }
+
+  /** Points a routine feed at the run thread behind its newest message. */
+  async setOrigin(threadId: string, originThreadId: string): Promise<void> {
+    await this.pool.query("UPDATE agent_threads SET origin_thread_id = $2 WHERE id = $1", [threadId, originThreadId]);
   }
 
   /** One thread row by id without caller scoping. Tree tools resolve a child

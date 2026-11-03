@@ -40,6 +40,10 @@ export interface ChatAgentBinding {
 export interface ThreadContext {
   type: string;
   routineName: string | null;
+  /** A routine run's delivery mode; null outside a routine run. */
+  routineDelivery: "thread" | "new_chat" | null;
+  /** The routine whose deliveries this user thread collects. */
+  feedRoutineName: string | null;
   origin: { thread_id: string; title: string } | null;
 }
 
@@ -139,8 +143,16 @@ export class ThreadBinding {
     if (row === null) return null;
     const origin =
       row.origin_thread_id === null ? null : { thread_id: row.origin_thread_id, title: row.origin_title ?? "" };
-    if (row.type !== "routine" && origin === null) return null;
-    return { type: row.type, routineName: row.routine_name, origin };
+    if (row.type !== "routine" && origin === null && row.feed_routine_name === null) return null;
+    const delivery =
+      row.type !== "routine" ? null : row.routine_delivery === "new_chat" ? ("new_chat" as const) : ("thread" as const);
+    return {
+      type: row.type,
+      routineName: row.routine_name,
+      routineDelivery: delivery,
+      feedRoutineName: row.feed_routine_name,
+      origin,
+    };
   }
 
   /** The tree context of a spawned child thread; undefined for a root. */

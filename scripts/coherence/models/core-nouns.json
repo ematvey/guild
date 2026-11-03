@@ -407,6 +407,7 @@
       "canonical": "crates/protocol/src/api.rs",
       "types": [
         "Chat",
+        "ChatRoutine",
         "CreateChatRequest",
         "UpdateChatRequest",
         "ChatRow",

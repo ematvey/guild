@@ -1,5 +1,15 @@
 import { useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronRight, EllipsisVertical, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
+  EllipsisVertical,
+  Loader2,
+  Pencil,
+  Plus,
+  Repeat,
+  Trash2,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -147,10 +157,13 @@ export function ChatListItem({
   onArchive,
   onDelete,
   archiveLabel,
+  routine,
 }: {
   title: string;
   active: boolean;
   status: RowState;
+  /** The routine whose output this chat is: the row leads with its mark. */
+  routine?: string;
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
@@ -192,6 +205,15 @@ export function ChatListItem({
         title={title}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
+        {routine !== undefined && (
+          <Repeat
+            data-routine-mark
+            aria-label={`Routine: ${routine}`}
+            className="size-3.5 shrink-0 text-muted-foreground"
+          >
+            <title>{`Routine: ${routine}`}</title>
+          </Repeat>
+        )}
         {title === "" ? (
           <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
             New thread

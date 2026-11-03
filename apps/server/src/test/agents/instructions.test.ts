@@ -186,6 +186,42 @@ describe("composeAgentInstructions", () => {
     expect(text).toContain("conversation_read on thread thread-1");
   });
 
+  it("tells a routine run where its send_message lands", () => {
+    const compose = (routineDelivery: "thread" | "new_chat") =>
+      composeAgentInstructions(
+        { name: "Assistant", is_personal: true },
+        config(FULL),
+        undefined,
+        false,
+        undefined,
+        false,
+        { type: "routine", routineName: "Digest", routineDelivery, origin: null },
+      );
+    expect(compose("thread")).toContain("send_message posts into this routine's one conversation");
+    expect(compose("new_chat")).toContain("Each send_message opens its own conversation");
+  });
+
+  it("tells a routine's feed thread to read its deliveries", () => {
+    const text = composeAgentInstructions(
+      { name: "Assistant", is_personal: true },
+      config(FULL),
+      undefined,
+      false,
+      undefined,
+      false,
+      {
+        type: "user",
+        routineName: null,
+        feedRoutineName: "Morning email digest",
+        origin: { thread_id: "thread-2", title: "Morning email digest — run" },
+      },
+    );
+    expect(text).toContain('<routine_thread name="Morning email digest">');
+    expect(text).toContain("thread_history");
+    expect(text).toContain("run thread thread-2");
+    expect(text).not.toContain("<opened_by_agent");
+  });
+
   it("adds no thread block for a plain thread", () => {
     const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
     expect(text).not.toContain("<routine_run");

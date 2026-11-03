@@ -86,6 +86,7 @@ export const ChatsPanel = memo(function ChatsPanel({
               <ChatListItem
                 key={c.id}
                 title={c.title ?? ""}
+                routine={c.routine?.name}
                 active={c.id === chatId}
                 status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
                 onClick={() => onOpenChat(c.id)}
@@ -116,6 +117,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                   <ChatListItem
                     key={c.id}
                     title={c.title ?? ""}
+                    routine={c.routine?.name}
                     active={c.id === chatId}
                     status={{ generating: !!c.generating, working: !!c.working, unread: false }}
                     onClick={() => onOpenChat(c.id)}

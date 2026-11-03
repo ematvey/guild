@@ -27,6 +27,18 @@ describe("ChatListItem", () => {
     expect(html).toContain("Row actions");
   });
 
+  it("leads a routine's chat with the routine mark", () => {
+    const marked = renderToStaticMarkup(
+      <ChatListItem title="Jira digest" active={false} status={idle} onClick={() => {}} routine="Jira digest" />,
+    );
+    expect(marked).toContain("data-routine-mark");
+    expect(marked).toContain("Routine: Jira digest");
+    const plain = renderToStaticMarkup(
+      <ChatListItem title="Deploy notes" active={false} status={idle} onClick={() => {}} />,
+    );
+    expect(plain).not.toContain("data-routine-mark");
+  });
+
   it("shows a spinner while a descendant is working", () => {
     const html = renderToStaticMarkup(
       <ChatListItem

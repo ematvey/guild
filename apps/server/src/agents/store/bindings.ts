@@ -85,17 +85,26 @@ export interface ThreadContextRow {
   origin_thread_id: string | null;
   origin_title: string | null;
   routine_name: string | null;
+  routine_delivery: string | null;
+  /** The routine whose deliveries this user thread collects. */
+  feed_routine_name: string | null;
 }
 
-/** The chat thread's type, origin thread and latest routine name. */
+/** The chat thread's type, origin thread, latest routine (name and
+ *  delivery) and the routine whose output thread it is. */
 export async function threadContextRow(pool: PlatformPool, chatId: string): Promise<ThreadContextRow | null> {
   const res = await pool.query<ThreadContextRow>(
     `SELECT t.type, t.origin_thread_id,
             (SELECT o.title FROM agent_threads o WHERE o.id = t.origin_thread_id) AS origin_title,
-            (SELECT r.name FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
-             WHERE rn.thread_id = t.id AND rn.trigger = 'routine'
-             ORDER BY rn.created_at DESC LIMIT 1) AS routine_name
+            lr.name AS routine_name, lr.delivery AS routine_delivery,
+            fr.name AS feed_routine_name
      FROM agent_threads t
+     LEFT JOIN LATERAL (
+       SELECT r.name, r.delivery FROM agent_runs rn JOIN agent_routines r ON r.id = rn.routine_id
+       WHERE rn.thread_id = t.id AND rn.trigger IN ('routine', 'manual')
+       ORDER BY rn.created_at DESC LIMIT 1
+     ) lr ON true
+     LEFT JOIN agent_routines fr ON fr.id = t.routine_id
      WHERE t.chat_id = $1`,
     [chatId],
   );

@@ -18,7 +18,8 @@
     "last_activity_at": "2026-10-28T09:00:00Z",
     "type": "user",
     "archived": false,
-    "deleted": false
+    "deleted": false,
+    "routine": { "id": "01a0c3d4-2222-7abc-8def-0123456789ab", "name": "Morning Jira digest" }
   },
   {
     "id": "01a1049c-431d-74b2-a4a0-0eabfc8020c6",

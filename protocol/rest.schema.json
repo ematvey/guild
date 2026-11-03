@@ -42,6 +42,7 @@
     "ToolsManifest": { "$ref": "#/$defs/ToolsManifest" },
     "TriggerSpec": { "$ref": "#/$defs/TriggerSpec" },
     "Chat": { "$ref": "#/$defs/Chat" },
+    "ChatRoutine": { "$ref": "#/$defs/ChatRoutine" },
     "ThreadEventRow": { "$ref": "#/$defs/ThreadEventRow" },
     "SubagentNode": { "$ref": "#/$defs/SubagentNode" },
     "EventRow": { "$ref": "#/$defs/EventRow" },
@@ -778,7 +779,21 @@
         "deleted": {
           "type": "boolean",
           "description": "The user removed the chat; it drops out of every list."
+        },
+        "routine": {
+          "$ref": "#/$defs/ChatRoutine",
+          "description": "The routine whose output this chat is (the sidebar's routine mark). Omitted for any other chat, and once the routine is deleted."
         }
+      }
+    },
+    "ChatRoutine": {
+      "description": "The routine a chat collects output from. `ChatRoutine` in api.rs.",
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string" }
       }
     },
     "ThreadEventRow": {
@@ -924,7 +939,7 @@
     "AgentRoutine": {
       "description": "One routine of an agent with its newest run: the `agent_routines` frame row.",
       "type": "object",
-      "required": ["id", "agent_id", "created_by_user_id", "name", "kind", "schedule", "timezone", "run_at", "prompt", "context", "enabled", "next_run_at", "created_at", "updated_at", "last_run"],
+      "required": ["id", "agent_id", "created_by_user_id", "name", "kind", "schedule", "timezone", "run_at", "prompt", "context", "delivery", "enabled", "next_run_at", "created_at", "updated_at", "last_run"],
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/Uuid" },
@@ -937,6 +952,11 @@
         "run_at": { "type": ["string", "null"], "format": "date-time" },
         "prompt": { "type": "string" },
         "context": { "type": "string", "enum": ["isolated"] },
+        "delivery": {
+          "type": "string",
+          "enum": ["thread", "new_chat"],
+          "description": "Where a run's send_message lands: `thread` appends to the routine's one conversation per user; `new_chat` opens a conversation per message."
+        },
         "enabled": { "type": "boolean" },
         "next_run_at": { "type": ["string", "null"], "format": "date-time" },
         "created_at": { "$ref": "#/$defs/DateTime" },

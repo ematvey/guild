@@ -72,6 +72,8 @@ export interface ChatListRow {
   type: AgentThreadType;
   archived: boolean;
   deleted: boolean;
+  /** The routine whose output this chat is. */
+  routine: { id: string; name: string } | null;
 }
 
 const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
@@ -120,9 +122,11 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
     ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
     COALESCE(xt.type, 'user') AS type,
     c.archived_at IS NOT NULL AS archived,
-    c.deleted_at IS NOT NULL AS deleted
+    c.deleted_at IS NOT NULL AS deleted,
+    rt.id AS routine_id, rt.name AS routine_name
   FROM chats c
   LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+  LEFT JOIN agent_routines rt ON rt.id = xt.routine_id
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
   LEFT JOIN projects pr ON pr.id = c.project_id
@@ -888,5 +892,9 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),
+    routine:
+      r.routine_id === null || r.routine_id === undefined
+        ? null
+        : { id: r.routine_id as string, name: r.routine_name as string },
   };
 }

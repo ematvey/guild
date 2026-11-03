@@ -38,5 +38,6 @@ export function chatWire(hub: ChatWireHub, row: ChatListRow): Chat {
     type: row.type,
     archived: row.archived,
     deleted: row.deleted,
+    ...(row.routine !== null ? { routine: row.routine } : {}),
   };
 }

@@ -30,6 +30,7 @@ import { MAX_AGENT_DESCRIPTION_CHARS } from "../../agents/types.js";
 import { installSpecialists } from "../../agents/specialists.js";
 import type {
   Agent,
+  AgentRoutineDelivery,
   AgentRoutineKind,
   AgentRunStatus,
   AgentStatus,
@@ -318,6 +319,13 @@ function routineKindField(body: Record<string, unknown>): AgentRoutineKind | und
   const value = optionalString(body, "kind");
   if (value === undefined) return undefined;
   if (value !== "cron" && value !== "once") throw ApiError.badRequest("kind must be cron or once");
+  return value;
+}
+
+function routineDeliveryField(body: Record<string, unknown>): AgentRoutineDelivery | undefined {
+  const value = optionalString(body, "delivery");
+  if (value === undefined) return undefined;
+  if (value !== "thread" && value !== "new_chat") throw ApiError.badRequest("delivery must be thread or new_chat");
   return value;
 }
 
@@ -729,6 +737,7 @@ export function registerAgentRoutes(
       timezone: optionalString(body, "timezone"),
       run_at: nullableString(body, "run_at"),
       prompt: requiredString(body, "prompt"),
+      delivery: routineDeliveryField(body),
       enabled: booleanField(body, "enabled"),
     });
     return sendJson(reply, { routine });
@@ -753,6 +762,7 @@ export function registerAgentRoutes(
       timezone: optionalString(body, "timezone"),
       run_at: nullableString(body, "run_at"),
       prompt: optionalString(body, "prompt"),
+      delivery: routineDeliveryField(body),
       enabled: booleanField(body, "enabled"),
     });
     return sendJson(reply, { routine });

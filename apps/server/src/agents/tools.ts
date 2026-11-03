@@ -45,26 +45,39 @@ export interface AgentMessageResult {
   url: string;
 }
 
-/** Creates the user-visible thread, appends the assistant message, moves the
- *  thread activity marker and writes the inbox notice. The chat's unread
- *  projection follows from the new assistant event. */
+/** Posts a message to the user. Outside a routine run it opens a new thread.
+ *  From a routine run it lands per the routine's delivery: appended to the
+ *  routine's feed thread (`thread`, opened on first use), or a new thread
+ *  marked as the routine's output (`new_chat`). A feed whose chat is
+ *  mid-turn gets a new marked thread instead, so the delivery never
+ *  interleaves with a live turn. Moves the thread activity marker and writes
+ *  the inbox notice; the chat's unread projection follows from the new
+ *  assistant event. */
 export async function sendAgentMessage(
   deps: Pick<AgentToolDeps, "store" | "threads" | "agent" | "userId" | "chatId">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
   if (text === "") throw new Error("text must not be empty");
-  const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
   const origin = deps.chatId === undefined ? null : await deps.store.threads.threadByChatId(deps.chatId);
-  // A model that repeats send_message with the same title from one chat
-  // within a minute gets the thread it already opened, not a second one. The
-  // match is scoped to this agent, this user and this chat of origin, so two
-  // users of a shared agent never receive each other's thread.
-  const existing = await deps.store.threads.recentlyOpened(deps.agent.id, deps.userId, title, origin?.id ?? null);
-  if (existing !== null) return { thread_id: existing.id, url: `/thread/${existing.chat_id}` };
-  const thread = await deps.store.threads.createThread(deps.agent.id, deps.userId, title, "user", {
-    ...(origin === null ? {} : { originThreadId: origin.id }),
-  });
+  const routine = origin === null ? null : await deps.store.threads.routineOfRunThread(origin.id);
+  const title = (args.title ?? "").trim() || deriveTitleFromMessage(text);
+  let thread: { id: string; chat_id: string; title: string } | null = null;
+  if (routine !== null && routine.delivery === "thread") {
+    thread = await routineFeedThread(deps, routine, origin!.id);
+  }
+  if (thread === null) {
+    // A model that repeats send_message with the same title from one chat
+    // within a minute gets the thread it already opened, not a second one.
+    // The match is scoped to this agent, this user and this chat of origin,
+    // so two users of a shared agent never receive each other's thread.
+    const existing = await deps.store.threads.recentlyOpened(deps.agent.id, deps.userId, title, origin?.id ?? null);
+    if (existing !== null) return { thread_id: existing.id, url: `/thread/${existing.chat_id}` };
+    thread = await deps.store.threads.createThread(deps.agent.id, deps.userId, title, "user", {
+      ...(origin === null ? {} : { originThreadId: origin.id }),
+      ...(routine === null ? {} : { routineId: routine.id }),
+    });
+  }
   await deps.threads.appendEvent(
     thread.chat_id,
     assistantMessageEvent(
@@ -86,6 +99,37 @@ export async function sendAgentMessage(
     payload: { thread_id: thread.id, url, title: thread.title },
   });
   return { thread_id: thread.id, url };
+}
+
+/** The routine's feed thread for this delivery: the live one, pointed at
+ *  this run, or a new one titled after the routine. Null when the live feed
+ *  is mid-turn. */
+async function routineFeedThread(
+  deps: Pick<AgentToolDeps, "store" | "agent" | "userId">,
+  routine: { id: string; name: string },
+  originThreadId: string,
+): Promise<{ id: string; chat_id: string; title: string } | null> {
+  const threads = deps.store.threads;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const feed = await threads.routineFeed(deps.agent.id, deps.userId, routine.id);
+    if (feed !== null) {
+      if (feed.generating) return null;
+      await threads.setOrigin(feed.id, originThreadId);
+      return { id: feed.id, chat_id: feed.chat_id, title: routine.name };
+    }
+    try {
+      return await threads.createThread(deps.agent.id, deps.userId, routine.name, "user", {
+        originThreadId,
+        routineId: routine.id,
+        routineFeed: true,
+        titleLocked: true,
+      });
+    } catch (error) {
+      // Another delivery opened the feed first: read it back.
+      if ((error as { code?: string }).code !== "23505") throw error;
+    }
+  }
+  return null;
 }
 
 export async function searchAgentConversations(
@@ -155,6 +199,7 @@ const routineOutput = Type.Object({
   schedule: Type.Union([Type.String(), Type.Null()]),
   timezone: Type.String(),
   prompt: Type.String(),
+  delivery: Type.String(),
   enabled: Type.Boolean(),
   next_run_at: Type.Union([Type.String(), Type.Null()]),
 });
@@ -237,8 +282,9 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
       defineTool({
         name: "send_message",
         description:
-          "Open a new conversation with the user and post a message into it. This is how a run reaches the user; " +
-          "the new thread appears in the user's Chats list and an inbox notice is written.",
+          "Post a message to the user. This is how a run reaches the user; the thread appears in the user's Chats " +
+          "list and an inbox notice is written. Outside a routine it opens a new conversation; from a routine run it " +
+          "goes where the routine delivers: its one conversation with the user, or a new one per message.",
         parameters: Type.Object({
           text: Type.String({ description: "The message to show the user" }),
           title: Type.Optional(Type.String({ description: "Optional short thread title" })),
@@ -417,6 +463,13 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           prompt: Type.String({ description: "The prompt the isolated routine run receives" }),
           schedule: Type.String({ description: "Five-field cron or interval such as 'every 2 hours'" }),
           timezone: Type.Optional(Type.String({ description: "IANA timezone, default UTC" })),
+          delivery: Type.Optional(
+            Type.Union([Type.Literal("thread"), Type.Literal("new_chat")], {
+              description:
+                "Where the run's send_message lands: 'thread' (default) appends to the routine's one conversation " +
+                "with the user; 'new_chat' opens a new conversation per message",
+            }),
+          ),
           enabled: Type.Optional(Type.Boolean({ description: "Start enabled (default true)" })),
         }),
         structuredOutputSchema: routineOutput,
@@ -432,6 +485,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               kind: "cron",
               schedule: args.schedule,
               timezone: args.timezone ?? "UTC",
+              delivery: args.delivery ?? "thread",
               enabled: args.enabled ?? true,
             });
             return { structuredOutput: structured(routine) };
@@ -448,7 +502,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
       defineTool({
         name: "update_routine",
         description:
-          "Change a routine's name, prompt, schedule, timezone or enabled state. Omitted fields stay as they are. " +
+          "Change a routine's name, prompt, schedule, timezone, delivery or enabled state. Omitted fields stay as they are. " +
           "Use list_routines first when you need the routine id. Describe schedule changes in plain language; " +
           "do not show the raw cron expression to the user.",
         parameters: Type.Object({
@@ -457,6 +511,13 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           prompt: Type.Optional(Type.String()),
           schedule: Type.Optional(Type.String({ description: "Five-field cron or interval such as 'every 2 hours'" })),
           timezone: Type.Optional(Type.String()),
+          delivery: Type.Optional(
+            Type.Union([Type.Literal("thread"), Type.Literal("new_chat")], {
+              description:
+                "Where the run's send_message lands: 'thread' (default) appends to the routine's one conversation " +
+                "with the user; 'new_chat' opens a new conversation per message",
+            }),
+          ),
           enabled: Type.Optional(Type.Boolean()),
         }),
         structuredOutputSchema: routineOutput,
@@ -470,6 +531,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
               ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
               ...(args.schedule === undefined ? {} : { schedule: args.schedule }),
               ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
+              ...(args.delivery === undefined ? {} : { delivery: args.delivery }),
               ...(args.enabled === undefined ? {} : { enabled: args.enabled }),
             });
             return { structuredOutput: structured(routine) };

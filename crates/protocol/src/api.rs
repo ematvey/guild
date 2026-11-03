@@ -171,6 +171,16 @@ pub struct Chat {
     /// The user removed the chat; it drops out of every list.
     #[serde(default)]
     pub deleted: bool,
+    /// The routine whose output this chat is (the sidebar's routine mark).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine: Option<ChatRoutine>,
+}
+
+/// The routine a chat collects output from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatRoutine {
+    pub id: Uuid,
+    pub name: String,
 }
 
 /// One persisted thread event as the store returns it: the durable log row

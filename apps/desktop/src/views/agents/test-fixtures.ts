@@ -92,6 +92,7 @@ export function makeRoutine(patch: Partial<AgentRoutine> = {}): AgentRoutine {
     run_at: null,
     prompt: "",
     context: "isolated",
+    delivery: "thread",
     enabled: true,
     next_run_at: null,
     created_at: AT,

@@ -16,7 +16,7 @@ import {
   selectRoutine,
   writeRoutine,
 } from "./store/routines.js";
-import type { AgentRoutine, AgentRoutineKind, AgentRoutineOccurrence } from "./types.js";
+import type { AgentRoutine, AgentRoutineDelivery, AgentRoutineKind, AgentRoutineOccurrence } from "./types.js";
 
 export { countPendingReminders, listOccurrences, listRoutines } from "./store/routines.js";
 
@@ -32,6 +32,7 @@ export interface CreateRoutineInput {
   timezone?: string | null;
   run_at?: string | null;
   prompt: string;
+  delivery?: AgentRoutineDelivery | null;
   enabled?: boolean;
 }
 
@@ -42,6 +43,7 @@ export interface UpdateRoutineInput {
   timezone?: string | null;
   run_at?: string | null;
   prompt?: string;
+  delivery?: AgentRoutineDelivery | null;
   enabled?: boolean;
 }
 
@@ -161,6 +163,12 @@ function cleanPrompt(raw: string): string {
   return prompt;
 }
 
+function cleanDelivery(raw: string | null | undefined, fallback: AgentRoutineDelivery): AgentRoutineDelivery {
+  if (raw === undefined || raw === null) return fallback;
+  if (raw !== "thread" && raw !== "new_chat") throw ApiError.badRequest("delivery must be thread or new_chat");
+  return raw;
+}
+
 function cleanTimezone(raw: string | null | undefined): string {
   const timezone = (raw ?? DEFAULT_ROUTINE_TIMEZONE).trim() || DEFAULT_ROUTINE_TIMEZONE;
   if (!isValidTimeZone(timezone)) throw ApiError.badRequest(`invalid timezone: ${timezone}`);
@@ -209,6 +217,7 @@ export async function createRoutine(
     timezone,
     run_at: runAt,
     prompt,
+    delivery: cleanDelivery(input.delivery, "thread"),
     enabled,
     next_run_at: next,
   });
@@ -247,6 +256,7 @@ export async function updateRoutine(
     timezone,
     run_at: runAt,
     prompt,
+    delivery: cleanDelivery(patch.delivery, existing.delivery),
     enabled,
     next_run_at: next,
   });

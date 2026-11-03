@@ -4,10 +4,16 @@
 
 import type { PlatformPool } from "../../platform/db.js";
 import { pgTimestampToRfc3339, utcText, uuidv7 } from "../../platform/time.js";
-import type { AgentRoutine, AgentRoutineKind, AgentRoutineOccurrence, AgentRoutineOccurrenceStatus } from "../types.js";
+import type {
+  AgentRoutine,
+  AgentRoutineDelivery,
+  AgentRoutineKind,
+  AgentRoutineOccurrence,
+  AgentRoutineOccurrenceStatus,
+} from "../types.js";
 
 const ROUTINE_COLUMNS = `r.id, r.agent_id, r.created_by_user_id, r.name, r.kind, r.schedule, r.timezone,
-  ${utcText("r.run_at")} AS run_at, r.prompt, r.context, r.enabled,
+  ${utcText("r.run_at")} AS run_at, r.prompt, r.context, r.delivery, r.enabled,
   ${utcText("r.next_run_at")} AS next_run_at,
   ${utcText("r.created_at")} AS created_at, ${utcText("r.updated_at")} AS updated_at`;
 
@@ -26,6 +32,7 @@ export function toRoutine(row: Record<string, unknown>): AgentRoutine {
     run_at: row.run_at === null || row.run_at === undefined ? null : pgTimestampToRfc3339(row.run_at as string),
     prompt: row.prompt as string,
     context: "isolated",
+    delivery: row.delivery === "new_chat" ? "new_chat" : "thread",
     enabled: Boolean(row.enabled),
     next_run_at:
       row.next_run_at === null || row.next_run_at === undefined
@@ -56,6 +63,7 @@ export interface RoutineFields {
   timezone: string;
   run_at: string | null;
   prompt: string;
+  delivery: AgentRoutineDelivery;
   enabled: boolean;
   next_run_at: string | null;
 }
@@ -92,8 +100,9 @@ export async function insertRoutine(
   const res = await pool.query<Record<string, unknown>>(
     `WITH r AS (
        INSERT INTO agent_routines
-         (id, agent_id, created_by_user_id, name, kind, schedule, timezone, run_at, prompt, context, enabled, next_run_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, 'isolated', $10, $11::timestamptz)
+         (id, agent_id, created_by_user_id, name, kind, schedule, timezone, run_at, prompt, context, enabled, next_run_at,
+          delivery)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, 'isolated', $10, $11::timestamptz, $12)
        RETURNING *)
      SELECT ${ROUTINE_COLUMNS} FROM r`,
     [
@@ -108,6 +117,7 @@ export async function insertRoutine(
       fields.prompt,
       fields.enabled,
       fields.next_run_at,
+      fields.delivery,
     ],
   );
   return toRoutine(res.rows[0]!);
@@ -124,7 +134,7 @@ export async function writeRoutine(
     `WITH r AS (
        UPDATE agent_routines
        SET name = $3, kind = $4, schedule = $5, timezone = $6, run_at = $7::timestamptz,
-           prompt = $8, enabled = $9, next_run_at = $10::timestamptz, updated_at = now()
+           prompt = $8, enabled = $9, next_run_at = $10::timestamptz, delivery = $11, updated_at = now()
        WHERE agent_id = $1 AND id = $2
        RETURNING *)
      SELECT ${ROUTINE_COLUMNS} FROM r`,
@@ -139,6 +149,7 @@ export async function writeRoutine(
       fields.prompt,
       fields.enabled,
       fields.next_run_at,
+      fields.delivery,
     ],
   );
   const row = res.rows[0];
