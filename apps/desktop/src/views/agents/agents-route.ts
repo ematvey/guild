@@ -23,7 +23,7 @@ export interface ActivityFilters {
 }
 
 export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
-  tab: "traces",
+  tab: "chats",
   period: "7d",
   status: "all",
   trigger: "all",

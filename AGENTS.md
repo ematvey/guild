@@ -10,6 +10,10 @@ you.
 
 ## Read before touching the code
 
+- **`docs/domain/`** — the domain model: concepts, the rules each keeps,
+  access, execution, capabilities and live state, in numbered documents
+  read in order. Its terms are the project's vocabulary; a change to a
+  concept or rule updates the matching document in the same commit.
 - **`PLAN.md`** — current state of work and the decisions behind it
   (approvals, exec policy, skills, thread events…). Newest entries on top;
   older ones are in `docs/archive/decisions.md`. Read the top entries before
@@ -35,7 +39,8 @@ you.
   `packages/wire/src/types.ts`, its tag in `SERVER_TAG_NAMES`
   (`packages/wire/src/parse.ts`), a NOTIFY channel, a feed handler, and
   its place in the sync gate's deferred-frame classification
-  (`apps/server/src/http/ws.ts`: held during a `sync` bracket or not).
+  (`DEFERRED_UNTIL_SYNC` in `apps/server/src/hub/protocol.ts`: held
+  during a `sync` bracket or not).
   The server serializer (`apps/server/src/hub/protocol.ts`) is generic and
   needs no arm.
   The client applies the frame; it never re-fetches.

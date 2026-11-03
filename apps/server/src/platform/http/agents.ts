@@ -839,7 +839,9 @@ export function registerAgentRoutes(
       call_id: step.call_id ?? null,
       is_error: step.is_error ?? null,
     }));
-    return sendJson(reply, { run: { ...run, steps: mapped, files }, steps });
+    const thread =
+      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id);
+    return sendJson(reply, { run: { ...run, steps: mapped, files }, steps, thread });
   });
 
   app.get("/api/v1/runs/:id/children", async (req, reply) => {

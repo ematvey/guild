@@ -1,14 +1,17 @@
-// Activity API: traces (agent runs), spans (LLM and tool calls), sessions
-// (chats) and the activity summary, all over ClickHouse. Admin scope is the
-// session's org; member scope is the session's user id. No org id from the
-// client is ever trusted. Payload bodies are admin-only.
+// Activity API: conversations (chats and the runs inside them), traces
+// (agent runs), spans (LLM and tool calls), sessions (chats) and the
+// activity summary. Conversations read Postgres; the call aggregates read
+// ClickHouse. Admin scope is the session's org; member scope is the
+// session's user id. No org id from the client is ever trusted. Payload
+// bodies are admin-only.
 
-import { canReadOwned, ownerScope } from "../domain/access.js";
+import { canReadOwned, ownerScope, readsWholeOrg } from "../domain/access.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { queryParam, requireUser } from "./error.js";
 import { errorText } from "../usage.js";
 import { isUuid } from "../time.js";
+import { groupConversation, type ConversationRow } from "../store/conversation-history.js";
 import type { IdentityCtx, InfraContext } from "../route-contexts.js";
 
 const MAX_LIMIT = 500;
@@ -169,6 +172,98 @@ function renderSession(row: Record<string, unknown>): Record<string, unknown> {
 export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext): void {
   /** Admins see the org; members see their own traces and calls. */
   const viewer = async (req: FastifyRequest) => requireUser(ctx, req);
+
+  /** The page's token, cost and error totals, keyed by chat id. An
+   *  unreachable ClickHouse degrades to no totals, like every activity
+   *  read. */
+  const chatTotals = async (orgId: string, chatIds: string[]) => {
+    try {
+      return await infra.trace.sessionTotals(orgId, chatIds);
+    } catch {
+      return new Map<string, { tokens_in: number; tokens_out: number; cost_usd: number; errors: number }>();
+    }
+  };
+
+  const renderConversation = (
+    row: ConversationRow,
+    totals: { tokens_in: number; tokens_out: number; cost_usd: number; errors: number } | undefined,
+  ) => ({
+    ...row,
+    tokens_in: totals?.tokens_in ?? 0,
+    tokens_out: totals?.tokens_out ?? 0,
+    cost_usd: totals?.cost_usd ?? 0,
+    errors: totals?.errors ?? 0,
+  });
+
+  /** The org's conversations, newest activity first. A member reads only
+   *  their own rows; an admin reads the whole org and may narrow it to one
+   *  owner with `user`. */
+  app.get("/api/v1/activity/conversations", async (req) => {
+    const user = await viewer(req);
+    const window = windowOf(req);
+    const agent = uuidFilter(req, "agent");
+    const owner = readsWholeOrg(user) ? uuidFilter(req, "user") : user.id;
+    const q = queryParam(req, "q");
+    const result = await infra.conversationHistory.list({
+      orgId: user.org_id,
+      userId: owner,
+      from: window.from,
+      to: window.to,
+      ...(agent === undefined ? {} : { agentId: agent }),
+      ...(q === undefined || q === "" ? {} : { query: q }),
+      limit: limitOf(req),
+      offset: offsetOf(req),
+    });
+    const totals = await chatTotals(
+      user.org_id,
+      result.rows.map((row) => row.id),
+    );
+    return JSON.stringify({
+      conversations: result.rows.map((row) => renderConversation(row, totals.get(row.id))),
+      total: result.total,
+    });
+  });
+
+  /** One conversation as the reader sees it: the header, one page of
+   *  messages and the runs that overlap the page, grouped into reading
+   *  order. `before` walks older pages. */
+  app.get("/api/v1/activity/conversations/:id", async (req) => {
+    const user = await requireUser(ctx, req);
+    const id = (req.params as Record<string, string>)["id"] ?? "";
+    if (!isUuid(id)) throw ApiError.badRequest(`invalid conversation id: ${id}`);
+    const rawBefore = queryParam(req, "before");
+    const before = rawBefore === undefined || rawBefore === "" ? undefined : Number(rawBefore);
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+      throw ApiError.badRequest("before must be a nonnegative integer");
+    }
+    const detail = await infra.conversationHistory.detail(user.org_id, id, {
+      ...(before === undefined ? {} : { beforeSeq: before }),
+      limit: limitOf(req),
+    });
+    if (detail === null) throw ApiError.notFound("no such conversation");
+    const header = await infra.conversationHistory.header(user.org_id, id);
+    if (header === null) throw ApiError.notFound("no such conversation");
+    if (!canReadOwned(user, header.owner.id)) throw ApiError.notFound("no such conversation");
+    let counts = new Map<string, { call_count: number; tool_count: number }>();
+    try {
+      counts = await infra.trace.runCallCounts(
+        user.org_id,
+        detail.runs.map((run) => run.id),
+      );
+    } catch {
+      // A trace read failure leaves the step counts at zero.
+    }
+    const totals = await chatTotals(user.org_id, [id]);
+    return JSON.stringify({
+      conversation: renderConversation(header, totals.get(id)),
+      items: groupConversation(
+        detail.messages,
+        detail.runs,
+        (runId) => counts.get(runId) ?? { call_count: 0, tool_count: 0 },
+      ),
+      has_more: detail.hasMore,
+    });
+  });
 
   app.get("/api/v1/activity/traces", async (req) => {
     const user = await viewer(req);
