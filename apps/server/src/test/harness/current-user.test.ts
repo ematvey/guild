@@ -61,8 +61,10 @@ describe("guild section current user", () => {
     expect(defaultPersona("  ")).toContain("an organization's Guild workspace");
   });
 
-  it("renders the persona alone when the conversation has no owner", async () => {
-    expect(await renderGuild(extensionDeps(null))).toBe(buildSystemPrompt(null, "Acme Dental"));
+  it("renders the persona and the organization when the conversation has no owner", async () => {
+    expect(await renderGuild(extensionDeps(null))).toBe(
+      `${buildSystemPrompt(null, "Acme Dental")}\n\n<organization name="Acme Dental" />`,
+    );
   });
 
   it("keeps the org persona ahead of the block", async () => {

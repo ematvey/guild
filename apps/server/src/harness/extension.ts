@@ -52,6 +52,13 @@ export function renderCurrentUser(user: CurrentUser): string {
   return `<current_user name="${escapeAttr(name)}" email="${escapeAttr(user.email)}" />`;
 }
 
+/** The organization block: the workspace name the chat runs in. Present for
+ *  every persona, so an org override keeps the current name without
+ *  restating it in its own text. */
+export function renderOrganization(name: string): string {
+  return `<organization name="${escapeAttr(name)}" />`;
+}
+
 function escapeAttr(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -124,8 +131,10 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       const orgId = await deps.orgOfConversation(input.conversationId);
       const profile = orgId === null ? null : await deps.orgProfile(orgId);
       const user = await deps.userOfConversation(input.conversationId);
-      const body = buildSystemPrompt(profile?.prompt, profile?.name);
-      return user === null ? body : `${body}\n\n${renderCurrentUser(user)}`;
+      const blocks = [buildSystemPrompt(profile?.prompt, profile?.name)];
+      if (profile !== null) blocks.push(renderOrganization(profile.name));
+      if (user !== null) blocks.push(renderCurrentUser(user));
+      return blocks.join("\n\n");
     },
   };
   const skillsSection: PromptSection<ToolRegistration> = {
