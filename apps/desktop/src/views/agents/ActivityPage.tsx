@@ -1003,7 +1003,6 @@ function RunItem({ item, admin, onOpen }: { item: ConversationRunItem; admin: bo
             <span className="text-xs text-muted-foreground">
               {count(item.steps, "step")}
               {duration !== null ? ` · ${ms(duration)}` : ""}
-              {` · ${compact(item.call_count)} calls · ${compact(item.tool_count)} tools`}
               {admin && item.run.tokens > 0 ? ` · ${compact(item.run.tokens)} tokens` : ""}
             </span>
           </span>

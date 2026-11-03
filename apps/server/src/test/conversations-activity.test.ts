@@ -149,6 +149,28 @@ describe("groupConversation", () => {
     expect(items.map((item) => (item.kind === "run" ? "run" : item.text))).toEqual(["first", "run"]);
     expect(items[1]?.kind === "run" && items[1].trigger).toBe("second");
   });
+
+  it("claims a trigger message the journal writes just after the run row", () => {
+    // The observed race: the run starts 9 ms before its user message lands.
+    const messages = [{ seq: 1, role: "user" as const, text: "change the routine", ts: "2026-11-01T10:00:00.009Z" }];
+    const runs = [
+      {
+        id: "r1",
+        agent_id: "a",
+        agent_name: "Echo",
+        trigger: "message",
+        status: "succeeded",
+        summary: "done",
+        error_message: "",
+        tokens: 0,
+        started_at: "2026-11-01T10:00:00.000Z",
+        finished_at: "2026-11-01T10:00:02.000Z",
+      },
+    ];
+    const items = groupConversation(messages, runs, () => ({ call_count: 1, tool_count: 0 }));
+    expect(items).toHaveLength(1);
+    expect(items[0]?.kind === "run" && items[0].trigger).toBe("change the routine");
+  });
 });
 
 describe("conversation activity", () => {

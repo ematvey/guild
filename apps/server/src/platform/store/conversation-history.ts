@@ -151,6 +151,10 @@ function messageRow(row: {
 /** Groups one page of messages and the runs that overlap it into reading
  *  order. Each run claims the user message that precedes its start and the
  *  assistant messages inside its window; the rest stay standalone. */
+/** How far after a run start its trigger message may land: the run row and
+ *  the journal write happen in the same turn, in either order. */
+const TRIGGER_RACE_MS = 2000;
+
 export function groupConversation(
   messages: ConversationMessageRow[],
   runs: ConversationRunRow[],
@@ -171,6 +175,20 @@ export function groupConversation(
       if (Date.parse(message.ts) > start) break;
       trigger = message.text;
       triggerSeq = message.seq;
+    }
+    // The run row can be written a few milliseconds before the journal
+    // records the message that started it (same turn). Take the first user
+    // message just after the start, before a steering message can land.
+    if (triggerSeq === null) {
+      for (const message of messages) {
+        if (message.role !== "user" || claimed.has(message.seq)) continue;
+        const at = Date.parse(message.ts);
+        if (at < start) continue;
+        if (at > start + TRIGGER_RACE_MS) break;
+        trigger = message.text;
+        triggerSeq = message.seq;
+        break;
+      }
     }
     if (triggerSeq !== null) claimed.add(triggerSeq);
     let reply = false;
