@@ -1,0 +1,106 @@
+// @vitest-environment happy-dom
+// The conversation page reads a chat the way a manager browses it: the
+// trigger message, one run row, the agent's reply; the run row opens the
+// run detail.
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConversationDetail } from "./agents-api";
+
+const api = vi.hoisted(() => ({ getConversation: vi.fn() }));
+vi.mock("./agents-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./agents-api")>()),
+  ...api,
+}));
+
+import { ConversationPage } from "./ActivityPage";
+
+const detail: ConversationDetail = {
+  conversation: {
+    id: "c1",
+    title: "Quarterly numbers",
+    owner: { id: "u1", email: "ada@example.com", display_name: "Ada Lovelace" },
+    agent: { id: "a1", name: "Echo" },
+    thread: {
+      id: "t1",
+      type: "subagent",
+      parent_thread_id: "t0",
+      parent_chat_id: "c0",
+      parent_title: "Parent work",
+    },
+    created_at: "2026-11-01T10:00:00Z",
+    last_activity_at: "2026-11-01T10:02:00Z",
+    messages: 2,
+    runs: 1,
+    open_runs: 0,
+    failed_runs: 0,
+    archived: false,
+    deleted: false,
+    tokens_in: 100,
+    tokens_out: 50,
+    cost_usd: 0.01,
+    errors: 0,
+  },
+  items: [
+    {
+      kind: "run",
+      ts: "2026-11-01T10:00:00Z",
+      trigger: "Summarize the quarter",
+      steps: 7,
+      call_count: 3,
+      tool_count: 4,
+      run: {
+        id: "r1",
+        agent_id: "a1",
+        agent_name: "Echo",
+        trigger: "message",
+        status: "succeeded",
+        summary: "Wrote the summary",
+        error_message: "",
+        tokens: 150,
+        started_at: "2026-11-01T10:00:00Z",
+        finished_at: "2026-11-01T10:00:30Z",
+      },
+    },
+    {
+      kind: "message",
+      seq: 2,
+      role: "assistant",
+      text: "The quarter closed above plan.",
+      ts: "2026-11-01T10:00:30Z",
+    },
+  ],
+  has_more: false,
+};
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("conversation page", () => {
+  it("reads the trigger, the run row and the reply, and opens the run", async () => {
+    api.getConversation.mockResolvedValue(detail);
+    const onNavigate = vi.fn();
+    render(<ConversationPage chatId="c1" role="admin" onNavigate={onNavigate} />);
+
+    await waitFor(() => expect(screen.getByText("Quarterly numbers")).toBeTruthy());
+    expect(screen.getByText("Ada Lovelace · Echo")).toBeTruthy();
+    expect(screen.getByText("Summarize the quarter")).toBeTruthy();
+    expect(screen.getByText("Echo run")).toBeTruthy();
+    expect(screen.getByText(/7 steps/)).toBeTruthy();
+    expect(screen.getByText("The quarter closed above plan.")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Echo run"));
+    expect(onNavigate).toHaveBeenCalledWith({ view: "run", runId: "r1" });
+
+    fireEvent.click(screen.getByText("Parent thread"));
+    expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c0" });
+  });
+
+  it("hides the owner line for a member", async () => {
+    api.getConversation.mockResolvedValue(detail);
+    render(<ConversationPage chatId="c1" role="member" onNavigate={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Quarterly numbers")).toBeTruthy());
+    expect(screen.queryByText("Cost")).toBeNull();
+  });
+});

@@ -1,23 +1,31 @@
-// Activity: one observability surface for agent work. Traces are agent
-// runs (one per turn), spans are the LLM calls and tool calls inside a
-// trace, chats group traces by conversation. The list and the trace detail read
-// the same ClickHouse model the gateway and the tool hook write, so a run
-// and its calls are one story. Navigation stays in the URL: the tab,
-// period and filters ride the query, the open trace is /runs/<id>.
+// Activity: one observability surface for agent work, read top-down. A
+// conversation is one chat; the conversation view is its high-level
+// transcript (trigger message, one row per run, the agent's reply), and a
+// run row opens the run detail with every model and tool call until the
+// agent stopped. Conversations and runs read Postgres; model calls and the
+// summary read ClickHouse. Navigation stays in the URL: the tab, period and
+// filters ride the query, the open run is /runs/<id>, the conversation is
+// /chats/<id>.
 
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  Bot,
   ChevronRight,
   Coins,
+  CornerUpLeft,
   MessageSquare,
   RefreshCw,
   Search,
   Timer,
+  User,
 } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
+import { cn } from "@guild/ui/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import {
   AGENTS_ACTIVITY,
@@ -31,12 +39,16 @@ import {
 } from "./agents-route";
 import {
   getActivitySummary,
-  listChatActivity,
+  getConversation,
+  listConversations,
   listSpans,
   listTraces,
   type ActivityQuery,
   type ActivitySummary,
-  type ChatActivityRow,
+  type ConversationDetail,
+  type ConversationItem,
+  type ConversationRow,
+  type ConversationRunItem,
   type SpanRow,
   type TraceRow,
 } from "./agents-api";
@@ -44,6 +56,7 @@ import type { AgentRun } from "./agents-api";
 import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
+import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { count } from "../../lib/format";
 import { useDebounced } from "../../lib/use-debounced";
 import { compact, money, ms, time, toneOf, totalTokens, triggerLabel, statusLabel } from "./activity-format";
@@ -60,9 +73,9 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
   "30d": 30 * 24 * 3_600_000,
 };
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
-  ["traces", "Traces"],
+  ["chats", "Conversations"],
+  ["traces", "Runs"],
   ["calls", "Model calls"],
-  ["chats", "Chats"],
 ];
 const STATUSES = ["queued", "running", "succeeded", "failed", "silent", "skipped"] as const;
 const TRIGGERS = ["message", "routine", "manual", "delegation"] as const;
@@ -111,7 +124,7 @@ export function ActivityPage({
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
-  const [chats, setChats] = useState<ChatActivityRow[] | null>(null);
+  const [conversations, setConversations] = useState<ConversationRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -158,9 +171,9 @@ export function ActivityPage({
             setTotal(res.total);
           })
         : tab === "chats"
-          ? listChatActivity(query).then((res) => {
+          ? listConversations(query).then((res) => {
               if (!live) return;
-              setChats(res.chats);
+              setConversations(res.conversations);
               setTotal(res.total);
             })
           : listTraces({
@@ -177,7 +190,7 @@ export function ActivityPage({
       setError(err instanceof Error ? err.message : "The activity API did not answer.");
       setTraces(null);
       setSpans(null);
-      setChats(null);
+      setConversations(null);
     });
     return () => {
       live = false;
@@ -280,13 +293,19 @@ export function ActivityPage({
           <input
             value={filters.q}
             onChange={(e) => set({ q: e.target.value }, { replace: true })}
-            placeholder={filters.tab === "traces" ? "Search summary or agent" : "Search"}
+            placeholder={
+              filters.tab === "chats"
+                ? "Search title, owner or agent"
+                : filters.tab === "traces"
+                  ? "Search summary or agent"
+                  : "Search"
+            }
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, filters.tab === "chats" ? "chat" : filters.tab === "calls" ? "call" : "trace")}
+            {count(total, filters.tab === "chats" ? "conversation" : filters.tab === "calls" ? "call" : "run")}
           </span>
           {filters.tab !== "traces" && (
             <Button
@@ -326,7 +345,12 @@ export function ActivityPage({
           />
         )}
         {error === null && filters.tab === "chats" && (
-          <ChatsTable rows={chats} admin={admin} onOpen={(id) => onNavigate({ view: "chat", chatId: id })} />
+          <ConversationsTable
+            rows={conversations}
+            admin={admin}
+            showOwner={role === "admin"}
+            onOpen={(id) => onNavigate({ view: "chat", chatId: id })}
+          />
         )}
       </div>
     </>
@@ -348,7 +372,7 @@ export function ActivityPage({
       <PageHeader
         variant="bar"
         title="Activity"
-        description="Agent runs, the LLM calls and tool calls inside them, and the chats they belong to."
+        description="Conversations and the runs inside them, then the model and tool calls of one run."
         tabs={
           <TabBar label="Activity views" tabs={ACTIVITY_TABS} value={filters.tab} onChange={(tab) => set({ tab })} />
         }
@@ -362,7 +386,7 @@ function SummaryCards({ summary, admin }: { summary: ActivitySummary | null; adm
   const totals = summary?.totals;
   const cards = [
     {
-      label: "Traces",
+      label: "Runs",
       value: totals === undefined ? null : compact(totals.traces),
       icon: <Activity className="size-3.5" />,
     },
@@ -429,15 +453,15 @@ function TracesTable({
     return (
       <EmptyState
         icon={Activity}
-        title="No traces yet"
-        hint="A trace appears when an agent run starts. Silent runs are recorded too."
+        title="No runs yet"
+        hint="A run appears when an agent turn starts. Silent runs are recorded too."
       />
     );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="hidden grid-cols-[minmax(0,1fr)_7rem_6rem_5rem_5rem_5rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
-        <span>Trace</span>
+        <span>Run</span>
         <span>Agent</span>
         <span>Status</span>
         <span className="text-right">Model calls</span>
@@ -533,7 +557,7 @@ function CallsTable({
       <div className="hidden grid-cols-[9rem_11rem_minmax(0,1fr)_6rem_5rem_5rem_5rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
         <span>Time</span>
         <span>Model</span>
-        <span>Trace</span>
+        <span>Run</span>
         <span>Caller</span>
         <span className="text-right">Tokens</span>
         <span className="text-right">Latency</span>
@@ -610,13 +634,15 @@ function CallsTable({
   );
 }
 
-function ChatsTable({
+function ConversationsTable({
   rows,
   admin,
+  showOwner,
   onOpen,
 }: {
-  rows: ChatActivityRow[] | null;
+  rows: ConversationRow[] | null;
   admin: boolean;
+  showOwner: boolean;
   onOpen: (id: string) => void;
 }) {
   if (rows === null) return <LoadingRows rows={6} />;
@@ -624,49 +650,112 @@ function ChatsTable({
     return (
       <EmptyState
         icon={MessageSquare}
-        title="No chats in this window"
-        hint="A chat is one conversation: every trace and call inside it shares the chat id."
+        title="No conversations in this window"
+        hint="A conversation is one chat: its trigger messages, its runs, and the agent's replies."
       />
     );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="hidden grid-cols-[minmax(0,1fr)_9rem_8rem_4rem_5rem_5rem_7rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
+        <span>Conversation</span>
+        <span>Owner</span>
+        <span>Agent</span>
+        <span className="text-right">Runs</span>
+        <span className="text-right">Tokens</span>
+        <span className="text-right">Cost</span>
+        <span className="text-right">Last activity</span>
+        <span />
+      </div>
       {rows.map((row) => (
         <button
-          key={row.session_id}
+          key={row.id}
           type="button"
-          onClick={() => onOpen(row.session_id)}
-          className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
+          onClick={() => onOpen(row.id)}
+          className="grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50 lg:grid-cols-[minmax(0,1fr)_9rem_8rem_4rem_5rem_5rem_7rem_2rem]"
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground">
-            <MessageSquare className="size-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-xs">{row.session_id}</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              {count(row.traces, "trace")} · {count(row.calls, "call")} · {count(row.tool_calls, "tool")}
-              {row.errors > 0 ? ` · ${count(row.errors, "error")}` : ""}
+          <span className="min-w-0">
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate text-sm font-medium">
+                {row.title !== null && row.title.trim() !== "" ? row.title : "Untitled conversation"}
+              </span>
+              {row.open_runs > 0 && <ToneBadge tone="info">Running</ToneBadge>}
+              {row.failed_runs > 0 && <ToneBadge tone="danger">{count(row.failed_runs, "failed run")}</ToneBadge>}
+              {row.archived && <ToneBadge tone="neutral">Archived</ToneBadge>}
+            </span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <span>{count(row.messages, "message")}</span>
+              <span>·</span>
+              <span>{count(row.runs, "run")}</span>
+              <span>·</span>
+              <span>{compact(row.tokens_in + row.tokens_out)} tokens</span>
+              <span>·</span>
+              <span>{time(row.last_activity_at)}</span>
+              {showOwner && (
+                <>
+                  <span className="lg:hidden">·</span>
+                  <span className="lg:hidden">{ownerName(row)}</span>
+                </>
+              )}
+              {admin && (
+                <>
+                  <span>·</span>
+                  <span>{money(row.cost_usd)}</span>
+                </>
+              )}
             </span>
           </span>
-          <span className="hidden text-right text-xs tabular-nums text-muted-foreground sm:block">
-            {compact(row.tokens_in + row.tokens_out)} tokens
+          <span className="hidden min-w-0 lg:block">
+            {showOwner ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-secondary text-3xs font-semibold uppercase">
+                  {ownerInitials(row)}
+                </span>
+                <span className="truncate text-xs">{ownerName(row)}</span>
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">—</span>
+            )}
           </span>
-          {admin && (
-            <span className="hidden text-right text-xs tabular-nums text-muted-foreground sm:block">
-              {money(row.cost_usd)}
-            </span>
-          )}
-          <span className="hidden text-right text-xs tabular-nums text-muted-foreground md:block">
-            {ms(row.duration_ms)}
+          <span className="hidden min-w-0 lg:block">
+            {row.agent !== null ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <AgentGlyph name={row.agent.name} className="size-6 rounded text-3xs" />
+                <span className="truncate text-xs">{row.agent.name}</span>
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">—</span>
+            )}
           </span>
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+          <span className="hidden text-right text-xs tabular-nums lg:block">{row.runs}</span>
+          <span className="hidden text-right text-xs tabular-nums lg:block">
+            {compact(row.tokens_in + row.tokens_out)}
+          </span>
+          <span className="hidden text-right text-xs tabular-nums lg:block">{admin ? money(row.cost_usd) : "—"}</span>
+          <span className="hidden text-right text-xs tabular-nums text-muted-foreground lg:block">
+            {time(row.last_activity_at)}
+          </span>
+          <ChevronRight className="size-4 text-muted-foreground" />
         </button>
       ))}
     </div>
   );
 }
 
-export function ChatActivityPage({
+function ownerName(row: ConversationRow): string {
+  return row.owner.display_name !== null && row.owner.display_name !== "" ? row.owner.display_name : row.owner.email;
+}
+
+function ownerInitials(row: ConversationRow): string {
+  const name = ownerName(row).trim();
+  if (name === "") return "?";
+  const parts = name.split(/\s+/);
+  return parts.length === 1 ? name.slice(0, 2) : `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`;
+}
+
+const CONVERSATION_PAGE = 200;
+
+export function ConversationPage({
   chatId,
   role,
   onNavigate,
@@ -678,54 +767,102 @@ export function ChatActivityPage({
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [rows, setRows] = useState<TraceRow[] | null>(null);
+  const [detail, setDetail] = useState<ConversationDetail | null>(null);
+  const [items, setItems] = useState<ConversationItem[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
     setError(null);
-    const to = new Date(Date.now() + 86_400_000).toISOString();
-    const from = new Date(Date.now() - 90 * 86_400_000).toISOString();
-    void listTraces({ session: chatId, from, to, limit: 200 })
-      .then((res) => {
-        if (live) setRows(res.traces);
+    setDetail(null);
+    setItems([]);
+    void getConversation(chatId, { limit: CONVERSATION_PAGE })
+      .then((value) => {
+        if (!live) return;
+        setDetail(value);
+        setItems(value.items);
+        setHasMore(value.has_more);
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setError(err instanceof Error ? err.message : "The chat did not load.");
-        setRows(null);
+        setError(err instanceof Error ? err.message : "The conversation did not load.");
+        setDetail(null);
       });
     return () => {
       live = false;
     };
   }, [chatId, tick]);
 
+  // An older page prepends; a run the newer page already showed is skipped.
+  const loadOlder = () => {
+    const oldestSeq = items.reduce<number | null>((min, item) => {
+      if (item.kind !== "message") return min;
+      return min === null ? item.seq : Math.min(min, item.seq);
+    }, null);
+    if (oldestSeq === null || loadingOlder) return;
+    setLoadingOlder(true);
+    void getConversation(chatId, { before: oldestSeq, limit: CONVERSATION_PAGE })
+      .then((value) => {
+        setItems((current) => {
+          const knownRuns = new Set(current.filter((item) => item.kind === "run").map((item) => item.run.id));
+          const knownSeqs = new Set(current.filter((item) => item.kind === "message").map((item) => item.seq));
+          const fresh = value.items.filter((item) =>
+            item.kind === "run" ? !knownRuns.has(item.run.id) : !knownSeqs.has(item.seq),
+          );
+          return [...fresh, ...current];
+        });
+        setHasMore(value.has_more);
+      })
+      .catch(() => {
+        // The page stays as it is; the reader can retry.
+      })
+      .finally(() => setLoadingOlder(false));
+  };
+
   const admin = role === "admin";
+  const conversation = detail?.conversation ?? null;
   const totals = useMemo(() => {
-    const list = rows ?? [];
+    const runItems = items.filter((item): item is ConversationRunItem => item.kind === "run");
     return {
-      traces: list.length,
-      calls: list.reduce((sum, row) => sum + row.call_count, 0),
-      tools: list.reduce((sum, row) => sum + row.tool_count, 0),
-      tokens: list.reduce((sum, row) => sum + totalTokens(row), 0),
-      cost: list.reduce((sum, row) => sum + row.cost_usd, 0),
-      duration: list.reduce((sum, row) => Math.max(sum, row.duration_ms), 0),
+      runs: runItems.length,
+      steps: runItems.reduce((sum, item) => sum + item.steps, 0),
+      errors: runItems.filter((item) => item.run.status === "failed").length,
     };
-  }, [rows]);
+  }, [items]);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <PageHeader
         variant="bar"
-        title="Chat"
-        description={chatId}
+        title={
+          conversation?.title !== null && conversation?.title !== undefined && conversation.title.trim() !== ""
+            ? conversation.title
+            : "Conversation"
+        }
+        description={
+          conversation !== null
+            ? `${ownerName(conversation)}${conversation.agent !== null ? ` · ${conversation.agent.name}` : ""}`
+            : chatId
+        }
         actions={
           <>
             <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
               <ArrowLeft />
               Activity
             </Button>
+            {conversation?.thread?.parent_chat_id != null && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onNavigate({ view: "chat", chatId: conversation.thread!.parent_chat_id! })}
+              >
+                <CornerUpLeft />
+                Parent thread
+              </Button>
+            )}
             {onOpenChat !== undefined && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
@@ -737,50 +874,180 @@ export function ChatActivityPage({
       />
       <PageBody className="max-w-[80rem]">
         {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && rows === null && <InlineLoading label="Loading chat" />}
-        {rows !== null && (
+        {error === null && detail === null && <InlineLoading label="Loading conversation" />}
+        {detail !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
                 <div>
-                  <dt className="text-muted-foreground">Traces</dt>
-                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.traces}</dd>
+                  <dt className="text-muted-foreground">Runs</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{conversation?.runs ?? totals.runs}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Model calls</dt>
-                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.calls}</dd>
+                  <dt className="text-muted-foreground">Messages</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{conversation?.messages ?? 0}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Tools</dt>
-                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{totals.tools}</dd>
+                  <dt className="text-muted-foreground">Steps</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{compact(totals.steps)}</dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Tokens</dt>
-                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{compact(totals.tokens)}</dd>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {compact((conversation?.tokens_in ?? 0) + (conversation?.tokens_out ?? 0))}
+                  </dd>
                 </div>
                 {admin && (
                   <div>
                     <dt className="text-muted-foreground">Cost</dt>
-                    <dd className="mt-0.5 text-lg font-semibold tabular-nums">{money(totals.cost)}</dd>
+                    <dd className="mt-0.5 text-lg font-semibold tabular-nums">{money(conversation?.cost_usd ?? 0)}</dd>
                   </div>
                 )}
                 <div>
-                  <dt className="text-muted-foreground">Longest</dt>
-                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">{ms(totals.duration)}</dd>
+                  <dt className="text-muted-foreground">Failed runs</dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {conversation?.failed_runs ?? totals.errors}
+                  </dd>
                 </div>
               </dl>
             </div>
-            <div className="mt-4">
-              <TracesTable
-                rows={rows}
-                admin={admin}
-                showAgent
-                onOpen={(id) => onNavigate({ view: "run", runId: id })}
-              />
+
+            <div className="mt-4 space-y-3">
+              {hasMore && (
+                <div className="flex justify-center">
+                  <Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlder}>
+                    {loadingOlder ? "Loading earlier…" : "Load earlier messages"}
+                  </Button>
+                </div>
+              )}
+              {items.length === 0 && (
+                <EmptyState
+                  icon={MessageSquare}
+                  title="This conversation has no messages"
+                  hint="A chat with no turns has nothing to read yet."
+                />
+              )}
+              {items.map((item, index) =>
+                item.kind === "run" ? (
+                  <RunItem
+                    key={`run-${item.run.id}`}
+                    item={item}
+                    admin={admin}
+                    onOpen={() => onNavigate({ view: "run", runId: item.run.id })}
+                  />
+                ) : (
+                  <MessageItem key={`${item.role}-${item.seq}-${index}`} item={item} />
+                ),
+              )}
             </div>
           </>
         )}
       </PageBody>
+    </div>
+  );
+}
+
+/** A trigger message, one run summary row, and the agent's reply follows as
+ *  its own message item. The row is the door into the run detail. */
+function RunItem({ item, admin, onOpen }: { item: ConversationRunItem; admin: boolean; onOpen: () => void }) {
+  const duration =
+    item.run.finished_at === null
+      ? null
+      : Math.max(0, Date.parse(item.run.finished_at) - Date.parse(item.run.started_at));
+  return (
+    <div className="space-y-2">
+      {item.trigger !== null ? (
+        <div className="flex justify-end">
+          <div className="max-w-[85%] rounded-xl border border-border bg-accent/40 px-3 py-2">
+            <p className="flex items-center justify-end gap-1.5 text-2xs text-muted-foreground">
+              <User className="size-3" />
+              {time(item.ts)}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{item.trigger}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground">
+          <Bot className="size-3.5" />
+          {triggerLabel(item.run.trigger)} trigger
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-start gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left outline-none transition-colors hover:bg-accent/50"
+      >
+        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground">
+          <Bot className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <ToneBadge tone={toneOf(item.run.status)}>{statusLabel(item.run.status)}</ToneBadge>
+            <span className="text-sm font-medium">
+              {item.run.agent_name !== "" ? item.run.agent_name : "Agent"} run
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {count(item.steps, "step")}
+              {duration !== null ? ` · ${ms(duration)}` : ""}
+              {` · ${compact(item.call_count)} calls · ${compact(item.tool_count)} tools`}
+              {admin && item.run.tokens > 0 ? ` · ${compact(item.run.tokens)} tokens` : ""}
+            </span>
+          </span>
+          {item.run.summary !== "" && (
+            <span className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground">{item.run.summary}</span>
+          )}
+          {item.run.error_message !== "" && (
+            <span className="mt-0.5 block truncate text-xs text-destructive">{item.run.error_message}</span>
+          )}
+        </span>
+        <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      </button>
+    </div>
+  );
+}
+
+function MessageItem({ item }: { item: Extract<ConversationItem, { kind: "message" }> }) {
+  if (item.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-xl border border-border bg-accent/40 px-3 py-2">
+          <p className="flex items-center justify-end gap-1.5 text-2xs text-muted-foreground">
+            <User className="size-3" />
+            {time(item.ts)}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{item.text}</p>
+        </div>
+      </div>
+    );
+  }
+  if (item.role === "assistant") {
+    return (
+      <div className="max-w-[85%]">
+        <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+          <Bot className="size-3" />
+          {time(item.ts)}
+        </p>
+        <div className={cn("mt-1 text-sm text-foreground", MD_CLASS, MD_TABLE_CLASS)}>
+          <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {item.text}
+          </Markdown>
+        </div>
+      </div>
+    );
+  }
+  if (item.role === "error") {
+    return (
+      <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-2xs text-destructive">
+        {item.text}
+      </p>
+    );
+  }
+  return (
+    <div className="rounded-md border border-border bg-card px-3 py-2">
+      <p className="text-2xs uppercase tracking-wide text-muted-foreground">
+        {item.role === "compaction" ? "Compaction summary" : "System"} · {time(item.ts)}
+      </p>
+      <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.text}</p>
     </div>
   );
 }

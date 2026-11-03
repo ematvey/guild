@@ -65,7 +65,7 @@ describe("run page", () => {
   it("moves the header with the pushed run and re-reads the trace once when the run finishes", async () => {
     const first: TraceRow = traceFromRun(running);
     api.getTrace.mockResolvedValueOnce({ trace: first, spans: [span("s1", "first")], children: [] });
-    api.getRun.mockResolvedValue(running);
+    api.getRun.mockResolvedValue({ run: running, thread: null });
     render(<RunDetailPage runId="r1" view="tree" role="member" onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText("Running")).toBeTruthy());
 
@@ -76,7 +76,7 @@ describe("run page", () => {
       spans: [span("s1", "first"), span("s2", "final")],
       children: [],
     });
-    api.getRun.mockResolvedValue(done);
+    api.getRun.mockResolvedValue({ run: done, thread: null });
     act(() => applyAgentRun(done));
 
     await waitFor(() => expect(api.getTrace).toHaveBeenCalledTimes(2));

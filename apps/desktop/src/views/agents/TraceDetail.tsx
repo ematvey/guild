@@ -3,14 +3,14 @@
 // overview, input, output and attributes, with readable JSON.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, CornerUpLeft, MessageSquare, MessagesSquare, RefreshCw } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
 import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
-import { getRun, getTrace, type AgentRun, type SpanRow, type TraceRow } from "./agents-api";
+import { getRun, getTrace, type AgentRun, type RunThread, type SpanRow, type TraceRow } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
 import { runFinishes, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
@@ -47,6 +47,7 @@ export function RunDetailPage({
   const [children, setChildren] = useState<TraceRow[]>([]);
   const [selected, setSelected] = useState<SpanRow | null>(null);
   const [run, setRun] = useState<AgentRun | null>(null);
+  const [thread, setThread] = useState<RunThread | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const pushedRun = useRef<AgentRun | null>(null);
@@ -81,19 +82,24 @@ export function RunDetailPage({
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setError(err instanceof Error ? err.message : "The trace did not load.");
+        setError(err instanceof Error ? err.message : "The run did not load.");
       });
     if (traceOnly) {
       setRun(null);
+      setThread(null);
     } else {
       void getRun(runId)
-        .then((value) => {
+        .then(({ run: value, thread: parent }) => {
           if (!live) return;
           shownStatus.current ??= value.status;
           setRun(value);
+          setThread(parent);
         })
         .catch(() => {
-          if (live) setRun(null);
+          if (live) {
+            setRun(null);
+            setThread(null);
+          }
         });
     }
     return () => {
@@ -140,6 +146,8 @@ export function RunDetailPage({
   const admin = role === "admin";
   const chatId = trace?.session_id ?? null;
   const title = trace === null ? runId : traceTitle(trace);
+  // The run's first user message: what the run was asked to do.
+  const triggerText = (run?.steps ?? []).find((step) => step.kind === "user")?.detail ?? "";
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -161,10 +169,26 @@ export function RunDetailPage({
                 {trace.started_at === null ? "—" : relativeTime(trace.started_at)}
               </span>
             )}
-            <Button variant="ghost" size="sm" aria-label="Refresh trace" onClick={() => setTick((t) => t + 1)}>
+            <Button variant="ghost" size="sm" aria-label="Refresh run" onClick={() => setTick((t) => t + 1)}>
               <RefreshCw />
               Refresh
             </Button>
+            {chatId !== null && (
+              <Button variant="outline" size="sm" onClick={() => onNavigate({ view: "chat", chatId })}>
+                <MessagesSquare />
+                Conversation
+              </Button>
+            )}
+            {thread?.parent_chat_id != null && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onNavigate({ view: "chat", chatId: thread.parent_chat_id! })}
+              >
+                <CornerUpLeft />
+                Parent thread
+              </Button>
+            )}
             {chatId !== null && onOpenChat !== undefined && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
@@ -193,7 +217,7 @@ export function RunDetailPage({
         )}
         {error === null && trace === null && spans.length === 0 && (
           <div className="mx-auto w-full max-w-[90rem] px-4 pt-4 sm:px-6">
-            <InlineLoading label="Loading trace" />
+            <InlineLoading label="Loading run" />
           </div>
         )}
         {(trace !== null || spans.length > 0) && (
@@ -201,7 +225,7 @@ export function RunDetailPage({
             <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card xl:min-h-0 xl:flex-1">
               <div className="shrink-0 border-b border-border px-2">
                 <TabBar
-                  label="Trace views"
+                  label="Run views"
                   tabs={TRACE_VIEWS}
                   value={view}
                   onChange={(next) =>
@@ -236,9 +260,9 @@ export function RunDetailPage({
               >
                 <SpanDetail span={selected} admin={admin} />
                 <div className="border-t border-border pt-3">
-                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trace</p>
+                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Run</p>
                   <dl className="mt-2 space-y-1.5 text-2xs">
-                    <Meta label="Trace id" value={trace.trace_id} mono />
+                    <Meta label="Run id" value={trace.trace_id} mono />
                     <Meta label="Agent" value={trace.agent_name || "—"} />
                     {trace.session_id !== null ? (
                       <div>
@@ -256,10 +280,33 @@ export function RunDetailPage({
                     ) : (
                       <Meta label="Session" value="—" />
                     )}
-                    {trace.parent_trace_id !== null && <Meta label="Parent trace" value={trace.parent_trace_id} mono />}
+                    {trace.parent_trace_id !== null && <Meta label="Parent run" value={trace.parent_trace_id} mono />}
                     <Meta label="Trigger" value={triggerLabel(trace.trigger)} />
+                    {thread !== null && thread.parent_chat_id !== null && (
+                      <div>
+                        <dt className="text-muted-foreground">Parent thread</dt>
+                        <dd>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ view: "chat", chatId: thread.parent_chat_id! })}
+                            className="break-all text-left underline decoration-border underline-offset-2 hover:decoration-foreground"
+                          >
+                            {thread.parent_title !== null && thread.parent_title !== ""
+                              ? thread.parent_title
+                              : thread.parent_chat_id}
+                          </button>
+                        </dd>
+                      </div>
+                    )}
                   </dl>
                 </div>
+
+                {triggerText !== "" && (
+                  <section className="border-t border-border pt-3">
+                    <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Trigger</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{triggerText}</p>
+                  </section>
+                )}
 
                 {trace.summary.trim() !== "" && (
                   <details className="border-t border-border pt-3">
@@ -282,9 +329,7 @@ export function RunDetailPage({
 
                 {children.length > 0 && (
                   <section className="border-t border-border pt-3">
-                    <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Delegated traces
-                    </p>
+                    <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Delegated runs</p>
                     <ul className="mt-2 divide-y divide-border/60">
                       {children.map((child) => (
                         <li key={child.trace_id}>
@@ -321,6 +366,6 @@ function traceTitle(trace: TraceRow): string {
     .split("\n")
     .map((line) => line.replace(/[#*_`>]/g, "").trim())
     .find((line) => line !== "");
-  if (first === undefined || first === "") return trace.agent_name || "Trace";
+  if (first === undefined || first === "") return trace.agent_name || "Run";
   return first.length > 140 ? `${first.slice(0, 140).trimEnd()}…` : first;
 }

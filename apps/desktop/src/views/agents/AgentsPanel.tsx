@@ -1,7 +1,7 @@
 import { AgentsDirectory } from "./AgentsDirectory";
 import { AgentCreate } from "./AgentCreate";
 import { AgentPage, type Viewer } from "./AgentPage";
-import { ActivityPage, ChatActivityPage, RunDetailPage } from "./ActivityPage";
+import { ActivityPage, ConversationPage, RunDetailPage } from "./ActivityPage";
 import type { AgentsRoute } from "./agents-route";
 
 /** The agents surface's main-column page. Every visible page derives from
@@ -69,7 +69,7 @@ export function AgentsPanel({
       );
     case "chat":
       return (
-        <ChatActivityPage chatId={route.chatId} role={viewer.role} onNavigate={onNavigate} onOpenChat={onOpenChat} />
+        <ConversationPage chatId={route.chatId} role={viewer.role} onNavigate={onNavigate} onOpenChat={onOpenChat} />
       );
   }
 }
