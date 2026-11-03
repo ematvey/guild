@@ -36,7 +36,7 @@ export function PageHeader({
         </button>
       )}
       <div className={bar ? "flex flex-wrap items-center gap-3 pb-3" : "flex items-start justify-between gap-4"}>
-        <div className={bar ? "min-w-0 flex-1" : "min-w-0"}>
+        <div className={bar ? "min-w-0 w-full sm:w-auto sm:flex-1" : "min-w-0"}>
           <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           {description !== undefined && description !== "" && (
             <p

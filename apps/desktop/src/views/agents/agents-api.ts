@@ -420,6 +420,8 @@ export interface ConversationAgent {
 /** The thread row behind a conversation, with its parent thread's chat. */
 export interface ConversationThread {
   id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
   type: string;
   parent_thread_id: string | null;
   parent_chat_id: string | null;
@@ -470,6 +472,8 @@ export interface ConversationRunItem {
   steps: number;
   call_count: number;
   tool_count: number;
+  /** True when the agent's reply renders below the row. */
+  reply: boolean;
 }
 
 /** One message in a conversation, at the reading level. */
@@ -493,6 +497,8 @@ export interface ConversationDetail {
 /** The thread behind a run, with its parent thread's chat. */
 export interface RunThread {
   id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
   type: string;
   parent_thread_id: string | null;
   parent_chat_id: string | null;

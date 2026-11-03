@@ -22,6 +22,7 @@ const detail: ConversationDetail = {
     agent: { id: "a1", name: "Echo" },
     thread: {
       id: "t1",
+      chat_id: "c1",
       type: "subagent",
       parent_thread_id: "t0",
       parent_chat_id: "c0",
@@ -48,6 +49,7 @@ const detail: ConversationDetail = {
       steps: 7,
       call_count: 3,
       tool_count: 4,
+      reply: true,
       run: {
         id: "r1",
         agent_id: "a1",

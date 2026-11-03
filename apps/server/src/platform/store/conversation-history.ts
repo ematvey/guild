@@ -25,6 +25,8 @@ export interface ConversationAgent {
 
 export interface ConversationThread {
   id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
   type: string;
   parent_thread_id: string | null;
   parent_chat_id: string | null;
@@ -89,6 +91,9 @@ export interface ConversationRunItem {
   steps: number;
   call_count: number;
   tool_count: number;
+  /** True when an assistant message inside the run window follows the row:
+   *  the reply renders there, so the row does not repeat it. */
+  reply: boolean;
 }
 
 export type ConversationItem = ({ kind: "message"; ts: string } & ConversationMessageRow) | ConversationRunItem;
@@ -168,10 +173,14 @@ export function groupConversation(
       triggerSeq = message.seq;
     }
     if (triggerSeq !== null) claimed.add(triggerSeq);
+    let reply = false;
     for (const message of messages) {
       if (message.role !== "assistant" || claimed.has(message.seq)) continue;
       const at = Date.parse(message.ts);
-      if (at >= start && at <= end) claimed.add(message.seq);
+      if (at >= start && at <= end) {
+        claimed.add(message.seq);
+        reply = true;
+      }
     }
     const counts = stepsOf(run.id);
     items.push({
@@ -181,6 +190,7 @@ export function groupConversation(
       trigger,
       steps: counts.call_count + counts.tool_count,
       ...counts,
+      reply,
     });
   }
   for (const message of messages) {
@@ -367,7 +377,7 @@ export class ConversationHistoryStore {
   /** The thread a run belongs to, with its parent thread's chat. */
   async threadOfRun(orgId: string, threadId: string): Promise<ConversationThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT t.id, t.type, t.parent_thread_id, pt.chat_id AS parent_chat_id, pt.title AS parent_title
+      `SELECT t.id, t.chat_id, t.type, t.parent_thread_id, pt.chat_id AS parent_chat_id, pt.title AS parent_title
        FROM agent_threads t
        JOIN chats c ON c.id = t.chat_id
        LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
@@ -378,6 +388,7 @@ export class ConversationHistoryStore {
     if (row === undefined) return null;
     return {
       id: String(row["id"]),
+      chat_id: String(row["chat_id"]),
       type: String(row["type"] ?? "user"),
       parent_thread_id: row["parent_thread_id"] === null ? null : String(row["parent_thread_id"]),
       parent_chat_id:
@@ -408,6 +419,7 @@ function rowToConversation(row: Record<string, unknown>): ConversationRow {
         ? null
         : {
             id: String(threadId),
+            chat_id: String(row["id"]),
             type: String(row["thread_type"] ?? "user"),
             parent_thread_id:
               row["parent_thread_id"] === null || row["parent_thread_id"] === undefined

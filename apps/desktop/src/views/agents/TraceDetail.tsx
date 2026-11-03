@@ -3,7 +3,7 @@
 // overview, input, output and attributes, with readable JSON.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronRight, CornerUpLeft, MessageSquare, MessagesSquare, RefreshCw } from "lucide-react";
+import { Activity, ArrowLeft, ChevronRight, CornerUpLeft, MessageSquare, RefreshCw } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
@@ -144,7 +144,7 @@ export function RunDetailPage({
   }, [ordered, trace?.started_at, trace?.finished_at]);
 
   const admin = role === "admin";
-  const chatId = trace?.session_id ?? null;
+  const chatId = trace?.session_id ?? thread?.chat_id ?? null;
   const title = trace === null ? runId : traceTitle(trace);
   // The run's first user message: what the run was asked to do.
   const triggerText = (run?.steps ?? []).find((step) => step.kind === "user")?.detail ?? "";
@@ -153,9 +153,14 @@ export function RunDetailPage({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <header className="border-b border-border px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            onClick={() => onNavigate(chatId === null ? AGENTS_ACTIVITY : { view: "chat", chatId })}
+          >
             <ArrowLeft />
-            Activity
+            {chatId === null ? "Activity" : "Conversation"}
           </Button>
           {trace !== null && (
             <>
@@ -173,12 +178,10 @@ export function RunDetailPage({
               <RefreshCw />
               Refresh
             </Button>
-            {chatId !== null && (
-              <Button variant="outline" size="sm" onClick={() => onNavigate({ view: "chat", chatId })}>
-                <MessagesSquare />
-                Conversation
-              </Button>
-            )}
+            <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
+              <Activity />
+              Activity
+            </Button>
             {thread?.parent_chat_id != null && (
               <Button
                 variant="ghost"

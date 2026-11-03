@@ -123,6 +123,7 @@ describe("groupConversation", () => {
     if (run?.kind !== "run") throw new Error("first item is not a run");
     expect(run.trigger).toBe("hello");
     expect(run.steps).toBe(5);
+    expect(run.reply).toBe(true);
   });
 
   it("keeps an earlier user message standalone when two precede one run", () => {

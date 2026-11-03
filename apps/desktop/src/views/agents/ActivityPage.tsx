@@ -742,6 +742,16 @@ function ConversationsTable({
   );
 }
 
+/** A one-line gist of a run summary: markdown markers and line breaks out,
+ *  then a hard cut. The full reply renders below the run row. */
+function plainPreview(text: string): string {
+  const plain = text
+    .replace(/[#*_`>\[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > 180 ? `${plain.slice(0, 180)}…` : plain;
+}
+
 function ownerName(row: ConversationRow): string {
   return row.owner.display_name !== null && row.owner.display_name !== "" ? row.owner.display_name : row.owner.email;
 }
@@ -997,8 +1007,10 @@ function RunItem({ item, admin, onOpen }: { item: ConversationRunItem; admin: bo
               {admin && item.run.tokens > 0 ? ` · ${compact(item.run.tokens)} tokens` : ""}
             </span>
           </span>
-          {item.run.summary !== "" && (
-            <span className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground">{item.run.summary}</span>
+          {!item.reply && item.run.summary !== "" && (
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {plainPreview(item.run.summary)}
+            </span>
           )}
           {item.run.error_message !== "" && (
             <span className="mt-0.5 block truncate text-xs text-destructive">{item.run.error_message}</span>

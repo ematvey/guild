@@ -86,6 +86,18 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The domain model is written down, in numbered documents (2026-11-03).**
+  `docs/domain/000`–`005` name Guild's concepts and the rules each keeps:
+  principles, the domain model with rejected concepts and a glossary,
+  access, execution, capabilities and live state. Each document builds only
+  on the ones before it. They describe the code as verified on this date,
+  where the 2026-10 specs had drifted (no `project_*` tools, thread types
+  `user|subagent|routine`, only `AGENTS.md`/`MEMORY.md` ride the prompt,
+  routine kinds `cron|once`, admins read but never write a member's
+  thread). Known gaps found while writing are listed at the end of 002,
+  003 and 004. A change to a concept or a rule updates its document in the
+  same commit.
+
 - **Observability reads conversations and runs, top-down (2026-11-04).**
   The Activity surface is the history browser for managers. Its base layer
   is the conversation (one chat) and the run (one agent turn); the call
