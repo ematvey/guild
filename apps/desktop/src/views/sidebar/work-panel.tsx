@@ -14,7 +14,9 @@ import { CloseSidebarButton, CollapseButton } from "./chrome";
 
 export const WorkPanel = memo(function WorkPanel({
   grouping,
+  archivedGrouping,
   loadingChats,
+  loadingArchivedChats,
   projects,
   archivedProjects,
   machines,
@@ -26,12 +28,18 @@ export const WorkPanel = memo(function WorkPanel({
   onNewProject,
   onRenameChat,
   onArchiveChat,
+  onUnarchiveChat,
   onRenameProject,
   onArchiveProject,
   onUnarchiveProject,
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
+  /** The archived chats' grouping — an archived project folds out to the
+   *  chats archived with it, which the live list does not hold. */
+  archivedGrouping: ReturnType<typeof sidebarGrouping>;
   loadingChats: boolean;
+  /** True while the archived chat list is still loading. */
+  loadingArchivedChats: boolean;
   projects: Project[] | null;
   /** Archived section: the rows and their restore action. */
   archivedProjects?: Project[] | null;
@@ -48,6 +56,7 @@ export const WorkPanel = memo(function WorkPanel({
   onNewProject: () => void;
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
+  onUnarchiveChat?: (id: string) => void;
   onRenameProject?: (id: string, name: string) => void;
   onArchiveProject?: (id: string) => void;
   onUnarchiveProject?: (id: string) => void;
@@ -62,7 +71,8 @@ export const WorkPanel = memo(function WorkPanel({
 
   const renderProject = (p: Project, archived: boolean) => {
     const open = !!expanded[p.id];
-    const chats = grouping.chatsByProject[p.id] ?? [];
+    const chats = (archived ? archivedGrouping : grouping).chatsByProject[p.id] ?? [];
+    const loading = archived ? loadingArchivedChats : loadingChats;
     const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
     const machine = machines?.find((m) => m.machine_id === p.machine_id);
     return (
@@ -94,8 +104,8 @@ export const WorkPanel = memo(function WorkPanel({
         />
         {open && (
           <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
-            {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
-            {!loadingChats &&
+            {loading && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
+            {!loading &&
               chats.slice(0, limit).map((c) => (
                 <ChatListItem
                   key={c.id}
@@ -110,12 +120,11 @@ export const WorkPanel = memo(function WorkPanel({
                   }}
                   onClick={() => onOpenChat(c.id)}
                   onRename={(title) => onRenameChat?.(c.id, title)}
-                  onArchive={() => onArchiveChat?.(c.id)}
+                  archiveLabel={archived ? "Unarchive" : undefined}
+                  onArchive={archived ? () => onUnarchiveChat?.(c.id) : () => onArchiveChat?.(c.id)}
                 />
               ))}
-            {!loadingChats && chats.length === 0 && (
-              <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
-            )}
+            {!loading && chats.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>}
             {chats.length > limit && (
               <button
                 type="button"

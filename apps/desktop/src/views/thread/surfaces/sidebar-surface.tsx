@@ -40,7 +40,7 @@ export function SidebarSurface({
   onCollapse?: () => void;
   onClose?: () => void;
 }) {
-  const { chats, grouping, archivedRows } = useSidebarRows();
+  const { chats, grouping, archivedRows, archivedGrouping } = useSidebarRows();
   const projects = projectsStore.use();
   const archivedProjects = archivedProjectsStore.use();
   const machines = useMachines();
@@ -94,7 +94,9 @@ export function SidebarSurface({
     return (
       <WorkPanel
         loadingChats={chats === null}
+        loadingArchivedChats={archivedRows === null}
         grouping={grouping}
+        archivedGrouping={archivedGrouping}
         projects={projects}
         archivedProjects={archivedProjects}
         machines={machines}
@@ -106,6 +108,7 @@ export function SidebarSurface({
         onNewProject={onNewProject}
         onRenameChat={renameChatRow}
         onArchiveChat={archiveChatRow}
+        onUnarchiveChat={unarchiveChatRow}
         onRenameProject={renameProjectRow}
         onArchiveProject={archiveProjectRow}
         onUnarchiveProject={unarchiveProjectRow}

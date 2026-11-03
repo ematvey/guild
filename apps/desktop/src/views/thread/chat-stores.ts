@@ -89,7 +89,9 @@ export function sidebarRow(c: ChatSummary, status: ChatStatus, trees: Record<str
   return { ...c, generating: !!entry.generating, unread: !!entry.unread, working: workingForChat(entry, trees[c.id]) };
 }
 
-/** The sidebar's grouped rows and archived rows, with live flags. */
+/** The sidebar's grouped rows and archived rows, with live flags. Each list
+ *  has its own grouping: an archived project expands to its archived chats,
+ *  which the live list does not carry. */
 export function useSidebarRows() {
   const chats = chatsStore.use();
   const archivedChats = archivedChatsStore.use();
@@ -103,5 +105,6 @@ export function useSidebarRows() {
     () => archivedChats?.map((c) => sidebarRow(c, status, trees)) ?? null,
     [archivedChats, status, trees],
   );
-  return { chats, grouping, archivedRows };
+  const archivedGrouping = useMemo(() => sidebarGrouping(archivedRows), [archivedRows]);
+  return { chats, grouping, archivedRows, archivedGrouping };
 }

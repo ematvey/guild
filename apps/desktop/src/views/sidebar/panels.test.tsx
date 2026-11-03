@@ -127,7 +127,9 @@ describe("panels", () => {
     const work = renderToStaticMarkup(
       <WorkPanel
         grouping={{ visible: [], chatsByProject: {} } as any}
+        archivedGrouping={{ visible: [], chatsByProject: {} } as any}
         loadingChats={false}
+        loadingArchivedChats={false}
         projects={[]}
         chatId={null}
         onOpenChat={() => {}}
