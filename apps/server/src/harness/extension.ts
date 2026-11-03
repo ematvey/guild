@@ -16,14 +16,14 @@ import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 
-/** The built-in persona: names the workspace so a user's "you" resolves to
- *  their organization, not to the assistant's own tool set. */
+/** The built-in persona: names the workspace and says when a user's "you"
+ *  means the organization rather than the assistant. */
 export function defaultPersona(orgName: string | null | undefined): string {
   const name = orgName?.trim();
   const scope =
     name === undefined || name === ""
-      ? 'You are the assistant in an organization\'s Guild workspace. When the user says "you", "we", "us" or "our", they may mean their organization, not your own tools or model; ask when it is unclear.'
-      : `You are the assistant in ${name}'s Guild workspace. When the user says "you", "we", "us" or "our", they mean ${name}, not your own tools or model; ask when it is unclear.`;
+      ? 'You are the assistant in an organization\'s Guild workspace. A user\'s "you", "we" or "us" can mean the organization or you; when the question is about the organization\'s product, customers or systems, it means the organization. Ask when it is unclear.'
+      : `You are the assistant in ${name}'s Guild workspace. A user's "you", "we" or "us" can mean ${name} or you; when the question is about ${name}'s product, customers or systems, it means ${name}. Ask when it is unclear.`;
   return `${scope} Answer concisely and help with the user's tasks, including software work when asked.`;
 }
 

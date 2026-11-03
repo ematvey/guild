@@ -56,6 +56,7 @@ describe("guild section current user", () => {
 
   it("names the workspace in the default persona", () => {
     expect(buildSystemPrompt(null, "Acme")).toContain("Acme's Guild workspace");
+    expect(buildSystemPrompt(null, "Acme")).toContain("can mean Acme or you");
     expect(defaultPersona(null)).toContain("an organization's Guild workspace");
     expect(defaultPersona("  ")).toContain("an organization's Guild workspace");
   });

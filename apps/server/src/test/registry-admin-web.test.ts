@@ -683,7 +683,7 @@ describe("M6 admin users + prompts", () => {
     expect(json(before)).toEqual({
       prompt: null,
       default:
-        'You are the assistant in m6 test org\'s Guild workspace. When the user says "you", "we", "us" or "our", they mean m6 test org, not your own tools or model; ask when it is unclear. Answer concisely and help with the user\'s tasks, including software work when asked.',
+        'You are the assistant in m6 test org\'s Guild workspace. A user\'s "you", "we" or "us" can mean m6 test org or you; when the question is about m6 test org\'s product, customers or systems, it means m6 test org. Ask when it is unclear. Answer concisely and help with the user\'s tasks, including software work when asked.',
     });
 
     const set = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "You are terse." });
