@@ -355,7 +355,13 @@ export class GuildRuntime {
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (built-in coding tools enabled) + codemode.
     this.guildExtension = createGuildExtension({
-      orgPrompt: (orgId) => stores.orgKv.get(orgId, ASSISTANT_PROMPT_KEY),
+      orgProfile: async (orgId) => {
+        const [org, prompt] = await Promise.all([
+          stores.orgs.get(orgId).catch(() => null),
+          stores.orgKv.get(orgId, ASSISTANT_PROMPT_KEY),
+        ]);
+        return org === null ? null : { name: org.name, prompt };
+      },
       orgOfConversation: async (conversationId) => {
         const chatId = await this.chatOfConversation(conversationId);
         return chatId === null ? null : stores.chats.orgOf(chatId);

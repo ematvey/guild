@@ -7,7 +7,7 @@ import type { Context } from "@earendil-works/chord";
 import {
   buildSystemPrompt,
   createGuildExtension,
-  DEFAULT_PERSONA,
+  defaultPersona,
   renderCurrentUser,
   type CurrentUser,
   type GuildExtensionDeps,
@@ -25,7 +25,7 @@ const DMITRY: CurrentUser = {
 
 function extensionDeps(user: CurrentUser | null, orgId: string | null = "org-1"): GuildExtensionDeps {
   return {
-    orgPrompt: async () => null,
+    orgProfile: async () => ({ name: "Acme Dental", prompt: null }),
     orgOfConversation: async () => orgId,
     userOfConversation: async () => user,
   } as unknown as GuildExtensionDeps;
@@ -41,7 +41,7 @@ async function renderGuild(deps: GuildExtensionDeps): Promise<string> {
 describe("guild section current user", () => {
   it("names the account with its display name and email", async () => {
     const body = await renderGuild(extensionDeps(DMITRY));
-    expect(body.startsWith(buildSystemPrompt(null))).toBe(true);
+    expect(body.startsWith(buildSystemPrompt(null, "Acme Dental"))).toBe(true);
     expect(body).toContain('\n\n<current_user name="Dana Tester" email="dana@example.test" />');
   });
 
@@ -54,15 +54,24 @@ describe("guild section current user", () => {
     expect(block).toBe('<current_user name="A &quot;B&quot; &lt;c&gt; &amp; d" email="dana@example.test" />');
   });
 
+  it("names the workspace in the default persona", () => {
+    expect(buildSystemPrompt(null, "Acme")).toContain("Acme's Guild workspace");
+    expect(defaultPersona(null)).toContain("an organization's Guild workspace");
+    expect(defaultPersona("  ")).toContain("an organization's Guild workspace");
+  });
+
   it("renders the persona alone when the conversation has no owner", async () => {
-    expect(await renderGuild(extensionDeps(null))).toBe(buildSystemPrompt(null));
+    expect(await renderGuild(extensionDeps(null))).toBe(buildSystemPrompt(null, "Acme Dental"));
   });
 
   it("keeps the org persona ahead of the block", async () => {
-    const deps = { ...extensionDeps(DMITRY), orgPrompt: async () => "You are terse." };
+    const deps = {
+      ...extensionDeps(DMITRY),
+      orgProfile: async () => ({ name: "Acme Dental", prompt: "You are terse." }),
+    };
     const body = await renderGuild(deps);
-    expect(body.startsWith(buildSystemPrompt("You are terse."))).toBe(true);
+    expect(body.startsWith(buildSystemPrompt("You are terse.", "Acme Dental"))).toBe(true);
     expect(body).toContain("<current_user");
-    expect(DEFAULT_PERSONA).not.toBe("You are terse.");
+    expect(defaultPersona("Acme Dental")).not.toBe("You are terse.");
   });
 });

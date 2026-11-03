@@ -225,7 +225,7 @@ function extensionDeps(skillRuntime: SkillRuntime | undefined, orgId: string | n
     chatOfConversation: async () => "chat-1",
     executorKind: async () => null,
     currentModel: async () => null,
-    orgPrompt: async () => null,
+    orgProfile: async () => ({ name: "Skill Test Org", prompt: null }),
     orgOfConversation: async () => orgId,
     userOfConversation: async () => ({ id: USER, email: "user-1@example.test", display_name: null, role: "member" }),
     skillRuntime,

@@ -9,7 +9,7 @@ import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam, optionalJsonBody } from "./error.js";
 import { createIntegration, integrationShop, integrationTools, saveIntegration } from "../../integrations/admin.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
-import { DEFAULT_PERSONA } from "../../harness/extension.js";
+import { defaultPersona } from "../../harness/extension.js";
 import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org-kv.js";
 /** Upper bound on a custom prompt — personas are short; this is abuse
  *  protection, not a context-window budget. */
@@ -96,7 +96,8 @@ export function registerAdminPromptRoutes(app: FastifyInstance, ctx: IdentityCtx
   app.get("/api/v1/admin/assistant-prompt", async (req, reply) => {
     const admin = await requireAdminUser(ctx, req);
     const prompt = await ctx.orgKv.get(admin.org_id, ASSISTANT_PROMPT_KEY);
-    sendJson(reply, { prompt, default: DEFAULT_PERSONA });
+    const org = await ctx.orgs.get(admin.org_id);
+    sendJson(reply, { prompt, default: defaultPersona(org.name) });
     return reply;
   });
 

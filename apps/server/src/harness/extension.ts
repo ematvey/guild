@@ -16,8 +16,16 @@ import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 
-export const DEFAULT_PERSONA =
-  "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
+/** The built-in persona: names the workspace so a user's "you" resolves to
+ *  their organization, not to the assistant's own tool set. */
+export function defaultPersona(orgName: string | null | undefined): string {
+  const name = orgName?.trim();
+  const scope =
+    name === undefined || name === ""
+      ? 'You are the assistant in an organization\'s Guild workspace. When the user says "you", "we", "us" or "our", they may mean their organization, not your own tools or model; ask when it is unclear.'
+      : `You are the assistant in ${name}'s Guild workspace. When the user says "you", "we", "us" or "our", they mean ${name}, not your own tools or model; ask when it is unclear.`;
+  return `${scope} Answer concisely and help with the user's tasks, including software work when asked.`;
+}
 
 /** The Guild user a thread belongs to (the chat owner). */
 export interface CurrentUser {
@@ -25,6 +33,13 @@ export interface CurrentUser {
   email: string;
   display_name: string | null;
   role: string;
+}
+
+/** The workspace identity a thread's system prompt is built from: the org
+ *  name (the default persona's subject) and its stored persona override. */
+export interface OrgProfile {
+  name: string;
+  prompt: string | null;
 }
 
 /** The current-user line: the Guild account this thread belongs to. Tools
@@ -42,10 +57,13 @@ function escapeAttr(value: string): string {
 }
 
 /** Renders the request's system prompt body: the persona (org override wins
- *  when non-blank) plus the coding-tools sentence. */
-export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
+ *  when non-blank, otherwise the default named for the workspace) plus the
+ *  coding-tools sentence. */
+export function buildSystemPrompt(orgPrompt: string | null | undefined, orgName?: string | null): string {
   const persona =
-    orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
+    orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== ""
+      ? orgPrompt.trim()
+      : defaultPersona(orgName);
   const codingTools = CODING_TOOL_NAMES.map((name) => `\`${name}\``).join(", ");
   return `${persona} Coding tools — ${codingTools} — are called directly. Integration and MCP tools run on the Guild server through the codemode tool: write JavaScript that calls \`tools.<name>\`, and \`tools.thread_history\`/\`tools.thread_search\` as nested calls. Inspect and change files with the coding tools before answering anything that could be about files.`;
 }
@@ -65,8 +83,9 @@ export const CODEMODE_NOTES_SECTION_TEXT = [
 ].join("\n");
 
 export interface GuildExtensionDeps extends ApprovalGateDeps {
-  /** Org id → stored persona lookup (org_kv.assistant_system_prompt). */
-  orgPrompt(orgId: string): Promise<string | null>;
+  /** Org id → the workspace name and the stored persona
+   *  (org_kv.assistant_system_prompt); null when the org row is gone. */
+  orgProfile(orgId: string): Promise<OrgProfile | null>;
   /** conversationId → org id (the chat mapping). */
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
   /** conversationId → the chat owner's user (the skills index's install
@@ -103,9 +122,9 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
     key: "guild",
     async render(input) {
       const orgId = await deps.orgOfConversation(input.conversationId);
-      const prompt = orgId === null ? null : await deps.orgPrompt(orgId);
+      const profile = orgId === null ? null : await deps.orgProfile(orgId);
       const user = await deps.userOfConversation(input.conversationId);
-      const body = buildSystemPrompt(prompt);
+      const body = buildSystemPrompt(profile?.prompt, profile?.name);
       return user === null ? body : `${body}\n\n${renderCurrentUser(user)}`;
     },
   };
