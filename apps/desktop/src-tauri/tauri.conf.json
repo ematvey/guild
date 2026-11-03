@@ -32,9 +32,6 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzQ0FFNjc1OUEwRTFCNEQKUldSTkd3NmFkZWJLUTlvdEZ5VHJLSVN1TXBHdGJWRkhUOXRjN3FYTXV2Rk9kU0pvSnIvSG1kSy8K",
-      "endpoints": [
-        "http://localhost:18080/api/v1/updates/latest.json"
-      ],
       "dangerousInsecureTransportProtocol": true
     }
   }
