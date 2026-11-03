@@ -55,6 +55,17 @@ describe("HoverStamp", () => {
   it("renders the formatted time", () => {
     const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} side="right" />);
     expect(html).toMatch(/\d{1,2}:\d{2}/);
+    expect(html).not.toContain("Copy message");
+  });
+
+  it("puts the copy button before the time", () => {
+    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} side="right" copyText="hi" />);
+    expect(html).toContain('aria-label="Copy message"');
+    expect(html.indexOf("Copy message")).toBeLessThan(html.search(/\d{1,2}:\d{2}/));
+  });
+
+  it("renders the copy button without a stamp", () => {
+    expect(renderToStaticMarkup(<HoverStamp side="left" copyText="hi" />)).toContain("Copy message");
   });
 });
 

@@ -69,7 +69,7 @@ const TextBlock = memo(function TextBlock({
         )}
         {b.interrupted && showInterrupted && <div className="text-xs text-muted-foreground">stopped</div>}
       </div>
-      {showStamp && <HoverStamp ts={b.ts} side="left" />}
+      {showStamp && <HoverStamp ts={b.ts} side="left" copyText={b.text} />}
     </div>
   );
 });
@@ -217,7 +217,7 @@ export function ThreadPane({
                 </div>
               )}
             </div>
-            <HoverStamp ts={e.b.ts} side="right" />
+            <HoverStamp ts={e.b.ts} side="right" copyText={e.b.text} />
           </div>
         ) : e.b.kind === "approval" && e.b.approval ? (
           <ApprovalCard key={e.b.key} a={e.b.approval} chatId={viewChatId} />

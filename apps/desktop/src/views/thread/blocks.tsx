@@ -1,7 +1,7 @@
 // System-style transcript blocks: the loading skeleton, the reasoning frame,
 // the compaction card and the hover stamps under messages.
-import { useMemo } from "react";
-import { Brain } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Brain, Check, Copy } from "lucide-react";
 import Markdown from "react-markdown";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
 import { Frame } from "../frame";
@@ -100,9 +100,9 @@ export function CompactionCard({ c }: { c: CompactionBlock }) {
   );
 }
 
-/// Hover-revealed message timestamp: always mounted (absolute below the
-/// message, hidden via opacity) so showing it never reflows the thread. It
-/// sits `mt-3` under the message box — the same step the transcript uses
+/// Hover-revealed message footer — a copy button left of the timestamp:
+/// always mounted (absolute below the message, hidden via opacity) so
+/// showing it never reflows the thread. It sits `pt-3` under the message box — the same step the transcript uses
 /// between paragraphs (`space-y-3`), so the stamp reads as the next line of
 /// the message rather than a separate element.
 /// Locale-aware shortest unambiguous form: time only for today,
@@ -136,16 +136,38 @@ export function prettyStamp(iso: string): string {
   return text;
 }
 
-export function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
-  if (!ts) return null;
-  const text = prettyStamp(ts);
-  if (!text) return null;
+export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" | "right"; copyText?: string }) {
+  const text = ts ? prettyStamp(ts) : "";
+  const canCopy = copyText !== undefined && copyText !== "";
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  if (!text && !canCopy) return null;
+  // `pt-3` (not a margin) keeps the gap under the message inside the
+  // hover target, so the pointer can travel from the message to the copy
+  // button without the row fading out. Pointer events switch on only while
+  // the message is hovered: hidden, the row never eats clicks.
   return (
     <div
-      aria-hidden
-      className={`pointer-events-none absolute top-full mt-3 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
+      className={`pointer-events-none absolute top-full flex items-center gap-2 pt-3 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100`}
     >
-      {text}
+      {canCopy && (
+        <button
+          type="button"
+          aria-label={copied ? "Copied" : "Copy message"}
+          title={copied ? "Copied" : "Copy message"}
+          onClick={() => {
+            void navigator.clipboard?.writeText(copyText).then(() => setCopied(true));
+          }}
+          className="-m-1 rounded p-1 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+        </button>
+      )}
+      {text && <span aria-hidden>{text}</span>}
     </div>
   );
 }
