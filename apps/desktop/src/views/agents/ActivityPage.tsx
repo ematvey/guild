@@ -961,8 +961,8 @@ export function ConversationPage({
   );
 }
 
-/** A trigger message, one run summary row, and the agent's reply follows as
- *  its own message item. The row is the door into the run detail. */
+/** The run's summary row: it reads under the agent's reply and is the door
+ *  into the run detail. The trigger is its own message item. */
 function RunItem({ item, admin, onOpen }: { item: ConversationRunItem; admin: boolean; onOpen: () => void }) {
   const duration =
     item.run.finished_at === null
@@ -970,17 +970,7 @@ function RunItem({ item, admin, onOpen }: { item: ConversationRunItem; admin: bo
       : Math.max(0, Date.parse(item.run.finished_at) - Date.parse(item.run.started_at));
   return (
     <div className="space-y-2">
-      {item.trigger !== null ? (
-        <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-xl border border-border bg-accent/40 px-3 py-2">
-            <p className="flex items-center justify-end gap-1.5 text-2xs text-muted-foreground">
-              <User className="size-3" />
-              {time(item.ts)}
-            </p>
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{item.trigger}</p>
-          </div>
-        </div>
-      ) : (
+      {item.trigger === null && (
         <p className="flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground">
           <Bot className="size-3.5" />
           {triggerLabel(item.run.trigger)} trigger

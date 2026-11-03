@@ -118,15 +118,20 @@ describe("groupConversation", () => {
       },
     ];
     const items = groupConversation(messages, runs, () => ({ call_count: 2, tool_count: 3 }));
-    expect(items.map((item) => (item.kind === "run" ? "run" : item.role))).toEqual(["assistant", "run", "user"]);
-    const run = items[1];
-    if (run?.kind !== "run") throw new Error("second item is not a run");
+    expect(items.map((item) => (item.kind === "run" ? "run" : item.role))).toEqual([
+      "user",
+      "assistant",
+      "run",
+      "user",
+    ]);
+    const run = items[2];
+    if (run?.kind !== "run") throw new Error("third item is not a run");
     expect(run.trigger).toBe("hello");
     expect(run.steps).toBe(5);
     expect(run.reply).toBe(true);
   });
 
-  it("keeps an earlier user message standalone when two precede one run", () => {
+  it("keeps every trigger message standalone before its run row", () => {
     const messages = [
       { seq: 1, role: "user" as const, text: "first", ts: "2026-11-01T09:59:00Z" },
       { seq: 2, role: "user" as const, text: "second", ts: "2026-11-01T09:59:30Z" },
@@ -146,8 +151,8 @@ describe("groupConversation", () => {
       },
     ];
     const items = groupConversation(messages, runs, () => ({ call_count: 0, tool_count: 0 }));
-    expect(items.map((item) => (item.kind === "run" ? "run" : item.text))).toEqual(["first", "run"]);
-    expect(items[1]?.kind === "run" && items[1].trigger).toBe("second");
+    expect(items.map((item) => (item.kind === "run" ? "run" : item.text))).toEqual(["first", "second", "run"]);
+    expect(items[2]?.kind === "run" && items[2].trigger).toBe("second");
   });
 
   it("claims a trigger message the journal writes just after the run row", () => {
@@ -168,8 +173,8 @@ describe("groupConversation", () => {
       },
     ];
     const items = groupConversation(messages, runs, () => ({ call_count: 1, tool_count: 0 }));
-    expect(items).toHaveLength(1);
-    expect(items[0]?.kind === "run" && items[0].trigger).toBe("change the routine");
+    expect(items.map((item) => (item.kind === "run" ? "run" : item.text))).toEqual(["change the routine", "run"]);
+    expect(items[1]?.kind === "run" && items[1].trigger).toBe("change the routine");
   });
 });
 
@@ -237,11 +242,12 @@ describe("conversation activity", () => {
     expect(body.conversation.agent.name).toBe("Echo");
     expect(body.has_more).toBe(false);
     const shape = body.items.map((item) => (item.kind === "run" ? "run" : String(item.role)));
-    expect(shape).toEqual(["assistant", "run", "assistant", "run"]);
-    const firstRun = body.items[1]!;
+    expect(shape).toEqual(["user", "assistant", "run", "user", "assistant", "run"]);
+    const firstRun = body.items[2]!;
     expect(firstRun.trigger).toBe("question 1");
     expect(firstRun.run).toMatchObject({ status: "succeeded", trigger: "message" });
-    expect(body.items[0]!.text).toBe("reply 1");
+    expect(body.items[0]!.text).toBe("question 1");
+    expect(body.items[1]!.text).toBe("reply 1");
   });
 
   it("hides another member's conversation from a member", async () => {

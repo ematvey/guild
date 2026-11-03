@@ -43,8 +43,22 @@ const detail: ConversationDetail = {
   },
   items: [
     {
+      kind: "message",
+      seq: 1,
+      role: "user",
+      text: "Summarize the quarter",
+      ts: "2026-11-01T09:59:59Z",
+    },
+    {
+      kind: "message",
+      seq: 2,
+      role: "assistant",
+      text: "The quarter closed above plan.",
+      ts: "2026-11-01T10:00:30Z",
+    },
+    {
       kind: "run",
-      ts: "2026-11-01T10:00:00Z",
+      ts: "2026-11-01T10:00:30Z",
       trigger: "Summarize the quarter",
       steps: 7,
       call_count: 3,
@@ -62,13 +76,6 @@ const detail: ConversationDetail = {
         started_at: "2026-11-01T10:00:00Z",
         finished_at: "2026-11-01T10:00:30Z",
       },
-    },
-    {
-      kind: "message",
-      seq: 2,
-      role: "assistant",
-      text: "The quarter closed above plan.",
-      ts: "2026-11-01T10:00:30Z",
     },
   ],
   has_more: false,

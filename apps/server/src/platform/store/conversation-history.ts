@@ -190,7 +190,8 @@ export function groupConversation(
         break;
       }
     }
-    if (triggerSeq !== null) claimed.add(triggerSeq);
+    // The trigger stays a message of its own: it reads before the reply,
+    // and the run row that names it reads after.
     let reply = false;
     let lastReplyAt = 0;
     for (const message of messages) {
