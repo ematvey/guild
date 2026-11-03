@@ -20,6 +20,7 @@ import type { ObjectStore } from "./s3.js";
 import type { ClickhouseClient } from "./clickhouse.js";
 import type { UsageSink } from "./usage.js";
 import type { TraceStore } from "./trace.js";
+import type { ConversationHistoryStore } from "./store/conversation-history.js";
 import type { UserRow } from "./store/identity.js";
 import type { IdentityStore } from "./store/identity.js";
 import type { PairingStore } from "./store/pairing.js";
@@ -63,6 +64,8 @@ export interface InfraContext {
   readonly clickhouse: ClickhouseClient;
   readonly usage: UsageSink;
   readonly trace: TraceStore;
+  /** The conversation-history read model (the Activity surface). */
+  readonly conversationHistory: ConversationHistoryStore;
   masterKey(): Buffer;
 }
 

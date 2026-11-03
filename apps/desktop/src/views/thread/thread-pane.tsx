@@ -23,13 +23,11 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
  *  and state publishes, so this memo hits for every settled block. */
 const TextBlock = memo(function TextBlock({
   b,
-  showStamp,
   showInterrupted,
   origin,
   onOpenOrigin,
 }: {
   b: RenderBlock;
-  showStamp: boolean;
   showInterrupted: boolean;
   /** The run this message was delivered from. Rendered in the body so the
    *  timestamp stays under the link. */
@@ -69,35 +67,17 @@ const TextBlock = memo(function TextBlock({
         )}
         {b.interrupted && showInterrupted && <div className="text-xs text-muted-foreground">stopped</div>}
       </div>
-      {showStamp && <HoverStamp ts={b.ts} side="left" copyText={b.text} />}
+      <HoverStamp ts={b.ts} side="left" copyText={b.text} />
     </div>
   );
 });
 
 /** View entries: each contiguous thinking/tool run becomes one
  *  WorkedForBlock; everything else (user, text, errors, compaction cards,
- *  queued-send chips, approvals) stays 1:1. Hover stamps under agent text
- *  mark only the turn's final message: an intermediate text block between
- *  tool runs is context, not the answer. The last agent text gets no stamp
- *  while streaming — more may still follow. */
+ *  queued-send chips, approvals) stays 1:1. Every agent text block carries
+ *  the hover stamp with its time and copy button. */
 function useDisplayEntries(blocks: RenderBlock[]) {
-  return useMemo(() => {
-    const entries = viewEntries(blocks);
-    const finalAgent = new Set<number>();
-    let lastAgent: number | null = null;
-    let agentSinceUser = false;
-    for (let k = entries.length - 1; k >= 0; k--) {
-      const e = entries[k];
-      if (e.kind === "plain" && e.b.kind === "text") {
-        if (!agentSinceUser) finalAgent.add(e.i);
-        agentSinceUser = true;
-        if (lastAgent === null) lastAgent = e.i;
-      } else if (e.kind === "plain" && e.b.kind === "user") {
-        agentSinceUser = false;
-      }
-    }
-    return { entries, finalAgent, lastAgent };
-  }, [blocks]);
+  return useMemo(() => viewEntries(blocks), [blocks]);
 }
 
 export interface ThreadPaneScroll {
@@ -159,7 +139,7 @@ export function ThreadPane({
   column: ThreadPaneColumn;
   isMobile: boolean;
 }) {
-  const { entries: displayEntries, finalAgent, lastAgent } = useDisplayEntries(blocks);
+  const displayEntries = useDisplayEntries(blocks);
   const { chatWidth, chatResizing, startChatDrag, resetChatWidth, nudgeChatWidth } = column;
   const isStopping = !!(viewChatId && stopping[viewChatId]);
 
@@ -234,7 +214,6 @@ export function ThreadPane({
           <TextBlock
             key={e.b.key}
             b={e.b}
-            showStamp={finalAgent.has(e.i) && !(busy && e.i === lastAgent)}
             showInterrupted={!busy}
             origin={i === firstTextIndex ? originLink : null}
             onOpenOrigin={onOpenChat}
@@ -243,8 +222,6 @@ export function ThreadPane({
       ),
     [
       displayEntries,
-      finalAgent,
-      lastAgent,
       busy,
       viewChatId,
       isStopping,

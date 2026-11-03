@@ -6,6 +6,7 @@ import type { PlatformPool } from "./db.js";
 import { ApiKeyStore } from "./store/api-keys.js";
 import { AttachmentStore } from "./store/attachments.js";
 import { ChatStore } from "./store/chats.js";
+import { ConversationHistoryStore } from "./store/conversation-history.js";
 import { ConversationMapStore } from "./store/conversations.js";
 import { EventStore } from "./store/events.js";
 import { GatewayStore } from "./store/gateway.js";
@@ -58,6 +59,8 @@ export interface PlatformStores {
   readonly toolArtifacts: ToolArtifactStore;
   /** The chat ↔ durable-conversation mapping rows. */
   readonly conversations: ConversationMapStore;
+  /** The conversation-history read model behind the Activity surface. */
+  readonly conversationHistory: ConversationHistoryStore;
 }
 
 export function createStores(pool: PlatformPool): PlatformStores {
@@ -88,5 +91,6 @@ export function createStores(pool: PlatformPool): PlatformStores {
     turnCommands: new TurnCommandStore(pool),
     toolArtifacts: new ToolArtifactStore(pool),
     conversations: new ConversationMapStore(pool),
+    conversationHistory: new ConversationHistoryStore(pool),
   };
 }

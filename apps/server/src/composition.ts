@@ -90,6 +90,8 @@ export class PlatformContext implements PlatformStores {
   /** The agent trace store (agent_traces + agent_spans + opt-in
    *  llm_payloads; trace.ts). */
   readonly trace: TraceStore;
+  /** The conversation-history read model behind the Activity surface. */
+  readonly conversationHistory: PlatformStores["conversationHistory"];
   /** The ClickHouse skill-read sink (read_skill analytics; the skill
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
@@ -170,6 +172,7 @@ export class PlatformContext implements PlatformStores {
     this.clickhouse = clickhouseFromConfig(config);
     this.usage = new UsageSink(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
+    this.conversationHistory = stores.conversationHistory;
     this.skillReads = new SkillReadSink(this.clickhouse);
     this.skillReads.attachPool(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);

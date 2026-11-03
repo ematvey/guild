@@ -184,8 +184,12 @@ export async function listAgentRuns(id: string): Promise<AgentRun[]> {
   return (await request<{ runs: AgentRun[] }>("GET", `${agentBase(id)}/runs`)).runs;
 }
 
-export async function getRun(runId: string): Promise<AgentRun> {
-  return (await request<{ run: AgentRun }>("GET", `/api/v1/runs/${encodeURIComponent(runId)}`)).run;
+export async function getRun(runId: string): Promise<{ run: AgentRun; thread: RunThread | null }> {
+  const body = await request<{ run: AgentRun; thread?: RunThread | null }>(
+    "GET",
+    `/api/v1/runs/${encodeURIComponent(runId)}`,
+  );
+  return { run: body.run, thread: body.thread ?? null };
 }
 
 export async function listRoutines(id: string): Promise<AgentRoutine[]> {
@@ -400,18 +404,105 @@ export interface SpanRow {
   attributes: Record<string, unknown>;
 }
 
-export interface ChatActivityRow {
-  session_id: string;
-  traces: number;
-  calls: number;
-  tool_calls: number;
+/** One owner of a conversation (the chat's user). */
+export interface ConversationOwner {
+  id: string;
+  email: string;
+  display_name: string | null;
+}
+
+/** The agent a conversation belongs to; absent on a chat with no agent thread. */
+export interface ConversationAgent {
+  id: string;
+  name: string;
+}
+
+/** The thread row behind a conversation, with its parent thread's chat. */
+export interface ConversationThread {
+  id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
+  type: string;
+  parent_thread_id: string | null;
+  parent_chat_id: string | null;
+  parent_title: string | null;
+}
+
+/** One conversation row in the Activity list. */
+export interface ConversationRow {
+  id: string;
+  title: string | null;
+  owner: ConversationOwner;
+  agent: ConversationAgent | null;
+  thread: ConversationThread | null;
+  created_at: string;
+  last_activity_at: string;
+  messages: number;
+  runs: number;
+  open_runs: number;
+  failed_runs: number;
+  archived: boolean;
+  deleted: boolean;
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
   errors: number;
-  started_at: string | null;
-  ended_at: string | null;
-  duration_ms: number;
+}
+
+/** One run inside a conversation. */
+export interface ConversationRun {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  trigger: string;
+  status: string;
+  summary: string;
+  error_message: string;
+  tokens: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** A run as a conversation item: the trigger it answered and its step count. */
+export interface ConversationRunItem {
+  kind: "run";
+  ts: string;
+  run: ConversationRun;
+  trigger: string | null;
+  steps: number;
+  call_count: number;
+  tool_count: number;
+  /** True when the agent's reply renders below the row. */
+  reply: boolean;
+}
+
+/** One message in a conversation, at the reading level. */
+export interface ConversationMessageItem {
+  kind: "message";
+  ts: string;
+  seq: number;
+  role: "user" | "assistant" | "system" | "error" | "compaction";
+  text: string;
+}
+
+export type ConversationItem = ConversationMessageItem | ConversationRunItem;
+
+/** One conversation as the reader sees it: header, page items, paging flag. */
+export interface ConversationDetail {
+  conversation: ConversationRow;
+  items: ConversationItem[];
+  has_more: boolean;
+}
+
+/** The thread behind a run, with its parent thread's chat. */
+export interface RunThread {
+  id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
+  type: string;
+  parent_thread_id: string | null;
+  parent_chat_id: string | null;
+  parent_title: string | null;
 }
 
 export interface ActivityTotals {
@@ -465,6 +556,29 @@ function activityQuery(filters: ActivityQuery): string {
   return query.toString() ? `?${query}` : "";
 }
 
+export async function listConversations(
+  filters: ActivityQuery = {},
+): Promise<{ conversations: ConversationRow[]; total: number }> {
+  return request<{ conversations: ConversationRow[]; total: number }>(
+    "GET",
+    `/api/v1/activity/conversations${activityQuery(filters)}`,
+  );
+}
+
+export async function getConversation(
+  conversationId: string,
+  opts: { before?: number; limit?: number } = {},
+): Promise<ConversationDetail> {
+  const query = new URLSearchParams();
+  if (opts.before !== undefined) query.set("before", String(opts.before));
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<ConversationDetail>(
+    "GET",
+    `/api/v1/activity/conversations/${encodeURIComponent(conversationId)}${suffix}`,
+  );
+}
+
 export async function listTraces(filters: ActivityQuery = {}): Promise<{ traces: TraceRow[]; total: number }> {
   return request<{ traces: TraceRow[]; total: number }>("GET", `/api/v1/activity/traces${activityQuery(filters)}`);
 }
@@ -482,16 +596,6 @@ export async function getTrace(traceId: string): Promise<{
 
 export async function listSpans(filters: ActivityQuery = {}): Promise<{ spans: SpanRow[]; total: number }> {
   return request<{ spans: SpanRow[]; total: number }>("GET", `/api/v1/activity/spans${activityQuery(filters)}`);
-}
-
-export async function listChatActivity(
-  filters: ActivityQuery = {},
-): Promise<{ chats: ChatActivityRow[]; total: number }> {
-  const body = await request<{ sessions: ChatActivityRow[]; total: number }>(
-    "GET",
-    `/api/v1/activity/sessions${activityQuery(filters)}`,
-  );
-  return { chats: body.sessions, total: body.total };
 }
 
 export async function getActivitySummary(filters: ActivityQuery = {}): Promise<ActivitySummary> {

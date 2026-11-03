@@ -812,6 +812,47 @@ export class TraceStore {
     return { call_count: Number(row?.["call_count"] ?? 0), tool_count: Number(row?.["tool_count"] ?? 0) };
   }
 
+  /** Per-run model and tool call counts for the listed run ids (a run's
+   *  trace id is the run id). Ids without spans are absent. */
+  async runCallCounts(
+    orgId: string,
+    runIds: string[],
+  ): Promise<Map<string, { call_count: number; tool_count: number }>> {
+    const out = new Map<string, { call_count: number; tool_count: number }>();
+    const rows = await this.spanAggregates(orgId, runIds);
+    for (const [id, row] of rows) {
+      out.set(id, { call_count: Number(row["call_count"] ?? 0), tool_count: Number(row["tool_count"] ?? 0) });
+    }
+    return out;
+  }
+
+  /** Per-chat token, cost and error totals for the listed chat ids. A chat
+   *  with no spans is absent. */
+  async sessionTotals(
+    orgId: string,
+    sessionIds: string[],
+  ): Promise<Map<string, { tokens_in: number; tokens_out: number; cost_usd: number; errors: number }>> {
+    const out = new Map<string, { tokens_in: number; tokens_out: number; cost_usd: number; errors: number }>();
+    if (sessionIds.length === 0) return out;
+    await this.ensureOnce();
+    const list = sessionIds.map((id) => `toUUID('${id.replace(/'/g, "")}')`).join(", ");
+    const rows = await this.client.query(
+      "SELECT session_id, sum(tokens_in) AS tokens_in, sum(tokens_out) AS tokens_out, " +
+        "sum(cost_usd) AS cost_usd, countIf(status = 'error') AS errors " +
+        `FROM agent_spans WHERE org_id = toUUID(?) AND session_id IN (${list}) GROUP BY session_id`,
+      [orgId],
+    );
+    for (const row of rows) {
+      out.set(String(row["session_id"]), {
+        tokens_in: Number(row["tokens_in"] ?? 0),
+        tokens_out: Number(row["tokens_out"] ?? 0),
+        cost_usd: Number(row["cost_usd"] ?? 0),
+        errors: Number(row["errors"] ?? 0),
+      });
+    }
+    return out;
+  }
+
   /** Per-trace span totals for the listed trace ids. */
   private async spanAggregates(orgId: string, traceIds: string[]): Promise<Map<string, Record<string, unknown>>> {
     const out = new Map<string, Record<string, unknown>>();

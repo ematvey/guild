@@ -38,8 +38,8 @@ first. Code comments describe only the present.
 - **Product surface:** private threads and shared persistent agents; org
   skills with provenance; projects, machines and agent routines. Admin
   sections live inside Settings (`/settings/<section>`); there is no
-  separate admin app. Observability is the Activity surface, fed by traces
-  and spans from ClickHouse.
+  separate admin app. Observability is the Activity surface: conversations
+  and runs read Postgres, the model calls inside a run read ClickHouse.
 - **Quality baseline:** `scripts/check.sh` runs all of it in one pass:
   `cargo nextest run --workspace`, the TS server suite
   (`npm test --workspace apps/server`), desktop vitest, strict clippy
@@ -85,6 +85,34 @@ first. Code comments describe only the present.
    and the integration connectors.
 
 ## Latest decisions
+
+- **The domain model is written down, in numbered documents (2026-11-03).**
+  `docs/domain/000`–`005` name Guild's concepts and the rules each keeps:
+  principles, the domain model with rejected concepts and a glossary,
+  access, execution, capabilities and live state. Each document builds only
+  on the ones before it. They describe the code as verified on this date,
+  where the 2026-10 specs had drifted (no `project_*` tools, thread types
+  `user|subagent|routine`, only `AGENTS.md`/`MEMORY.md` ride the prompt,
+  routine kinds `cron|once`, admins read but never write a member's
+  thread). Known gaps found while writing are listed at the end of 002,
+  003 and 004. A change to a concept or a rule updates its document in the
+  same commit.
+
+- **Observability reads conversations and runs, top-down (2026-11-04).**
+  The Activity surface is the history browser for managers. Its base layer
+  is the conversation (one chat) and the run (one agent turn); the call
+  analytics stay behind them. A conversation row joins the chat, its owner,
+  its agent thread and the run and message counts, so an admin sees the
+  whole org and a member only their own rows. The conversation page reads a
+  page of message events and the runs that overlap it, and groups them:
+  the trigger message, one run row ("N steps", status, duration, tokens),
+  then the agent's reply. The run row opens the run detail; the run detail
+  names its thread and links the parent thread, and shows the trigger
+  message above the transcript. `/api/v1/activity/conversations` is the new
+  read; the old `/activity/sessions` stays as the released-client alias.
+  The tabs read Conversations, Runs, Model calls, in that order. Access is
+  the existing owner-or-admin rule: an admin reads every chat, a member
+  only their own.
 
 - **A routine delivers into one chat, marked in the list (2026-11-04).**
   Every `send_message` from a routine run opened a new chat, so an hourly

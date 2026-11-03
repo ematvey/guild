@@ -2,7 +2,7 @@
 // The run page follows its run's frames: the header takes the pushed tokens
 // and duration, and the frame that finishes the run re-reads the trace once
 // so the transcript shows the final spans.
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, SpanRow, TraceRow } from "./agents-api";
 import { makeRun } from "./test-fixtures";
@@ -65,7 +65,7 @@ describe("run page", () => {
   it("moves the header with the pushed run and re-reads the trace once when the run finishes", async () => {
     const first: TraceRow = traceFromRun(running);
     api.getTrace.mockResolvedValueOnce({ trace: first, spans: [span("s1", "first")], children: [] });
-    api.getRun.mockResolvedValue(running);
+    api.getRun.mockResolvedValue({ run: running, thread: null });
     render(<RunDetailPage runId="r1" view="tree" role="member" onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText("Running")).toBeTruthy());
 
@@ -76,7 +76,7 @@ describe("run page", () => {
       spans: [span("s1", "first"), span("s2", "final")],
       children: [],
     });
-    api.getRun.mockResolvedValue(done);
+    api.getRun.mockResolvedValue({ run: done, thread: null });
     act(() => applyAgentRun(done));
 
     await waitFor(() => expect(api.getTrace).toHaveBeenCalledTimes(2));
@@ -85,5 +85,16 @@ describe("run page", () => {
 
     act(() => applyAgentRun(done));
     expect(api.getTrace).toHaveBeenCalledTimes(2);
+  });
+
+  it("goes back to the conversation the run belongs to", async () => {
+    const trace = { ...traceFromRun(running), session_id: "c1" };
+    api.getTrace.mockResolvedValueOnce({ trace, spans: [span("s1", "hi")], children: [] });
+    api.getRun.mockResolvedValue({ run: running, thread: null });
+    const onNavigate = vi.fn();
+    render(<RunDetailPage runId="r1" view="tree" role="member" onNavigate={onNavigate} />);
+    const back = await screen.findByRole("button", { name: /Conversation/ });
+    fireEvent.click(back);
+    expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c1" });
   });
 });
