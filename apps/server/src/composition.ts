@@ -32,6 +32,7 @@ import { SkillReadSink } from "./platform/skill-reads.js";
 import { UsageSink } from "./platform/usage.js";
 import { TraceStore } from "./platform/trace.js";
 import { masterKeyBytes } from "./platform/crypto.js";
+import { IdpRecheck } from "./platform/idp-recheck.js";
 import { gatewayCredential } from "./platform/http/auth.js";
 import type { GatewayCredential } from "./platform/llm-gateway.js";
 import type { SocketSeams } from "./platform/route-contexts.js";
@@ -81,6 +82,10 @@ export class PlatformContext implements PlatformStores {
    *  process, hub-owned lifetime). */
   readonly machineDispatch: MachineDispatch;
   readonly wsTickets: TicketStore;
+  /** Activity-driven IdP revalidation: an active OIDC user's refresh token
+   *  is replayed on the interval, and a refused replay revokes the user's
+   *  credentials. */
+  readonly idpRecheck: IdpRecheck;
   readonly usage: UsageSink;
   /** The agent trace store (agent_traces + agent_spans + opt-in
    *  llm_payloads; trace.ts). */
@@ -155,6 +160,13 @@ export class PlatformContext implements PlatformStores {
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
+    this.idpRecheck = new IdpRecheck({
+      oidc: this.oidc,
+      identity: this.identity,
+      config,
+      masterKey: () => this.masterKey(),
+      log: (message) => log.warn(message),
+    });
     this.clickhouse = clickhouseFromConfig(config);
     this.usage = new UsageSink(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);

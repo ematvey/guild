@@ -60,7 +60,9 @@ export async function requireUser(ctx: IdentityCtx, req: FastifyRequest): Promis
   if (!header.startsWith("Bearer ")) {
     throw ApiError.unauthorized("expected Bearer token");
   }
-  return ctx.identity.validateSession(header.slice("Bearer ".length));
+  const user = await ctx.identity.validateSession(header.slice("Bearer ".length));
+  ctx.idpRecheck.noteActivity(user);
+  return user;
 }
 
 /** The authenticated user, who must be an org admin (403 otherwise). */

@@ -8,10 +8,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { createPlatformTestEnv, type PlatformTestEnv } from "../support/platform-env.js";
 import { PlatformContext } from "../../composition.js";
-import { hashPassword, verifyPassword } from "../../platform/crypto.js";
+import { hashPassword, verifyPassword, encryptSecret } from "../../platform/crypto.js";
 import { pgTimestampToRfc3339, uuidv7, isUuid } from "../../platform/time.js";
 import { safeFilename } from "../../platform/store/attachments.js";
 import { resolveOidcUser } from "../../platform/http/oidc.js";
+import { IdpRecheck } from "../../platform/idp-recheck.js";
 import { ApiError } from "../../platform/errors.js";
 import { waitFor } from "../support/wait.js";
 
@@ -313,6 +314,10 @@ describe("OIDC login round-trip against a mock IdP", () => {
   let idp: Server;
   let idpOrigin = "";
   let userinfoHits = 0;
+  /** Refresh-grant calls the mock IdP answered, and whether it refuses
+   *  them (a suspended/deleted account). */
+  let refreshHits = 0;
+  let refuseRefresh = false;
 
   beforeAll(async () => {
     idp = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -332,11 +337,24 @@ describe("OIDC login round-trip against a mock IdP", () => {
         let body = "";
         req.on("data", (c: Buffer) => (body += c.toString()));
         req.on("end", () => {
+          if (body.includes("grant_type=refresh_token")) {
+            refreshHits += 1;
+            if (refuseRefresh) {
+              res.writeHead(400, { "content-type": "application/json" });
+              res.end(JSON.stringify({ error: "invalid_grant" }));
+              return;
+            }
+            expect(body).toContain("refresh_token=idp-refresh-token");
+            expect(body).toContain("client_id=mock-client");
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ access_token: "idp-access-token" }));
+            return;
+          }
           expect(body).toContain("grant_type=authorization_code");
           expect(body).toContain("code=the-code");
           expect(body).toContain("client_id=mock-client");
           res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ access_token: "idp-access-token" }));
+          res.end(JSON.stringify({ access_token: "idp-access-token", refresh_token: "idp-refresh-token" }));
         });
         return;
       }
@@ -453,6 +471,101 @@ describe("OIDC login round-trip against a mock IdP", () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve) => idp.close(() => resolve()));
+  });
+});
+
+describe("activity-driven IdP revalidation", () => {
+  let idpOrigin = "";
+  let refreshHits = 0;
+  let refuse = false;
+
+  /** The recheck policy over the shared stores, on a one-minute interval. */
+  const rechecker = (): IdpRecheck =>
+    new IdpRecheck({
+      oidc: ctx.oidc,
+      identity: ctx.identity,
+      config: { idpRecheckSeconds: 60 },
+      masterKey: () => ctx.masterKey(),
+    });
+
+  const ssoUser = async () => (await ctx.identity.findByEmail(orgId, "sso-flow@example.test"))!;
+
+  /** The interval claim compares against checked_at; age it so the next
+   *  check is due. */
+  const ageLink = async (): Promise<void> => {
+    await ctx.pool.query("UPDATE oidc_identities SET checked_at = now() - interval '1 hour'");
+  };
+
+  beforeAll(async () => {
+    const idp = createServer((req: IncomingMessage, res: ServerResponse) => {
+      let body = "";
+      req.on("data", (c: Buffer) => (body += c.toString()));
+      req.on("end", () => {
+        refreshHits += 1;
+        if (refuse) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid_grant" }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "idp-access-token" }));
+      });
+    });
+    await new Promise<void>((resolve) => idp.listen(0, "127.0.0.1", resolve));
+    idpOrigin = `http://127.0.0.1:${(idp.address() as AddressInfo).port}`;
+    const user = await ssoUser();
+    await ctx.oidc.saveIdentity(user.id, `${idpOrigin}/token`, encryptSecret(ctx.masterKey(), "idp-refresh-token"));
+  });
+
+  it("the login stores the IdP link encrypted", async () => {
+    const row = (
+      await ctx.pool.query<{ token_endpoint: string; encrypted_refresh_token: string }>(
+        "SELECT i.token_endpoint, i.encrypted_refresh_token FROM oidc_identities i " +
+          "JOIN users u ON u.id = i.user_id WHERE u.email = 'sso-flow@example.test'",
+      )
+    ).rows[0]!;
+    expect(row.token_endpoint).toBe(`${idpOrigin}/token`);
+    expect(row.encrypted_refresh_token).not.toContain("idp-refresh-token");
+  });
+
+  it("keeps the credentials when the IdP still accepts the account", async () => {
+    await ageLink();
+    const user = await ssoUser();
+    const [, token] = await ctx.identity.createSession(user.id);
+    const before = refreshHits;
+    await rechecker().check(user);
+    expect(refreshHits).toBe(before + 1);
+    expect(await meStatus(token)).toBe(200);
+    // The claim holds for the interval: a second check costs no call.
+    await rechecker().check(user);
+    expect(refreshHits).toBe(before + 1);
+  });
+
+  it("revokes sessions, pairing tokens and api keys when the IdP refuses the grant", async () => {
+    await ageLink();
+    const user = await ssoUser();
+    const [, token] = await ctx.identity.createSession(user.id);
+    expect(await meStatus(token)).toBe(200);
+    refuse = true;
+    try {
+      await rechecker().check(user);
+    } finally {
+      refuse = false;
+    }
+    expect(await meStatus(token)).toBe(401);
+    const live = await ctx.pool.query<{ count: string }>(
+      "SELECT count(*) AS count FROM sessions WHERE user_id = $1 AND revoked_at IS NULL",
+      [user.id],
+    );
+    expect(Number(live.rows[0]!.count)).toBe(0);
+  });
+
+  it("skips a managed account", async () => {
+    const before = refreshHits;
+    const admin = await ctx.identity.getUser(adminId);
+    await rechecker().check(admin);
+    rechecker().noteActivity(admin);
+    expect(refreshHits).toBe(before);
   });
 });
 

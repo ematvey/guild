@@ -5,7 +5,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
-import { decryptSecret, maskSecretLen } from "../crypto.js";
+import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { requireJsonBody, requireAdminUser, queryParam } from "./error.js";
@@ -286,8 +286,12 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
       ["response_type", "code"],
       ["client_id", row.client_id],
       ["redirect_uri", redirectUri],
-      ["scope", "openid email profile"],
+      ["scope", "openid email profile offline_access"],
       ["state", state],
+      // Offline access is what makes activity revalidation possible: the
+      // refresh token is the only credential Guild holds for the user at the
+      // IdP (platform/idp-recheck.ts).
+      ["access_type", "offline"],
     ]) {
       authUrl.searchParams.set(k, v);
     }
@@ -319,7 +323,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     const discovery = await fetchDiscovery(row.issuer);
     const redirectUri = `${oidcState.app.replace(/\/+$/, "")}/api/v1/auth/oidc/callback`;
 
-    let tokenResp: { access_token?: string };
+    let tokenResp: { access_token?: string; refresh_token?: string };
     try {
       const res = await fetch(discovery.token_endpoint, {
         method: "POST",
@@ -335,7 +339,7 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
       if (!res.ok) {
         throw ApiError.unauthorized(`oidc token exchange failed: ${res.status} ${res.statusText}`);
       }
-      tokenResp = (await res.json()) as { access_token?: string };
+      tokenResp = (await res.json()) as { access_token?: string; refresh_token?: string };
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw ApiError.internal(`oidc token exchange failed: ${(error as Error).message}`);
@@ -373,6 +377,16 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     // Provision on first login with the IdP profile, refresh it when the
     // claims change, then hand out a session.
     const user = await resolveOidcUser(ctx, org, email, emailVerified, displayName, avatarUrl);
+    // The refresh token is the user's IdP link: stored so activity can
+    // revalidate the account later. A provider that issues none leaves the
+    // user without a link, and the recheck skips them.
+    if (typeof tokenResp.refresh_token === "string" && tokenResp.refresh_token !== "") {
+      await ctx.oidc.saveIdentity(
+        user.id,
+        discovery.token_endpoint,
+        encryptSecret(ctx.masterKey(), tokenResp.refresh_token),
+      );
+    }
     const [, token] = await ctx.identity.createSession(user.id);
 
     // Back to the web app; the token rides in the URL fragment so it never

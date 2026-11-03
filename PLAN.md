@@ -86,6 +86,30 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **An OIDC user's account is rechecked at the IdP on activity
+  (2026-11-04).** A login proved the account existed; nothing after it
+  did. A Google account disabled at the provider kept its Guild session
+  (30-day sliding expiry), its machine pairing and its API keys until an
+  admin deleted the user. Now the login asks for offline access and stores
+  the refresh token (`oidc_identities`, encrypted with the master key), and
+  `platform/idp-recheck.ts` replays it — at most once per interval, and only
+  for a user who is active.
+  - *The hook is activity, not a timer.* `requireUser` and the member
+    socket's per-message revalidation note the user; a per-process memory
+    map makes that a read, and the store's `claimRecheck` makes one call per
+    user per interval across every worker.
+  - *The request is never blocked.* The recheck runs in the background, so
+    an IdP outage cannot fail a request. A refused grant (`invalid_grant`:
+    suspended, deleted, or app access revoked) revokes the user's sessions,
+    pairing tokens and API keys and bumps `auth_generation`; the next call
+    answers 401 and the client signs out through the existing 401 policy. A
+    transport failure or 5xx is not evidence against the user: nothing
+    changes and the next interval retries.
+  - *Interval* is `GUILD_IDP_RECHECK_SECONDS` (default 900, `0` disables).
+    A user whose provider issued no refresh token has no link and is
+    skipped — they get one at their next login. A re-login rewrites the
+    link and counts as a check.
+
 - **Full review applied: trust boundaries, one home per layer, exact
   machine files, desktop stores (2026-11-03).** A six-lane review (server
   runtime, platform/hub, services, desktop, Rust, cross-cutting) found two

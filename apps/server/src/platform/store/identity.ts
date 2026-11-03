@@ -3,7 +3,7 @@
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../errors.js";
-import { withTransaction, type PlatformPool } from "../db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
 import { pgTimestampToRfc3339, utcText, uuidv7 } from "../time.js";
 
@@ -336,8 +336,7 @@ export class IdentityStore {
       }
       const res = await client.query(
         "UPDATE users SET role = COALESCE($2::text, role), " +
-          "password_hash = COALESCE($3::text, password_hash), " +
-          "auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END " +
+          "password_hash = COALESCE($3::text, password_hash) " +
           "WHERE id = $1 AND org_id = $4 " +
           "RETURNING id, email, role, identity_type, " +
           utcText("created_at") +
@@ -346,12 +345,7 @@ export class IdentityStore {
       );
       if (res.rows.length === 0) throw ApiError.notFound("no such user");
       if (password !== null) {
-        await client.query("DELETE FROM pairing_tokens WHERE user_id = $1 AND used_at IS NULL", [userId]);
-        await client.query(
-          "UPDATE api_keys SET revoked_at = now() WHERE (user_id = $1 OR created_by = $1) AND revoked_at IS NULL",
-          [userId],
-        );
-        await client.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1", [userId]);
+        await this.revokeCredentials(client, userId);
       }
       const r = res.rows[0] as Record<string, unknown>;
       return {
@@ -362,6 +356,25 @@ export class IdentityStore {
         created_at: pgTimestampToRfc3339(r.created_at as string),
       };
     });
+  }
+
+  /** Revokes every credential the user holds and bumps the auth generation
+   *  so anything minted from an older validation stops validating: sessions,
+   *  unused pairing tokens, api keys. Runs inside the caller's transaction. */
+  private async revokeCredentials(client: PoolClient, userId: string): Promise<void> {
+    await client.query("UPDATE users SET auth_generation = auth_generation + 1 WHERE id = $1", [userId]);
+    await client.query("DELETE FROM pairing_tokens WHERE user_id = $1 AND used_at IS NULL", [userId]);
+    await client.query(
+      "UPDATE api_keys SET revoked_at = now() WHERE (user_id = $1 OR created_by = $1) AND revoked_at IS NULL",
+      [userId],
+    );
+    await client.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1", [userId]);
+  }
+
+  /** The same revocation in its own transaction, for callers that are not
+   *  already inside one (the IdP recheck). */
+  async revokeAllCredentials(userId: string): Promise<void> {
+    await withTransaction(this.pool, (client) => this.revokeCredentials(client, userId));
   }
 
   /** Deletes a user inside one transaction; refuses to remove the org's

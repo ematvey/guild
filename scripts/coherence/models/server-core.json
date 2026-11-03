@@ -48,14 +48,15 @@
     },
     {
       "id": "user",
-      "definition": "One person in an org, with an identity type and a password or IdP subject.",
+      "definition": "One person in an org, with an identity type and a password or IdP subject. An OIDC user also carries an IdP link: the refresh token the login stored, which activity revalidation replays.",
       "canonical": "apps/server/src/platform/store/identity.ts",
       "types": [
         "UserRow",
         "UserListRow",
         "UserInfo",
         "LoginRequest",
-        "LoginResponse"
+        "LoginResponse",
+        "OidcIdentityRow"
       ],
       "aliases": [
         "member",
@@ -73,6 +74,10 @@
         {
           "where": "crates/protocol/src/api.rs",
           "role": "wire"
+        },
+        {
+          "where": "apps/server/src/platform/store/oidc.ts",
+          "role": "db"
         }
       ],
       "translations": [

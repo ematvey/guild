@@ -90,6 +90,10 @@ export interface Config {
    *  llm_payloads request/response bodies. Set GUILD_TRACE_PAYLOADS=0 to
    *  keep the span metadata (agent_spans) without the bodies. */
   tracePayloads: boolean;
+  /** How often an active OIDC user's IdP link is replayed to ask the
+   *  provider whether the account still exists
+   *  (GUILD_IDP_RECHECK_SECONDS, default 900; 0 disables the recheck). */
+  idpRecheckSeconds: number;
   /** Worker-per-chat mode: "on" forks a worker per active chat and the
    *  server holds no harness; "off" (default) runs everything in-process. */
   workerMode: "off" | "on";
@@ -267,6 +271,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     approvalTimeoutMs,
     clientToolTimeoutMs,
     retryBaseDelayMs: positiveInt(env, "GUILD_RETRY_BASE_DELAY_MS", 2000),
+    idpRecheckSeconds: nonNegativeInt(env, "GUILD_IDP_RECHECK_SECONDS", 900),
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES || null,
     tracePayloads,
     // Worker-per-chat: when "on", the server holds no harness — admission
@@ -298,6 +303,18 @@ function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
+
+/** A non-negative integer env setting; unset or empty takes `fallback`.
+ *  Zero is a value ("off"), not an error. */
+function nonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
   }
   return value;
 }

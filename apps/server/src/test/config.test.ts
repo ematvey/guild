@@ -34,6 +34,7 @@ describe("loadConfig", () => {
       approvalTimeoutMs: 300_000,
       clientToolTimeoutMs: 300_000,
       retryBaseDelayMs: 2_000,
+      idpRecheckSeconds: 900,
       execPolicyRulesPath: null,
       tracePayloads: true,
       workerMode: "off",
@@ -67,6 +68,18 @@ describe("loadConfig", () => {
       poolMax: 7,
       approvalTimeoutMs: 300_000,
     });
+  });
+
+  it("reads the IdP recheck interval, where zero means off", () => {
+    const base = { GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" };
+    expect(loadConfig({ ...base, GUILD_IDP_RECHECK_SECONDS: "0" }).idpRecheckSeconds).toBe(0);
+    expect(loadConfig({ ...base, GUILD_IDP_RECHECK_SECONDS: "60" }).idpRecheckSeconds).toBe(60);
+    expect(loadConfig(base).idpRecheckSeconds).toBe(900);
+    for (const value of ["abc", "-5", "2.5"]) {
+      expect(() => loadConfig({ ...base, GUILD_IDP_RECHECK_SECONDS: value }), value).toThrow(
+        "GUILD_IDP_RECHECK_SECONDS",
+      );
+    }
   });
 
   it("resolves the sandbox mode", () => {

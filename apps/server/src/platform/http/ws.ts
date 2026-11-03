@@ -455,6 +455,7 @@ async function driveSocket(
       return null;
     }
     if (current.org_id !== user.org_id) return null;
+    auth.idpRecheck.noteActivity(current);
     validated = { user: current, at: Date.now() };
     return current;
   };

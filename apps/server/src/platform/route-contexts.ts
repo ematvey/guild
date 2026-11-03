@@ -27,6 +27,7 @@ import type { EventStore } from "./store/events.js";
 import type { AttachmentStore } from "./store/attachments.js";
 import type { OrgStore } from "./store/orgs.js";
 import type { OidcStore } from "./store/oidc.js";
+import type { IdpRecheck } from "./idp-recheck.js";
 import type { ApiKeyStore } from "./store/api-keys.js";
 import type { MachineStore } from "./store/machines.js";
 import type { SkillReadSink } from "./skill-reads.js";
@@ -85,6 +86,8 @@ export interface IdentityCtx {
   readonly push: PushStore;
   readonly config: Config;
   masterKey(): Buffer;
+  /** Activity-driven IdP revalidation (platform/idp-recheck.ts). */
+  readonly idpRecheck: IdpRecheck;
   /** The server's VAPID pair, minted on first use. */
   pushKeys(): Promise<VapidKeys>;
 }
