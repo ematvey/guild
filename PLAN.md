@@ -83,6 +83,17 @@ first. Code comments describe only the present.
 8. **Cover the review gaps in the next loop:** Windows-only engine paths
    (compile-checked, never run), the desktop updater flow on a real install,
    and the integration connectors.
+9. **Make `guild-plugin` a proper CLI with its own auth.** Today it is one
+   Bun script (`packages/integration-sdk/bin/guild-plugin.ts`, run by path)
+   whose `publish` needs a user session token passed by hand (`--token` or
+   `$GUILD_TOKEN`). The registry accepts only session tokens (`gk_…` keys
+   are the LLM gateway's), so CI would have to borrow a person's session.
+   Wanted: an installable CLI (npm release of the SDK), a `login` that
+   stores per-server credentials (or reads the desktop's
+   `~/.config/guild/workspaces.json`), and an admin-minted, revocable
+   publish token scoped to the registry endpoints for CI. Uploads stay
+   inert until an admin approves the hash, so that token need not be an
+   admin credential.
 
 ## Latest decisions
 
