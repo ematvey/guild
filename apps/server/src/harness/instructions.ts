@@ -93,7 +93,7 @@ export function composeAgentInstructions(
     parts.push(
       [
         `<routine_thread name="${name}">`,
-        `This thread collects the messages the routine "${feedRoutine}" sends the user. Its runs post them here; they may not be in your context, so read them with thread_history before you answer about them. The user replies here.`,
+        `This thread collects the messages the routine "${feedRoutine}" sends the user. Its runs post them here, and they are in your context as your own messages; the user replies here. Older messages may be compacted or missing from your context: thread_history reads the whole thread.`,
         ...(latest === null
           ? []
           : [

@@ -16,6 +16,7 @@ import {
   type ThreadEventRow,
 } from "../platform/domain/thread-events.js";
 import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
+import { AGENT_MESSAGE_KIND, agentMessageOf } from "./agent-message.js";
 
 export interface ProjectionState {
   chatId: string;
@@ -224,6 +225,26 @@ export class TranscriptProjection {
           }
         }
         await this.append(state, entry, ev);
+        return;
+      }
+      case AGENT_MESSAGE_KIND: {
+        // A posted message is its own turn, after every turn the chat has.
+        const message = agentMessageOf(entry);
+        if (message === null) return;
+        const text = message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+        const turn = Math.max(state.turn, await this.deps.threads.latestTurn(state.chatId)) + 1;
+        const ev = assistantMessageEvent(
+          turn,
+          1,
+          [{ type: "text", text }],
+          { tokens_in: 0, tokens_out: 0, cost_usd: 0 },
+          message.model,
+        );
+        const row = await this.append(state, entry, ev);
+        if (row.event.type === "assistant_message") {
+          state.turn = row.event.turn;
+          state.step = 0;
+        }
         return;
       }
       case "pi.compaction": {

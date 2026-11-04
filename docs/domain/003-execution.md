@@ -133,11 +133,11 @@ Each Routine Run gets a new, hidden `routine` Thread, owned by the creator. It s
 - `thread` (default): appended to the Routine's one feed Thread for that Member. If the feed is archived, deleted or closed, a new feed opens. If the feed is mid-Turn, the message goes to a separate marked Thread.
 - `new_chat`: one new Thread per message.
 
-Each message also writes an `agent_message` Notice.
+A delivered message is an entry in the receiving Thread's conversation, written like a compaction summary: at once when the Thread is idle, else at the Turn's next boundary. The Agent reads it there as its own reply, it counts toward context usage, and compaction summarizes it. Every `send_message`, inside a Routine or not, lands this way. Each message also writes an `agent_message` Notice.
 
 ## Durability and recovery
 
-**The journal is the truth.** Each Thread maps to one durable conversation, created once. Every Input, Step, Tool call and result is a journal entry before it has effects. Thread events are a projection of that journal: each entry is copied once, behind a stored cursor. The Run and Turn command rows are reconciled from it the same way.
+**The journal is the truth.** Each Thread maps to one durable conversation, created once. Every Input, Step, Tool call and result is a journal entry before it has effects. Thread events are a projection of that journal: each entry is copied once, behind a stored cursor. **What a Thread shows as conversation, the Agent has in its conversation:** a message is written to the journal and projected; it is never appended to Thread events alone. Display-only rows (Approval cards, Turn failures) carry no message. The Run and Turn command rows are reconciled from it the same way.
 
 **Hosts reopen.** A conversation's host reopens after a failure with backoff (0, 1 s, 5 s, 30 s) and resumes. In worker mode, each active Thread has its own forked worker process. The supervisor respawns a dead worker only when the journal still holds pending work. It kills a worker that stops reporting its heartbeat for 90 seconds, or that ignores a stop for 10 seconds.
 

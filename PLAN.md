@@ -86,6 +86,29 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A posted agent message is a conversation entry (2026-11-04).** Rule:
+  what a thread shows as conversation, the agent has in its conversation.
+  `send_message` appended an `assistant_message` straight to
+  `thread_events`, so a routine feed's posts (and the opening message of a
+  thread an agent opens) were never in model context: compaction of a prod
+  feed summarized one user line as "no prior history", the context meter
+  never counted them, and the agent had to `thread_history` its own posts.
+  A delivery is now a `guild.agent-message` write submission into the
+  target chat's conversation (`deliverMessage`, routed like `deliverSteer`
+  to the chat's owning worker): it lands at once when idle, else at the
+  turn boundary. The entry carries an assistant message with zero usage;
+  the projection appends its transcript row as a turn of its own, and the
+  context meter adds estimates of entries after the last measured request,
+  as pi-durable's compaction trigger does. Posts written before this change
+  stay display-only; the feed prompt still points at `thread_history` for
+  them. Open gaps of the same rule, found by code reading and not yet
+  fixed: a child result merged into a user's queued steer stays consumed
+  when that steer is withdrawn; a subagent/routine prompt echo written
+  outside the turn-command path survives a withdrawn input; a failed
+  submit leaves its user echo; closing a child from the UI and the
+  workspace-conflict notice never reach the other conversation; the
+  generic event-append route accepts message types.
+
 - **The domain model is written down, in numbered documents (2026-11-03).**
   `docs/domain/000`–`005` name Guild's concepts and the rules each keeps:
   principles, the domain model with rejected concepts and a glossary,

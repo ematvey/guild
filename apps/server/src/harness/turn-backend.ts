@@ -41,6 +41,7 @@ export interface SubmitTurnInput {
 export interface RemoteTurns {
   submit(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
   deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
 }
 
 export type TurnPlacement =
@@ -59,6 +60,9 @@ export type TurnPlacement =
 export interface LocalTurns {
   submit(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number>;
   deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  /** Writes one agent message into the chat's conversation: the model sees
+   *  it as its own reply, and the transcript shows it from the entry. */
+  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
   steer(chatId: string, submissionId: number): Promise<boolean>;
   withdraw(chatId: string, submissionId: number): Promise<string>;
   stop(chatId: string): Promise<void>;
@@ -107,6 +111,7 @@ export function turnBackend(placement: TurnPlacement, local: LocalTurns): TurnBa
       return {
         submit: (chatId, _orgId, input) => forker.submit(chatId, input),
         deliverSteer: (chatId, orgId, text, model) => forker.deliverSteer(chatId, orgId, text, model),
+        deliverMessage: (chatId, orgId, text, model) => forker.deliverMessage(chatId, orgId, text, model),
         steer: (chatId, submissionId) => forker.steer(chatId, submissionId),
         withdraw: (chatId, submissionId) => forker.withdraw(chatId, submissionId),
         stop: (chatId) => forker.stop(chatId),
@@ -137,6 +142,10 @@ export function turnBackend(placement: TurnPlacement, local: LocalTurns): TurnBa
           owns(chatId)
             ? local.deliverSteer(chatId, orgId, text, model)
             : placement.remote.deliverSteer(chatId, orgId, text, model),
+        deliverMessage: (chatId, orgId, text, model) =>
+          owns(chatId)
+            ? local.deliverMessage(chatId, orgId, text, model)
+            : placement.remote.deliverMessage(chatId, orgId, text, model),
         owns,
         scope: own,
         hostsHarness: true,

@@ -348,6 +348,46 @@ describe("durable integration contracts", () => {
     }
   });
 
+  it("a posted agent message is a conversation entry the transcript projects", async () => {
+    const id = await chat();
+    const runtime = new GuildRuntime({
+      config: stack.env.config,
+      pool: stack.env.db,
+      log,
+      stores: createStores(stack.env.db),
+      agents: new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db) }),
+      masterKey: () => masterKeyBytes(stack.env.config.masterKeyHex),
+      placement: { kind: "in-process" },
+    });
+    try {
+      await runtime.deliverAgentMessage(id, stack.orgId, "Hourly check: all green.", "GLM-Test");
+      await runtime.deliverAgentMessage(id, stack.orgId, "Hourly check: one pod pending.", "GLM-Test");
+      await until(
+        async () =>
+          (await threads.listEvents(stack.orgId, id)).filter((r) => r.event.type === "assistant_message").length === 2,
+      );
+      const rows = (await threads.listEvents(stack.orgId, id)).filter((r) => r.event.type === "assistant_message");
+      expect(rows.map((r) => r.event)).toMatchObject([
+        { turn: 1, step: 1, model: "GLM-Test", blocks: [{ type: "text", text: "Hourly check: all green." }] },
+        { turn: 2, step: 1, model: "GLM-Test", blocks: [{ type: "text", text: "Hourly check: one pod pending." }] },
+      ]);
+      // The model's context holds both, as the agent's own replies.
+      const conversation = await runtime.conversationForChat(id);
+      const said = (await conversation.context(context)).messages.flatMap((m) =>
+        m.role === "assistant" ? m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])) : [],
+      );
+      expect(said).toEqual(["Hourly check: all green.", "Hourly check: one pod pending."]);
+      // Recovery from the journal does not duplicate the projected rows.
+      await stack.env.db.query("DELETE FROM chat_projection_cursors WHERE chat_id=$1", [id]);
+      await bridge(id, conversation).recover(conversation);
+      expect(
+        (await threads.listEvents(stack.orgId, id)).filter((r) => r.event.type === "assistant_message"),
+      ).toHaveLength(2);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("first-touch worker bootstrap never rewrites another conversation's running task", async () => {
     const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(stack.env.db));
     const cid = await storage.mintId();
@@ -388,6 +428,9 @@ describe("durable integration contracts", () => {
             throw new Error("unused");
           },
           deliverSteer: async () => {
+            throw new Error("unused");
+          },
+          deliverMessage: async () => {
             throw new Error("unused");
           },
         },

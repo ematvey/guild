@@ -383,6 +383,13 @@ export class ForkSupervisor {
       });
       return;
     }
+    if (message.t === "remote-deliver-message") {
+      this.serve(handle, message.ref, async () => {
+        await this.deliverMessage(message.chatId, message.orgId, message.text, message.model);
+        return null;
+      });
+      return;
+    }
     if (message.t === "remote-submit") {
       this.serve(handle, message.ref, () => {
         if (!this.submitRemote) throw new Error("remote submit is unavailable");
@@ -498,6 +505,10 @@ export class ForkSupervisor {
 
   deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
     return this.request<void>(chatId, { t: "deliver-steer", orgId, text, model });
+  }
+
+  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    return this.request<void>(chatId, { t: "deliver-message", orgId, text, model });
   }
 
   steer(chatId: string, submissionId: number): Promise<boolean> {

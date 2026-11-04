@@ -7,7 +7,6 @@ import { Type } from "typebox";
 import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { assistantMessageEvent } from "../platform/domain/thread-events.js";
 import { deriveTitleFromMessage, type AgentStore } from "./store.js";
 import { search, type AgentSearchHit } from "./search.js";
 import { createRoutine, deleteRoutine, listRoutines, scheduleReminder, updateRoutine } from "./routines.js";
@@ -30,6 +29,9 @@ export interface AgentToolDeps {
   /** The chat this turn runs in. A thread the agent opens records it as its
    *  origin, so the agent can read the run behind a delivered message. */
   chatId?: string;
+  /** Writes a posted message into the target chat's conversation, routed to
+   *  the process that owns that chat. */
+  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
   /** Present only when this chat has a running run and the subagent tree is
    *  addressable. */
   subagents?: SubagentsToolContext;
@@ -51,10 +53,11 @@ export interface AgentMessageResult {
  *  marked as the routine's output (`new_chat`). A feed whose chat is
  *  mid-turn gets a new marked thread instead, so the delivery never
  *  interleaves with a live turn. Moves the thread activity marker and writes
- *  the inbox notice; the chat's unread projection follows from the new
- *  assistant event. */
+ *  the inbox notice. The message is a conversation entry of the target chat:
+ *  the model reads it as its own reply, and the transcript row (and the
+ *  chat's unread projection) follow from that entry. */
 export async function sendAgentMessage(
-  deps: Pick<AgentToolDeps, "store" | "threads" | "agent" | "userId" | "chatId">,
+  deps: Pick<AgentToolDeps, "store" | "agent" | "userId" | "chatId" | "deliverMessage">,
   args: { text: string; title?: string },
 ): Promise<AgentMessageResult> {
   const text = args.text.trim();
@@ -78,16 +81,7 @@ export async function sendAgentMessage(
       ...(routine === null ? {} : { routineId: routine.id }),
     });
   }
-  await deps.threads.appendEvent(
-    thread.chat_id,
-    assistantMessageEvent(
-      1,
-      1,
-      [{ type: "text", text }],
-      { tokens_in: 0, tokens_out: 0, cost_usd: 0 },
-      deps.agent.model,
-    ),
-  );
+  await deps.deliverMessage(thread.chat_id, deps.agent.org_id, text, deps.agent.model);
   await deps.store.threads.touchThread(deps.agent.id, thread.id);
   // One canonical address per thread: its chat.
   const url = `/thread/${thread.chat_id}`;

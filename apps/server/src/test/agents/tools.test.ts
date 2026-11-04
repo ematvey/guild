@@ -16,6 +16,7 @@ import {
 import { insertChunks } from "../../agents/search.js";
 import { createRoutine, updateRoutine } from "../../agents/routines.js";
 import { createAgentsTestEnv } from "./harness.js";
+import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
 const env: HubTestEnv | null = await createAgentsTestEnv();
@@ -54,13 +55,25 @@ dbDescribe("agent conversation tools", () => {
     other = await store.create(owner, { name: "Other", model: "GLM-Test" });
   }, 60_000);
 
+  // The runtime writes a posted message into the target chat's conversation
+  // and the projection appends its transcript row; this stands in for both
+  // (the entry path is covered in agent-message.test.ts).
+  const delivered: { chatId: string; text: string }[] = [];
+  const deliverMessage = async (chatId: string, _orgId: string, text: string, model: string | null) => {
+    delivered.push({ chatId, text });
+    await threads.appendEvent(
+      chatId,
+      assistantMessageEvent(1, 1, [{ type: "text", text }], { tokens_in: 0, tokens_out: 0, cost_usd: 0 }, model ?? ""),
+    );
+  };
+
   afterAll(async () => {
     await env?.cleanup();
   });
 
   it("send_message creates a thread, assistant message, unread chat and notice", async () => {
     const result = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id },
+      { store, deliverMessage, agent, userId: owner.id },
       { text: "The report is ready." },
     );
     const thread = await store.threads.getThread(agent.id, owner.id, result.thread_id);
@@ -68,6 +81,7 @@ dbDescribe("agent conversation tools", () => {
     expect(result.url).toBe(`/thread/${thread.chat_id}`);
     const events = await threads.listEvents(orgId, thread.chat_id);
     expect(events.some((row) => row.event.type === "assistant_message")).toBe(true);
+    expect(delivered.at(-1)).toEqual({ chatId: thread.chat_id, text: "The report is ready." });
     const list = await chats.listChats(orgId, owner.id);
     expect(list.find((row) => row.id === thread.chat_id)?.unread).toBe(true);
     const notices = await store.notices.listNotices(owner.id, orgId);
@@ -81,7 +95,7 @@ dbDescribe("agent conversation tools", () => {
   it("send_message records the calling thread as the delivered thread's origin", async () => {
     const run = await store.threads.createThread(agent.id, owner.id, "Morning email digest — run", "routine");
     const result = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: run.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: run.chat_id },
       { text: "The digest is ready.", title: "Morning digest" },
     );
     const delivered = await store.threads.getThread(agent.id, owner.id, result.thread_id);
@@ -97,11 +111,11 @@ dbDescribe("agent conversation tools", () => {
       [secondId, orgId],
     );
     const args = { text: "Shared status update.", title: "Status update" };
-    const first = await sendAgentMessage({ store, threads, agent, userId: owner.id }, args);
-    const second = await sendAgentMessage({ store, threads, agent, userId: secondId }, args);
+    const first = await sendAgentMessage({ store, deliverMessage, agent, userId: owner.id }, args);
+    const second = await sendAgentMessage({ store, deliverMessage, agent, userId: secondId }, args);
     expect(second.thread_id).not.toBe(first.thread_id);
     expect((await store.threads.getThread(agent.id, secondId, second.thread_id)).title).toBe("Status update");
-    const repeat = await sendAgentMessage({ store, threads, agent, userId: owner.id }, args);
+    const repeat = await sendAgentMessage({ store, deliverMessage, agent, userId: owner.id }, args);
     expect(repeat.thread_id).toBe(first.thread_id);
   });
 
@@ -130,11 +144,11 @@ dbDescribe("agent conversation tools", () => {
     const first = await routineRun(routine.id, "Jira digest — 1");
     const second = await routineRun(routine.id, "Jira digest — 2");
     const a = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: first.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: first.chat_id },
       { text: "Two new tasks.", title: "Jira update" },
     );
     const b = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: second.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: second.chat_id },
       { text: "One more task.", title: "Jira update" },
     );
     expect(b.thread_id).toBe(a.thread_id);
@@ -157,7 +171,7 @@ dbDescribe("agent conversation tools", () => {
     await env!.db.query("UPDATE chats SET archived_at = now() WHERE id = $1", [feed.chat_id]);
     const third = await routineRun(routine.id, "Jira digest — 3");
     const c = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: third.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: third.chat_id },
       { text: "Quiet day." },
     );
     expect(c.thread_id).not.toBe(a.thread_id);
@@ -180,11 +194,11 @@ dbDescribe("agent conversation tools", () => {
     const first = await routineRun(routine.id, "Alerts — 1");
     const second = await routineRun(routine.id, "Alerts — 2");
     const a = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: first.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: first.chat_id },
       { text: "Disk is full.", title: "Disk alert" },
     );
     const b = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: second.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: second.chat_id },
       { text: "CPU is hot.", title: "CPU alert" },
     );
     expect(b.thread_id).not.toBe(a.thread_id);
@@ -196,7 +210,7 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("a plain send_message chat carries no routine mark", async () => {
-    const result = await sendAgentMessage({ store, threads, agent, userId: owner.id }, { text: "Hello there." });
+    const result = await sendAgentMessage({ store, deliverMessage, agent, userId: owner.id }, { text: "Hello there." });
     const chatId = result.url.replace("/thread/", "");
     const row = (await chats.listChats(orgId, owner.id)).find((chat) => chat.id === chatId);
     expect(row?.routine).toBeNull();
@@ -212,7 +226,7 @@ dbDescribe("agent conversation tools", () => {
     });
     const delivered = await routineRun(routine.id, "Standup notes — 1");
     const sent = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: delivered.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: delivered.chat_id },
       { text: "All clear today." },
     );
     const feedChat = sent.url.replace("/thread/", "");
@@ -229,7 +243,7 @@ dbDescribe("agent conversation tools", () => {
     await updateRoutine(env!.db, agent.id, routine.id, { delivery: "new_chat" });
     const perChat = await routineRun(routine.id, "Standup notes — 3");
     const opened = await sendAgentMessage(
-      { store, threads, agent, userId: owner.id, chatId: perChat.chat_id },
+      { store, deliverMessage, agent, userId: owner.id, chatId: perChat.chat_id },
       { text: "Disk is full.", title: "Disk alert" },
     );
     expect(await store.threads.routineDeliveryChat(perChat.id)).toEqual({
@@ -239,7 +253,7 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("registers the routine management tools", () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
+    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("schedule_reminder");
     expect(names).toContain("list_routines");
@@ -249,7 +263,7 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("set_description rewrites only the caller's own description", async () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
+    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
     const setDescription = tools.find((tool) => tool.name === "set_description");
     expect(setDescription).toBeDefined();
     const call = (args: Record<string, unknown>) =>
@@ -281,7 +295,7 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("conversations_list filters by type and flags and pages with a cursor", async () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, agent, userId: owner.id });
+    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
     const list = tools.find((tool) => tool.name === "conversations_list");
     expect(list).toBeDefined();
     const call = (args: Record<string, unknown>) =>

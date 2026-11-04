@@ -177,6 +177,29 @@ export async function taskAbortRequested(db: DurableQueryable, taskId: number): 
 
 /** The newest assistant entries of the chat's conversation since its last
  *  head change (reset or compaction), newest first, as record text. */
+/** The chat's entries after `afterId` in the active range (since the newest
+ *  head marker), oldest first: the messages a measured request did not
+ *  include yet. */
+export async function entriesSinceHeadAfter(
+  db: DurableQueryable,
+  orgId: string,
+  chatId: string,
+  afterId: number,
+  limit: number,
+): Promise<string[]> {
+  const result = await db.query<{ record: string }>(
+    `SELECT e.record FROM entries e
+     JOIN chat_conversations cc ON cc.conversation_id = e.conversation_id
+     JOIN chats ch ON ch.id = cc.chat_id
+     WHERE ch.org_id = $1 AND ch.id = $2 AND e.id > $3
+       AND e.id > COALESCE((SELECT h.id FROM entries h
+         WHERE h.conversation_id = e.conversation_id AND h.head IS NOT NULL ORDER BY h.id DESC LIMIT 1), 0)
+     ORDER BY e.id ASC LIMIT $4`,
+    [orgId, chatId, afterId, limit],
+  );
+  return result.rows.map((row) => row.record);
+}
+
 export async function assistantEntriesSinceHead(
   db: DurableQueryable,
   orgId: string,

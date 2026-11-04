@@ -114,6 +114,31 @@ describe("composer context usage from committed provider measurements", () => {
     expect(response.json().tokens).toBe(321);
   });
 
+  it("adds estimates of the messages posted after the last measured request", async () => {
+    const before = (await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens as number;
+    const text = "Hourly check: one pod pending. ".repeat(20);
+    await stack.env.db.query(
+      "INSERT INTO entries(id,conversation_id,commit_seq,kind,record) VALUES(1008,1000,1,'guild.agent-message',$1)",
+      [
+        JSON.stringify({
+          id: 1008,
+          kind: "guild.agent-message",
+          model: [
+            {
+              role: "assistant",
+              model: "Context-Test",
+              stopReason: "stop",
+              content: [{ type: "text", text }],
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+            },
+          ],
+        }),
+      ],
+    );
+    const after = (await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens as number;
+    expect(after).toBeGreaterThan(before + 100);
+  });
+
   it("requires authentication and thread ownership", async () => {
     expect((await stack.env.app.inject({ url: url() })).statusCode).toBe(401);
     const other = await stack.env.app.inject({

@@ -57,6 +57,7 @@ import { createTraceHook } from "../agents/trace-hook.js";
 import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.js";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink, type LiveBuffers } from "../chats/bridge.js";
+import { agentMessageEntry } from "../chats/agent-message.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import { createGuildExtension } from "./extension.js";
 import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
@@ -210,6 +211,7 @@ export class GuildRuntime {
     this.turns = turnBackend(deps.placement, {
       submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
       deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),
+      deliverMessage: (chatId, orgId, text, model) => this.deliverMessageInProcess(chatId, orgId, text, model),
       steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
       withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
       stop: (chatId) => this.stopInProcess(chatId),
@@ -449,6 +451,7 @@ export class GuildRuntime {
       executors: this.executors,
       turns: {
         submitTurn: (chatId, orgId, input) => this.submitTurn(chatId, orgId, input),
+        deliverMessage: (chatId, orgId, text, model) => this.deliverAgentMessage(chatId, orgId, text, model),
         stopChat: (chatId) => this.stopChat(chatId),
         canStopChat: (chatId) => this.canStopChat(chatId),
       },
@@ -989,6 +992,25 @@ export class GuildRuntime {
    *  follow-up turn. */
   deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
     return this.turns.deliverSteer(chatId, orgId, text, model);
+  }
+
+  /** Posts an agent message into a chat's conversation (send_message). The
+   *  write lands at once when the chat is idle, else at the turn's next
+   *  boundary; the transcript row is projected from the entry. */
+  deliverAgentMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    return this.turns.deliverMessage(chatId, orgId, text, model);
+  }
+
+  private async deliverMessageInProcess(
+    chatId: string,
+    orgId: string,
+    text: string,
+    model: string | null,
+  ): Promise<void> {
+    await this.start();
+    const conversation = await this.conversationForChat(chatId);
+    await conversation.submit({ type: "write", entry: agentMessageEntry(orgId, model, text) }, BACKGROUND_CONTEXT);
+    await this.reconcileConversation(chatId, Number(conversation.id));
   }
 
   private async deliverSteerInProcess(

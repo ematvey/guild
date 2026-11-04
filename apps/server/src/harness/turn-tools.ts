@@ -59,6 +59,7 @@ export interface TurnToolDeps {
   /** The turn controls the subagent tools drive on child chats. */
   readonly turns: {
     submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
+    deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
     stopChat(chatId: string): Promise<void>;
     canStopChat(chatId: string): boolean;
   };
@@ -225,6 +226,7 @@ export class TurnTools {
       agent,
       userId: ref.user_id,
       chatId,
+      deliverMessage: (targetChatId, orgId, text, model) => deps.turns.deliverMessage(targetChatId, orgId, text, model),
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });

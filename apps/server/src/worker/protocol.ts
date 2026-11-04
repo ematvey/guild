@@ -36,6 +36,7 @@ export type Outcome =
 export type ServerRequest =
   | { t: "submit"; ref: number; input: SubmitTurnInput }
   | { t: "deliver-steer"; ref: number; orgId: string; text: string; model: string | null }
+  | { t: "deliver-message"; ref: number; orgId: string; text: string; model: string | null }
   | { t: "steer"; ref: number; submissionId: number }
   | { t: "withdraw"; ref: number; submissionId: number }
   | { t: "stop"; ref: number }
@@ -55,7 +56,9 @@ export type WorkerRequest =
   | { t: "remote-submit"; ref: number; chatId: string; input: SubmitTurnInput }
   /** A worker delivering a child result into a chat it does not own: the
    *  conversation handle is invocation-bound, so the owning worker does it. */
-  | { t: "remote-deliver-steer"; ref: number; chatId: string; orgId: string; text: string; model: string | null };
+  | { t: "remote-deliver-steer"; ref: number; chatId: string; orgId: string; text: string; model: string | null }
+  /** A worker posting an agent message into another chat (a routine feed). */
+  | { t: "remote-deliver-message"; ref: number; chatId: string; orgId: string; text: string; model: string | null };
 
 /** Worker → server: a fire-and-forget cancel of one of its dispatches. */
 export type WorkerCancel = { t: "dispatch_cancel"; ref: number };
