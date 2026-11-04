@@ -374,7 +374,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
   - `scripts/release-clients.sh` — production-format artifacts:
     Windows NSIS installer (cargo-xwin cross-build), Linux AppImage
     (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
-    deps: zig + cargo-zigbuild, macOS SDK at `$SDKROOT`, mingw-w64, makensis,
+    deps on PATH: zig + cargo-zigbuild, cargo-xwin, macOS SDK at `$SDKROOT`, makensis,
     llvm, linuxdeploy, libdmg-hfsplus, hfsprogs, 7z.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
     VITE_DEFAULT_SERVER_URL=https://guild.example.com scripts/release-clients.sh`.

@@ -136,14 +136,15 @@ The field stays editable, so any URL can always be typed at login.
 | llvm + lld | `llvm-rc` (Windows resource compile), `lld-link` | `pacman -S llvm lld` |
 | linuxdeploy | AppImage assembly (bundles webkit2gtk libs) | the `linuxdeploy` AppImage on `PATH` (continuous release) |
 | hfsprogs | HFS+ format + fsck for macOS DMGs | AUR `hfsprogs` (`paru -S hfsprogs`) |
-| libdmg-hfsplus | wraps the raw HFS+ image into a real UDIF `.dmg` | a local build of `libdmg-hfsplus` — with two patches: cmake ≥3.5 and an OpenSSL-3 `filevault_stub.c` (encrypted-DMG support removed) |
+| libdmg-hfsplus | wraps the raw HFS+ image into a real UDIF `.dmg` | a local build of `libdmg-hfsplus` — with two patches: cmake ≥3.5 and an OpenSSL-3 `filevault_stub.c` (encrypted-DMG support removed); its `dmg` binary on `PATH` |
 | dmg2img | DMG round-trip verification | `dmg2img` on `PATH` |
 | webkit2gtk-4.1 | Linux GUI build | `pacman -S webkit2gtk-4.1` |
 
 ## 4. Release process
 
 One script does everything (idempotent — republishing replaces existing
-artifacts of the same version/platform). When running it detached
+artifacts of the same version/platform). It finds every tool on `PATH` and
+checks them all before the first compile. When running it detached
 (systemd-run), pass the interactive PATH explicitly — `cargo-xwin` lives in
 `~/.cargo/bin`, which the systemd user environment lacks:
 

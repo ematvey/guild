@@ -13,9 +13,9 @@
 # The macOS DMGs are unsigned (Apple signing needs a Mac + Developer cert);
 # Gatekeeper: right-click -> Open on first run.
 #
-# Build-host requirements: zig + cargo-zigbuild, macOS SDK at $SDKROOT,
-# mingw-w64-gcc, makensis, llvm (llvm-rc), linuxdeploy and libdmg-hfsplus on
-# PATH, hfsprogs, 7z.
+# Build-host requirements, all on PATH: zig, cargo-zigbuild, cargo-xwin,
+# rustup (with the apple + windows targets), the macOS SDK at $SDKROOT,
+# makensis, llvm-rc, linuxdeploy, libdmg-hfsplus's dmg, hfsprogs, 7z, jq.
 #
 # Each updater-capable artifact is minisign-signed with the tauri updater key
 # (~/.tauri/guild.key; override with UPDATER_KEY) and published with its
@@ -60,6 +60,23 @@ if [[ -n "$TAGGED" && "$TAGGED" != "$(git rev-parse HEAD)" ]]; then
   echo "ERROR: $TAG already marks $TAGGED, not HEAD; a shipped version is not re-tagged — bump VERSION" >&2
   exit 1
 fi
+# Every tool the three platform builds call, checked before the first
+# compile so a missing one costs seconds and not a build.
+NEEDED_TOOLS=(cargo rustup zig cargo-zigbuild cargo-xwin makensis llvm-rc
+  linuxdeploy dmg mkfs.hfsplus fsck.hfsplus 7z jq)
+missing=()
+for t in "${NEEDED_TOOLS[@]}"; do
+  command -v "$t" >/dev/null || missing+=("$t")
+done
+if (( ${#missing[@]} > 0 )); then
+  echo "ERROR: not on PATH: ${missing[*]}" >&2
+  exit 1
+fi
+if [[ ! -d "$SDKROOT" ]]; then
+  echo "ERROR: macOS SDK not found at $SDKROOT (set SDKROOT)" >&2
+  exit 1
+fi
+
 # The compatibility gate: a schema change an installed client cannot read
 # must not ship, and must not become the next baseline.
 echo "==> protocol compatibility check"
@@ -141,7 +158,7 @@ EOF
 cp "$AD/usr/share/applications/guild.desktop" "$AD/guild.desktop"
 cp apps/desktop/src-tauri/icons/128x128.png "$AD/guild.png"
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 \
-  "$HOME/opt/linuxdeploy/linuxdeploy-x86_64.AppImage" --appdir "$AD" --output appimage >/dev/null
+  linuxdeploy --appdir "$AD" --output appimage >/dev/null
 # linuxdeploy emits the AppImage inside the AppDir (absolute --appdir) or in CWD
 APPIMG=$(find "$AD" "$STAGE" "$(pwd)" -maxdepth 3 -name "Guild*x86_64.AppImage" 2>/dev/null | head -1)
 if [[ -z "$APPIMG" ]]; then echo "AppImage build failed" >&2; exit 1; fi
@@ -215,7 +232,7 @@ build_dmg() { # arch
   sudo -n ln -s /Applications /mnt/guild-dmg/Applications
   sudo -n umount /mnt/guild-dmg
   fsck.hfsplus "$raw" >/dev/null 2>&1 || { echo "HFS+ fsck failed for $arch" >&2; exit 1; }
-  "$HOME/opt/libdmg-hfsplus/build/dmg/dmg" build "$raw" "$STAGE/Guild-$VERSION-macos-$arch.dmg" >/dev/null 2>&1
+  dmg build "$raw" "$STAGE/Guild-$VERSION-macos-$arch.dmg" >/dev/null 2>&1
   # notarize + staple the DMG so quarantined downloads open without the
   # Gatekeeper dialog (notarization covers the .app inside; the .app.tar.gz
   # updater artifact is installed without a quarantine flag, so it needs no
