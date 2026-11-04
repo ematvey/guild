@@ -266,7 +266,13 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   Its object-store key goes in `deploy/compose/juicefs.env`
   (`GUILD_JUICE_ACCESS_KEY`/`GUILD_JUICE_SECRET_KEY`, see
   `juicefs.env.example`); without one it falls back to `config.env`'s
-  `GUILD_S3_*`, which the server also holds.
+  `GUILD_S3_*`, which the server also holds. Use a RustFS user whose policy
+  covers only the stack's bucket (dev: user and policy
+  `guild-workspaces-dev`, made with `mcli admin` and the root key from
+  `/etc/default/rustfs`). The sidecar stores an explicitly given key in the
+  volume on every start, so rotating it is editing `juicefs.env` and
+  restarting the sidecar; the `GUILD_S3_*` fallback never replaces a stored
+  key.
 - The `juicefs` sidecar formats the volume once (`juicefs format` is skipped
   when `juicefs status` reports an existing volume), then mounts it in the
   **host mount namespace**: it runs with `pid: host` and `privileged: true`,

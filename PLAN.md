@@ -113,11 +113,12 @@ first. Code comments describe only the present.
   own filesystem (`/mnt/guild-dev`, `guild_meta_dev`, bucket
   `guild-workspaces-dev`, volume `compose_guild_workspaces_dev`), its 370 MB
   of agent folders copied and removed from prod's; prod kept its filesystem,
-  pinned in its `.env`. Open: a bucket-scoped object-store key for each
-  JuiceFS volume (RustFS user admin needs `mc`, not available here); the
+  pinned in its `.env`. Dev's volume uses a RustFS user scoped to its bucket
+  (`guild-workspaces-dev`, in `juicefs.env`). Open: the same for prod; the
   orphaned `compose_guild_workspaces` volume record, which still binds
-  `/mnt/guild` and must not be removed while prod is mounted there (an
-  unmount of it took prod's host mount down even after `--make-rprivate`);
+  `/mnt/guild` in prod's shared peer group and must not be removed while
+  prod is mounted there (unmounting any peer unmounts them all, which took
+  prod's host mount down once);
   the 12 KB `agents/01a17457…` folder in prod's filesystem that matches no
   org; prod picks up the compose change with its next deploy.
 

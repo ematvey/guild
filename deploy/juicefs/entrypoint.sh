@@ -70,6 +70,14 @@ nsenter -t 1 -m -- sh -c '
 
 if juicefs status "$meta_url" >/dev/null 2>&1; then
   log "volume already formatted; skipping format"
+  # The volume keeps the key it was formatted with. A key given to this
+  # sidecar alone (juicefs.env) replaces it, so rotating the key is a
+  # restart; the shared GUILD_S3_* fallback never overwrites a stored one.
+  if [ -n "${GUILD_JUICE_ACCESS_KEY:-}" ] && [ -n "${GUILD_JUICE_SECRET_KEY:-}" ]; then
+    juicefs config "$meta_url" --yes --access-key "$GUILD_JUICE_ACCESS_KEY" --secret-key "$GUILD_JUICE_SECRET_KEY" \
+      >/dev/null 2>&1 || die "could not store the volume's object-store key (check the key's access to the bucket)"
+    log "object-store key set from GUILD_JUICE_ACCESS_KEY"
+  fi
 else
   log "formatting volume $volume_name"
   set -- format --storage "$storage" --bucket "$bucket_url"
@@ -117,7 +125,7 @@ fi
 # window for write latency and API call count.
 mount_opts="${GUILD_JUICE_MOUNT_OPTS:---writeback}"
 
-log "mounting $meta_url at $mountpoint (host namespace, opts: $mount_opts)"
+log "mounting $(printf '%s' "$meta_url" | sed 's#://[^@]*@#://***@#') at $mountpoint (host namespace, opts: $mount_opts)"
 # shellcheck disable=SC2086 # mount_opts is a whitespace-separated flag list
 nsenter -t 1 -m -n -- env LD_LIBRARY_PATH="$host_lib" "$host_bin" mount $mount_opts "$meta_url" "$mountpoint" &
 mount_pid=$!
