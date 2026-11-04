@@ -86,7 +86,7 @@ dbDescribe("agent send_file and turn attachments", () => {
 
   it("uploads, records a pending agent attachment and publishes it at turn end", async () => {
     const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
-    const run = await store.runs.createRun({
+    await store.runs.createRun({
       agent_id: agent.id,
       thread_id: thread.id,
       trigger: "message",
@@ -102,7 +102,6 @@ dbDescribe("agent send_file and turn attachments", () => {
         attachments,
         objects,
         agent,
-        run,
         chatId: thread.chat_id,
         workspaceRoot: root,
       },
@@ -136,6 +135,7 @@ dbDescribe("agent send_file and turn attachments", () => {
     const lifecycle = new AgentRunLifecycle({
       pool: env!.db,
       log: pino({ level: "silent" }),
+      runs: store.runs,
       attachments,
     });
     const event = await threads.appendEvent(
@@ -148,7 +148,7 @@ dbDescribe("agent send_file and turn attachments", () => {
         "GLM-Test",
       ),
     );
-    await lifecycle.assistantEvent(thread.chat_id, event);
+    await lifecycle.runEnd(thread.chat_id, [], null);
     const published = await env!.db.query<{ event_id: string | null }>(
       "SELECT event_id FROM attachments WHERE id = $1",
       [result.id],
@@ -161,14 +161,7 @@ dbDescribe("agent send_file and turn attachments", () => {
     const workspace = path.join(root, "agents", orgId, agent.id);
     await mkdir(workspace, { recursive: true });
     const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
-    const run = await store.runs.createRun({
-      agent_id: agent.id,
-      thread_id: thread.id,
-      trigger: "message",
-      status: "running",
-      started_at: new Date().toISOString(),
-    });
-    const context = { attachments, objects, agent, run, chatId: thread.chat_id, workspaceRoot: root };
+    const context = { attachments, objects, agent, chatId: thread.chat_id, workspaceRoot: root };
     await expect(sendFile(context, { path: "../outside.txt" })).rejects.toThrow(/parent traversal|escapes/);
     await expect(sendFile(context, { path: "/etc/passwd" })).rejects.toThrow(/absolute/);
   });

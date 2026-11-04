@@ -392,50 +392,29 @@ export function registerAgentRoutes(
     }
     const attachmentIds = (rawAttachments ?? []) as string[];
     // The agent's model must resolve to an enabled gateway route; a missing
-    // route fails before a run row is created.
+    // route fails before the turn is submitted. The run row opens with the
+    // pi-durable run that takes the message.
     await gateway.gatewayStore.resolveRoute(agent.org_id, agent.model, gateway.masterKey());
-    const run = await store.runs.createRun({
-      agent_id: agent.id,
-      user_id: user.id,
-      thread_id: thread.id,
-      trigger: "message",
-      status: "running",
-      started_at: new Date().toISOString(),
-    });
-    try {
-      const chat = await chats.chats.getChatInOrg(agent.org_id, thread.chat_id);
-      const ack = await submitTurn(
-        chats,
-        gateway,
-        auth,
-        objects,
-        user,
-        {
-          model: agent.model,
-          messages: [{ role: "user", content: message }],
-          attachment_ids: attachmentIds,
-          ...(typeof body["user_message_id"] === "string" ? { user_message_id: body["user_message_id"] } : {}),
-          ...(body["send_mode"] === "steer" || body["send_mode"] === "queue" ? { send_mode: body["send_mode"] } : {}),
-        },
-        thread.chat_id,
-        chat,
-        false,
-      );
-      await store.threads.deriveThreadTitle(agent.id, thread.id, message);
-      await store.threads.touchThread(agent.id, thread.id);
-      return reply.type("application/json").send(ack);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      await store.runs
-        .updateRun(run.id, {
-          status: "failed",
-          error_code: "turn_submit_failed",
-          error_message: text,
-          finished_at: new Date().toISOString(),
-        })
-        .catch(() => {});
-      throw error;
-    }
+    const chat = await chats.chats.getChatInOrg(agent.org_id, thread.chat_id);
+    const ack = await submitTurn(
+      chats,
+      gateway,
+      auth,
+      objects,
+      user,
+      {
+        model: agent.model,
+        messages: [{ role: "user", content: message }],
+        attachment_ids: attachmentIds,
+        ...(typeof body["user_message_id"] === "string" ? { user_message_id: body["user_message_id"] } : {}),
+        ...(body["send_mode"] === "steer" || body["send_mode"] === "queue" ? { send_mode: body["send_mode"] } : {}),
+      },
+      thread.chat_id,
+      chat,
+    );
+    await store.threads.deriveThreadTitle(agent.id, thread.id, message);
+    await store.threads.touchThread(agent.id, thread.id);
+    return reply.type("application/json").send(ack);
   }
 
   app.post("/api/v1/agents", async (req, reply) => {

@@ -31,9 +31,6 @@ export async function submitTurn(
   /** Agent turn routes authorize through the agent grant and pass the
    *  thread's chat row, so the chat's own owner check does not apply. */
   preloadedChat?: ChatRow,
-  /** Agent turn routes open their own run row before this call; only the
-   *  chat route asks submitTurn to open one. */
-  beginRun = true,
 ): Promise<string> {
   const chatIdRaw: unknown = pathChatId ?? body["chat_id"];
   if (chatIdRaw === undefined) throw ApiError.badRequest("chat_id is required");
@@ -49,7 +46,7 @@ export async function submitTurn(
   const chatId = chatIdRaw.toLowerCase();
   // Every conversation belongs to an agent. A plain chat is adopted by the
   // caller's personal agent on its first turn; from then on the turn runs
-  // with the agent's model and tools, and the run lifecycle closes the run.
+  // with the agent's model and tools, and each pi-durable run is an agent run.
   const chat = preloadedChat ?? (await chats.chats.getOwnChat(user.org_id, chatId, user));
   const requestedAgent = typeof body["agent_id"] === "string" ? body["agent_id"] : null;
   const messages = body["messages"] as { role?: unknown; content?: unknown }[];
@@ -168,11 +165,6 @@ export async function submitTurn(
   let command;
   try {
     command = await chats.turnCommands.accept(commandId, user.org_id, user.id, chatId, request, payload);
-    // The run row exists before the turn is admitted; the lifecycle closes it
-    // from the transcript.
-    if (adopted !== null && beginRun) {
-      await chats.runtime.beginChatRun(adopted.agent_id, adopted.thread_id, user.id);
-    }
     const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
       orgId: user.org_id,
       requestId: commandId,

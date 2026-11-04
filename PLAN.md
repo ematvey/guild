@@ -97,6 +97,19 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A Run is the record of exactly one pi-durable run (2026-11-04,
+  branch `spike/pi-durable-runs`).** `agent_runs` no longer infers a run's
+  end from the first answer without a tool call. A `beforeRequest` hook
+  opens the row before the run's first model call, taking over the queued
+  row a spawn, send or routine created for its input; the input's request
+  id is that row's id. The bridge's `run_end` settles it from the run's last
+  answer. A steer or child result taken after an answer is now part of the
+  same Run, and the answer delivered upward is the last one. Submit, the
+  agent turn route and child delivery no longer open runs, and delivery
+  drops its advisory lock: pi-durable's request id keeps a result to one
+  admission. A spawned child shows `queued` until its run starts. Spec:
+  `docs/specs/2026-11-04-runs-follow-pi-durable.md`.
+
 - **Runs follow pi-durable: findings (2026-11-04, branch
   `spike/pi-durable-runs`).** `agent_runs` infers a run's end from the
   first assistant message without a tool call, so a record can close while

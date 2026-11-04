@@ -46,7 +46,11 @@ export interface SubagentsToolContext {
   threads: ThreadStore;
   /** The calling agent (the parent). */
   agent: Agent;
-  parentRun: AgentRun;
+  /** The caller's own thread. */
+  threadId: string;
+  /** The caller's current run: the chat's running run, read when a tool
+   *  runs (the run's row opens before its first model request). */
+  parentRun(): Promise<AgentRun>;
   requester: UserRow;
   runtime: SubagentsRuntime;
   /** Tree limits from config (never constants in this module). */
@@ -128,10 +132,7 @@ export async function authorizeSpawn(args: {
 
 /** The caller's own thread id; spawn and the tree tools need the node. */
 function callerThreadId(context: SubagentsToolContext): string {
-  if (context.parentRun.thread_id === null) {
-    throw new SubagentError("no_parent_thread", "the calling run has no thread");
-  }
-  return context.parentRun.thread_id;
+  return context.threadId;
 }
 
 /** Resolves a strictly descendant thread. `open` also rejects a closed
@@ -215,6 +216,7 @@ async function startDelegatedRun(
   content: string,
   failureCode: string,
 ): Promise<{ run: AgentRun; agent: Agent }> {
+  const parentRun = await context.parentRun();
   try {
     return await startThreadRun(context, {
       agentId,
@@ -224,8 +226,8 @@ async function startDelegatedRun(
       failureCode,
       recordStack: true,
       run: {
-        user_id: context.parentRun.user_id ?? context.requester.id,
-        parent_run_id: context.parentRun.id,
+        user_id: parentRun.user_id ?? context.requester.id,
+        parent_run_id: parentRun.id,
         delegate_agent_id: agentId,
         depth: thread.depth,
         trigger: "delegation",
@@ -278,7 +280,7 @@ export async function spawn(
   // fallback label. The title is locked when the spawner chose it.
   const title = requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
   const titleLocked = requestedName !== "";
-  const userId = context.parentRun.user_id ?? context.requester.id;
+  const userId = (await context.parentRun()).user_id ?? context.requester.id;
   let thread: AgentThread;
   try {
     thread = await context.store.threads.createChildThread(
@@ -469,8 +471,8 @@ export async function close(context: SubagentsToolContext, args: { thread_id: st
   return closeThread(context, thread.id);
 }
 
-/** Builds the per-run subagent context; null when the chat has no running
- *  run (plain chats and turns before admission). */
+/** Builds the subagent context of an agent thread's chat; null for a chat
+ *  with no agent thread or no requester. */
 export async function subagentsContextForChat(
   args: RequesterReads & {
     pool: PlatformPool;
@@ -483,8 +485,8 @@ export async function subagentsContextForChat(
     maxChildrenPerNode: number;
   },
 ): Promise<SubagentsToolContext | null> {
-  const parentRun = await args.store.runs.runningRunForChat(args.chatId);
-  if (parentRun === null) return null;
+  const thread = await args.store.threads.threadByChatId(args.chatId);
+  if (thread === null) return null;
   const requester = await requesterForChat(args, args.chatId);
   if (requester === null) return null;
   return {
@@ -492,7 +494,12 @@ export async function subagentsContextForChat(
     store: args.store,
     threads: args.threads,
     agent: args.agent,
-    parentRun,
+    threadId: thread.id,
+    parentRun: async () => {
+      const run = await args.store.runs.runningRunForChat(args.chatId);
+      if (run === null) throw new SubagentError("no_running_run", "the calling thread has no running run");
+      return run;
+    },
     requester,
     runtime: args.runtime,
     maxDepth: args.maxDepth,

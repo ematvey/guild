@@ -11,9 +11,10 @@ A Member's message carries a message id, and that id names the submission. A rep
 A Thread with no Agent is adopted by the sender's personal Agent here. The server then:
 
 1. Marks the Thread `generating`.
-2. Writes the Turn command and the user message event in one transaction. The message is marked `queued` if a Turn was already running.
-3. Opens a Run.
-4. Admits the Input.
+2. Writes the Turn command.
+3. Admits the Input.
+
+The message's row is projected when its Input is placed, and the Turn that takes it opens its Run.
 
 A failure before admission fails the command and recomputes `generating`.
 
@@ -49,7 +50,9 @@ A **notice** tells a Thread's Agent about something that happened outside its Tu
 
 ### Steps and the end of a Turn
 
-A Turn is a sequence of Steps. Each Step is one model call through the Org gateway, and its Tool calls run before the next Step. The Turn ends at an assistant message that has no Tool call, or that has an error. Its Run then settles once:
+A Turn is one pi-durable run: a sequence of Steps. Each Step is one model call through the Org gateway, and its Tool calls run before the next Step. A steer taken at a tool boundary joins the Turn. The Turn ends after an assistant message that has no Tool call, or that has an error; Inputs still waiting then start the next Turn.
+
+**A Run is the record of exactly one Turn.** It opens before the Turn's first model call, including one a restart resumes, so the call and its Tools see it. A delegated or Routine Turn creates its Run `queued` and submits its Input under the Run id as request id; the Turn that places that Input takes the Run over. Any other Turn opens a `message` Run for the Member who sent its message, else the Thread's owner. The Run settles once when the Turn ends, from the Turn's last answer, never earlier:
 
 | Run status | Condition |
 | --- | --- |
@@ -112,7 +115,7 @@ The tree is bounded by its shape: depth 3 and 16 children per node, both set in 
 
 **Downward messages are Turns. Upward messages are Turn ends.** When a child Run settles, its final text, its status and its Attachments are submitted to the parent's conversation as one child result. Nothing is submitted when the child or the parent is closed. The parent is then woken:
 
-1. The result is a steer Input of its own, keyed by the child Run id, so a redelivery never admits it twice. If the parent is idle, a new Run starts with it; deliveries into one parent are serialized, so concurrent results open one Run.
+1. The result is a steer Input of its own, keyed by the child Run id, so a redelivery never admits it twice. A busy parent takes it into its running Turn at the next tool boundary; an idle one starts a Turn on it, which opens its own Run.
 2. Results that are queued together are placed at the same boundary and reach the model in one call. A result never merges with another Input, so withdrawing a Member's message leaves it intact.
 3. The parent Thread's child-result row is projected from the Input when it is placed. A result the parent has not received shows only in the queue.
 4. A stop withdraws queued Inputs. A queued child result is then written into the conversation instead: the parent has it and the row shows, but no Turn starts.

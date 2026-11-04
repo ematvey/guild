@@ -78,10 +78,9 @@ export async function failStaleRuns(
   return failed;
 }
 
-/** A delivery that never reached a turn leaves its batch unconsumed: the
- *  consume-then-steer path releases the batch when the steer fails, and the
- *  parent chat has no run to take it. This pass gives such a batch the turn
- *  it never got. */
+/** A child result whose submit never reached the parent's conversation (the
+ *  submit failed, or the process died first) is in neither the parent's
+ *  inbox nor its thread. This pass submits it again, rebuilt from the run. */
 async function deliverUndeliveredResults(deps: ReconcileDeps, undeliveredMs: number): Promise<void> {
   const chats = await chatsWithUndeliveredResults(deps.pool, undeliveredMs);
   for (const chatId of chats) {

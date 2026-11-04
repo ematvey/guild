@@ -6,7 +6,7 @@
 
 import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { refuseDeletingAgent, type AgentRunStore, type AgentStore, type AgentTreeStore } from "./store.js";
+import { refuseDeletingAgent, type AgentStore, type AgentTreeStore } from "./store.js";
 import type { Agent } from "./types.js";
 import {
   agentThreadForChat,
@@ -63,7 +63,6 @@ export interface TitleSource {
 
 type BindingStore = Pick<AgentStore, "fetchAgent" | "ensurePersonalAgentFor" | "requireAccess"> & {
   readonly tree: Pick<AgentTreeStore, "childCount" | "closeSubtree">;
-  readonly runs: Pick<AgentRunStore, "createRun" | "updateRun" | "runningRunForThread">;
 };
 
 export class ThreadBinding {
@@ -165,36 +164,6 @@ export class ThreadBinding {
       depth: Number(row.depth),
       can_spawn: Number(row.depth) < this.limits.maxDepth && children < this.limits.maxChildrenPerNode,
     };
-  }
-
-  /** Opens the run row for a chat turn; the run lifecycle closes it from
-   *  the transcript like any other agent turn. A run a delivery opened for
-   *  the thread while the chat had no live turn is adopted: a second run
-   *  would stay open forever. */
-  async beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
-    const open = await this.store.runs.runningRunForThread(threadId);
-    if (open !== null) {
-      if (open.status === "queued") {
-        await this.store.runs.updateRun(open.id, { status: "running", started_at: new Date().toISOString() });
-      }
-      return open.id;
-    }
-    return this.beginMessageRun({ agent_id: agentId, user_id: userId, id: threadId });
-  }
-
-  /** Creates a running message-triggered run on a thread (a chat turn, or a
-   *  child result delivered to an idle parent). */
-  async beginMessageRun(thread: { id: string; agent_id: string; user_id: string; depth?: number }): Promise<string> {
-    const run = await this.store.runs.createRun({
-      agent_id: thread.agent_id,
-      user_id: thread.user_id,
-      thread_id: thread.id,
-      ...(thread.depth === undefined ? {} : { depth: thread.depth }),
-      trigger: "message",
-      status: "running",
-      started_at: new Date().toISOString(),
-    });
-    return run.id;
   }
 
   /** What a fresh thread's title is generated from: its org, its agent's

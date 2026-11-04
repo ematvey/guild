@@ -220,7 +220,6 @@ export class TurnTools {
             attachments: deps.attachments,
             objects: deps.objects,
             agent,
-            run: subagents.parentRun,
             chatId,
             workspaceRoot: deps.config.agentWorkspaceWriteRoot,
           };

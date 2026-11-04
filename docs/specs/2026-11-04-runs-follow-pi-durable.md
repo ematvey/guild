@@ -1,7 +1,25 @@
 # Runs follow pi-durable — findings and plan
 
-Status: investigation (branch `spike/pi-durable-runs`). Nothing is
-implemented yet.
+Status: option A implemented (branch `spike/pi-durable-runs`); B and C
+undecided.
+
+Implementation of A:
+
+- `agents/run-hook.ts` is a `beforeRequest` hook on the generation task.
+  It reads the run's inputs from `pi.live.run` and calls
+  `AgentRunLifecycle.runStart`, before every model request of the run.
+- The first call takes over the queued rows whose id is one of the inputs'
+  request ids, else opens a `message` run for the submitting member. A row
+  already `running` is the run's own (a resumed run).
+- The bridge's `run_end` calls `runEnd`, which settles every running row
+  from the run's last answer (`terminalAssistantSince`). It also settles
+  queued rows of a run that ended before any request, and records a failed
+  run that had none.
+- `startThreadRun` (spawn, send, routines) creates its row `queued` and
+  submits under the run id. Submit and the agent turn route no longer
+  pre-create rows. Delivery no longer opens runs or takes a lock.
+- The subagent tools read the calling run when they run, not at
+  provisioning.
 
 ## Question
 

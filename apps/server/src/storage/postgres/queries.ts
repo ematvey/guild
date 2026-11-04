@@ -157,6 +157,18 @@ export async function chatSubmission(
   return result.rows[0] ?? null;
 }
 
+/** The request ids of a run's input submissions (JSON text unwrapped),
+ *  in submission order. */
+export async function inputRequestIds(db: DurableQueryable, submissionIds: readonly number[]): Promise<string[]> {
+  if (submissionIds.length === 0) return [];
+  const result = await db.query<{ request_id: string }>(
+    `SELECT request_id::jsonb #>> '{}' AS request_id FROM submissions
+     WHERE id = ANY($1::bigint[]) AND request_id IS NOT NULL ORDER BY id`,
+    [submissionIds],
+  );
+  return result.rows.map((row) => row.request_id);
+}
+
 /** The submission a chat's conversation admitted under a request id; null
  *  when the conversation never admitted it. */
 export async function admittedSubmission(
