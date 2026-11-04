@@ -78,6 +78,54 @@ version in a catalog index; host the index and its `bundles/` folder in a
 public repository (served as a URL) or a private GitHub/GitLab repository
 (each org reads it with its own GitHub/GitLab integration).
 
+## MCP stubs
+
+A remote MCP server joins a catalog as a stub: a folder with
+`manifest.json`, `README.md` and `logo.svg`, and no code. The manifest
+names the server, the settings an admin fills in, and how they reach the
+server as headers:
+
+```json
+{
+  "kind": "integration",
+  "slug": "acme",
+  "version": "1.0.0",
+  "title": "Acme",
+  "summary": "One line for the catalog card",
+  "description": "What the agent reads about this integration",
+  "publisher": "Acme",
+  "docs_url": "https://acme.example/docs/mcp",
+  "mcp": {
+    "url": "https://mcp.acme.example",
+    "headers": { "Authorization": "Bearer {acme_key}" },
+    "envelope": false
+  },
+  "auth": { "kind": "org_secret", "secret_names": ["acme_key"], "identity_key": "email" },
+  "settings": {
+    "fields": [
+      { "name": "acme_key", "kind": "secret", "label": "API key", "required": true,
+        "obtain": "Where the admin gets the value" }
+    ]
+  }
+}
+```
+
+Each `{name}` in a header template is replaced by the stored secret of
+that name; a header whose secret is not stored is not sent, so an optional
+secret field makes an optional header. `envelope: false` keeps Guild's
+`x-guild-*` identity headers away from a third-party server.
+
+A stub lists no tools. Once configured, the server discovers them live:
+each arrives disabled, and its class is the admin's choice, else the one
+the server's `readOnlyHint`/`destructiveHint` suggests, else read for a
+name starting with a read verb (`get_`, `list_`, `search_` …) and write for
+anything else.
+
+```
+guild-plugin pack plugins/acme --out dist
+guild-plugin catalog add dist/acme-1.0.0.guildplugin --index catalog/index.json
+```
+
 ## Catalog format
 
 ```json

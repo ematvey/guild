@@ -25,6 +25,7 @@ import type { ObjectStore } from "../platform/s3.js";
 import { builtinByName } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
+import { suggestedToolClass } from "./policy.js";
 
 export interface OrgMcpDeps {
   readonly integrations: IntegrationStore;
@@ -56,19 +57,6 @@ export interface ProbedTool {
 
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const TOOL_NAME = /^[a-zA-Z0-9_.-]+$/;
-const READ_VERB =
-  /^(get|list|search|read|fetch|find|query|describe|lookup|show|view|count|check|retrieve|browse)([_.-]|[A-Z]|$)/i;
-
-/** The class a tool starts with: the server's own hints first (read-only →
- *  read, destructive → write), then a read verb at the start of its name;
- *  anything else is write, so a member's default read-only policy never
- *  reaches a tool nobody looked at. */
-export function suggestedToolClass(tool: McpTool): ToolClass {
-  if (tool.annotations?.readOnlyHint === true) return "read";
-  if (tool.annotations?.destructiveHint === true) return "write";
-  return READ_VERB.test(tool.name) ? "read" : "write";
-}
-
 function str(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === "string" ? value.trim() : "";

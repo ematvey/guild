@@ -2,8 +2,9 @@
 // class gate, and the acting-identity override rule.
 
 import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
+import type { McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
-import { classRank, isToolClass, manifestToolClass, type ToolClass } from "../platform/domain/tool-class.js";
+import { classRank, isToolClass, type ToolClass } from "../platform/domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
 export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
@@ -38,11 +39,42 @@ export function toolCurate(
   return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false, cls: null };
 }
 
+const READ_VERB =
+  /^(get|list|search|read|fetch|find|query|describe|lookup|show|view|count|check|retrieve|browse)([_.-]|[A-Z]|$)/i;
+
+/** The class Guild suggests for a discovered MCP tool: the server's own
+ *  hints first (read-only → read, destructive → write), then a read verb at
+ *  the start of its name; anything else is write, so a tool nobody classed
+ *  never runs under a read-only policy by default. */
+export function suggestedToolClass(tool: Pick<McpTool, "name" | "annotations">): ToolClass {
+  if (tool.annotations?.readOnlyHint === true) return "read";
+  if (tool.annotations?.destructiveHint === true) return "write";
+  return READ_VERB.test(tool.name) ? "read" : "write";
+}
+
+/** The class a registry manifest declares for one MCP tool, or null when
+ *  it names none (a catalog stub ships no tool list). */
+function declaredMcpClass(manifest: JsonObject | null, rawTool: string): ToolClass | null {
+  const tools = manifest?.["tools"];
+  if (tools === null || typeof tools !== "object" || Array.isArray(tools)) return null;
+  const classes = (tools as JsonObject)["classes"];
+  if (classes === null || typeof classes !== "object" || Array.isArray(classes)) return null;
+  const declared = (classes as JsonObject)[rawTool];
+  return isToolClass(declared) ? declared : null;
+}
+
 /** The class an MCP tool runs under: the admin's curated class when set,
- *  else the registry manifest's declaration (read when it declares none).
- *  A compiled-in tool's class is its code declaration only. */
-export function mcpToolClass(rowConfig: JsonObject, manifest: JsonObject | null, rawTool: string): ToolClass {
-  return toolCurate(rowConfig, true, rawTool).cls ?? (manifestToolClass(manifest, rawTool) as ToolClass);
+ *  else the registry manifest's declaration, else the class suggested from
+ *  the live tool's hints and name. A compiled-in tool's class is its code
+ *  declaration only. */
+export function mcpToolClass(
+  rowConfig: JsonObject,
+  manifest: JsonObject | null,
+  tool: Pick<McpTool, "name" | "annotations">,
+): ToolClass {
+  return (
+    toolCurate(rowConfig, true, tool.name).cls ?? declaredMcpClass(manifest, tool.name) ?? suggestedToolClass(tool)
+  );
 }
 
 /** What one Turn may reach: the Trait tools its Agent's built-in allowlist

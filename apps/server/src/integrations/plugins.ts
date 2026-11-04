@@ -142,7 +142,7 @@ function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject
       description: tool.description,
       parameters: tool.inputSchema,
     },
-    class: mcpToolClass(rowConfig, manifest, tool.name),
+    class: mcpToolClass(rowConfig, manifest, tool),
     raw: tool.name,
   };
 }

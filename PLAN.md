@@ -97,6 +97,26 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Remote MCP servers ship in catalogs as stubs; Guild's own catalog
+  lives in `catalog/` (2026-11-04).** A catalog listed only code plugins,
+  so a known vendor MCP server (Stripe) meant every admin typing its URL,
+  header shape and key format into Add MCP server. Install already accepted
+  a manifest-only MCP bundle; what was missing: `guild-plugin pack <folder>`
+  now packs a stub folder (`manifest.json`, `README.md`, `logo.svg`, no
+  code), and the shop reads an MCP item's logo and readme from its approved
+  bundle and keeps its manifest categories. A stub lists no tools: the
+  server discovers them live, each arriving disabled. That exposed a class
+  hole: an MCP tool with no curated class and no manifest declaration ran
+  as `read`, so a catalog-installed `stripe_api_write` would have passed a
+  read-only ceiling. The fallback is now the suggestion the create form
+  already used (server `readOnlyHint`/`destructiveHint`, then a read verb
+  in the name, else `write`), at turn time and in the tools listing. Header
+  templates carry literal text (`Bearer {stripe_key}`) so the admin pastes
+  only the key, and an optional secret makes an optional header
+  (`Stripe-Account`). Stubs for third-party servers set `envelope: false`.
+  Guild's catalog sits in this repository (`catalog/index.json`), so an org
+  adds it as a GitHub source (`maintainer/guild`, ref `develop`).
+
 - **Integration access: audiences and explicit Agent Integration lists
   (2026-11-04).** An enabled Integration used to reach every Member, gated
   only by role × class (`member` read, `admin` all) and each Agent's

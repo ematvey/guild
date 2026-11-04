@@ -1,0 +1,26 @@
+{
+  "format": "guild-plugin-catalog/1",
+  "name": "Guild catalog",
+  "plugins": [
+    {
+      "slug": "stripe",
+      "title": "Stripe",
+      "summary": "Stripe's hosted MCP server: read and change payments, customers, billing and balances",
+      "publisher": "Guild",
+      "categories": [
+        "payments",
+        "billing"
+      ],
+      "traits": [],
+      "docs_url": "https://docs.stripe.com/mcp",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "sha256": "3dfc132d3e066739d9ada3f05f864eb61ddfbce07e74293ff51cf49cb2e9177c",
+          "bundle": "bundles/stripe-1.0.0.guildplugin",
+          "published_at": "2026-11-04T19:15:09.750Z"
+        }
+      ]
+    }
+  ]
+}

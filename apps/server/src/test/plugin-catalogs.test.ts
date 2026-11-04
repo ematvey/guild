@@ -4,6 +4,7 @@
 // org's GitHub integration) list plugins with install state and install by
 // the sha256 they list; trait bindings pick the provider.
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -352,6 +353,25 @@ describe("catalogs", () => {
     expect((await api("DELETE", `/api/v1/admin/integrations/catalogs/${id}`)).status).toBe(200);
     const after = await api("GET", "/api/v1/admin/integrations/catalogs");
     expect(after.body.catalogs.map((c: { id: string }) => c.id)).not.toContain(id);
+  });
+});
+
+describe("MCP stubs", () => {
+  it("install the shipped Stripe stub with its storefront files and settings", async () => {
+    const bytes = readFileSync(new URL("../../../../catalog/bundles/stripe-1.0.0.guildplugin", import.meta.url));
+    const up = await api("POST", "/api/v1/admin/integrations/plugins/upload", bytes);
+    expect(up.status).toBe(200);
+    expect(up.body).toMatchObject({ slug: "stripe", version: "1.0.0", runtime: "mcp", created: true });
+
+    const shop = await api("GET", "/api/v1/admin/integrations");
+    const item = shop.body.items.find((i: { name: string }) => i.name === "stripe");
+    expect(item).toMatchObject({ source: "mcp", configured: true, enabled: false, docs_url: "https://docs.stripe.com/mcp" });
+    expect(item.logo).toContain("<svg");
+    expect(item.readme).toContain("## What agents can do");
+    expect(item.categories).toEqual(["mcp", "payments", "billing"]);
+    expect(item.missing).toEqual(["Agent API key"]);
+    expect(item.settings.fields.map((f: { name: string }) => f.name)).toEqual(["stripe_key", "stripe_account"]);
+    expect(item.settings.fields[0].obtain).toContain("Authorizing agent access");
   });
 });
 

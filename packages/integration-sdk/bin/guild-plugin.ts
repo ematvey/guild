@@ -7,6 +7,11 @@
 //       manifest, and writes <out>/<slug>-<version>.guildplugin (a tar.gz
 //       with manifest.json, plugin.js, and the nearest logo.svg between the
 //       entry's folder and the working directory).
+//       An entry that is a folder holding manifest.json (or the
+//       manifest.json itself) is an MCP stub: a manifest naming a remote
+//       MCP server (`mcp.url`), its settings and header templates, packed
+//       with the folder's README.md and logo.svg and no code. The server
+//       discovers the stub's tools live once an admin configures it.
 //
 //   guild-plugin publish <bundle> [--server URL] [--token TOKEN] [--approve]
 //       Uploads the bundle to a Guild server's registry. --approve (admin
@@ -19,7 +24,7 @@
 //       relative path (a git-hosted catalog serves it from the same repo).
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -92,11 +97,39 @@ function bundleManifest(bytes: Buffer): Record<string, unknown> {
   die("the bundle has no manifest.json");
 }
 
+/** Packs an MCP stub folder: manifest.json plus README.md and logo.svg. */
+function packMcpStub(manifestPath: string, outDir: string): void {
+  const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+  if (m["kind"] !== "integration") die(`${manifestPath}: kind must be "integration"`);
+  const slug = m["slug"];
+  const version = m["version"];
+  if (typeof slug !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(slug)) die(`${manifestPath}: bad slug`);
+  if (typeof version !== "string" || version === "") die(`${manifestPath}: version is empty`);
+  if (m["runtime"] !== undefined) die(`${manifestPath}: an MCP stub carries no runtime`);
+  const mcp = m["mcp"] as Record<string, unknown> | undefined;
+  const url = mcp?.["url"];
+  if (typeof url !== "string" || !/^https?:\/\//.test(url)) die(`${manifestPath}: mcp.url must be an absolute http(s) URL`);
+  const files: Record<string, Buffer | string> = { "manifest.json": `${JSON.stringify(m, null, 2)}\n` };
+  for (const name of ["logo.svg", "README.md"]) {
+    const candidate = path.join(path.dirname(manifestPath), name);
+    if (existsSync(candidate)) files[name] = readFileSync(candidate);
+  }
+  const bytes = packFiles(files);
+  const out = path.join(outDir, `${slug}-${version}.guildplugin`);
+  writeFileSync(out, bytes);
+  console.log(`${out}\nsha256 ${sha256(bytes)}`);
+}
+
 async function pack(positional: string[], flags: Record<string, string | true>): Promise<void> {
   const entry = path.resolve(positional[0] ?? "src/integration.ts");
   if (!existsSync(entry)) die(`no plugin entry at ${entry}`);
   const outDir = path.resolve(flag(flags, "out") ?? "dist");
   mkdirSync(outDir, { recursive: true });
+  const stubManifest = entry.endsWith(".json") ? entry : path.join(entry, "manifest.json");
+  if (existsSync(stubManifest) && statSync(stubManifest).isFile()) {
+    packMcpStub(stubManifest, outDir);
+    return;
+  }
   const built = await Bun.build({ entrypoints: [entry], target: "node", format: "esm", minify: false });
   if (!built.success) {
     for (const log of built.logs) console.error(log);

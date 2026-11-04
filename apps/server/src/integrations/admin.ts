@@ -16,6 +16,7 @@ import { mcpConnect } from "./mcp.js";
 import { manifestSecretNames, namespacedTool, registryManifest, registryManifestIfApproved } from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
 import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
+import { parseBundle, readBundleFile } from "../platform/bundle.js";
 
 /** The stores the admin paths read and write. */
 export interface IntegrationAdminDeps {
@@ -94,6 +95,40 @@ function shopEntry(
   };
 }
 
+/** The storefront files of an MCP item's approved bundle (logo.svg,
+ *  README.md), per bundle hash: the hash pins the bytes. */
+const mcpStoreFiles = new Map<string, Promise<{ logo: string; readme: string }>>();
+
+async function mcpBundleFiles(
+  gateway: IntegrationAdminDeps,
+  orgId: string,
+  slug: string,
+): Promise<{ logo: string; readme: string }> {
+  const empty = { logo: "", readme: "" };
+  try {
+    const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
+    if (approved === null) return empty;
+    const [version, sha256] = approved;
+    let files = mcpStoreFiles.get(sha256);
+    if (files === undefined) {
+      files = (async () => {
+        const stored = await gateway.registry.getVersion(orgId, "integration", slug, version);
+        if (stored.bundle_sha256 !== sha256) return empty;
+        const parsed = await parseBundle(await gateway.objects.get(stored.object_key));
+        return {
+          logo: readBundleFile(parsed, "logo.svg")?.toString("utf8") ?? "",
+          readme: readBundleFile(parsed, "README.md")?.toString("utf8") ?? "",
+        };
+      })();
+      files.catch(() => mcpStoreFiles.delete(sha256));
+      mcpStoreFiles.set(sha256, files);
+    }
+    return await files;
+  } catch {
+    return empty;
+  }
+}
+
 /** The labels of the required settings and credentials a row has not
  *  filled yet: the "needs setup" state. */
 export function missingRequired(settings: unknown, config: unknown, storedSecrets: string[]): string[] {
@@ -162,6 +197,10 @@ export async function integrationShop(
     if (manifest === null || manifest["mcp"] === null || manifest["mcp"] === undefined) continue;
     const auth = (manifest["auth"] ?? null) as Record<string, unknown> | null;
     const secretNames = Array.isArray(auth?.["secret_names"]) ? (auth["secret_names"] as string[]) : [];
+    const files = await mcpBundleFiles(gateway, orgId, item.slug);
+    const declared = Array.isArray(manifest["categories"])
+      ? (manifest["categories"] as unknown[]).filter((c): c is string => typeof c === "string" && c !== "mcp")
+      : [];
     items.push(
       shopEntry(
         {
@@ -177,13 +216,16 @@ export async function integrationShop(
                 : "",
           description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
           docs_url: typeof manifest["docs_url"] === "string" ? (manifest["docs_url"] as string) : null,
-          logo: typeof manifest["logo"] === "string" ? (manifest["logo"] as string) : "",
-          categories: ["mcp"],
+          logo: typeof manifest["logo"] === "string" && manifest["logo"] !== "" ? (manifest["logo"] as string) : files.logo,
+          categories: ["mcp", ...declared],
           traits: {},
           secret_names: secretNames,
           settings: manifest["settings"] ?? null,
           source: "mcp",
-          readme: typeof manifest["readme"] === "string" ? (manifest["readme"] as string) : "",
+          readme:
+            typeof manifest["readme"] === "string" && manifest["readme"] !== ""
+              ? (manifest["readme"] as string)
+              : files.readme,
           tools: [],
         },
         rowByName.get(item.slug) ?? null,
@@ -295,7 +337,7 @@ export async function integrationTools(
     curatedToolJson(
       t.name,
       integrationRow.name,
-      mcpToolClass(rowConfig, manifest, t.name),
+      mcpToolClass(rowConfig, manifest, t),
       t.description,
       true,
       rowConfig,
