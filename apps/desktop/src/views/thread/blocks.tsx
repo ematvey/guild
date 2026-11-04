@@ -100,11 +100,6 @@ export function CompactionCard({ c }: { c: CompactionBlock }) {
   );
 }
 
-/// Hover-revealed message footer — a copy button left of the timestamp:
-/// always mounted (absolute below the message, hidden via opacity) so
-/// showing it never reflows the thread. It sits `pt-3` under the message box — the same step the transcript uses
-/// between paragraphs (`space-y-3`), so the stamp reads as the next line of
-/// the message rather than a separate element.
 /// Locale-aware shortest unambiguous form: time only for today,
 /// + month/day within the year, + year for older messages.
 // Stamps repeat for every message on every render. The formatted text only
@@ -136,6 +131,10 @@ export function prettyStamp(iso: string): string {
   return text;
 }
 
+/// Hover-revealed message footer — a copy button left of the timestamp:
+/// always mounted (hidden via opacity) so showing it never reflows the
+/// thread. It is the last row of the message box, in the page flow, so the
+/// transcript's own gap separates it from the next message.
 export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" | "right"; copyText?: string }) {
   const text = ts ? prettyStamp(ts) : "";
   const canCopy = copyText !== undefined && copyText !== "";
@@ -146,13 +145,13 @@ export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" |
     return () => clearTimeout(t);
   }, [copied]);
   if (!text && !canCopy) return null;
-  // `pt-3` (not a margin) keeps the gap under the message inside the
-  // hover target, so the pointer can travel from the message to the copy
-  // button without the row fading out. Pointer events switch on only while
-  // the message is hovered: hidden, the row never eats clicks.
+  // The row is in the flow, so its `pt-2` is both the gap under the text and
+  // part of the hover target: the pointer can travel from the message to the
+  // copy button without the row fading out. Pointer events switch on only
+  // while the message is hovered: hidden, the row never eats clicks.
   return (
     <div
-      className={`pointer-events-none absolute top-full flex items-center gap-2 pt-3 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100`}
+      className={`pointer-events-none flex items-center gap-2 pt-2 ${side === "right" ? "justify-end" : "justify-start"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100`}
     >
       {canCopy && (
         <button

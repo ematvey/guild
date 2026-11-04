@@ -35,7 +35,7 @@ const TextBlock = memo(function TextBlock({
   onOpenOrigin?: (chatId: string) => void;
 }) {
   return (
-    <div className="group relative">
+    <div className="group">
       <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
           {b.text}
@@ -179,7 +179,7 @@ export function ThreadPane({
             )}
           </WorkedForBlock>
         ) : e.b.kind === "user" ? (
-          <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
+          <div key={e.b.key} className="group ml-auto w-fit max-w-[80%]">
             <div className={`rounded-2xl bg-secondary px-4 py-2.5 text-base leading-[1.75] ${WRAP_ANYWHERE}`}>
               {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
               {e.b.attachments && e.b.attachments.length > 0 && (
@@ -266,10 +266,7 @@ export function ThreadPane({
         >
           <div
             ref={scroll.setContentEl}
-            // `space-y-8` clears the absolute hover stamp under each
-            // message (its `pt-3` plus a text-xs line); a smaller gap lets
-            // the stamp sit on the next message.
-            className={`mx-auto w-full space-y-8 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
+            className={`mx-auto w-full space-y-5 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ paddingBottom: scroll.composerH + 48, maxWidth: chatWidth }}
