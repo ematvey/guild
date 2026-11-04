@@ -62,8 +62,8 @@ services:
 
   juicefs-init:
     # One-shot: the JuiceFS metadata lives in its own Postgres database
-    # (guild_meta), separate from the app database. Uses the stack's
-    # GUILD_DATABASE_URL credentials; the host dir prerequisite is
+    # (GUILD_JUICE_META_DB), separate from the app database. Uses the
+    # stack's GUILD_DATABASE_URL credentials; the host dir prerequisite is
     # documented in docs/deploy-nuances.md.
     image: postgres:17
     restart: "no"
@@ -71,7 +71,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      GUILD_JUICE_META_DB: ${GUILD_JUICE_META_DB:-guild_meta}
+      GUILD_JUICE_META_DB: ${GUILD_JUICE_META_DB:?set GUILD_JUICE_META_DB in .env (this stack's own JuiceFS metadata database)}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -91,23 +91,42 @@ services:
     # JuiceFS sidecar: mounts the agent workspace volume in the host mount
     # namespace (the server, runner and sandbox containers all resolve the
     # host directory). pid: host + privileged are what let the entrypoint
-    # nsenter into PID 1 and install the client on the host. Settings come
-    # from config.env (GUILD_JUICE_* and the GUILD_S3_* fallbacks).
+    # nsenter into PID 1 and install the client on the host.
+    # Each stack owns its filesystem: the host directory, metadata database,
+    # volume name and bucket come from .env and have no defaults, so two
+    # stacks never share one by accident. Object-store credentials for the
+    # volume live in juicefs.env (GUILD_JUICE_ACCESS_KEY/SECRET_KEY), which
+    # only this service reads; without it the GUILD_S3_* keys of config.env
+    # are the fallback.
     image: ${GUILD_JUICE_IMAGE:-juicedata/mount:ce-v1.3.1}
     restart: unless-stopped
     pid: host
     privileged: true
-    env_file: ${GUILD_CONFIG_ENV:-config.env}
+    env_file:
+      - ${GUILD_CONFIG_ENV:-config.env}
+      - path: ${GUILD_JUICE_ENV:-juicefs.env}
+        required: false
+    environment:
+      GUILD_WORKSPACE_HOST_DIR: ${GUILD_WORKSPACE_HOST_DIR:?set GUILD_WORKSPACE_HOST_DIR in .env (this stack's own host directory)}
+      GUILD_JUICE_META_DB: ${GUILD_JUICE_META_DB:?set GUILD_JUICE_META_DB in .env}
+      GUILD_JUICE_VOLUME: ${GUILD_JUICE_VOLUME:?set GUILD_JUICE_VOLUME in .env (this stack's own JuiceFS volume name)}
+      GUILD_JUICE_BUCKET: ${GUILD_JUICE_BUCKET:?set GUILD_JUICE_BUCKET in .env (this stack's own bucket)}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     entrypoint: ["/usr/local/bin/guild-juicefs-entrypoint"]
     volumes:
       - ../juicefs/entrypoint.sh:/usr/local/bin/guild-juicefs-entrypoint:ro
+      # Holds the workspace volume for as long as the sidecar runs. Docker
+      # unmounts a bind volume when its last container stops, and that
+      # unmount propagates to the host directory and takes the FUSE mount
+      # down with it: a deploy that recreates the server and the runner
+      # together would otherwise drop every workspace.
+      - guild_workspaces:/var/lib/guild-workspaces-hold:ro
     depends_on:
       juicefs-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "nsenter -t 1 -m -- stat -f -c %T $${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild} | grep -qi fuse"]
+      test: ["CMD-SHELL", "nsenter -t 1 -m -- stat -f -c %T $${GUILD_WORKSPACE_HOST_DIR} | grep -qi fuse"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -171,6 +190,8 @@ services:
       GUILD_SANDBOX_PROXY_URL: http://${GUILD_SANDBOX_EGRESS_IP:-10.213.0.2}:3128
       # Agent subpath dirs are created on the agent volume mounted here.
       GUILD_SANDBOX_AGENT_DIR: /workspaces
+      # The volume sandboxes take their agent subpath from (guild_workspaces).
+      GUILD_SANDBOX_AGENT_VOLUME: ${GUILD_WORKSPACES_VOLUME:?set GUILD_WORKSPACES_VOLUME in .env (this stack's workspace volume name)}
     depends_on:
       sandbox-image:
         condition: service_started
@@ -228,8 +249,13 @@ volumes:
   # mounts into. The bind source must exist before `docker compose up`
   # (docs/deploy-nuances.md §4b).
   guild_workspaces:
+    # Named per stack: a bind volume pointing at another directory is a new
+    # volume, never a recreated one, so moving a stack's filesystem never
+    # unmounts the old volume (an unmount there can propagate to whatever
+    # is still mounted at the old directory).
+    name: ${GUILD_WORKSPACES_VOLUME:?set GUILD_WORKSPACES_VOLUME in .env (this stack's workspace volume name)}
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}
+      device: ${GUILD_WORKSPACE_HOST_DIR:?set GUILD_WORKSPACE_HOST_DIR in .env (this stack's own host directory)}

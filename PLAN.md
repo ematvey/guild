@@ -97,6 +97,30 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Each stack owns its JuiceFS filesystem; the sidecar holds the volume
+  (2026-11-04).** At 16:15 a dev deploy recreated the server and the runner
+  together, the only users of the `guild_workspaces` bind volume. Docker
+  unmounted the volume, the unmount propagated through the shared host
+  directory, and the FUSE mount at `/mnt/guild` went down. Prod went with it:
+  prod never set `GUILD_WORKSPACE_HOST_DIR`, and the entrypoint hard-coded
+  `guild_meta`, so dev and prod were one filesystem (same host directory,
+  metadata database and bucket). Now: `.env` names each stack's host
+  directory, metadata database, JuiceFS volume, bucket and Docker volume with
+  no defaults; the entrypoint honours `GUILD_JUICE_META_DB` and refuses a
+  host directory that holds another volume; the `juicefs` service mounts
+  `guild_workspaces` itself, so the volume never loses its last user; the
+  JuiceFS settings reach only that service (`juicefs.env`). Dev moved to its
+  own filesystem (`/mnt/guild-dev`, `guild_meta_dev`, bucket
+  `guild-workspaces-dev`, volume `compose_guild_workspaces_dev`), its 370 MB
+  of agent folders copied and removed from prod's; prod kept its filesystem,
+  pinned in its `.env`. Open: a bucket-scoped object-store key for each
+  JuiceFS volume (RustFS user admin needs `mc`, not available here); the
+  orphaned `compose_guild_workspaces` volume record, which still binds
+  `/mnt/guild` and must not be removed while prod is mounted there (an
+  unmount of it took prod's host mount down even after `--make-rprivate`);
+  the 12 KB `agents/01a17457…` folder in prod's filesystem that matches no
+  org; prod picks up the compose change with its next deploy.
+
 - **A Run is the record of exactly one pi-durable run (2026-11-04,
   branch `spike/pi-durable-runs`).** `agent_runs` no longer infers a run's
   end from the first answer without a tool call. A `beforeRequest` hook

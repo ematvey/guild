@@ -86,10 +86,16 @@ object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
   database, ClickHouse database and S3 bucket.
 - Sandbox networks must not overlap: dev `10.213.0.0/24`, prod
   `10.215.0.0/24`, ezh `10.216.0.0/24`.
-- Agent workspaces are per stack: `GUILD_WORKSPACE_HOST_DIR` sets both the
-  JuiceFS mountpoint and the bind source of the `guild_workspaces` volume
-  (`/mnt/guild` for dev and prod, `/mnt/guild-stage` for ezh). Each stack also
-  needs its own JuiceFS volume name, metadata database and bucket.
+- Agent workspaces are per stack, set in the stack's `.env` with no defaults
+  (compose refuses to start without them), see §4b:
+
+  | Stack | `GUILD_WORKSPACE_HOST_DIR` | `GUILD_JUICE_META_DB` | `GUILD_JUICE_VOLUME` | `GUILD_JUICE_BUCKET` | `GUILD_WORKSPACES_VOLUME` |
+  |---|---|---|---|---|---|
+  | dev (`compose`) | `/mnt/guild-dev` | `guild_meta_dev` | `guild-workspaces-dev` | `guild-workspaces-dev` | `compose_guild_workspaces_dev` |
+  | prod (`guild-live`) | `/mnt/guild` | `guild_meta` | `guild-workspaces` | `guild-workspaces` | `guild-live_guild_workspaces` |
+  | ezh (`guild-stage`) | `/mnt/guild-stage` | `guild_stage_meta` | `guild-workspaces-ezh` | `guild-workspaces-ezh` | `guild-stage_guild_workspaces` |
+
+  No two stacks may share any of these values.
 - Public hosts are ingress rules in `/etc/cloudflared/config.yml` (the
   `cloudflared` tunnel), each pointing at the stack's port. Add a host with
   `cloudflared tunnel route dns <tunnel> <host>` and restart the service.
@@ -230,18 +236,37 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
 
 Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
 
-- **Host prerequisite (the only one):** create the bind source once per
+- **Each stack owns its filesystem.** `.env` names it with five values and
+  no defaults (table in §1): the host directory, the metadata database, the
+  JuiceFS volume name, the bucket, and the Docker volume name. Two stacks on
+  one host directory or one metadata database are one filesystem, and one
+  stack's unmount takes the other's workspaces down. The sidecar refuses to
+  start when another volume is mounted at its host directory.
+- **Host prerequisites:** create the bind source and the bucket once per
   stack. No systemd unit is involved.
 
   ```bash
-  sudo mkdir -p /mnt/guild
+  sudo mkdir -p /mnt/guild-dev   # GUILD_WORKSPACE_HOST_DIR
   ```
 
-  For the isolated instance use its own directory (`/mnt/guild-agents-vfs`,
-  see below). The compose volume `guild_workspaces` binds that directory;
+  The compose volume `guild_workspaces` binds that directory;
   `docker compose up` fails at volume creation when it does not exist.
-- The `juicefs-init` one-shot service creates the `guild_meta` database in
-  the stack's Postgres from `GUILD_DATABASE_URL` credentials, then exits.
+- The `juicefs-init` one-shot service creates `GUILD_JUICE_META_DB` in the
+  stack's Postgres from `GUILD_DATABASE_URL` credentials, then exits.
+- **The sidecar holds the volume.** Docker unmounts a bind volume when its
+  last container stops, and that unmount propagates through the shared
+  host directory and takes the FUSE mount down. The `juicefs` service mounts
+  `guild_workspaces` itself, so recreating the server and the runner together
+  (any deploy that rebuilds the shared image) leaves the mount alone.
+- **Never remove or recreate a workspace volume while its directory is
+  mounted.** Moving a stack to a new directory means a new
+  `GUILD_WORKSPACES_VOLUME` name; the old volume record stays until the old
+  directory has no mount, then `docker volume rm` is safe.
+- **Credentials:** the JuiceFS settings reach only the `juicefs` service.
+  Its object-store key goes in `deploy/compose/juicefs.env`
+  (`GUILD_JUICE_ACCESS_KEY`/`GUILD_JUICE_SECRET_KEY`, see
+  `juicefs.env.example`); without one it falls back to `config.env`'s
+  `GUILD_S3_*`, which the server also holds.
 - The `juicefs` sidecar formats the volume once (`juicefs format` is skipped
   when `juicefs status` reports an existing volume), then mounts it in the
   **host mount namespace**: it runs with `pid: host` and `privileged: true`,
@@ -249,20 +274,20 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   `/usr/local/lib/juicefs`) and mounts via `nsenter -t 1 -m -n`. A FUSE mount
   created inside the sidecar's own namespace is not visible to the Docker
   daemon, so it cannot back the per-agent sandbox subpaths. The healthcheck
-  runs `nsenter -t 1 -m -- stat -f` on `/mnt/guild`.
+  runs `nsenter -t 1 -m -- stat -f` on `GUILD_WORKSPACE_HOST_DIR`.
 - `server` binds `guild_workspaces` read-only at `/workspaces` (file
   browser, `GUILD_AGENT_WORKSPACE_ROOT`); `sandbox-runner` binds it
   read-write and creates `agents/<org>/<agent>` subpaths for the sandboxes.
   Both wait for the `juicefs` healthcheck and restart with it (`depends_on:
   restart: true`).
-- Per-agent quota: the sidecar sweeps `/mnt/guild/agents/*/*` in the host
+- Per-agent quota: the sidecar sweeps `<host dir>/agents/*/*` in the host
   mount namespace every `GUILD_AGENT_QUOTA_INTERVAL` seconds (default 300)
   and runs `juicefs quota set --capacity GUILD_AGENT_WORKSPACE_GIB` (default
   50) for each directory. The sweep needs the host network namespace too, so
   `host.docker.internal` resolves to the host's Postgres.
 - Restarting the `juicefs` container replaces the FUSE session behind
   Docker's bind volume (`/var/lib/docker/volumes/<project>_guild_workspaces/_data`).
-  The sidecar re-binds that `_data` to `/mnt/guild` after every mount, so the
+  The sidecar re-binds that `_data` to the host directory after every mount, so the
   dependent services start on the live mount; the runner also removes its
   sandbox containers on boot, because a sandbox created before the remount
   keeps the dead session (`transport endpoint is not connected`; every
@@ -271,16 +296,14 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   hangs:
 
   ```bash
-  findmnt -n /var/lib/docker/volumes/compose_guild_workspaces/_data
+  findmnt -n /var/lib/docker/volumes/compose_guild_workspaces_dev/_data
   ```
 
   A fresh `docker compose up` on a stack that has never run is unaffected.
 - Chat/legacy workspaces stay on `guild_data`; the agent volume is separate.
-- JuiceFS settings come from `deploy/compose/config.env`
-  (`GUILD_JUICE_*`, with `GUILD_S3_*` fallbacks). Defaults are in
-  `deploy/juicefs/entrypoint.sh`. The object-storage bucket must already
-  exist before the first `juicefs format` (for the isolated instance the
-  init script creates it). The sidecar writes `127.0.0.1
+- The object-storage bucket must already exist before the first
+  `juicefs format` (for the isolated instance the init script creates it;
+  elsewhere `rclone mkdir` with the stack's key). The sidecar writes `127.0.0.1
   host.docker.internal` into the host `/etc/hosts` when missing, because the
   host-namespace mount resolves the same S3/Postgres names as the
   containers.
@@ -296,9 +319,11 @@ verification stack with fixed resources, never the dev/prod stacks:
 | Compose project | `guild-agents-vfs` |
 | HTTP port | `18093` |
 | App database | `guild_agents_vfs` |
-| JuiceFS metadata database | `guild_meta` |
+| JuiceFS metadata database | `guild_meta_agents_vfs` |
+| JuiceFS volume | `guild-workspaces-agents-vfs` |
 | Object-storage bucket | `guild-agents-vfs` |
 | Host volume dir | `/mnt/guild-agents-vfs` |
+| Workspace volume | `guild-agents-vfs_guild_workspaces` |
 
 Host prerequisites for the isolated instance:
 
