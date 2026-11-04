@@ -103,10 +103,16 @@ function clip(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max);
 }
 
+const sameInputs = (a: readonly number[], b: readonly number[]) => a.length === b.length && includesAll(a, b);
+const includesAll = (inputs: readonly number[], of: readonly number[]) => of.every((input) => inputs.includes(input));
+
 export class AgentRunLifecycle {
   /** Per chat, the inputs of the run whose rows are open: later requests
    *  of the same run skip the lookup. */
-  private readonly opened = new Map<string, string>();
+  private readonly opened = new Map<string, readonly number[]>();
+  /** Per chat, a run this process settled when the next run started, with
+   *  its rows: its own run_end, still on the way, only adds a failure. */
+  private readonly settledEarly = new Map<string, { inputs: readonly number[]; runIds: string[] }>();
 
   constructor(private readonly deps: AgentRunLifecycleDeps) {}
 
@@ -115,17 +121,39 @@ export class AgentRunLifecycle {
    *  one opens the run's rows: the queued rows created for its inputs, else
    *  a new message run. A row already running is this run's own. */
   async runStart(chatId: string, inputs: readonly number[]): Promise<void> {
-    const key = inputs.join(",");
-    if (this.opened.get(chatId) === key) return;
+    const current = this.opened.get(chatId);
+    if (current !== undefined && sameInputs(current, inputs)) return;
+    if (current !== undefined && !includesAll(inputs, current)) {
+      // A run's inputs only grow (a steer or child result taken into it),
+      // so inputs without the open run's are another run. pi-durable runs
+      // one run at a time per conversation: the open one has ended, even
+      // when its run_end has not arrived yet (inputs waiting in the inbox
+      // start the next run at once). Settle it now, or its open row would
+      // swallow this run.
+      const running = await runningRunsForChat(this.deps.pool, chatId);
+      for (const run of running) await this.finish(run, null);
+      this.settledEarly.set(chatId, { inputs: current, runIds: running.map((run) => run.id) });
+    }
     await this.open(chatId, inputs, true);
-    this.opened.set(chatId, key);
+    this.opened.set(chatId, inputs);
   }
 
   /** Called at the chat bridge's run_end: settles the run's rows from its
    *  answer. A run that ended before any request still settles the queued
    *  rows created for its inputs, and a failed one is recorded. */
   async runEnd(chatId: string, inputs: readonly number[], failure: string | null): Promise<void> {
-    if (this.opened.get(chatId) !== inputs.join(",")) await this.open(chatId, inputs, failure !== null);
+    const early = this.settledEarly.get(chatId);
+    if (early !== undefined && includesAll(inputs, early.inputs)) {
+      this.settledEarly.delete(chatId);
+      if (failure !== null) {
+        for (const id of early.runIds) {
+          await this.deps.runs.updateRun(id, { status: "failed", error_code: "run_error", error_message: failure });
+        }
+      }
+      return;
+    }
+    const current = this.opened.get(chatId);
+    if (current === undefined || !sameInputs(current, inputs)) await this.open(chatId, inputs, failure !== null);
     this.opened.delete(chatId);
     for (const run of await runningRunsForChat(this.deps.pool, chatId)) await this.finish(run, failure);
   }

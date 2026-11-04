@@ -204,6 +204,37 @@ dbDescribe("agent run lifecycle", () => {
     expect(await openRuns()).toHaveLength(0);
   });
 
+  it("records a run that starts before the previous run's end arrives", async () => {
+    // Child results waiting in the inbox start the parent's next run at
+    // once; its first request can come before the first run's run_end.
+    await lifecycle.runStart(chatId, [1007]);
+    const first = (await openRuns())[0]!;
+    await threads.appendEvent(chatId, answer(1, "Both helpers are running."));
+    await lifecycle.runStart(chatId, [1008]);
+    const second = (await openRuns())[0]!;
+    expect(second.id).not.toBe(first.id);
+    await threads.appendEvent(chatId, answer(1, "ALPHA 391, BETA 551"));
+    await lifecycle.runEnd(chatId, [1007], null);
+    expect((await openRuns()).map((r) => r.id)).toEqual([second.id]);
+    await lifecycle.runEnd(chatId, [1008], null);
+    expect(await openRuns()).toHaveLength(0);
+    expect(await store.runs.getRun(first.id)).toMatchObject({
+      status: "succeeded",
+      summary: "Both helpers are running.",
+    });
+    expect(await store.runs.getRun(second.id)).toMatchObject({ status: "succeeded", summary: "ALPHA 391, BETA 551" });
+  });
+
+  it("records the failure a late run_end reports for a run already settled", async () => {
+    await lifecycle.runStart(chatId, [1009]);
+    const first = (await openRuns())[0]!;
+    await lifecycle.runStart(chatId, [1010]);
+    await lifecycle.runEnd(chatId, [1009], "provider down");
+    expect(await store.runs.getRun(first.id)).toMatchObject({ status: "failed" });
+    await lifecycle.runEnd(chatId, [1010], null);
+    expect(await openRuns()).toHaveLength(0);
+  });
+
   it("marks a run with no text and no send_message silent", async () => {
     await lifecycle.runStart(chatId, [1006]);
     const run = (await openRuns())[0]!;

@@ -20,6 +20,11 @@ Implementation of A:
   pre-create rows. Delivery no longer opens runs or takes a lock.
 - The subagent tools read the calling run when they run, not at
   provisioning.
+- A run's first request can arrive before the previous run's `run_end`
+  (child results waiting in the inbox start the next run at once). Inputs
+  without the open run's inputs are another run, so `runStart` settles the
+  open rows first and the late `run_end` only adds a failure; a run whose
+  inputs grew (a steer taken into it) stays one run.
 
 ## Question
 
