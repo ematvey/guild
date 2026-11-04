@@ -86,6 +86,34 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Integration plugins ship as registry bundles; orgs install them from
+  catalogs (2026-11-04).** The gitignored `integrations/private/` folder
+  (same day, below) tied company plugins to a server checkout and an image
+  rebuild. A plugin is now its own repository built against
+  `@guild/integration-sdk` (`packages/integration-sdk`: the contract types,
+  the request helpers, and the `guild-plugin` CLI). `guild-plugin pack`
+  bundles the plugin and the SDK into one `plugin.js` and writes a
+  `.guildplugin` (manifest.json with `runtime: "code"`, plugin.js,
+  logo.svg). The server runs an approved code bundle in a worker thread
+  (`code-plugins.ts`, `plugin-host.mjs`) loaded from the org's registry
+  object, checked against the approved hash, cached per hash — no rebuild,
+  no copy; the worker contains crashes and hangs but is not a sandbox, so
+  approval of the exact hash is the trust decision. Connectors are per org
+  now (`connectors.ts`: built-ins, then the org's approved code plugins).
+  Installs go through one path (`plugin-install.ts`: check, start once,
+  publish, approve, disabled row) from three sources: a catalog version, an
+  uploaded file, a bundle URL; `guild-plugin publish --approve` is the CI
+  push. A catalog is a static `guild-plugin-catalog/1` index (plugins,
+  versions, sha256, bundle location); each org keeps its own list in org KV
+  (`GUILD_DEFAULT_PLUGIN_CATALOG` seeds it), read from a public URL or a
+  file in a GitHub/GitLab repository through the org's own GitHub/GitLab
+  integration token, so private repositories work. Trait providers are
+  bound per org (org KV, Integrations → Traits); unbound, the first enabled
+  declarer wins. Superproxy moved to `~/guild-plugins-acme` (its own
+  repository and the private catalog) and installs as a code plugin.
+  Deferred: publisher signatures, MCP integrations providing traits, and an
+  npm release of the SDK (plugin repos link it from a Guild checkout).
+
 - **The conversation's inbox is the only queue; thread events are only
   what happened (2026-11-04).** Pending inputs had three homes: pi-durable's
   inbox, a `thread_events` echo marked `queued` (the desktop chip, moved on

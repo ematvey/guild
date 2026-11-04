@@ -5,8 +5,10 @@
 // re-resolved at call time.
 
 import { randomUUID } from "node:crypto";
-import { integrationByName, traitForTool, type IntegrationToolSpec } from "./loader.js";
-import { traitSpec } from "./traits.js";
+import type { IntegrationToolSpec, Connector } from "./loader.js";
+import { traitSpec } from "@guild/integration-sdk";
+import { connectorFor, readTraitBindings, type ConnectorSource, type TraitBindings } from "./connectors.js";
+import type { OrgKvStore } from "../platform/store/org-kv.js";
 import { toolClassOf } from "../platform/domain/tool-class.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
 import { mcpToolClass } from "./policy.js";
@@ -24,25 +26,19 @@ export interface PluginSecretSource {
 }
 
 /** The gateway slice plugin resolution needs (structurally the GatewayCtx
- *  slice): the integration rows, the secret store, and the registry whose
- *  approvals gate MCP manifests + guide bundles. */
-export interface IntegrationGateway extends PluginSecretSource {
+ *  slice): the integration rows, the secret store, the registry whose
+ *  approvals gate MCP manifests and code plugins, the object store the code
+ *  bundles load from, and the org KV holding the trait bindings. */
+export interface IntegrationGateway extends PluginSecretSource, ConnectorSource {
   integrations: {
     listEnabled(orgId: string): Promise<{ name: string; config: unknown; enabled: boolean }[]>;
   };
-  registry: {
-    approvedBundle(orgId: string, kind: string, slug: string): Promise<[string, string] | null>;
-    getVersion(
-      orgId: string,
-      kind: string,
-      slug: string,
-      version: string,
-    ): Promise<{ manifest: unknown; bundle_sha256: string | null; object_key: string }>;
-  };
+  orgKv: Pick<OrgKvStore, "get">;
 }
 
-/** How a plugin executes: a compiled-in connector or a remote MCP server. */
-export type IntegrationExecutor = "builtin" | "mcp";
+/** How a plugin executes: an in-process connector (a built-in or an
+ *  approved registry code plugin) or a remote MCP server. */
+export type IntegrationExecutor = "connector" | "mcp";
 
 export interface IntegrationToolInfo {
   /** The declaration the model sees. For a trait tool this is the
@@ -53,6 +49,15 @@ export interface IntegrationToolInfo {
   raw: string;
   /** The trait this tool implements, when it implements one. */
   trait?: string;
+}
+
+/** The trait a connector's tool implements, when its manifest maps one to
+ *  it. */
+function traitOfTool(connector: Connector, raw: string): string | undefined {
+  for (const [trait, tool] of Object.entries(connector.traits)) {
+    if (tool === raw) return trait;
+  }
+  return undefined;
 }
 
 /** Resolution snapshot for one enabled plugin — everything the script API
@@ -87,7 +92,7 @@ export function unnamespacedTool(slug: string, tool: string): string | null {
  *  while the item is approved AND the approval's recorded version is still
  *  the latest — a republish resets the review status. */
 export async function registryManifestIfApproved(
-  gateway: IntegrationGateway,
+  gateway: Pick<IntegrationGateway, "registry">,
   orgId: string,
   slug: string,
 ): Promise<JsonObject | null> {
@@ -101,7 +106,11 @@ export async function registryManifestIfApproved(
   return (stored.manifest ?? {}) as JsonObject;
 }
 
-export async function registryManifest(gateway: IntegrationGateway, orgId: string, slug: string): Promise<JsonObject> {
+export async function registryManifest(
+  gateway: Pick<IntegrationGateway, "registry">,
+  orgId: string,
+  slug: string,
+): Promise<JsonObject> {
   const manifest = await registryManifestIfApproved(gateway, orgId, slug);
   if (manifest === null) {
     throw new Error(`registry item ${slug} has no approval covering its latest version and bundle`);
@@ -138,8 +147,9 @@ function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject
   };
 }
 
-/** Turn-start resolution for the enabled plugins of one org: built-in
- *  connectors resolve from the compiled-in catalogs; MCP plugins connect
+/** Turn-start resolution for the enabled plugins of one org: connectors
+ *  (built-ins and approved code plugins) declare their tools from the
+ *  manifest; MCP plugins connect
  *  live and merge the discovered tools. A broken plugin degrades: skipped
  *  with a warning, the caller continues without it. */
 export async function resolveIntegrations(
@@ -160,9 +170,15 @@ export async function resolveIntegrations(
         ? (config["mcp"] as JsonObject)["url"]
         : undefined;
     if (typeof mcpUrl !== "string" || mcpUrl === "") {
-      const connector = integrationByName(row.name);
+      let connector: Connector | undefined;
+      try {
+        connector = await connectorFor(gateway, orgId, row.name);
+      } catch (error) {
+        warn(`${(error as Error).message}, skipping`);
+        continue;
+      }
       if (connector === undefined) continue; // unknown kind with no mcp.url — nothing to resolve
-      const secretNames = catalogSecretNames(row.name);
+      const secretNames = connector.secret_names;
       // Presence check only — values never ride the snapshot.
       try {
         await gateway.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
@@ -172,23 +188,28 @@ export async function resolveIntegrations(
       }
       let specs: IntegrationToolSpec[];
       try {
-        specs = connector.toolSpecs(config);
+        specs = await connector.toolSpecs(config);
       } catch {
         warn(`integration ${row.name}: broken config, skipping`);
         continue;
       }
+      const resolved = connector;
       out.push({
-        executor: "builtin",
+        executor: "connector",
         slug: row.name,
-        description: catalogDescription(row.name),
-        tools: specs.map((spec) => ({
-          spec: { ...spec, name: namespacedTool(row.name, spec.name) },
-          class: toolClassOf(connector, spec.name),
-          raw: spec.name,
-        })),
+        description: resolved.summary,
+        tools: specs.map((spec) => {
+          const trait = traitOfTool(resolved, spec.name);
+          return {
+            spec: { ...spec, name: namespacedTool(row.name, spec.name) },
+            class: toolClassOf(resolved, spec.name),
+            raw: spec.name,
+            ...(trait !== undefined ? { trait } : {}),
+          };
+        }),
         rowConfig: config,
         secretNames,
-        identityKey: catalogIdentityKey(row.name),
+        identityKey: resolved.identity_key,
       });
       continue;
     }
@@ -242,56 +263,38 @@ export async function resolveIntegrations(
           : "email",
     });
   }
-  assignTraits(out);
+  assignTraits(out, await readTraitBindings(gateway.orgKv, orgId));
   return out;
 }
 
 /** Trait tools take their Guild-provided name, description, and schema, and
- *  only the first integration that declares a trait keeps it: the trait has
- *  one implementation per conversation, so the model never sees two tools
- *  with the same name. */
-function assignTraits(turns: IntegrationTurn[]): void {
-  const claimed = new Set<string>();
+ *  one integration answers each trait: the org's bound provider when it is
+ *  among the resolved integrations, else the first one declaring it. The
+ *  model never sees two tools with the same name; the losers keep their
+ *  other tools. */
+export function assignTraits(turns: IntegrationTurn[], bindings: TraitBindings = {}): void {
+  const winner = new Map<string, string>();
   for (const turn of turns) {
-    // An installed MCP plugin owns its tool names: only a compiled-in
-    // integration's manifest declares traits.
-    if (turn.executor !== "builtin") continue;
+    for (const info of turn.tools) {
+      if (info.trait === undefined) continue;
+      const bound = bindings[info.trait];
+      const boundPresent =
+        bound !== undefined && turns.some((t) => t.slug === bound && t.tools.some((i) => i.trait === info.trait));
+      if (boundPresent) winner.set(info.trait, bound);
+      else if (!winner.has(info.trait)) winner.set(info.trait, turn.slug);
+    }
+  }
+  for (const turn of turns) {
     const kept: IntegrationToolInfo[] = [];
     for (const info of turn.tools) {
-      const trait = traitForTool(turn.slug, info.raw);
-      if (trait === undefined) {
+      if (info.trait === undefined) {
         kept.push(info);
         continue;
       }
-      if (claimed.has(trait)) continue;
-      const spec = traitSpec(trait);
-      if (spec === undefined) continue;
-      claimed.add(trait);
-      kept.push({
-        ...info,
-        trait,
-        spec: { name: spec.name, description: spec.description, parameters: spec.parameters },
-      });
+      const spec = traitSpec(info.trait);
+      if (spec === undefined || winner.get(info.trait) !== turn.slug) continue;
+      kept.push({ ...info, spec: { name: spec.name, description: spec.description, parameters: spec.parameters } });
     }
     turn.tools = kept;
   }
-}
-
-// The compiled-in catalog metadata (src/platform/integration-catalog.ts) —
-// description/secret_names/identity_key as the resolve snapshot carries them.
-
-function catalog(name: string) {
-  return integrationByName(name);
-}
-
-function catalogDescription(name: string): string {
-  return catalog(name)?.summary ?? "";
-}
-
-function catalogSecretNames(name: string): string[] {
-  return catalog(name)?.secret_names ?? [];
-}
-
-function catalogIdentityKey(name: string): string {
-  return catalog(name)?.identity_key ?? "email";
 }

@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { NO_REGISTRY } from "./support/no-registry.js";
 import { executeConnectorTool, callPlugin } from "../integrations/execute.js";
 import { mcpConnect } from "../integrations/mcp.js";
 
@@ -299,6 +300,8 @@ function jwtPayload(assertion: string): Record<string, unknown> {
 describe("google_workspace execute (mock backend)", () => {
   it("gmail_search mints a token with the admin sub and renders the result list", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "gmail_search",
@@ -320,6 +323,8 @@ describe("google_workspace execute (mock backend)", () => {
 
   it("an acting identity rides the token sub claim (google impersonation)", async () => {
     await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "gmail_search",
@@ -333,6 +338,8 @@ describe("google_workspace execute (mock backend)", () => {
 
   it("gmail_get_message renders headers, the decoded text body, and the attachment list", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "gmail_get_message",
@@ -348,6 +355,8 @@ describe("google_workspace execute (mock backend)", () => {
 
   it("gmail_get_attachment decodes the base64url body into a binary artifact", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "gmail_get_attachment",
@@ -363,6 +372,8 @@ describe("google_workspace execute (mock backend)", () => {
 
   it("calendar, drive, directory, and the api tool reach their endpoints", async () => {
     const calendar = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "calendar_list_events",
@@ -372,6 +383,8 @@ describe("google_workspace execute (mock backend)", () => {
     );
     expect(calendar.content).toContain("Standup");
     const drive = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "drive_search",
@@ -381,6 +394,8 @@ describe("google_workspace execute (mock backend)", () => {
     );
     expect(drive.content).toContain("report — application/pdf (id f-1)");
     const directory = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "directory_users",
@@ -392,6 +407,8 @@ describe("google_workspace execute (mock backend)", () => {
     expect(lastHit("/admin/directory/v1/users").query.get("domain")).toBe("example.test");
     expect(directory.content).toContain("Bob Bobson");
     const api = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "google_workspace",
       googleConfig(),
       "api",
@@ -407,7 +424,16 @@ describe("google_workspace execute (mock backend)", () => {
   it("an unknown tool fails without touching the network", async () => {
     const before = hits.length;
     await expect(
-      executeConnectorTool("google_workspace", googleConfig(), "nope", {}, GOOGLE_SECRETS, null),
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "google_workspace",
+        googleConfig(),
+        "nope",
+        {},
+        GOOGLE_SECRETS,
+        null,
+      ),
     ).rejects.toThrow("google_workspace integration has no tool nope");
     expect(hits.length).toBe(before);
   });
@@ -425,6 +451,8 @@ function atlassianAuthOf(hit: Hit): string {
 describe("atlassian execute (mock backend)", () => {
   it("jira_search posts the JQL body and renders the issue lines with meta", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "jira_search",
@@ -440,6 +468,8 @@ describe("atlassian execute (mock backend)", () => {
 
   it("jira_get_issue flattens the issue with the browse URL", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "jira_get_issue",
@@ -455,6 +485,8 @@ describe("atlassian execute (mock backend)", () => {
 
   it("confluence_search and confluence_get_page render CQL results and storage text", async () => {
     const search = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "confluence_search",
@@ -465,6 +497,8 @@ describe("atlassian execute (mock backend)", () => {
     expect(search.content).toBe("Runbook (id 7): how to operate");
     expect(search.meta).toMatchObject({ kind: "confluence_search", count: 1 });
     const page = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "confluence_get_page",
@@ -480,6 +514,8 @@ describe("atlassian execute (mock backend)", () => {
 
   it("confluence_create_page posts the storage body and renders the created page", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "confluence_create_page",
@@ -504,6 +540,8 @@ describe("atlassian execute (mock backend)", () => {
 
   it("the api tool rides basic auth and truncates per the cap", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "atlassian",
       atlassianConfig(),
       "api",
@@ -519,6 +557,8 @@ describe("atlassian execute (mock backend)", () => {
   it("a vendor 400 surfaces as the tool-error contract with the body excerpt", async () => {
     await expect(
       executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
         "atlassian",
         atlassianConfig(),
         "jira_get_issue",
@@ -532,6 +572,8 @@ describe("atlassian execute (mock backend)", () => {
   it("a dot-segment path is rejected (path traversal guard)", async () => {
     await expect(
       executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
         "atlassian",
         atlassianConfig(),
         "jira_get_issue",
@@ -548,6 +590,8 @@ describe("atlassian execute (mock backend)", () => {
 describe("connector execute spot checks (mock backend)", () => {
   it("slack post_message posts through chat.postMessage and tolerates the ok envelope", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "slack",
       { base_url: `${vendorBase}/api` },
       "post_message",
@@ -562,6 +606,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("github list_issues skips pull requests", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "github",
       { api_url: vendorBase },
       "list_issues",
@@ -580,6 +626,8 @@ describe("connector execute spot checks (mock backend)", () => {
       hits.filter((h) => h.path.includes("projects")).map((h) => h.path),
     );
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "gitlab",
       { base_url: vendorBase },
       "list_issues",
@@ -593,6 +641,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("hubspot search rides the bearer token and renders the crm card meta", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "hubspot",
       { base_url: vendorBase },
       "search_contacts",
@@ -607,6 +657,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("langfuse list_traces uses the basic auth pair", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "langfuse",
       { base_url: vendorBase },
       "list_traces",
@@ -626,6 +678,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("firecrawl web_fetch renders the markdown with the web card meta", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "firecrawl",
       { base_url: vendorBase },
       "web_fetch",
@@ -639,6 +693,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("firecrawl web_search maps count onto the firecrawl limit", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "firecrawl",
       { base_url: vendorBase },
       "web_search",
@@ -653,6 +709,8 @@ describe("connector execute spot checks (mock backend)", () => {
 
   it("searxng web_search renders numbered results with source meta", async () => {
     const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "searxng",
       { base_url: vendorBase },
       "web_search",
@@ -789,7 +847,7 @@ describe("MCP tools/call (stub peer)", () => {
       callId: "call-1",
       actingAs: "member@example.test",
     };
-    const out = await callPlugin(source, turn, "echo", { text: "hi" }, identity);
+    const out = await callPlugin({ ...source, ...NO_REGISTRY }, turn, "echo", { text: "hi" }, identity);
     expect(out.content).toBe('echo:{"text":"hi"}');
     expect(out.meta).toBeUndefined();
     // Secrets were re-resolved at call time (snapshots never carry values).

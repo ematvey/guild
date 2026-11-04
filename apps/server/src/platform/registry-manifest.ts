@@ -25,6 +25,8 @@ export interface Manifest {
   docs_url?: unknown;
   dependencies?: unknown;
   mcp?: { url?: unknown } | null;
+  /** "code": the bundle carries a plugin.js the server runs. */
+  runtime?: unknown;
   auth?: { kind?: unknown; secret_names?: unknown; identity_key?: unknown } | null;
   settings?: { fields?: unknown } | null;
   tools?: { classes?: unknown } | null;
@@ -76,6 +78,12 @@ export function validateV2(m: Manifest): void {
     if (value !== undefined && value !== null && typeof value !== "string") {
       throw new Error(`${key} must be a string`);
     }
+  }
+  if (m.runtime !== undefined && m.runtime !== null && m.runtime !== "code") {
+    throw new Error('runtime must be "code" when present');
+  }
+  if (m.runtime === "code" && m.mcp !== null && m.mcp !== undefined) {
+    throw new Error("a code plugin bundle cannot also declare an mcp server");
   }
   if (m.mcp !== null && m.mcp !== undefined) {
     const url = m.mcp.url;

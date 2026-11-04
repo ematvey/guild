@@ -10,6 +10,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { tmpdir } from "node:os";
 import { createRegistry, defineExtension, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { UserMcpRuntime } from "../harness/user-mcp.js";
+import { NO_REGISTRY } from "./support/no-registry.js";
 import { executeConnectorTool } from "../integrations/execute.js";
 
 const arrived = new Map<string, () => void>();
@@ -188,6 +189,8 @@ describe("external tool cancellation", () => {
     const controller = new AbortController();
     const observed = observe("search");
     const result = executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
       "searxng",
       { base_url: base },
       "web_search",

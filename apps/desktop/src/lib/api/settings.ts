@@ -202,6 +202,49 @@ export function createOrgMcp<T>(body: unknown): Promise<T> {
   return request<T>("POST", `${SETTINGS_PATHS.integrations}/mcp`, body);
 }
 
+// ---- plugin catalogs, installs, trait bindings ----
+
+export const pluginCatalogsPath = `${SETTINGS_PATHS.integrations}/catalogs`;
+export const traitBindingsPath = `${SETTINGS_PATHS.integrations}/traits`;
+
+export function listPluginCatalogs<T>(refresh: boolean): Promise<T> {
+  return request<T>("GET", `${pluginCatalogsPath}${refresh ? "?refresh=1" : ""}`);
+}
+
+export function addPluginCatalog<T>(body: unknown): Promise<T> {
+  return request<T>("POST", pluginCatalogsPath, body);
+}
+
+export function removePluginCatalog(id: string): Promise<void> {
+  return request<void>("DELETE", `${pluginCatalogsPath}/${encodeURIComponent(id)}`);
+}
+
+export function installCatalogPlugin<T>(catalogId: string, slug: string, version: string | null): Promise<T> {
+  return request<T>("POST", `${pluginCatalogsPath}/${encodeURIComponent(catalogId)}/install`, {
+    slug,
+    ...(version !== null ? { version } : {}),
+  });
+}
+
+export async function uploadPluginBundle<T>(file: File): Promise<T> {
+  const res = await requestResponse("POST", `${SETTINGS_PATHS.integrations}/plugins/upload`, {
+    body: file,
+    headers: { "content-type": "application/gzip" },
+  });
+  return (await res.json()) as T;
+}
+
+export function installPluginUrl<T>(url: string, sha256: string): Promise<T> {
+  return request<T>("POST", `${SETTINGS_PATHS.integrations}/plugins/url`, {
+    url,
+    ...(sha256 !== "" ? { sha256 } : {}),
+  });
+}
+
+export function setTraitBinding(trait: string, provider: string | null): Promise<void> {
+  return request<void>("PUT", `${traitBindingsPath}/${encodeURIComponent(trait)}`, { provider });
+}
+
 export function putIntegrationTool(id: string, toolName: string, body: unknown): Promise<void> {
   return request<void>("PUT", `${integrationToolsPath(id)}/${encodeURIComponent(toolName)}`, body);
 }

@@ -11,7 +11,7 @@ import {
   firecrawlBaseUrl,
 } from "../shared.js";
 import type { ToolOutcome, JsonObject } from "../shared.js";
-import { assertPublicFetchTarget } from "../fetch-target.js";
+import { assertPublicFetchTarget } from "@guild/integration-sdk";
 
 // ---------- firecrawl ----------
 

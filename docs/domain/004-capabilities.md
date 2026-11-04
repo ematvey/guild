@@ -10,7 +10,7 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Model route | One model name mapped to a Provider, with prices, limits and an optional monthly quota | Unique per (Org, model). Disabled or keyless routes refuse calls. The model id is the wire identifier; the alias is only a display name | The Org decides which models exist and what they cost |
 | Usage event | One model request's tokens and cost, attributed to Org, Member, Team and key | Written for every gateway call, including a stream aborted after its first frame | Spend is visible and enforceable |
 | Tool | One capability the model can call | Is a built-in tool, an Integration tool, a Member's MCP tool or a Skill tool. Reaches a Turn only through the access rules of 002 | Everything an Agent does outside the model |
-| Integration | A third-party service the Org connects, built in or served by MCP | Off until an admin enables it. Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
+| Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
@@ -60,12 +60,19 @@ The tree tools are one entry because an Agent that can spawn but not cancel or c
 
 ### Integrations
 
-An Integration is a plugin with a manifest: its fields, its Tools, its Traits and how it authenticates. It comes in two kinds:
+An Integration is a plugin with a manifest: its fields, its Tools, its Traits and how it authenticates. It comes in three kinds:
 
 | Kind | Where it comes from | How it runs |
 | --- | --- | --- |
-| Built-in | A plugin folder compiled into the server: the shipped ones, plus the Org's private plugins in `integrations/private/`, which are loaded first and may not reuse a shipped slug | In the server process. A Tool's class is its code declaration |
+| Built-in | A plugin folder compiled into the server | In the server process. A Tool's class is its code declaration |
+| Plugin | An approved registry item whose bundle carries a `plugin.js` (`runtime: "code"`), built against `@guild/integration-sdk`. It may not reuse a built-in slug | In a worker thread of the server, loaded from the approved bundle bytes (checked against the approved hash). A Tool's class is its code declaration |
 | MCP | An approved registry item naming a remote MCP server. An admin adds one from the Integrations page, which publishes and approves the item in the same step | On the remote server, only while the approval covers the item's latest version and hash. A Tool's class is the admin's choice for that row, else the manifest's, else `read` |
+
+A Plugin reaches an Org's registry three ways, all ending in the same install: an admin installs a version from one of the Org's catalogs, uploads a `.guildplugin` file, or names a bundle URL; or a publisher pushes it with `guild-plugin publish` and an admin approves it. Install checks the bundle, starts it once, publishes it, approves its exact hash and adds a disabled row. The Org never depends on the source afterwards. Approval is the trust decision: the worker contains a Plugin's crashes and hangs, but it is not a sandbox.
+
+A catalog is a static index (`guild-plugin-catalog/1`) listing plugins, their versions, each bundle's sha256 and its location. Each Org keeps its own catalog list. A catalog is read from a public URL, or from a file in a GitHub or GitLab repository through the Org's own GitHub or GitLab Integration token, so private repositories work. A bundle the catalog names by relative path is read through the same source; its bytes must match the listed sha256.
+
+Each Trait has one provider per Turn: the Integration the Org bound to it when that one is enabled, else the first enabled Integration that declares it (built-ins, then Plugins by slug). The losers keep their other Tools.
 
 An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. A Tool the server starts serving later arrives disabled.
 

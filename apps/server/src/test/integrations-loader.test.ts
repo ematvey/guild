@@ -1,13 +1,9 @@
-// The plugin loader: sources keep their order, logos come from each
-// plugin's own folder, and two plugins may not share a slug.
+// The plugin loader: built-ins keep their order, two plugins may not share a
+// slug, and a manifest that breaks the contract is refused.
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { loadIntegrations } from "../integrations/loader.js";
-import type { IntegrationPlugin } from "../integrations/sdk.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
+import { loadBuiltins, validatePluginManifest } from "../integrations/loader.js";
 
 function plugin(name: string): IntegrationPlugin {
   return {
@@ -33,28 +29,28 @@ function plugin(name: string): IntegrationPlugin {
   };
 }
 
-describe("loadIntegrations", () => {
-  it("keeps source order and reads each logo from the plugin folder", () => {
-    const root = mkdtempSync(join(tmpdir(), "guild-plugins-"));
-    mkdirSync(join(root, "a"));
-    writeFileSync(join(root, "a", "logo.svg"), "<svg/>");
-    mkdirSync(join(root, "b"));
-    const loaded = loadIntegrations([
-      { plugin: plugin("first"), dir: pathToFileURL(join(root, "a") + "/") },
-      { plugin: plugin("second"), dir: pathToFileURL(join(root, "b") + "/") },
-    ]);
+describe("loadBuiltins", () => {
+  it("keeps the plugin order", () => {
+    const loaded = loadBuiltins([plugin("first"), plugin("second")]);
     expect(loaded.map((i) => i.name)).toEqual(["first", "second"]);
-    expect(loaded[0]!.logo).toBe("<svg/>");
-    expect(loaded[1]!.logo).toBe("");
+    expect(loaded[0]!.origin).toBe("builtin");
   });
 
   it("refuses two plugins with one slug", () => {
-    const dir = pathToFileURL(tmpdir() + "/");
-    expect(() =>
-      loadIntegrations([
-        { plugin: plugin("searxng"), dir },
-        { plugin: plugin("searxng"), dir },
-      ]),
-    ).toThrow(/two plugins declare this slug/);
+    expect(() => loadBuiltins([plugin("searxng"), plugin("searxng")])).toThrow(/two plugins declare this slug/);
+  });
+});
+
+describe("validatePluginManifest", () => {
+  it("refuses a trait mapped to an undeclared tool", () => {
+    const p = plugin("x");
+    p.manifest.traits = { web_search: "missing" };
+    expect(() => validatePluginManifest(p.manifest)).toThrow(/trait web_search names undeclared tool missing/);
+  });
+
+  it("refuses an unknown trait", () => {
+    const p = plugin("x");
+    p.manifest.traits = { teleport: "ping" };
+    expect(() => validatePluginManifest(p.manifest)).toThrow(/unknown trait teleport/);
   });
 });

@@ -7,13 +7,14 @@
 //! secrets editor (masked previews, write-only values), and per-tool
 //! curation (enable/disable + approval policy per declared tool). "Add MCP
 //! server" (/settings/integrations/_add-mcp) connects a remote MCP server for
-//! the whole organization.
+//! the whole organization; Catalogs, Install plugin and Traits are the
+//! plugin pages (integration-plugins.tsx).
 
 import { useMemo, useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
 import { createIntegration, SETTINGS_PATHS } from "../../../lib/api/settings";
-import { ExternalLink, Plug, Plus } from "lucide-react";
+import { BookOpen, ExternalLink, Plug, Plus, Sparkles, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Badge } from "@guild/ui/components/badge";
@@ -23,6 +24,14 @@ import { PageHeader } from "../../../components/page-header";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 import { ADD_MCP_DETAIL, AddOrgMcp } from "./integration-mcp-add";
+import {
+  CATALOGS_DETAIL,
+  INSTALL_PLUGIN_DETAIL,
+  InstallPlugin,
+  PluginCatalogs,
+  TRAITS_DETAIL,
+  TraitBindings,
+} from "./integration-plugins";
 import {
   CategoryBadges,
   ConfiguredIntegration,
@@ -58,6 +67,35 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
         }}
       />
     );
+  }
+
+  if (detail === CATALOGS_DETAIL) {
+    return (
+      <PluginCatalogs
+        onBack={() => {
+          reload();
+          open(null);
+        }}
+        onOpen={(slug) => {
+          reload();
+          open(slug);
+        }}
+      />
+    );
+  }
+  if (detail === INSTALL_PLUGIN_DETAIL) {
+    return (
+      <InstallPlugin
+        onBack={() => open(null)}
+        onInstalled={(slug) => {
+          reload();
+          open(slug);
+        }}
+      />
+    );
+  }
+  if (detail === TRAITS_DETAIL) {
+    return <TraitBindings onBack={() => open(null)} />;
   }
 
   if (detail !== null) {
@@ -102,9 +140,20 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
         title="Integrations"
         description="Connect the tools your chats use. Each integration brings its own tools, its own settings, and its own credentials."
         actions={
-          <Button size="sm" onClick={() => open(ADD_MCP_DETAIL)}>
-            <Plus className="mr-1 size-4" /> Add MCP server
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => open(TRAITS_DETAIL)}>
+              <Sparkles className="mr-1 size-4" /> Traits
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => open(CATALOGS_DETAIL)}>
+              <BookOpen className="mr-1 size-4" /> Catalogs
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => open(INSTALL_PLUGIN_DETAIL)}>
+              <Upload className="mr-1 size-4" /> Install plugin
+            </Button>
+            <Button size="sm" onClick={() => open(ADD_MCP_DETAIL)}>
+              <Plus className="mr-1 size-4" /> Add MCP server
+            </Button>
+          </div>
         }
       />
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
@@ -127,9 +176,7 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
           icon={Plug}
           title={query === "" ? "No integrations available" : "No matches"}
           hint={
-            query === ""
-              ? "This build ships no integrations yet. Add an MCP server to connect one."
-              : "Try another word."
+            query === "" ? "Install a plugin from a catalog or add an MCP server to connect one." : "Try another word."
           }
         />
       ) : (

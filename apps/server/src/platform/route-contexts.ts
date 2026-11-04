@@ -151,6 +151,12 @@ export interface SocketSeams {
  *  the LLM pipeline's needs (master key, usage sink, and the credential
  *  extractor the /openai and /anthropic surfaces meter against). */
 export interface GatewayCtx extends GatewayContext {
+  /** The object store registry bundles (code plugins among them) load
+   *  from. */
+  readonly objects: ObjectStore;
+  /** Org settings the integration runtime reads (trait bindings, plugin
+   *  catalogs). */
+  readonly orgKv: OrgKvStore;
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
   readonly registry: RegistryStore;

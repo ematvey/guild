@@ -8,7 +8,10 @@ import { ApiError } from "../platform/errors.js";
 import { isToolClass, toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import { INTEGRATIONS, integrationByName } from "./loader.js";
+import { builtinByName } from "./loader.js";
+import { connectorFor, orgConnectors } from "./connectors.js";
+import { isCodeManifest } from "./code-plugins.js";
+import type { ObjectStore } from "../platform/s3.js";
 import { mcpConnect } from "./mcp.js";
 import { manifestSecretNames, namespacedTool, registryManifest, registryManifestIfApproved } from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
@@ -19,6 +22,7 @@ export interface IntegrationAdminDeps {
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
   readonly registry: RegistryStore;
+  readonly objects: Pick<ObjectStore, "get">;
   masterKey(): Buffer;
 }
 
@@ -68,6 +72,9 @@ function shopEntry(
     traits: Record<string, string>;
     secret_names: string[];
     settings: unknown;
+    /** builtin: compiled into the server; registry: an installed code
+     *  plugin; mcp: a remote MCP server. */
+    source: "builtin" | "registry" | "mcp";
   },
   row: { id: string; org_id: string; config: unknown; enabled: boolean } | null,
 ): Record<string, unknown> {
@@ -81,9 +88,10 @@ function shopEntry(
   };
 }
 
-/** The integration shop: every installed plugin with its storefront
- *  metadata and this org's install state, plus the approved registry v2
- *  plugins. One list; the client filters and renders it. */
+/** The integration shop: every connector of the org (built-ins and
+ *  installed code plugins) with its storefront metadata and this org's
+ *  install state, plus the approved registry MCP plugins. One list; the
+ *  client filters and renders it. */
 export async function integrationShop(
   gateway: IntegrationAdminDeps,
   orgId: string,
@@ -91,7 +99,7 @@ export async function integrationShop(
   const rows = await gateway.integrations.list(orgId);
   const items: Record<string, unknown>[] = [];
   const rowByName = new Map(rows.map((r) => [r.name, r]));
-  for (const connector of INTEGRATIONS) {
+  for (const connector of await orgConnectors(gateway, orgId)) {
     const row = rowByName.get(connector.name) ?? null;
     // A registry bundle of the same slug shadows the compiled-in kind.
     const manifest = row === null ? null : await latestIntegrationManifest(gateway, orgId, connector.name);
@@ -112,6 +120,7 @@ export async function integrationShop(
           traits: connector.traits,
           secret_names: connector.secret_names,
           settings: connector.fields.length > 0 ? { fields: connector.fields } : null,
+          source: connector.origin,
         },
         row,
       ),
@@ -143,6 +152,7 @@ export async function integrationShop(
           traits: {},
           secret_names: secretNames,
           settings: manifest["settings"] ?? null,
+          source: "mcp",
         },
         rowByName.get(item.slug) ?? null,
       ),
@@ -165,8 +175,8 @@ export async function createIntegration(
   }
   // Known connectors only: a compiled-in kind, or an installed registry v2
   // bundle whose manifest declares an MCP server.
-  const known =
-    integrationByName(name) !== undefined || (await latestIntegrationManifest(gateway, orgId, name))?.["mcp"] != null;
+  const manifest = await latestIntegrationManifest(gateway, orgId, name);
+  const known = builtinByName(name) !== undefined || manifest?.["mcp"] != null || isCodeManifest(manifest);
   if (!known) throw ApiError.notFound(`unknown integration ${name}`);
   await saveIntegration(gateway, orgId, name, null, body);
 }
@@ -187,13 +197,13 @@ export async function integrationTools(
   const rowConfig = (integrationRow.config ?? {}) as Record<string, unknown>;
   const mcpUrl = readMcpUrl(rowConfig);
   if (mcpUrl === null) {
-    const connector = integrationByName(integrationRow.name);
+    const connector = await connectorOrError(gateway, orgId, integrationRow.name);
     if (connector === undefined) {
       throw ApiError.notFound(`unknown integration kind ${integrationRow.name}`);
     }
     let specs;
     try {
-      specs = connector.toolSpecs(rowConfig);
+      specs = await connector.toolSpecs(rowConfig);
     } catch (error) {
       throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
     }
@@ -207,7 +217,7 @@ export async function integrationTools(
         rowConfig,
       ),
     );
-    return { resolved: true, kind: "builtin", tools };
+    return { resolved: true, kind: "connector", tools };
   }
   // MCP-bound: live discovery merged with the stored config. A disabled
   // row is not resolved (it serves nothing); a reachable one lists every
@@ -259,6 +269,16 @@ export async function integrationTools(
     ),
   );
   return { resolved: true, kind: "mcp", tools };
+}
+
+/** The org's connector of one slug; a code plugin that fails to load is a
+ *  400 with the load error. */
+async function connectorOrError(gateway: IntegrationAdminDeps, orgId: string, name: string) {
+  try {
+    return await connectorFor(gateway, orgId, name);
+  } catch (error) {
+    throw ApiError.badRequest(`integration ${name} failed to load: ${(error as Error).message}`);
+  }
 }
 
 /** The mcp.url setting of an integration row config, when set. */
@@ -433,7 +453,7 @@ export async function saveIntegration(
     );
     return;
   }
-  const connector = integrationByName(name);
+  const connector = await connectorOrError(gateway, orgId, name);
   if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
   const config = body["config"] !== undefined ? body["config"] : (existing?.config ?? {});
   // Per-tool curation is admin state with a single writer — the PUT tools
@@ -450,11 +470,11 @@ export async function saveIntegration(
   const configForTools = (config ?? {}) as Record<string, unknown>;
   // Validate via the connector's own config check before saving.
   try {
-    connector.toolSpecs(configForTools);
+    await connector.toolSpecs(configForTools);
   } catch (error) {
     throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
   }
-  const schemaFields = INTEGRATIONS.find((c) => c.name === name)!.fields;
+  const schemaFields = connector.fields;
   const enabled = typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
   // Required settings must be filled (a missing optional falls back to the
   // manifest default or stays absent). Credential fields are skipped here —

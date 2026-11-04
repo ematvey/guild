@@ -4,7 +4,8 @@
   "workspaces": [
     "apps/*",
     "packages/ui",
-    "packages/wire"
+    "packages/wire",
+    "packages/integration-sdk"
   ],
   "scripts": {
     "coherence": "python3 scripts/coherence/check.py check",

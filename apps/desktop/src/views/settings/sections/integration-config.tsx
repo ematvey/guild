@@ -60,6 +60,9 @@ export interface ShopItem {
   traits: Record<string, string>;
   secret_names: string[];
   settings: { fields?: FieldSpec[] } | null;
+  /** builtin: ships with the server; registry: an installed plugin; mcp: a
+   *  remote MCP server. */
+  source: "builtin" | "registry" | "mcp";
   configured: boolean;
   id: string | null;
   org_id: string | null;
@@ -591,7 +594,7 @@ export function ConfiguredIntegration({
           {Object.keys(item.traits)
             .map((t) => `“${t}”`)
             .join(", ")}
-          . Only one enabled integration provides a given trait.
+          . When several enabled integrations provide one, Integrations → Traits picks which answers.
         </p>
       )}
 

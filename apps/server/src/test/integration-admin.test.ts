@@ -564,7 +564,7 @@ describe("admin integration save path", () => {
     expect(row.config.tools.get_trace).toEqual({ enabled: false, approval: "always_ask" }); // the stored selection rode through
   });
 
-  it("the tools curation listing reads the compiled-in declarations with classes (builtin)", async () => {
+  it("the tools curation listing reads the connector declarations with classes", async () => {
     await seedIntegration("atlassian", { site: "https://x.atlassian.net", email: "a@b.c" }, false, { token: "t" });
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
       items: { id: string; name: string }[];
@@ -578,7 +578,7 @@ describe("admin integration save path", () => {
       tools: { name: string; tool: string; class: string; enabled: boolean; approval: string }[];
     };
     expect(parsed.resolved).toBe(true);
-    expect(parsed.kind).toBe("builtin");
+    expect(parsed.kind).toBe("connector");
     const names = parsed.tools.map((t) => t.name);
     expect(names).toContain("jira_search");
     expect(names).toContain("api");

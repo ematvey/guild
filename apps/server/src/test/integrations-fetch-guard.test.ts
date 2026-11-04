@@ -6,7 +6,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { assertPublicFetchTarget } from "../integrations/fetch-target.js";
+import { assertPublicFetchTarget } from "@guild/integration-sdk";
 import { readBodyCapped, requestJson, jsonErrors } from "../integrations/shared.js";
 import { firecrawlExecute } from "../integrations/firecrawl/execute.js";
 

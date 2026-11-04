@@ -1,7 +1,8 @@
-// The integration plugin contract: one folder per integration carries a
-// manifest (shop metadata, settings fields, tool declarations, traits) and
-// an execute function. The core knows only this shape — adding an
-// integration touches its folder and the plugin index, nothing else.
+// The integration plugin contract: a plugin module's default export carries
+// a manifest (shop metadata, settings fields, tool declarations, traits) and
+// its validate, testConnection and execute functions. Guild knows only this
+// shape, for a built-in compiled into the server and a published plugin
+// bundle alike.
 
 import type { JsonObject, ToolOutcome } from "./shared.js";
 

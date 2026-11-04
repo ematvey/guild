@@ -1,8 +1,8 @@
 import { googleAccessTokenFor } from "./execute.js";
 import type { JsonObject } from "../shared.js";
-import type { IntegrationPlugin } from "../types.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { googleWorkspaceExecute } from "./execute.js";
-import { apiTool } from "../api-tool.js";
+import { apiTool } from "@guild/integration-sdk";
 
 const plugin: IntegrationPlugin = {
   manifest: {

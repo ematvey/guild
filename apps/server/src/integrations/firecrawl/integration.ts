@@ -1,8 +1,8 @@
 import { firecrawlBaseUrl, secretOrNull, FIRECRAWL_DEFAULT_BASE_URL } from "../shared.js";
-import { PROBE_TIMEOUT_MS } from "../probe.js";
+import { PROBE_TIMEOUT_MS } from "@guild/integration-sdk";
 import { fetchTimeout, readBodyCapped } from "../shared.js";
 import type { JsonObject } from "../shared.js";
-import type { IntegrationPlugin } from "../types.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { firecrawlExecute } from "./execute.js";
 
 const plugin: IntegrationPlugin = {

@@ -6,14 +6,17 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { INTEGRATIONS, integrationByName } from "../integrations/loader.js";
+import { BUILTINS, builtinByName } from "../integrations/loader.js";
+import { TRAIT_BINDINGS_KEY } from "../integrations/connectors.js";
 import { resolveIntegrations } from "../integrations/plugins.js";
 import { grafanaExecute } from "../integrations/grafana/execute.js";
 
 const SECRETS: [string, string][] = [["token", "glsa_test"]];
 
-function gateway(rows: { name: string; config: unknown; enabled: boolean }[]) {
+function gateway(rows: { name: string; config: unknown; enabled: boolean }[], bindings: Record<string, string> = {}) {
   return {
+    objects: { get: async () => Buffer.alloc(0) },
+    orgKv: { get: async (_org: string, key: string) => (key === TRAIT_BINDINGS_KEY ? JSON.stringify(bindings) : null) },
     integrations: { listEnabled: async () => rows },
     integrationSecrets: {
       names: async () => [],
@@ -23,15 +26,16 @@ function gateway(rows: { name: string; config: unknown; enabled: boolean }[]) {
     registry: {
       approvedBundle: async () => null,
       getVersion: async () => ({ manifest: {}, bundle_sha256: null, object_key: "" }),
+      listItems: async () => [],
     },
   };
 }
 
 describe("integration catalog", () => {
   it("loads every plugin with a unique slug, a summary, and a logo", () => {
-    const names = INTEGRATIONS.map((i) => i.name);
+    const names = BUILTINS.map((i) => i.name);
     expect(new Set(names).size).toBe(names.length);
-    for (const integration of INTEGRATIONS) {
+    for (const integration of BUILTINS) {
       expect(integration.summary).not.toBe("");
       expect(integration.description).not.toBe("");
       expect(integration.logo).toContain("<svg");
@@ -39,15 +43,10 @@ describe("integration catalog", () => {
     }
   });
 
-  it("ships Grafana with the observability tools", () => {
-    const grafana = integrationByName("grafana")!;
+  it("ships Grafana with the observability tools", async () => {
+    const grafana = builtinByName("grafana")!;
     expect(grafana.categories).toEqual(["observability"]);
-    expect(
-      grafana
-        .toolSpecs({ base_url: "https://grafana.example.test" })
-        .map((t) => t.name)
-        .sort(),
-    ).toEqual([
+    expect((await grafana.toolSpecs({ base_url: "https://grafana.example.test" })).map((t) => t.name).sort()).toEqual([
       "api",
       "get_dashboard",
       "list_alerts",
@@ -87,6 +86,33 @@ describe("trait tools", () => {
     // integration provides.
     expect(firecrawl.tools.map((t) => t.spec.name)).not.toContain("web_search");
     expect(firecrawl.tools.map((t) => t.spec.name)).toContain("firecrawl_map");
+  });
+
+  it("go to the org's bound provider over the catalog order", async () => {
+    const turns = await resolveIntegrations(
+      gateway(
+        [
+          { name: "searxng", config: { base_url: "http://searx.test" }, enabled: true },
+          { name: "firecrawl", config: {}, enabled: true },
+        ],
+        { web_search: "firecrawl" },
+      ),
+      "org-1",
+    );
+    const searx = turns.find((t) => t.slug === "searxng")!;
+    const firecrawl = turns.find((t) => t.slug === "firecrawl")!;
+    expect(firecrawl.tools.map((t) => t.spec.name)).toContain("web_search");
+    expect(searx.tools.map((t) => t.spec.name)).not.toContain("web_search");
+  });
+
+  it("fall back to catalog order when the bound provider is not enabled", async () => {
+    const turns = await resolveIntegrations(
+      gateway([{ name: "searxng", config: { base_url: "http://searx.test" }, enabled: true }], {
+        web_search: "firecrawl",
+      }),
+      "org-1",
+    );
+    expect(turns[0]!.tools.map((t) => t.spec.name)).toContain("web_search");
   });
 
   it("name the provider's raw tool for dispatch", async () => {

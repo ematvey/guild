@@ -13,6 +13,8 @@ import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { BundleWriteError, publishRegistryBundle } from "../registry-publish.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
+import { builtinByName } from "../../integrations/loader.js";
+import { CODE_ENTRY } from "../../integrations/code-plugins.js";
 
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
 
@@ -98,6 +100,9 @@ export function registerRegistryRoutes(
     }
     if (kind === "skill" && !parsed.entries.some((e) => e.path === "SKILL.md" && e.file)) {
       throw ApiError.badRequest("skill bundles must contain SKILL.md at the root");
+    }
+    if (kind === "integration" && manifest.runtime === "code") {
+      assertCodeBundle(slug, parsed);
     }
 
     await publishBundleBytes(
@@ -230,6 +235,10 @@ export function registerRegistryRoutes(
     if (manifest.mcp !== null && manifest.mcp !== undefined) {
       return installMcpPlugin(gateway, reply, user, slug, manifest, parsed);
     }
+    if (manifest.runtime === "code") {
+      assertCodeBundle(slug, parsed);
+      return installCodePlugin(gateway, reply, user, slug);
+    }
     const routineJson = readBundleFile(parsed, "routine.json");
     if (routineJson !== null) {
       // Routines are dropped (2026-10-04 decision): automation bundles are
@@ -238,6 +247,35 @@ export function registerRegistryRoutes(
     }
     throw ApiError.badRequest("bundle has neither an mcp plugin nor a supported payload");
   });
+}
+
+/** A code plugin bundle carries its entry file and does not reuse a
+ *  built-in slug (the built-in would shadow it). */
+export function assertCodeBundle(slug: string, parsed: ParsedBundle): void {
+  if (builtinByName(slug) !== undefined) {
+    throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
+  }
+  if (readBundleFile(parsed, CODE_ENTRY) === null) {
+    throw ApiError.badRequest(`code plugin bundles must contain ${CODE_ENTRY} at the root`);
+  }
+}
+
+/** Install path for code plugin bundles: a disabled, empty integration row
+ *  (skipped when the row exists); the settings page completes it. */
+async function installCodePlugin(
+  gateway: GatewayCtx,
+  reply: FastifyReply,
+  user: UserRow,
+  slug: string,
+): Promise<FastifyReply> {
+  let row = await gateway.integrations.getByName(user.org_id, slug);
+  if (row === null) {
+    await gateway.integrations.upsert(user.org_id, slug, {}, false);
+    row = await gateway.integrations.getByName(user.org_id, slug);
+    if (row === null) throw ApiError.internal("row just upserted");
+  }
+  sendJson(reply, { integration: row });
+  return reply;
 }
 
 /** Install path for v2 MCP plugin bundles: creates a disabled `integrations`

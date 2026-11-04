@@ -1,10 +1,10 @@
 import { gitlabBaseUrl, secret } from "../shared.js";
-import { PROBE_TIMEOUT_MS, probe } from "../probe.js";
+import { PROBE_TIMEOUT_MS, probe } from "@guild/integration-sdk";
 import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
-import type { IntegrationPlugin } from "../types.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { gitlabExecute } from "./execute.js";
-import { apiTool } from "../api-tool.js";
+import { apiTool } from "@guild/integration-sdk";
 
 const plugin: IntegrationPlugin = {
   manifest: {

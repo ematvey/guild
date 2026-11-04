@@ -17,7 +17,7 @@ import type { IntegrationSecretStore, IntegrationStore } from "../platform/store
 import type { TeamStore } from "../platform/store/teams.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { integrationByName } from "./loader.js";
+import { builtinByName } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 
@@ -172,7 +172,7 @@ export async function createOrgMcp(
   if (!SLUG.test(slug)) {
     throw ApiError.badRequest("slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
   }
-  if (integrationByName(slug) !== undefined) {
+  if (builtinByName(slug) !== undefined) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if ((await deps.integrations.getByName(orgId, slug)) !== null) {

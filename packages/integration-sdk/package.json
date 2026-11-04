@@ -1,0 +1,16 @@
+{
+  "name": "@guild/integration-sdk",
+  "private": true,
+  "version": "0.6.61",
+  "type": "module",
+  "description": "The Guild integration plugin contract (manifest, tool declarations, traits) and the request helpers integrations build on, plus the guild-plugin CLI that packs and publishes plugin bundles.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "guild-plugin": "./bin/guild-plugin.ts"
+  },
+  "dependencies": {
+    "tar": "^7.5.22"
+  }
+}

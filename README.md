@@ -24,6 +24,7 @@ crates/app-server   local engine binary
 apps/server         TS cloud server (Fastify + pi-durable) + SQL migrations
 apps/desktop        Tauri desktop client (also the web SPA)
 packages/wire       hand-written TypeScript wire types (server + desktop)
+packages/integration-sdk  integration plugin contract, helpers, guild-plugin CLI
 packages/ui         shared component kit
 protocol            wire schemas (the contract), fixtures, check.mjs
 deploy/compose      docker compose bundle
@@ -56,7 +57,7 @@ cargo fmt --all -- --check
 scripts/check-windows.sh                # SKIP when the Windows target is absent
 node protocol/check.mjs                 # schema ↔ wire types ↔ fixtures, and compatibility with the last client release
 npm run coherence
-npx tsc -p <project>/tsconfig.json --noEmit   # typecheck: apps/server, apps/desktop, packages/wire, packages/ui
+npx tsc -p <project>/tsconfig.json --noEmit   # typecheck: apps/server, apps/desktop, packages/wire, packages/ui, packages/integration-sdk
 ```
 
 `--fast` keeps everything but `cargo nextest` and the server suite, so the

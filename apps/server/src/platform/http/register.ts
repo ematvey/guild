@@ -31,6 +31,7 @@ import { registerReleaseRoutes } from "./releases.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
+import { registerPluginCatalogRoutes } from "./plugin-catalogs.js";
 import { registerIntegrationToolRoutes } from "./integration-tools.js";
 import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
@@ -85,6 +86,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminUserRoutes(scope, auth);
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth, ctx.objects);
+    registerPluginCatalogRoutes(scope, gateway, auth);
     registerUserMcpRoutes(scope, auth);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
   });

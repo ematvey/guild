@@ -12,7 +12,7 @@ import atlassian from "./atlassian/integration.js";
 import slack from "./slack/integration.js";
 import github from "./github/integration.js";
 import gitlab from "./gitlab/integration.js";
-import type { IntegrationPlugin } from "./types.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
 
 export const PLUGINS: IntegrationPlugin[] = [
   grafana,

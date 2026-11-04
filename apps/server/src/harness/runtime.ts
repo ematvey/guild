@@ -310,6 +310,12 @@ export class GuildRuntime {
           integrations: stores.integrations,
           integrationSecrets: stores.integrationSecrets,
           registry: stores.registry,
+          objects: objects ?? {
+            get: async () => {
+              throw new Error("code plugins need the object store, which this process has none of");
+            },
+          },
+          orgKv: stores.orgKv,
           masterKey: () => deps.masterKey(),
         },
         events: stores.events,

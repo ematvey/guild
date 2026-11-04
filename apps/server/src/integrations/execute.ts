@@ -9,13 +9,15 @@ import { mcpConnect, type McpPeer } from "./mcp.js";
 import type { PluginSecretSource, IntegrationTurn } from "./plugins.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
 import { callSignals, type JsonObject, type ToolOutcome } from "./shared.js";
-import { integrationByName } from "./loader.js";
+import { connectorFor, type ConnectorSource } from "./connectors.js";
 
 // ---------- the plugin dispatcher (call_plugin) ----------
 
-/** Runs one tool on a compiled-in connector directly (the script API and
- *  tests dispatch through callPlugin; this is the raw connector surface). */
+/** Runs one tool on an org's connector directly (the script API and tests
+ *  dispatch through callPlugin; this is the raw connector surface). */
 export async function executeConnectorTool(
+  source: ConnectorSource,
+  orgId: string,
   slug: string,
   config: JsonObject,
   tool: string,
@@ -25,7 +27,7 @@ export async function executeConnectorTool(
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
-  const integration = integrationByName(slug);
+  const integration = await connectorFor(source, orgId, slug);
   if (integration === undefined) throw new Error(`unknown integration ${slug}`);
   return callSignals.run(signal, () => integration.execute(config, tool, args, secrets, actingAs));
 }
@@ -44,7 +46,7 @@ export interface IntegrationCallIdentity {
  *  carry values), then runs the built-in connector directly or connects to
  *  the MCP server with the identity envelope and calls the raw tool name. */
 export async function callPlugin(
-  source: PluginSecretSource,
+  source: PluginSecretSource & ConnectorSource,
   turn: IntegrationTurn,
   rawTool: string,
   args: JsonObject,
@@ -53,14 +55,24 @@ export async function callPlugin(
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
   const masterKey = source.masterKey();
-  if (turn.executor === "builtin") {
+  if (turn.executor === "connector") {
     // Every stored secret of the slug rides to execute — the connector
     // picks what it needs (an optional credential included);
     // values never reach logs or events.
     const names = await source.integrationSecrets.names(identity.orgId, turn.slug);
     const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, names, masterKey);
     signal?.throwIfAborted();
-    return executeConnectorTool(turn.slug, turn.rowConfig, rawTool, args, secrets, identity.actingAs, signal);
+    return executeConnectorTool(
+      source,
+      identity.orgId,
+      turn.slug,
+      turn.rowConfig,
+      rawTool,
+      args,
+      secrets,
+      identity.actingAs,
+      signal,
+    );
   }
   // MCP plugin: a short-lived call connection keeps caller and call ID
   // exact.

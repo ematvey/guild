@@ -1,10 +1,10 @@
 import { slackBaseUrl, secret } from "../shared.js";
-import { PROBE_TIMEOUT_MS } from "../probe.js";
+import { PROBE_TIMEOUT_MS } from "@guild/integration-sdk";
 import { fetchTimeout, readBodyCapped } from "../shared.js";
 import type { JsonObject } from "../shared.js";
-import type { IntegrationPlugin } from "../types.js";
+import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { slackExecute } from "./execute.js";
-import { apiTool } from "../api-tool.js";
+import { apiTool } from "@guild/integration-sdk";
 
 function spec(name: string, description: string, properties: JsonObject) {
   return {

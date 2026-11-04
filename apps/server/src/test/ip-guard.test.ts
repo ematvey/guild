@@ -1,7 +1,7 @@
 // The shared outbound-address classifier.
 
 import { describe, expect, it } from "vitest";
-import { isNonPublicAddress } from "../integrations/ip-guard.js";
+import { isNonPublicAddress } from "@guild/integration-sdk";
 import { validateUrl } from "../integrations/mcp-url.js";
 
 describe("isNonPublicAddress", () => {

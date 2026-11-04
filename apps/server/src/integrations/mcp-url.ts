@@ -5,7 +5,7 @@
 
 import { lookup } from "node:dns/promises";
 import { ApiError } from "../platform/errors.js";
-import { isNonPublicAddress } from "./ip-guard.js";
+import { isNonPublicAddress } from "@guild/integration-sdk";
 
 /** Hostnames allowed to resolve to a private address. The compose deployment
  *  reaches `host.docker.internal`; anything else must resolve public. */
