@@ -5,6 +5,7 @@ import type { ServerFrame } from "@guild/wire/types";
 import type {
   Agent,
   AgentRoutine,
+  AttachableIntegration,
   AgentRun,
   AgentThread,
   ChatTree,
@@ -70,6 +71,8 @@ export interface SocketHandlers {
   onOrgEvent?: (event: EventRow) => void;
   /** Every agent the member may see. */
   onAgentList?: (agents: Agent[]) => void;
+  /** The Integrations the member may add to an agent. */
+  onIntegrationAccess?: (integrations: AttachableIntegration[]) => void;
   /** One run, created or changed. */
   onAgentRun?: (run: AgentRun) => void;
   /** The member's open threads with one agent. */
@@ -186,6 +189,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       return;
     case "agent_list":
       handlers.onAgentList?.(message.agents);
+      return;
+    case "integration_access":
+      handlers.onIntegrationAccess?.(message.integrations);
       return;
     case "agent_run":
       handlers.onAgentRun?.(message.run);

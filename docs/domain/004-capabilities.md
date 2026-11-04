@@ -10,7 +10,7 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Model route | One model name mapped to a Provider, with prices, limits and an optional monthly quota | Unique per (Org, model). Disabled or keyless routes refuse calls. The model id is the wire identifier; the alias is only a display name | The Org decides which models exist and what they cost |
 | Usage event | One model request's tokens and cost, attributed to Org, Member, Team and key | Written for every gateway call, including a stream aborted after its first frame | Spend is visible and enforceable |
 | Tool | One capability the model can call | Is a built-in tool, an Integration tool, a Member's MCP tool or a Skill tool. Reaches a Turn only through the access rules of 002 | Everything an Agent does outside the model |
-| Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
+| Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Has an audience that decides who may add it to an Agent (see 002). Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
@@ -35,7 +35,7 @@ An Agent has exactly one model. A new personal Agent takes the first enabled rou
 A Turn's tool set is assembled at admission, in this order:
 
 1. **Base tools,** narrowed by the Agent's allowlist. Code mode is always kept.
-2. **Integration tools,** narrowed by the allowlist. An Integration with no selected tool disappears.
+2. **Integration tools:** the Integrations in the Agent's Integration list, each narrowed to the classes within its entry's ceiling. Trait tools follow the allowlist instead. An Integration with no offered tool disappears.
 3. **The Member's own MCP servers.**
 4. **Workspace tools:** on a Machine-bound Thread, the `agent_*` tools, which sit outside the allowlist.
 5. **Conversation tools,** narrowed by the allowlist.
@@ -44,7 +44,7 @@ File and shell tools are called directly. Integration and MCP tools are called t
 
 ### The allowlist
 
-An Agent's allowlist is `all` or `selected`. `all` means every built-in tool plus every Integration tool the Org enables, resolved at each Turn, so a new Integration reaches the Agent without an edit. A personal Agent starts with `all`.
+An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and Trait tool, resolved at each Turn, so a tool added in a later release reaches the Agent without an edit. It never covers an Integration's own tools: those reach an Agent only through its Integration list (see 002). A personal Agent starts with `all` and no Integration.
 
 | Group | Tools |
 | --- | --- |
@@ -80,7 +80,7 @@ Each Trait has one provider per Turn: the Integration the Org bound to it when t
 
 An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. A Tool the server starts serving later arrives disabled.
 
-Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and role policy decide which of its Tools a Member's Turn sees (see 002).
+Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
 
 A Member can add their own MCP servers. Those servers are discovered at every Turn of that Member's Threads, and their headers are decrypted only at call time.
 

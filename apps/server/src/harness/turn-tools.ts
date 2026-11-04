@@ -83,18 +83,12 @@ export class TurnTools {
   async provision(conversation: Conversation, chatId: string, orgId: string, signal?: AbortSignal): Promise<void> {
     const deps = this.deps;
     const conversationId = Number(conversation.id);
-    // Integration connector tools are opt-in for agents: the agent's tool
-    // allowlist narrows the integration surface before the extension is
-    // installed, so unselected tools are neither declared nor callable.
-    // Plain chats keep the full surface.
+    // The agent's Integration list and Trait allowlist narrow the
+    // integration surface before the extension is installed, so tools
+    // outside them are neither declared nor callable.
     const agentRef = await agentThreadForChat(deps.pool, chatId);
     const agent = agentRef === null ? null : await deps.agents.fetchAgent(agentRef.agent_id);
-    const prepared = await deps.integrations.prepareTurn(
-      conversationId,
-      chatId,
-      orgId,
-      agent === null || agent.tools_mode === "all" ? undefined : new Set<string>(agent.tools),
-    );
+    const prepared = await deps.integrations.prepareTurn(conversationId, chatId, orgId);
     const userPrepared = await deps.userMcp.prepareTurn(conversationId, chatId, orgId, signal);
     const base = deps.base();
     const machineBound = (await deps.executors.executorKind(conversationId)) === "machine";

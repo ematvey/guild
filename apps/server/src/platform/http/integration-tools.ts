@@ -10,7 +10,16 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { auditError, callPlugin } from "../../integrations/execute.js";
 import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../../integrations/plugins.js";
-import { resolveActingAs, toolAllowed, toolCurate } from "../../integrations/policy.js";
+import {
+  resolveActingAs,
+  scopeCeiling,
+  toolCurate,
+  toolOffered,
+  type IntegrationScope,
+} from "../../integrations/policy.js";
+import { IntegrationAccessStore } from "../store/integration-access.js";
+import { memberCeiling } from "../domain/integration-access.js";
+import type { ToolClass } from "../domain/tool-class.js";
 import { sendJson } from "./error.js";
 
 /** The caller of the script API: an org member (session) or an org API key.
@@ -66,15 +75,40 @@ async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTur
   }
 }
 
+/** A script caller's reach: no Agent stands between the caller and the
+ *  Integration, so each Integration's audience decides the ceiling the
+ *  caller gets. Trait tools are open to every caller. */
+async function callerScope(access: IntegrationAccessStore, caller: IntegrationCaller): Promise<IntegrationScope> {
+  const [audiences, member] = await Promise.all([
+    access.audiences(caller.org),
+    access.member(caller.org, caller.userId),
+  ]);
+  const self = { role: caller.role, team_ids: member?.team_ids ?? new Set<string>() };
+  const integrations = new Map<string, ToolClass>();
+  for (const audience of audiences.values()) {
+    const ceiling = memberCeiling(audience, self);
+    if (ceiling !== null) integrations.set(audience.slug, ceiling);
+  }
+  return { traits: "all", integrations };
+}
+
 export function registerIntegrationToolRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx): void {
+  const access = new IntegrationAccessStore(gateway.integrations.pool);
+  const allowed = (
+    scope: IntegrationScope,
+    caller: IntegrationCaller,
+    turn: IntegrationTurn,
+    info: IntegrationTurn["tools"][number],
+  ) => toolOffered(turn, info, scopeCeiling(scope, turn.slug, info), caller.role);
   // `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
   // caller's org, policy-filtered to a count only.
   app.get("/api/v1/integrations", async (req, reply) => {
     const caller = await integrationCaller(auth, req);
+    const scope = await callerScope(access, caller);
     const items = (await turns(gateway, caller.org)).map((t) => ({
       slug: t.slug,
       description: t.description,
-      tool_count: t.tools.filter((info) => toolAllowed(t, info, caller.role)).length,
+      tool_count: t.tools.filter((info) => allowed(scope, caller, t, info)).length,
     }));
     sendJson(reply, { items });
     return reply;
@@ -87,8 +121,9 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     const slug = (req.params as Record<string, string>)["slug"] ?? "";
     const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
     if (turn === undefined) throw ApiError.notFound("no such integration");
+    const scope = await callerScope(access, caller);
     const tools = turn.tools
-      .filter((info) => toolAllowed(turn, info, caller.role))
+      .filter((info) => allowed(scope, caller, turn, info))
       .map((info) => ({
         name: info.spec.name,
         description: info.spec.description,
@@ -118,7 +153,8 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
       return callRaw === specRaw;
     });
     if (info === undefined) throw ApiError.notFound("no such tool");
-    if (!toolAllowed(turn, info, caller.role)) throw ApiError.forbidden("this tool is not available to you");
+    if (!allowed(await callerScope(access, caller), caller, turn, info))
+      throw ApiError.forbidden("this tool is not available to you");
     // The script API is non-interactive: a tool curated to always_ask has no
     // durable card to resolve here, so it is refused rather than silently
     // bypassing the approval (the stored per-tool config is the single
@@ -137,13 +173,6 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
       actingAs = resolveActingAs(caller.email, override, isAdmin);
     } catch {
       throw ApiError.forbidden("acting as another member is admin-only");
-    }
-    // Impersonating connectors (Google domain-wide delegation) mint the
-    // token subject from the acting identity — no resolved identity would
-    // fall back to the admin subject, i.e. a non-admin reading the admin's
-    // mailbox. The call is refused instead of defaulted.
-    if (actingAs === null && !isAdmin && turn.slug === "google_workspace") {
-      throw ApiError.forbidden("no identity is mapped for you on this integration");
     }
     // The body is the JSON arguments object (empty body = {}); any JSON
     // value that is not an object is refused.

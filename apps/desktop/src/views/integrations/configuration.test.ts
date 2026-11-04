@@ -30,11 +30,11 @@ describe("integration config", () => {
     expect(() => buildIntegrationConfig(fields, { mcp: { url: "" } }, mcp, true)).toThrow("not valid JSON");
   });
 
-  it("keeps a role policy only when one is set", () => {
-    const form = { ...initialDraft(fields, {}, false), policy: { member: ["read" as const], admin: [] } };
+  it("drops a stored role policy: access is the Integration's audience", () => {
+    const form = initialDraft(fields, {}, false);
     form.draft = { ...form.draft, label: "x", limit: "5" };
     const cfg = buildIntegrationConfig(fields, { tool_policy: { admin: ["admin"] } }, form, false);
-    expect(cfg.tool_policy).toEqual({ member: ["read"] });
+    expect(cfg.tool_policy).toBeUndefined();
     expect(cfg.limit).toBe(5);
   });
 });

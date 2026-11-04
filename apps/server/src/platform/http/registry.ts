@@ -279,7 +279,7 @@ async function installCodePlugin(
 }
 
 /** Install path for v2 MCP plugin bundles: creates a disabled `integrations`
- *  row carrying the mcp/auth/tool_policy config (skipped when the row
+ *  row carrying the mcp/auth config (skipped when the row
  *  already exists). */
 async function installMcpPlugin(
   gateway: GatewayCtx,
@@ -301,7 +301,6 @@ async function installMcpPlugin(
   const config = {
     mcp: manifest.mcp ?? null,
     auth,
-    tool_policy: {},
   };
   const existing = (await gateway.integrations.list(user.org_id)).find((r) => r.name === slug);
   let integrationRow = existing ?? null;

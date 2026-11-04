@@ -30,7 +30,7 @@ Two kinds of data stay as reads, because they are not live state:
 | --- | --- |
 | Sockets showing the Thread | `thread_state`, `thread_events`, `live_frame`, `context_usage` |
 | Every socket of the Thread's Member | `chat_status`, `chat_row`, `thread_list`, `archived_thread_list`, `subagent_tree`, `chat_tree`, `project_list`, `machine_list` |
-| The Member's member sockets | `machine_status`, `member_profile` |
+| The Member's member sockets | `machine_status`, `member_profile`, `integration_access` (the Integrations they may add to an Agent, re-sent when an audience, a grant or a team membership moves) |
 | Members who may see the Agent or Skill | `agent_list`, `agent_run`, `agent_threads`, `agent_routines`, `skill_catalog` |
 | Every socket of the Org | `org_event`, `workspace_identity`, `model_list` |
 | One socket | `hello`, `pong`, `error`, `sync_begin`, `sync_done`, `auth_required`, `displaced` |
@@ -40,7 +40,7 @@ A client sends `sync`, `read` and `ping`. A Machine also sends `tool_result` and
 
 ### The first view
 
-On connect the server sends `hello`, then the Member's workspace (Threads, Projects, Machines, identity, models, profile), then the Agent list and skill catalog. To show a Thread, the client sends `sync`. Inside the bracket the server:
+On connect the server sends `hello`, then the Member's workspace (Threads, Projects, Machines, identity, models, profile), then the Agent list (with each Agent's Integration warnings), the Integrations the Member may attach, and the skill catalog. To show a Thread, the client sends `sync`. Inside the bracket the server:
 
 1. Checks read access.
 2. Sends the Thread's tree and context usage.

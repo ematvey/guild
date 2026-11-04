@@ -13,7 +13,7 @@
 // "catalog", "connect" and "sources" are reserved: no integration slug can
 // take them (the server refuses them).
 
-export const INSTALLED_TABS = ["overview", "configuration", "tools", "usage", "about"] as const;
+export const INSTALLED_TABS = ["overview", "configuration", "access", "tools", "usage", "about"] as const;
 export type InstalledTab = (typeof INSTALLED_TABS)[number];
 
 export const RESERVED_SEGMENTS = ["catalog", "connect", "sources"] as const;

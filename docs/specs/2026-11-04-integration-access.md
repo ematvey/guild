@@ -1,8 +1,9 @@
 # Integration access
 
-Status: proposed. Builds on [002 Access](../domain/002-access.md) and
-[004 Capabilities](../domain/004-capabilities.md); when it lands, those two
-documents change in the same commit.
+Status: phase 1 implemented (0.6.65): audiences, explicit Agent
+Integration lists, warnings, and the Google Workspace refusal. Phases 2
+and 3 are open. The rules live in [002 Access](../domain/002-access.md) and
+[004 Capabilities](../domain/004-capabilities.md).
 
 ## Problem
 
@@ -65,18 +66,23 @@ use its Agent.
 
 ### Data
 
-- `integration_grants (org_id, integration, team_id, ceiling)` and an
-  `audience` column on `integrations` (`org` | `team` | `admins`); for
-  `org`, an org-wide ceiling.
-- `agent_integrations (agent_id, integration, ceiling, added_by, added_at)`.
-- Migration: for every Agent with `tools_mode = all`, write entries for the
-  Integrations enabled now, with the ceiling today's role rule would give
-  its owner. Existing Integrations get audience `org`. Behavior does not
+- `integration_grants (integration_id, org_id, team_id, ceiling)` and
+  `audience` and `org_ceiling` columns on `integrations`.
+- `agent_integrations (agent_id, integration_id, ceiling, added_by, added_at)`.
+- Migration (0114): for every Agent with `tools_mode = all`, write entries
+  for the Integrations enabled now; a `selected` Agent gets the Integrations
+  whose tools it selected, and those tool names leave its allowlist. A
+  personal Agent's entry takes its owner's role; a shared Agent's entry
+  takes what a member got (so an admin using a shared Agent can lose a
+  `write` tool they had before). Trait tools (`web_search`, `web_fetch`)
+  stay on the built-in allowlist. Existing Integrations get audience `org`. Behavior does not
   change until an admin narrows an audience, and the migration then shows
   the warnings an admin needs to act on.
-- Grant and Agent-entry changes are operational state: they push a
-  `ServerFrame` (the Integrations page, Agent settings and the warning
-  badges are all live), per the conventions in `AGENTS.md`.
+- Grant and Agent-entry changes notify `guild_agents`: the `agent_list`
+  frame carries each Agent's `integrations` and `integration_warnings`, and
+  a new `integration_access` frame carries the Integrations each Member may
+  attach. The Access tab's audience form is an admin editing list read
+  over HTTP (`/api/v1/admin/integrations/:id/access`).
 
 ## Gating HubSpot with this
 
@@ -122,8 +128,6 @@ phase is planned.
   and writes there, any later caller of the Agent can read. Decision 4
   accepts this: the Agent is the unit of access, and its audience is what
   the warning in decision 5 checks.
-- **Google Workspace falls back to the admin email** when a call has no
-  Member identity. It should refuse. Fix this independently of the rest.
 - **Per-member OAuth** (each Member connects their own vendor account) is
   out of scope.
 

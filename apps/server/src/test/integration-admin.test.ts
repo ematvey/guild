@@ -196,7 +196,8 @@ async function call(
 }
 
 /** Seeds (or replaces) one integration row + optional secrets; returns the
- *  row id. */
+ *  row id. The row's audience is every member at read, which is what
+ *  existing Integrations migrated to; a test of the audience narrows it. */
 async function seedIntegration(
   name: string,
   config: unknown,
@@ -204,7 +205,7 @@ async function seedIntegration(
   secrets: Record<string, string> = {},
 ): Promise<string> {
   const res = await e.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, $2, $3, $4) " +
+    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, $2, $3, $4, 'org') " +
       "ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config, enabled = EXCLUDED.enabled " +
       "RETURNING id",
     [e.orgId, name, JSON.stringify(config ?? {}), enabled],
@@ -220,6 +221,12 @@ async function seedIntegration(
     );
   }
   return id;
+}
+
+/** Opens an installed Integration to every member at read: a new one is
+ *  for admins only. */
+async function openToMembers(name: string): Promise<void> {
+  await e.env.db.query("UPDATE integrations SET audience = 'org' WHERE org_id = $1 AND name = $2", [e.orgId, name]);
 }
 
 /** Publishes + approves a v2 MCP plugin in the registry, then installs it
@@ -691,6 +698,9 @@ describe("MCP plugin rows", () => {
     // MCP tools are opt-in: only the curated-enabled tool is exposed, to
     // admins and members alike (the write-class one stays off).
     expect(tools.map((t) => t.name)).toEqual(["test-mcp-m7b_echo"]);
+    const closed = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.memberToken);
+    expect(JSON.parse(closed.body).tools).toEqual([]);
+    await openToMembers("test-mcp-m7b");
     const member = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.memberToken);
     expect(JSON.parse(member.body).tools.map((t: { name: string }) => t.name)).toEqual(["test-mcp-m7b_echo"]);
     const list = await call("GET", "/api/v1/integrations", e.memberToken);
@@ -765,6 +775,7 @@ describe("org MCP servers added from the admin UI", () => {
     ).rows[0]!;
     expect(secretRow.secret_enc).not.toContain("s3cret");
 
+    await openToMembers("corp-mcp");
     const member = await call("GET", "/api/v1/integrations/corp-mcp/tools", e.memberToken);
     expect(JSON.parse(member.body).tools.map((t: { name: string }) => t.name)).toEqual(["corp-mcp_echo"]);
     const exec = await call("POST", "/api/v1/integrations/corp-mcp/tools/echo", e.memberToken, { text: "hi" });

@@ -3,6 +3,7 @@
 // notice has one wire shape.
 
 import { pgTimestampToRfc3339, utcText } from "../../platform/time.js";
+import type { AgentIntegrationEntry } from "../../platform/domain/integration-access.js";
 import type {
   Agent,
   AgentNotice,
@@ -25,6 +26,9 @@ export const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.descrip
   (SELECT r.alias FROM model_routes r WHERE r.org_id = a.org_id AND r.model = a.model LIMIT 1) AS model_alias,
   COALESCE((SELECT array_agg(tg.team_id::text ORDER BY tg.team_id)
             FROM agent_team_grants tg WHERE tg.agent_id = a.id), '{}') AS team_ids,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', i.name, 'ceiling', ai.ceiling) ORDER BY i.name)
+            FROM agent_integrations ai JOIN integrations i ON i.id = ai.integration_id
+            WHERE ai.agent_id = a.id), '[]'::jsonb) AS integrations,
   ${utcText("a.deleted_at")} AS deleted_at, ${utcText("a.purge_after")} AS purge_after,
   ${utcText("a.created_at")} AS created_at, ${utcText("a.updated_at")} AS updated_at`;
 
@@ -66,6 +70,7 @@ export function toAgent(row: Record<string, unknown>): Agent {
     status: row.status as AgentStatus,
     is_personal: Boolean(row.is_personal),
     team_ids: (row.team_ids as string[] | null) ?? [],
+    integrations: (row.integrations as AgentIntegrationEntry[] | null) ?? [],
     deleted_at: optionalTime(row.deleted_at),
     purge_after: optionalTime(row.purge_after),
     created_at: pgTimestampToRfc3339(row.created_at as string),

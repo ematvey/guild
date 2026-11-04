@@ -100,7 +100,6 @@ export async function installPluginBundle(
       ? {
           mcp: manifest.mcp,
           auth: manifest.auth ?? { kind: "org_secret", secret_names: [], identity_key: "email" },
-          tool_policy: {},
         }
       : {};
     await deps.integrations.upsert(orgId, slug, config, false);

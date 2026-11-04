@@ -37,6 +37,7 @@
     "MemberProfile": { "$ref": "#/$defs/MemberProfile" },
     "ModelOption": { "$ref": "#/$defs/ModelOption" },
     "AgentList": { "$ref": "#/$defs/AgentList" },
+    "IntegrationAccess": { "$ref": "#/$defs/IntegrationAccess" },
     "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
     "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
@@ -93,6 +94,7 @@
         { "$ref": "#/$defs/ModelList" },
         { "$ref": "#/$defs/MemberProfile" },
         { "$ref": "#/$defs/AgentList" },
+        { "$ref": "#/$defs/IntegrationAccess" },
         { "$ref": "#/$defs/AgentRunFrame" },
         { "$ref": "#/$defs/AgentThreads" },
         { "$ref": "#/$defs/AgentRoutines" },
@@ -443,6 +445,19 @@
         "agents": {
           "type": "array",
           "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/Agent" }
+        }
+      }
+    },
+    "IntegrationAccess": {
+      "description": "The Integrations the member may add to an agent they manage, each with the highest class they may give. Sent on connect and to every member of the org when an Integration's audience, its team grants, its enabled flag or a team membership changes.",
+      "type": "object",
+      "required": ["type", "integrations"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "integration_access" },
+        "integrations": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AttachableIntegration" }
         }
       }
     },

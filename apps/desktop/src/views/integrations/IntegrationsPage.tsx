@@ -493,10 +493,13 @@ function CatalogHome({
 export function IntegrationsPage({
   route,
   navigate,
+  openAgent,
   isMobile,
 }: {
   route: IntegrationsRoute;
   navigate: Navigate;
+  /** Leaves the page for one agent's settings. */
+  openAgent: (agentId: string) => void;
   isMobile: boolean;
 }) {
   const data = useIntegrationsData();
@@ -564,6 +567,7 @@ export function IntegrationsPage({
             usage={data.usage.get(item.name)}
             update={updates.get(item.name)}
             onTab={(tab) => navigate({ ...route, tab })}
+            onOpenAgent={openAgent}
             onChanged={data.reload}
             onRemoved={() => {
               data.reload();

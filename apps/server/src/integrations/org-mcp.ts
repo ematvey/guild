@@ -241,7 +241,6 @@ export async function createOrgMcp(
   const config = {
     mcp: manifest.mcp,
     auth: manifest.auth,
-    tool_policy: {},
     tools: Object.fromEntries(
       [...selection].map(([name, s]) => [name, { enabled: s.enabled, approval: "default", class: s.cls }]),
     ),

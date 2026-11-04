@@ -88,6 +88,8 @@ export interface UpdateAgentInput {
   tools_mode?: "selected" | "all";
   visibility?: AgentVisibility;
   team_ids?: string[];
+  /** The agent's whole Integration list; omitted leaves it unchanged. */
+  integrations?: { slug: string; ceiling: "read" | "write" | "admin" }[];
 }
 
 export interface AgentFileContent {

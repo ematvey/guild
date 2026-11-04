@@ -57,10 +57,14 @@ function googleAdminEmail(config: JsonObject, secrets: [string, string][]): stri
   return secret(secrets, "admin_email");
 }
 
-/** Acting identity for the `sub` claim: the call's `acting_as` value when
- *  present, else the `admin_email` default subject. */
-function googleActingIdentity(actingAs: string | null, adminEmail: string): string {
-  return actingAs ?? adminEmail;
+/** Acting identity for the `sub` claim: the call's member identity. A call
+ *  without one is refused, never run as the admin: the admin's mailbox,
+ *  calendar and Drive are not anyone else's to read. */
+function googleActingIdentity(actingAs: string | null): string {
+  if (actingAs === null || actingAs === "") {
+    throw new Error("google_workspace: this call has no member identity to act as");
+  }
+  return actingAs;
 }
 
 async function googleAccessToken(config: JsonObject, secrets: [string, string][], sub: string): Promise<string> {
@@ -127,7 +131,12 @@ export async function googleAccessTokenFor(
   secrets: [string, string][],
   actingAs: string | null,
 ): Promise<string> {
-  return googleAccessToken(config, secrets, googleActingIdentity(actingAs, googleAdminEmail(config, secrets)));
+  return googleAccessToken(config, secrets, googleActingIdentity(actingAs));
+}
+
+/** A token for the configured admin: the connection test only. */
+export async function googleAdminAccessToken(config: JsonObject, secrets: [string, string][]): Promise<string> {
+  return googleAccessToken(config, secrets, googleAdminEmail(config, secrets));
 }
 
 async function googleGetJson(url: string, token: string, api: string): Promise<JsonObject> {
@@ -398,8 +407,8 @@ export async function googleWorkspaceExecute(
   actingAs: string | null,
 ): Promise<ToolOutcome> {
   // Dispatch first: an unknown tool fails without touching the network.
-  // Per-call identity: acting_as is the DWD `sub`; the default subject is
-  // admin_email.
+  // Per-call identity: acting_as is the DWD `sub`; a call without one is
+  // refused.
   if (tool === "api") {
     const token = await googleAccessTokenFor(config, secrets, actingAs);
     return callVendorApi(googleApiBase(config), { kind: "bearer", token }, args, API_MAX_CHARS, []);

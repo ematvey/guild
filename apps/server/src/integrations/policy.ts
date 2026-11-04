@@ -1,5 +1,5 @@
-// Per-tool integration policy: the stored curation map, the role/class
-// gate, and the acting-identity override rule.
+// Per-tool integration policy: the stored curation map, the scope and
+// class gate, and the acting-identity override rule.
 
 import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
 import type { JsonObject } from "./shared.js";
@@ -45,31 +45,42 @@ export function mcpToolClass(rowConfig: JsonObject, manifest: JsonObject | null,
   return toolCurate(rowConfig, true, rawTool).cls ?? (manifestToolClass(manifest, rawTool) as ToolClass);
 }
 
-/** Classes one role may call. Default policy: member read-only, admin
- *  everything; a stored `tool_policy` tightens or reshapes per role, never
- *  past the manifest. */
-function allowedClasses(rowConfig: JsonObject, role: string): string[] {
-  const policy = rowConfig["tool_policy"];
-  if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
-    const tp = (policy as JsonObject)[role];
-    if (Array.isArray(tp)) {
-      // A stored policy entry replaces the default for that role — an empty
-      // list allows nothing.
-      return tp.filter((v): v is string => typeof v === "string").filter(isToolClass);
-    }
-  }
-  return role === "admin" ? ["read", "write", "admin"] : ["read"];
+/** What one Turn may reach: the Trait tools its Agent's built-in allowlist
+ *  names (`all` for `tools_mode = all`) and the Agent's Integration entries
+ *  with their class ceilings. */
+export interface IntegrationScope {
+  traits: ReadonlySet<string> | "all";
+  integrations: ReadonlyMap<string, ToolClass>;
 }
 
-/** Whether one resolved tool may be called by `role`: per-tool curation
- *  first (a disabled tool is invisible), then the class rule (manifest class
- *  is the floor; a stored `tool_policy` tightens; admin-class tools are
- *  admin-only). Guards built-in and MCP tools
- *  alike. */
-export function toolAllowed(turn: IntegrationTurn, info: IntegrationToolInfo, role: string): boolean {
+/** A scope with no Integration: Trait tools only. */
+export const TRAITS_ONLY: IntegrationScope = { traits: "all", integrations: new Map() };
+
+/** The ceiling a scope gives one tool. A Trait tool is Guild's generic tool
+ *  (web search, web fetch): the built-in allowlist decides it, whichever
+ *  Integration serves it. Any other tool needs its Integration in the
+ *  Agent's list. */
+export function scopeCeiling(scope: IntegrationScope, slug: string, info: IntegrationToolInfo): ToolClass | null {
+  if (info.trait !== undefined) {
+    const named = scope.traits === "all" || scope.traits.has(info.spec.name);
+    return named ? (isToolClass(info.class) ? info.class : "read") : null;
+  }
+  return scope.integrations.get(slug) ?? null;
+}
+
+/** Whether one resolved tool is offered: per-tool curation first (a
+ *  disabled tool is invisible), then `admin`-class tools are admin-only,
+ *  then the tool's class must fall within the ceiling. Guards built-in and
+ *  MCP tools alike. */
+export function toolOffered(
+  turn: IntegrationTurn,
+  info: IntegrationToolInfo,
+  ceiling: ToolClass | null,
+  role: string,
+): boolean {
   if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin") return false;
-  return allowedClasses(turn.rowConfig, role).some((c) => classRank(c) >= classRank(info.class));
+  return ceiling !== null && classRank(info.class) <= classRank(ceiling);
 }
 
 /** Resolves the acting identity for one call: no override acts as the

@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
-import { isToolClass, toolClassOf } from "../platform/domain/tool-class.js";
+import { toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
 import { builtinByName } from "./loader.js";
@@ -327,8 +327,7 @@ function readMcpUrl(config: Record<string, unknown>): string | null {
 // ---------- integration save path (create/update with connection tests) ----------
 
 /** Validates an MCP plugin row's config: mcp.url must be an absolute http(s)
- *  URL when present; tool_policy role keys ⊆ {member, admin} with class
- *  lists ⊆ {read, write, admin}. */
+ *  URL when present; header templates must parse. */
 function validateMcpConfig(config: Record<string, unknown>): void {
   const mcp = config["mcp"];
   const url =
@@ -344,22 +343,6 @@ function validateMcpConfig(config: Record<string, unknown>): void {
       validateHeaderTemplates(templates);
     } catch (error) {
       throw ApiError.badRequest((error as Error).message);
-    }
-  }
-  const policy = config["tool_policy"];
-  if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
-    for (const [role, classes] of Object.entries(policy as Record<string, unknown>)) {
-      if (role !== "member" && role !== "admin") {
-        throw ApiError.badRequest("tool_policy role keys must be member or admin");
-      }
-      if (!Array.isArray(classes)) {
-        throw ApiError.badRequest("tool_policy role value must be a class list");
-      }
-      for (const c of classes) {
-        if (!isToolClass(c)) {
-          throw ApiError.badRequest("tool_policy classes must be read, write, or admin");
-        }
-      }
     }
   }
 }
@@ -416,7 +399,6 @@ export async function saveIntegration(
         ? {
             mcp: manifest["mcp"],
             auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" },
-            tool_policy: {},
           }
         : {};
     await gateway.integrations.upsert(orgId, name, config, false);

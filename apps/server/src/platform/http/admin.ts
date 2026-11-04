@@ -3,6 +3,8 @@
 // logic (shop, save, tools) is the integrations admin service
 // (src/integrations/admin.ts).
 
+import { IntegrationAccessStore } from "../store/integration-access.js";
+import { agentWarnings, isAudience, isGrantCeiling } from "../domain/integration-access.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
@@ -342,6 +344,74 @@ export function registerAdminIntegrationRoutes(
     const id = parseUuidParam(req, "id");
     await gateway.integrations.delete(admin.org_id, id);
     sendJson(reply, {});
+    return reply;
+  });
+
+  // An Integration's audience: who may add it to an agent, and up to which
+  // class; plus every agent that lists it, with the warnings where that
+  // agent's audience is wider.
+  const access = new IntegrationAccessStore(gateway.integrations.pool);
+  const accessView = async (orgId: string, id: string): Promise<Record<string, unknown>> => {
+    const [audience, context, agents] = await Promise.all([
+      access.audienceById(orgId, id),
+      access.context(orgId),
+      access.agentsUsing(orgId, id),
+    ]);
+    return {
+      audience: audience.audience,
+      org_ceiling: audience.org_ceiling,
+      grants: audience.grants,
+      teams: [...context.teams]
+        .map(([teamId, name]) => ({ id: teamId, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      agents: agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        status: agent.status,
+        owner_label: agent.owner_label,
+        visibility: agent.visibility,
+        is_personal: agent.is_personal,
+        ceiling: agent.integrations[0]?.ceiling ?? "read",
+        warnings: agentWarnings(agent, context),
+      })),
+    };
+  };
+
+  app.get("/api/v1/admin/integrations/:id/access", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    sendJson(reply, await accessView(admin.org_id, parseUuidParam(req, "id")));
+    return reply;
+  });
+
+  app.put("/api/v1/admin/integrations/:id/access", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const id = parseUuidParam(req, "id");
+    const body = requireJsonBody(req);
+    const audience = body["audience"];
+    if (!isAudience(audience)) throw ApiError.badRequest("audience must be org, team or admins");
+    const orgCeiling = body["org_ceiling"] ?? "read";
+    if (!isGrantCeiling(orgCeiling)) throw ApiError.badRequest("org_ceiling must be read or write");
+    const rawGrants = body["grants"] ?? [];
+    if (!Array.isArray(rawGrants)) throw ApiError.badRequest("grants must be an array");
+    const grants = rawGrants.map((item: unknown) => {
+      const grant = item as Record<string, unknown> | null;
+      if (grant === null || typeof grant !== "object" || typeof grant["team_id"] !== "string") {
+        throw ApiError.badRequest("each grant needs a team_id");
+      }
+      if (!isGrantCeiling(grant["ceiling"])) throw ApiError.badRequest("a grant's ceiling must be read or write");
+      return { team_id: grant["team_id"], ceiling: grant["ceiling"] };
+    });
+    if (audience === "team" && grants.length === 0) throw ApiError.badRequest("a team audience needs a team");
+    await access.setAudience(admin.org_id, id, audience, orgCeiling, audience === "team" ? grants : []);
+    const row = await gateway.integrations.get(admin.org_id, id);
+    await identity.events.emit(admin.org_id, "integration.access_changed", {
+      slug: row?.name ?? null,
+      by: admin.id,
+      audience,
+      org_ceiling: orgCeiling,
+      grants: audience === "team" ? grants : [],
+    });
+    sendJson(reply, await accessView(admin.org_id, id));
     return reply;
   });
 

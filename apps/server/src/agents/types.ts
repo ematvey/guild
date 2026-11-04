@@ -2,6 +2,7 @@
 // These names are the contract the agents lanes share; keep them stable.
 
 import type { AgentThreadType } from "../platform/domain/thread-type.js";
+import type { AgentIntegrationEntry } from "../platform/domain/integration-access.js";
 
 export type { AgentThreadType };
 export type AgentVisibility = "private" | "team" | "org";
@@ -46,13 +47,13 @@ export type AgentToolName =
   | "subagents"
   | "send_file";
 
-/** One entry of an agent's tool allowlist: a built-in tool, or an
- *  integration/MCP tool name the runtime resolves at turn time. */
+/** One entry of an agent's tool allowlist: a built-in tool or a Trait tool
+ *  (`web_fetch`). Integration tools are not listed here. */
 export type AgentToolRef = AgentToolName | (string & {});
 
-/** Every tool an agent can be given. `tools_mode = 'all'` means this set,
- *  plus every integration tool the org enables (resolved at turn time, so a
- *  new integration reaches the agent without an edit). */
+/** Every built-in tool an agent can be given; `tools_mode = 'all'` means
+ *  this set. Integrations are never covered by `all`: an agent lists them
+ *  explicitly (`Agent.integrations`). */
 export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "read",
   "write",
@@ -95,7 +96,7 @@ export interface Agent {
   /** The org's display name for the model ("Auto"); the id is the fallback. */
   model_alias?: string | null;
   tools: AgentToolRef[];
-  /** `all` follows the org's enabled tools; `selected` uses `tools`. */
+  /** `all` takes every built-in tool; `selected` uses `tools`. */
   tools_mode: AgentToolsMode;
   visibility: AgentVisibility;
   resources: Record<string, unknown>;
@@ -104,6 +105,8 @@ export interface Agent {
   is_personal: boolean;
   /** Teams granted use of a `team`-visibility agent. */
   team_ids?: string[];
+  /** The Integrations this agent's Turns see, each with its class ceiling. */
+  integrations: AgentIntegrationEntry[];
   deleted_at: string | null;
   purge_after: string | null;
   created_at: string;

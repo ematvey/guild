@@ -29,7 +29,7 @@ Agent, Thread, Turn and Executor form the core; the rest supports them.
 | Org | The tenant that owns every record, key and member | Every row carries its org. Nothing crosses orgs. Provider keys, integration secrets and the model catalog are per org | The org owns its data and pays for its models |
 | Member | One person in an Org, with a role (`admin` or `member`) and an identity (`managed` password or `oidc`) | An Org always keeps at least one admin. Revoking a member's credentials revokes all of them at once (see 002) | Every action and every token is attributed to someone |
 | Team | A group of Members | Used for agent grants and usage attribution. It holds no data of its own | Sharing and cost reporting at a group level |
-| Agent | A named, persistent worker: instructions, one model, a tool allowlist, a visibility and a Workspace | Has one owner. Each Member has exactly one personal Agent, which stays private and cannot be archived or deleted. Other Agents are shared as `private`, `team` or `org`. Lifecycle: `active` → `archived` or `deleting` → purged. Only an `active` Agent starts Runs | Whoever does the work, with the same configuration for everyone who uses it |
+| Agent | A named, persistent worker: instructions, one model, a tool allowlist, an Integration list, a visibility and a Workspace | Has one owner. Each Member has exactly one personal Agent, which stays private and cannot be archived or deleted. Other Agents are shared as `private`, `team` or `org`. Lifecycle: `active` → `archived` or `deleting` → purged. Only an `active` Agent starts Runs | Whoever does the work, with the same configuration for everyone who uses it |
 | Workspace | The Agent's private directory: its files, its `AGENTS.md` and `MEMORY.md`, and its notes | One per Agent, shared by every Member who uses the Agent. Tools reach it only inside the Agent's sandbox. It is never merged with a project folder | Durable memory and working state that outlive any one Thread |
 | Thread | One conversation between an Agent and the Member it belongs to; `chat` in storage and on the wire | Links one Agent, one Member and optionally one Project. Is of type `user`, `subagent` or `routine`. An Agent's creator has one default Thread with it, made with the Agent; other Members have none, and reading an Agent never creates a Thread. Only its Member writes to it. A spawned Thread names its parent, and that link is the only tree edge | The unit of history, privacy and live display |
 | Thread event | One row of a Thread's append-only log, with a sequence number | Never edited. Read state, unread state and the client's view are all derived from it | The durable record clients render and resume from |
@@ -77,9 +77,9 @@ The concepts and their rules are fixed. Each Org supplies the content:
 | Part | Set by the Org |
 | --- | --- |
 | Members and Teams | Users, roles, teams, and an optional OIDC provider |
-| Agents | Instructions, model, tool allowlist, visibility, Workspace contents and Routines |
+| Agents | Instructions, model, tool allowlist, Integration list, visibility, Workspace contents and Routines |
 | Models | Providers, Model routes, aliases, prices and monthly quotas |
-| Tools | Enabled Integrations and their curated tools, role policy, and Members' own MCP servers |
+| Tools | Enabled Integrations, their curated tools and audiences, and Members' own MCP servers |
 | Skills | The registry catalog, its reviews, and each Member's installs and pins |
 | Prompts | The assistant prompt and the auto-approval policy prompt |
 

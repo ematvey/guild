@@ -1,4 +1,4 @@
-import { googleAccessTokenFor } from "./execute.js";
+import { googleAdminAccessToken } from "./execute.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { googleWorkspaceExecute } from "./execute.js";
@@ -44,8 +44,7 @@ const plugin: IntegrationPlugin = {
         help: "Override only for a Google API proxy",
         placeholder: null,
         obtain:
-          "Leave the default. Change it only when Google's OAuth token endpoint must be reached " +
-          "through a proxy.",
+          "Leave the default. Change it only when Google's OAuth token endpoint must be reached " + "through a proxy.",
       },
       {
         name: "admin_email",
@@ -53,11 +52,11 @@ const plugin: IntegrationPlugin = {
         label: "Admin email",
         required: true,
         default: null,
-        help: "Workspace admin the service account acts as by default",
+        help: "Workspace admin the connection test acts as",
         placeholder: "admin@yourorg.com",
         obtain:
           "A Workspace admin who can read the user directory (a super admin works). Guild acts as " +
-          "this user for **Test connection** and for calls made without a member identity; " +
+          "this user only for **Test connection**; a call without a member identity is refused. " +
           "`directory_users` lists this user's domain by default.",
       },
       {
@@ -161,7 +160,7 @@ const plugin: IntegrationPlugin = {
     ],
   },
   async testConnection(config: JsonObject, secrets) {
-    await googleAccessTokenFor(config, secrets, null);
+    await googleAdminAccessToken(config, secrets);
   },
   execute: googleWorkspaceExecute,
 };

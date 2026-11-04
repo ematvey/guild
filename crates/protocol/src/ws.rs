@@ -252,6 +252,13 @@ pub enum WsServerMsg {
     AgentList {
         agents: Vec<serde_json::Value>,
     },
+    /// The Integrations the member may add to an agent they manage, each
+    /// with the highest class they may give. Sent on connect and whenever
+    /// an Integration's audience, grants or enabled flag, or a team
+    /// membership, changes. Daemons tag-peek and ignore it.
+    IntegrationAccess {
+        integrations: Vec<serde_json::Value>,
+    },
     /// One run, created or changed, for every member who may see its agent.
     /// A finished run carries its `call_count` and `tool_count`. Daemons
     /// tag-peek and ignore it.

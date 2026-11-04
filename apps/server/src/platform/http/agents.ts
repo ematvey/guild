@@ -18,6 +18,11 @@ import { createRoutine, deleteRoutine, getRoutine, updateRoutine } from "../../a
 import { search } from "../../agents/search.js";
 import { resolveIntegrations } from "../../integrations/plugins.js";
 import { toolCurate } from "../../integrations/policy.js";
+import { IntegrationAccessStore } from "../store/integration-access.js";
+import type { AgentIntegrationEntry } from "../domain/integration-access.js";
+import { isToolClass } from "../domain/tool-class.js";
+import { agentWire } from "../../hub/agent-state.js";
+import type { Agent as WireAgent } from "@guild/wire/rest";
 import {
   refuseDeletingAgent,
   type ActivityFilters,
@@ -156,7 +161,7 @@ const AGENT_TOOL_CATALOG = [
  *  runtime's namespaced tool names (`<slug>_<tool>`), the same strings an
  *  agent's `tools` array stores. Resolution is live: a broken or unreachable
  *  integration is skipped rather than failing the catalog. */
-async function integrationToolCatalog(
+async function traitToolCatalog(
   gateway: GatewayCtx,
   orgId: string,
 ): Promise<{ name: string; label: string; group: string; description: string; safe: boolean }[]> {
@@ -166,20 +171,20 @@ async function integrationToolCatalog(
   } catch {
     return [];
   }
+  // Only Trait tools join the built-in catalog: they are Guild's generic
+  // tools, whatever Integration serves them. An Integration's own tools
+  // reach an agent through its Integration list.
   const tools: { name: string; label: string; group: string; description: string; safe: boolean }[] = [];
+  const seen = new Set(AGENT_TOOL_CATALOG.map((tool) => tool.name));
   for (const turn of turns) {
     for (const info of turn.tools) {
+      if (info.trait === undefined || seen.has(info.spec.name)) continue;
       if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
-      // A trait tool is Guild-provided: it joins the Web group under its
-      // generic name, whatever integration implements it.
-      const traitLabel = info.trait === undefined ? null : info.trait === "web_search" ? "Web search" : "Web fetch";
+      seen.add(info.spec.name);
       tools.push({
         name: info.spec.name,
-        label: traitLabel ?? info.raw.replace(/_/g, " "),
-        group:
-          info.trait === undefined
-            ? `Integration · ${turn.slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`
-            : "Web",
+        label: info.trait === "web_search" ? "Web search" : "Web fetch",
+        group: "Web",
         description: info.spec.description,
         safe: false,
       });
@@ -266,6 +271,24 @@ function toolsField(body: Record<string, unknown>): AgentToolName[] | undefined 
   return value as AgentToolName[];
 }
 
+/** The `integrations` body field: the agent's whole Integration list. */
+function integrationsField(body: Record<string, unknown>): AgentIntegrationEntry[] | undefined {
+  const value = body["integrations"];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw ApiError.badRequest("integrations must be an array");
+  const seen = new Set<string>();
+  return value.map((item: unknown) => {
+    const entry = item as Record<string, unknown> | null;
+    if (entry === null || typeof entry !== "object" || typeof entry["slug"] !== "string") {
+      throw ApiError.badRequest("each integration needs a slug");
+    }
+    if (!isToolClass(entry["ceiling"])) throw ApiError.badRequest("ceiling must be read, write or admin");
+    if (seen.has(entry["slug"])) throw ApiError.badRequest(`integration ${entry["slug"]} is listed twice`);
+    seen.add(entry["slug"]);
+    return { slug: entry["slug"], ceiling: entry["ceiling"] };
+  });
+}
+
 function toolsModeField(body: Record<string, unknown>): "selected" | "all" | undefined {
   const value = body["tools_mode"];
   if (value === undefined) return undefined;
@@ -344,6 +367,29 @@ export function registerAgentRoutes(
 ): void {
   const store = chats.runtime.agents;
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
+  const integrationAccess = new IntegrationAccessStore(infra.pool);
+
+  /** Agents on the wire, with their Integration warnings. */
+  const wire = async (orgId: string, agents: Agent[]): Promise<WireAgent[]> => {
+    const context = await integrationAccess.context(orgId);
+    return agents.map((agent) => agentWire(agent, context));
+  };
+  const wireOne = async (agent: Agent): Promise<WireAgent> => (await wire(agent.org_id, [agent]))[0]!;
+
+  /** Replaces an agent's Integration list as `user`, then re-reads it. */
+  const setIntegrations = async (
+    user: Awaited<ReturnType<typeof requireUser>>,
+    agent: Agent,
+    entries: AgentIntegrationEntry[],
+  ): Promise<Agent> => {
+    const self = await integrationAccess.member(user.org_id, user.id);
+    await integrationAccess.setAgentIntegrations(agent.org_id, agent.id, entries, {
+      id: user.id,
+      role: user.role,
+      team_ids: self?.team_ids ?? new Set(),
+    });
+    return store.fetchAgent(agent.id);
+  };
 
   /** The built-in tool catalog the creation/settings forms offer. Integration
    *  and MCP tools are added by the runtime; this endpoint is the stable
@@ -351,7 +397,7 @@ export function registerAgentRoutes(
   app.get("/api/v1/agents/tools", async (req, reply) => {
     const user = await requireUser(auth, req);
     return sendJson(reply, {
-      tools: [...AGENT_TOOL_CATALOG, ...(await integrationToolCatalog(gateway, user.org_id))],
+      tools: [...AGENT_TOOL_CATALOG, ...(await traitToolCatalog(gateway, user.org_id))],
     });
   });
 
@@ -367,7 +413,7 @@ export function registerAgentRoutes(
     const model = requested ?? (await gateway.gatewayStore.listModels(user.org_id))[0]?.model;
     if (model === undefined) throw ApiError.badRequest("no enabled model for this org");
     const result = await installSpecialists(
-      { store, workspaceRoot: infra.config.agentWorkspaceWriteRoot },
+      { store, workspaceRoot: infra.config.agentWorkspaceWriteRoot, access: integrationAccess },
       { orgId: user.org_id, ownerUserId: user.id, model },
     );
     return sendJson(reply, result);
@@ -430,7 +476,9 @@ export function registerAgentRoutes(
       resources: resourcesField(body),
       team_ids: teamIdsField(body),
     });
-    return sendJson(reply, { agent: agent, access: await store.access(user, agent) });
+    const entries = integrationsField(body);
+    const created = entries === undefined || entries.length === 0 ? agent : await setIntegrations(user, agent, entries);
+    return sendJson(reply, { agent: await wireOne(created), access: await store.access(user, created) });
   });
 
   app.get("/api/v1/agents", async (req, reply) => {
@@ -445,14 +493,14 @@ export function registerAgentRoutes(
       includeArchived: queryParam(req, "include_archived") === "1",
       status: status === undefined || status === "" ? undefined : (status as AgentStatus),
     });
-    return sendJson(reply, { agents: await Promise.all(agents) });
+    return sendJson(reply, { agents: await wire(user.org_id, agents) });
   });
 
   app.get("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const agent = await store.get(user, agentId);
-    return sendJson(reply, { agent: agent, access: await store.access(user, agent) });
+    return sendJson(reply, { agent: await wireOne(agent), access: await store.access(user, agent) });
   });
 
   app.patch("/api/v1/agents/:id", async (req, reply) => {
@@ -482,8 +530,10 @@ export function registerAgentRoutes(
     if (resources !== undefined) patch.resources = resources;
     const teamIds = teamIdsField(body);
     if (teamIds !== undefined) patch.team_ids = teamIds;
-    const agent = await store.update(user, agentId, patch);
-    return sendJson(reply, { agent: agent });
+    const entries = integrationsField(body);
+    let agent = await store.update(user, agentId, patch);
+    if (entries !== undefined) agent = await setIntegrations(user, agent, entries);
+    return sendJson(reply, { agent: await wireOne(agent) });
   });
 
   /** Stops the turns of an agent that just left service (archived or
@@ -501,20 +551,20 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agent = await store.lifecycle.archive(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
-    return sendJson(reply, { agent });
+    return sendJson(reply, { agent: await wireOne(agent) });
   });
 
   app.post("/api/v1/agents/:id/restore", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agent = await store.lifecycle.restore(user, parseUuidParam(req, "id"));
-    return sendJson(reply, { agent });
+    return sendJson(reply, { agent: await wireOne(agent) });
   });
 
   app.delete("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agent = await store.lifecycle.markDeleted(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
-    return sendJson(reply, { agent });
+    return sendJson(reply, { agent: await wireOne(agent) });
   });
 
   app.get("/api/v1/agents/:id/export", async (req, reply) => {

@@ -30,6 +30,7 @@ import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 import {
   applyAgentList,
+  applyIntegrationAccess,
   applyAgentRoutines,
   applyAgentRun,
   applyAgentThreads,
@@ -215,6 +216,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onModelList: applyModelList,
       onMemberProfile: applyMemberProfile,
       onAgentList: applyAgentList,
+      onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,

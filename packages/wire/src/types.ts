@@ -9,6 +9,7 @@
 
 import type {
   Agent,
+  AttachableIntegration,
   AgentRoutine,
   AgentRun,
   AgentThread,
@@ -175,6 +176,8 @@ export type ServerFrame =
    *  name, avatar or onboarding flag changes. */
   | { type: "member_profile"; user: UserInfo }
   | { type: "agent_list"; agents: Agent[] }
+  /** The Integrations the member may add to an agent they manage. */
+  | { type: "integration_access"; integrations: AttachableIntegration[] }
   | { type: "agent_run"; run: AgentRun }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }

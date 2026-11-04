@@ -97,6 +97,36 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Integration access: audiences and explicit Agent Integration lists
+  (2026-11-04).** An enabled Integration used to reach every Member, gated
+  only by role × class (`member` read, `admin` all) and each Agent's
+  allowlist, where `tools_mode = all` picked up every Integration. Nine of
+  ten built-ins call their vendor with one shared token, so that gate was
+  the only boundary, and it could not keep HubSpot (revenue, deals) to
+  Sales. Now an Integration has an audience (`org` with a ceiling, `team`
+  grants with ceilings, or `admins`; new ones start at `admins`), and an
+  Agent lists its Integrations explicitly, each with a class ceiling. The
+  Agent's list supersedes the caller: whoever can use the Agent reaches what
+  it lists. The audience is checked when someone adds or raises an entry.
+  Where an Agent's audience is wider than an Integration's, the Agent and
+  the Integration's new Access tab warn, naming who gains what; nothing
+  composes the two at call time. `all` covers built-in and Trait tools
+  only. The per-role `tool_policy` is gone. The script API uses the
+  caller's own audience ceiling. Migration 0114 keeps today's reach:
+  existing Integrations become `org` at the class members had, `all`
+  Agents list every enabled Integration, `selected` Agents list the
+  Integrations whose tools they selected; shared Agents take the member
+  ceiling, so an admin using a shared Agent may lose a write tool until
+  someone raises its entry. Live state: `agent_list` carries
+  `integrations` and `integration_warnings`, and a new `integration_access`
+  frame carries what each Member may attach (`guild_agents` notify on the
+  new tables). Google Workspace no longer falls back to the admin email
+  when a call has no Member identity: it refuses. Known gap: a shared
+  Agent's Workspace carries what one caller fetched to the next. Spec:
+  `docs/specs/2026-11-04-integration-access.md`; phases 2 (several
+  connections per vendor) and 3 (member identity by impersonation or
+  vendor permission checks) are open.
+
 - **Reading an agent never creates a thread (2026-11-04).** Listing an
   agent's threads created the reader's Main thread, so an admin who opened
   another Member's agent got an empty "Main thread" that stayed in their

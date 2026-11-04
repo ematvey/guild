@@ -27,7 +27,7 @@ Lets agents read each member's own Google Workspace data: search their Gmail and
 
 ## Permissions and data
 
-The integration acts as the calling member (`org_secret_impersonated`): Guild signs a token for the member's email with the one service account, so each chat reads only the mail, events, and files that member can already open. Calls without a member identity act as the admin email. Every scope is read-only; nothing in Workspace is changed.
+The integration acts as the calling member (`org_secret_impersonated`): Guild signs a token for the member's email with the one service account, so each chat reads only the mail, events, and files that member can already open. A call without a member identity is refused; the admin email is used only by **Test connection**. Every scope is read-only; nothing in Workspace is changed.
 
 ## Troubleshooting
 

@@ -282,10 +282,53 @@
         "team_ids": [
           "018f0b7c-0000-7000-8000-000000000081"
         ],
+        "integrations": [
+          {
+            "slug": "hubspot",
+            "ceiling": "write"
+          }
+        ],
+        "integration_warnings": [
+          {
+            "integration": "hubspot",
+            "subject": "team",
+            "subject_id": "018f0b7c-0000-7000-8000-000000000051",
+            "subject_label": "Support",
+            "ceiling": "write",
+            "granted": "read"
+          },
+          {
+            "integration": "hubspot",
+            "subject": "member",
+            "subject_id": "018f0b7c-0000-7000-8000-000000000002",
+            "subject_label": "Ada",
+            "ceiling": "write",
+            "granted": null
+          }
+        ],
         "deleted_at": null,
         "purge_after": null,
         "created_at": "2026-11-01T10:00:00Z",
         "updated_at": "2026-11-01T10:00:00Z"
+      }
+    ]
+  },
+  {
+    "type": "integration_access",
+    "integrations": [
+      {
+        "slug": "hubspot",
+        "title": "HubSpot",
+        "summary": "CRM contacts, companies and deals.",
+        "enabled": true,
+        "ceiling": "write"
+      },
+      {
+        "slug": "github",
+        "title": "GitHub",
+        "summary": "",
+        "enabled": false,
+        "ceiling": "read"
       }
     ]
   },

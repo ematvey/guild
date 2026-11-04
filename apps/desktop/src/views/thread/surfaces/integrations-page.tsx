@@ -3,6 +3,7 @@
 import { IntegrationsPage } from "../../integrations/IntegrationsPage";
 import type { IntegrationsRoute } from "../../integrations/integrations-route";
 import { SURFACE_BASE } from "../route";
+import { agentTabRoute } from "../../agents/agents-route";
 import type { PushRoute } from "../hooks/use-thread-route";
 
 export function IntegrationsSurface({
@@ -21,6 +22,14 @@ export function IntegrationsSurface({
         isMobile={isMobile}
         navigate={(next, options) =>
           pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: next }, options)
+        }
+        openAgent={(agentId) =>
+          pushRoute({
+            ...SURFACE_BASE,
+            skills: null,
+            integrations: null,
+            agents: agentTabRoute(agentId, "settings"),
+          })
         }
       />
     </div>

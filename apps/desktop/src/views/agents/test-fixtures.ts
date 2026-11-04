@@ -24,6 +24,8 @@ export function makeAgent(patch: Partial<Agent> = {}): Agent {
     status: "active",
     is_personal: false,
     team_ids: [],
+    integrations: [],
+    integration_warnings: [],
     deleted_at: null,
     purge_after: null,
     created_at: AT,
