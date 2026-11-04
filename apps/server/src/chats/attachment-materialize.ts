@@ -1,7 +1,8 @@
 // Per-turn attachment materialization: the bytes of the attachments on the
-// message a turn consumes are written under /tmp/attachments/<runId>/ in the
+// inputs a turn takes are written under /tmp/attachments/<runId>/ in the
 // sandbox. Object storage stays the truth; the directory is a turn-scoped
-// cache and is wiped at the start of the next turn.
+// cache, wiped at the start of the next turn. An input placed later in the
+// turn (a steer, a child result) adds its files to the same directory.
 
 import path from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -34,11 +35,25 @@ export async function materializeTurnAttachments(args: MaterializeAttachmentsArg
   const dir = path.posix.join(root, args.runId);
   const created = await args.env.createDir(dir, { recursive: true }, args.context);
   if (!created.ok) throw created.error;
+  await writeRows(args, dir);
+  return dir;
+}
+
+/** Adds files to the turn's directory without wiping it: the attachments of
+ *  an input placed after the turn's files were first written. */
+export async function addTurnAttachments(args: MaterializeAttachmentsArgs): Promise<void> {
+  if (args.rows.length === 0) return;
+  const dir = path.posix.join(args.root ?? ATTACHMENTS_ROOT, args.runId);
+  const created = await args.env.createDir(dir, { recursive: true }, args.context);
+  if (!created.ok) throw created.error;
+  await writeRows(args, dir);
+}
+
+async function writeRows(args: MaterializeAttachmentsArgs, dir: string): Promise<void> {
   for (const row of args.rows) {
     const bytes = await args.objects.get(attachmentObjectKey(args.orgId, row.id, row.filename));
     const name = safeFilename(row.filename) ?? row.id;
     const written = await args.env.writeFile(path.posix.join(dir, name), bytes, args.context);
     if (!written.ok) throw written.error;
   }
-  return dir;
 }

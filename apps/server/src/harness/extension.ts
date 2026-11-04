@@ -113,7 +113,7 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   toolHooks?: readonly HookRegistration[];
   /** Chat attachments and their bytes in object storage — the
    *  download_attachment tool; absent in tests without them. */
-  attachments?: Pick<AttachmentStore, "list">;
+  attachments?: Pick<AttachmentStore, "reachableFromChat">;
   objects?: Pick<ObjectStore, "get">;
 }
 

@@ -53,7 +53,7 @@ class FakeObjects {
 
 function harness(rows: readonly AttachmentRow[], objects: FakeObjects, env: NodeExecutionEnv) {
   const tool = createDownloadAttachmentTool({
-    attachments: { list: async () => [...rows] },
+    attachments: { reachableFromChat: async () => [...rows] },
     objects,
     chatOfConversation: async () => CHAT,
     orgOfConversation: async () => ORG,

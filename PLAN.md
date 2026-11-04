@@ -121,6 +121,17 @@ first. Code comments describe only the present.
   the 12 KB `agents/01a17457…` folder in prod's filesystem that matches no
   org; prod picks up the compose change with its next deploy.
 
+- **A Turn's files reach the agent wherever they arrive from (2026-11-04,
+  branch `spike/pi-durable-runs`).** `/tmp/attachments/<run>/` was written
+  once, before the run's first tool call, from the user message nearest the
+  run's start, so files of a steer or child result placed mid-run never
+  landed. It now covers every input the run took (member messages and
+  child results since the previous run's last answer), and each tool call
+  adds files placed since. `download_attachment` only listed the chat's own
+  attachments, so a parent could not fetch the files its child results
+  carry (they belong to the child's chat). It now also reaches those, and
+  the child-result text says to fetch them with it.
+
 - **A Run is the record of exactly one pi-durable run (2026-11-04,
   branch `spike/pi-durable-runs`).** `agent_runs` no longer infers a run's
   end from the first answer without a tool call. A `beforeRequest` hook
