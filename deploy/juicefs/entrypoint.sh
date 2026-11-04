@@ -35,18 +35,20 @@ die() {
 self_pid=$$
 host_bin=/usr/local/bin/juicefs
 host_lib=/usr/local/lib/juicefs
-mountpoint="${GUILD_WORKSPACE_HOST_DIR:-/mnt/guild}"
-volume_name="${GUILD_JUICE_VOLUME:-guild-workspaces}"
+# Every stack names its own host directory, volume, metadata database and
+# bucket: a shared one would put two stacks on one filesystem.
+mountpoint="${GUILD_WORKSPACE_HOST_DIR:?set GUILD_WORKSPACE_HOST_DIR}"
+volume_name="${GUILD_JUICE_VOLUME:?set GUILD_JUICE_VOLUME}"
 storage="${GUILD_JUICE_STORAGE:-s3}"
 
 meta_url="${GUILD_JUICE_META_URL:-}"
 if [ -z "$meta_url" ]; then
   [ -n "${GUILD_DATABASE_URL:-}" ] || die "set GUILD_JUICE_META_URL or GUILD_DATABASE_URL"
   # Same Postgres credentials as the stack, dedicated database.
-  meta_url="${GUILD_DATABASE_URL%/*}/guild_meta"
+  meta_url="${GUILD_DATABASE_URL%/*}/${GUILD_JUICE_META_DB:?set GUILD_JUICE_META_DB}"
 fi
 
-bucket="${GUILD_JUICE_BUCKET:-guild-workspaces}"
+bucket="${GUILD_JUICE_BUCKET:?set GUILD_JUICE_BUCKET}"
 case "$bucket" in
   *://*) bucket_url="$bucket" ;;
   *)
@@ -93,7 +95,14 @@ for dir in /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/ceph; do
   done
 done
 
-# A previous run may have left a stale FUSE mount on the host.
+# Another stack's volume at this directory means two stacks were pointed at
+# one host directory: refuse rather than unmount the other stack's workspaces.
+foreign=$(nsenter -t 1 -m -- findmnt -n -o SOURCE,FSTYPE "$mountpoint" 2>/dev/null |
+  awk -v own="JuiceFS:$volume_name" '$2 ~ /^fuse/ && $1 != own { print $1 }' | head -n 1)
+[ -z "$foreign" ] ||
+  die "$mountpoint already holds $foreign, not JuiceFS:$volume_name; give this stack its own GUILD_WORKSPACE_HOST_DIR"
+
+# A previous run of this stack may have left a stale FUSE mount on the host.
 if nsenter -t 1 -m -- findmnt -n -o FSTYPE "$mountpoint" 2>/dev/null | grep -q '^fuse'; then
   log "unmounting the stale host mount"
   nsenter -t 1 -m -- umount "$mountpoint" >/dev/null 2>&1 ||

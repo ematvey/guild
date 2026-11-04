@@ -14,9 +14,11 @@ import { S3Client, CreateBucketCommand, HeadBucketCommand } from "@aws-sdk/clien
 const PROJECT = "guild-agents-vfs";
 const PORT = "18093";
 const DATABASE = "guild_agents_vfs";
-const META_DATABASE = "guild_meta";
+const META_DATABASE = "guild_meta_agents_vfs";
 const BUCKET = "guild-agents-vfs";
 const HOST_DIR = "/mnt/guild-agents-vfs";
+const JUICE_VOLUME = "guild-workspaces-agents-vfs";
+const WORKSPACES_VOLUME = `${PROJECT}_guild_workspaces`;
 
 const configPath = resolve(process.argv[2] ?? fileURLToPath(new URL("../deploy/compose/config.env", import.meta.url)));
 const config = Object.fromEntries(
@@ -46,7 +48,9 @@ if ((config.GUILD_HTTP_PORT ?? "8080") !== PORT) {
 if ((config.GUILD_S3_BUCKET ?? "guild") !== BUCKET) {
   problems.push(`GUILD_S3_BUCKET must be ${BUCKET}`);
 }
-if ((config.GUILD_WORKSPACE_HOST_DIR ?? "/mnt/guild") !== HOST_DIR) {
+// The JuiceFS filesystem is named by the compose environment (printed below),
+// not config.env; a config that still sets these must agree with it.
+if ((config.GUILD_WORKSPACE_HOST_DIR ?? HOST_DIR) !== HOST_DIR) {
   problems.push(`GUILD_WORKSPACE_HOST_DIR must be ${HOST_DIR}`);
 }
 if ((config.GUILD_JUICE_META_DB ?? META_DATABASE) !== META_DATABASE) {
@@ -117,4 +121,8 @@ console.log(`  Postgres ${DATABASE}, JuiceFS metadata ${META_DATABASE}`);
 console.log(`  S3 ${BUCKET}, host volume dir ${HOST_DIR}`);
 console.log("");
 console.log("Bring the stack up with:");
-console.log(`  GUILD_CONFIG_ENV=${configPath} docker compose -p ${PROJECT} -f deploy/compose/docker-compose.yml up -d`);
+console.log(
+  `  GUILD_CONFIG_ENV=${configPath} GUILD_WORKSPACE_HOST_DIR=${HOST_DIR} GUILD_JUICE_META_DB=${META_DATABASE} ` +
+    `GUILD_JUICE_VOLUME=${JUICE_VOLUME} GUILD_JUICE_BUCKET=${BUCKET} GUILD_WORKSPACES_VOLUME=${WORKSPACES_VOLUME} ` +
+    `docker compose -p ${PROJECT} -f deploy/compose/docker-compose.yml up -d`,
+);

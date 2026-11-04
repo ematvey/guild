@@ -19,7 +19,7 @@ import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client
 import { MachineExecutionEnv, type ExecutorKind, type MachineDispatch } from "../machines/dispatch.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import type { AgentRunStore } from "../agents/store.js";
-import { materializeTurnAttachments } from "../chats/attachment-materialize.js";
+import { addTurnAttachments, materializeTurnAttachments } from "../chats/attachment-materialize.js";
 import type { SkillRuntime } from "./skills.js";
 
 export interface ExecutorDeps {
@@ -45,8 +45,9 @@ export class ConversationExecutors {
   private readonly sandboxes: SandboxPool | null;
   /** Sandbox key → chat id, for the connect-time skill materialization. */
   private readonly sandboxChats = new Map<string, string>();
-  /** Chat → run whose turn directory is already materialized. */
-  private readonly materializedTurns = new Map<string, string>();
+  /** Chat → the run whose turn directory is materialized, and the
+   *  attachment ids already written there. */
+  private readonly materializedTurns = new Map<string, { runId: string; ids: Set<string> }>();
 
   constructor(private readonly deps: ExecutorDeps) {
     const { sandbox } = deps.config;
@@ -209,21 +210,30 @@ export class ConversationExecutors {
   }
 
   /** Writes the turn's attachments into the sandbox at
-   *  /tmp/attachments/<runId>/ and wipes the previous turn's directory.
-   *  Runs once per run, before the first tool call. */
+   *  /tmp/attachments/<runId>/. The run's first tool call wipes the previous
+   *  turn's directory and writes the files of the inputs taken so far; every
+   *  later call adds the files of inputs placed since (a steer, a child
+   *  result), so a file never misses the turn that took it. */
   private async materializeAttachmentsForTurn(chatId: string, orgId: string, env: ExecutionEnv): Promise<void> {
     const objects = this.deps.objects;
     if (objects === undefined || this.deps.config.sandbox.mode !== "runner") return;
     const run = await this.deps.agents.runs.runningRunForChat(chatId).catch(() => null);
     if (run === null) return;
-    if (this.materializedTurns.get(chatId) === run.id) return;
-    this.materializedTurns.set(chatId, run.id);
     try {
       const ids = await this.deps.threads.turnAttachmentIds(chatId, run.started_at ?? run.created_at);
+      const known = this.materializedTurns.get(chatId);
+      if (known !== undefined && known.runId === run.id) {
+        const fresh = ids.filter((id) => !known.ids.has(id));
+        if (fresh.length === 0) return;
+        const rows = await this.deps.attachments.byIds(orgId, fresh);
+        await addTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
+        for (const id of fresh) known.ids.add(id);
+        return;
+      }
       const rows = await this.deps.attachments.byIds(orgId, ids);
       await materializeTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
+      this.materializedTurns.set(chatId, { runId: run.id, ids: new Set(ids) });
     } catch (error) {
-      this.materializedTurns.delete(chatId);
       this.deps.log.warn({ err: error, chatId, runId: run.id }, "attachment materialization failed");
     }
   }

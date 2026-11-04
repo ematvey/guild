@@ -275,25 +275,22 @@ export class ThreadStore {
     );
   }
 
-  /** The attachment ids of one run's turn: the user message nearest the
-   *  run's start (placed just before or just after the run row, so the
-   *  nearest one in time is this turn's message) plus the child results
-   *  placed since the run started. */
+  /** The attachment ids of the inputs one run has taken: every member
+   *  message and child result placed since the previous run's last answer.
+   *  An input placed mid-run (a steer, a child result) is included once its
+   *  row is projected. */
   async turnAttachmentIds(chatId: string, startedAt: string): Promise<string[]> {
-    const messages = await this.pool.query<{ payload: Record<string, unknown> }>(
+    const inputs = await this.pool.query<{ payload: Record<string, unknown> }>(
       `SELECT payload FROM thread_events
-       WHERE chat_id = $1 AND type = 'user_message'
-       ORDER BY abs(extract(epoch FROM (created_at - $2::timestamptz))) ASC, seq DESC
-       LIMIT 1`,
-      [chatId, startedAt],
-    );
-    const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
-      `SELECT payload FROM thread_events
-       WHERE chat_id = $1 AND type = 'child_result' AND created_at >= $2::timestamptz`,
+       WHERE chat_id = $1 AND type IN ('user_message', 'child_result')
+         AND seq > COALESCE((SELECT max(seq) FROM thread_events
+                             WHERE chat_id = $1 AND type = 'assistant_message'
+                               AND created_at < $2::timestamptz), 0)
+       ORDER BY seq`,
       [chatId, startedAt],
     );
     const ids = new Set<string>();
-    for (const row of [...messages.rows, ...deliveries.rows]) {
+    for (const row of inputs.rows) {
       const list = Array.isArray(row.payload.attachments) ? row.payload.attachments : [];
       for (const item of list) {
         if (typeof item === "string") ids.add(item);

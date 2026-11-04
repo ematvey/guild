@@ -39,6 +39,37 @@ export async function transcriptEvents(
   return res.rows;
 }
 
+/** A run's answer: the chat's latest assistant message with no tool call
+ *  since `since`, or null when the run wrote none. */
+export async function terminalAssistantSince(
+  pool: PlatformPool,
+  chatId: string,
+  since: string,
+): Promise<{ id: string; payload: Record<string, unknown> } | null> {
+  const res = await pool.query<{ id: string; payload: Record<string, unknown> }>(
+    `SELECT e.id, e.payload FROM thread_events e
+     WHERE e.chat_id = $1 AND e.type = 'assistant_message' AND e.created_at >= $2::timestamptz
+       AND NOT EXISTS (
+         SELECT 1 FROM jsonb_array_elements(COALESCE(e.payload->'blocks', '[]'::jsonb)) b
+         WHERE b->>'type' = 'tool_call')
+     ORDER BY e.seq DESC LIMIT 1`,
+    [chatId, since],
+  );
+  return res.rows[0] ?? null;
+}
+
+/** The tokens in and out of the chat's assistant messages since `since`. */
+export async function assistantTokensSince(pool: PlatformPool, chatId: string, since: string): Promise<number> {
+  const res = await pool.query<{ tokens: string | null }>(
+    `SELECT SUM(COALESCE((e.payload->'usage'->>'tokens_in')::bigint, 0)
+              + COALESCE((e.payload->'usage'->>'tokens_out')::bigint, 0))::text AS tokens
+     FROM thread_events e
+     WHERE e.chat_id = $1 AND e.type = 'assistant_message' AND e.created_at >= $2::timestamptz`,
+    [chatId, since],
+  );
+  return Number(res.rows[0]?.tokens ?? 0);
+}
+
 /** The chat's events since `since`, oldest first, at most 400: one run's
  *  turn. */
 export async function turnEventsSince(pool: PlatformPool, chatId: string, since: string): Promise<JournalEventRow[]> {

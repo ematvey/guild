@@ -49,13 +49,13 @@ async function makeUser(orgId: string, email: string, role = "member"): Promise<
 
 interface FakeRuntime {
   runtime: SubagentsRuntime;
-  submitted: { chatId: string; content: string; entry?: string }[];
+  submitted: { chatId: string; content: string; entry?: string; requestId: string }[];
   written: { chatId: string; entry: EntryDraft }[];
   stopped: string[];
 }
 
 function fakeRuntime(overrides: Partial<SubagentsRuntime> = {}): FakeRuntime {
-  const submitted: { chatId: string; content: string; entry?: string }[] = [];
+  const submitted: { chatId: string; content: string; entry?: string; requestId: string }[] = [];
   const stopped: string[] = [];
   const written: { chatId: string; entry: EntryDraft }[] = [];
   return {
@@ -64,7 +64,7 @@ function fakeRuntime(overrides: Partial<SubagentsRuntime> = {}): FakeRuntime {
     stopped,
     runtime: {
       submitTurn: async (chatId, _orgId, input) => {
-        submitted.push({ chatId, content: input.content, entry: input.entry?.kind });
+        submitted.push({ chatId, content: input.content, entry: input.entry?.kind, requestId: input.requestId });
         return 1;
       },
       writeEntry: async (chatId, entry) => {
@@ -127,7 +127,7 @@ dbDescribe("subagent tree tools", () => {
       maxChildrenPerNode: args.maxChildrenPerNode ?? 16,
     });
     expect(context).not.toBeNull();
-    expect(context!.parentRun.id).toBe(args.run.id);
+    expect((await context!.parentRun()).id).toBe(args.run.id);
     return context!;
   }
 
@@ -162,8 +162,9 @@ dbDescribe("subagent tree tools", () => {
     expect(result.agent_name).toBe(targetAgent.name);
     expect(result.title).toBe("quarterly report");
     expect(result.status).toBe("running");
+    // Queued until the child's pi-durable run takes the turn.
     const childRun = await store.runs.getRun(result.run_id);
-    expect(childRun.status).toBe("running");
+    expect(childRun.status).toBe("queued");
     expect(childRun.trigger).toBe("delegation");
     expect(childRun.depth).toBe(1);
     expect(childRun.parent_run_id).toBe(parentRun.id);
@@ -178,7 +179,7 @@ dbDescribe("subagent tree tools", () => {
     expect(childThread?.title).toBe("quarterly report");
     expect(childThread?.title_locked).toBe(true);
     expect(fake.submitted).toEqual([
-      { chatId: childThread!.chat_id, content: "Write the report", entry: POSTED_TURN_KIND },
+      { chatId: childThread!.chat_id, content: "Write the report", entry: POSTED_TURN_KIND, requestId: result.run_id },
     ]);
 
     const parentEvents = await threads.listEvents(orgId, thread.chat_id);
@@ -401,6 +402,7 @@ dbDescribe("subagent tree tools", () => {
       chatId: childThread.chat_id,
       content: "next step",
       entry: POSTED_TURN_KIND,
+      requestId: sent.run_id,
     });
 
     const parentEvents = await threads.listEvents(orgId, thread.chat_id);
@@ -494,7 +496,7 @@ dbDescribe("subagent tree tools", () => {
     expect(children[0]).toMatchObject({
       thread_id: child.thread_id,
       agent_name: targetAgent.name,
-      status: "running",
+      status: "queued",
       depth: 1,
       closed: false,
     });

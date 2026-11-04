@@ -23,7 +23,7 @@ export function childResultText(event: ChildResultEvent, at: string): string {
   lines.push(text === "" ? "(no final text)" : text);
   if (event.attachments.length > 0) {
     lines.push(
-      `Files: ${event.attachments.map((attachment) => `${attachment.filename} (${attachment.id})`).join(", ")}`,
+      `Files (fetch with download_attachment): ${event.attachments.map((attachment) => `${attachment.filename} (${attachment.id})`).join(", ")}`,
     );
   }
   return lines.join("\n");

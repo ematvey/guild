@@ -108,11 +108,12 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The skills runtime (read_skill/search_skills/push_skill + the
    *  prompt index section); absent in tests without one. */
   skillRuntime?: SkillRuntime;
-  /** Extra tool-task hooks (the workspace conflict journal). */
+  /** Extra task hooks: the run rows' opener, the workspace conflict
+   *  journal, tool tracing. */
   toolHooks?: readonly HookRegistration[];
   /** Chat attachments and their bytes in object storage — the
    *  download_attachment tool; absent in tests without them. */
-  attachments?: Pick<AttachmentStore, "list">;
+  attachments?: Pick<AttachmentStore, "reachableFromChat">;
   objects?: Pick<ObjectStore, "get">;
 }
 

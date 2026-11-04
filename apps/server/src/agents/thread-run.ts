@@ -7,7 +7,6 @@
 
 import type { UserRow } from "../platform/store/identity.js";
 import { postedTurnEntry } from "../chats/posted-turn.js";
-import { uuidv7 } from "../platform/time.js";
 import type { AgentRunStore, AgentStore, CreateRunInput } from "./store.js";
 import type { Agent, AgentRun } from "./types.js";
 
@@ -34,9 +33,9 @@ export interface StartThreadRunDeps {
 export interface StartThreadRunInput {
   agentId: string;
   thread: { id: string; chat_id: string };
-  /** The run row's remaining fields; agent, thread, status and start time
-   *  are filled here. */
-  run: Omit<CreateRunInput, "agent_id" | "thread_id" | "status">;
+  /** The run row's remaining fields; agent, thread and status are filled
+   *  here, and the start time when its pi-durable run takes it. */
+  run: Omit<CreateRunInput, "agent_id" | "thread_id" | "status" | "started_at">;
   /** The user turn posted into the thread. */
   content: string;
   /** When set, this user must be able to use the agent. */
@@ -73,8 +72,10 @@ export class ThreadRunSubmitFailed extends Error {
   }
 }
 
-/** Gates on a fresh read of the agent, opens the run and posts the turn.
- *  Returns the running run and the agent it ran as. */
+/** Gates on a fresh read of the agent, creates the run queued and posts
+ *  the turn under the run's id as its request id: the pi-durable run that
+ *  takes the input takes over the row (agents/lifecycle.ts). Returns the
+ *  run and the agent it runs as. */
 export async function startThreadRun(
   deps: StartThreadRunDeps,
   input: StartThreadRunInput,
@@ -92,15 +93,14 @@ export async function startThreadRun(
     ...input.run,
     agent_id: agent.id,
     thread_id: input.thread.id,
-    status: "running",
-    started_at: input.run.started_at ?? new Date().toISOString(),
+    status: "queued",
   });
   try {
     await input.onRunCreated?.(run);
     // The thread's user message is projected from the placed entry.
     await deps.runtime.submitTurn(input.thread.chat_id, agent.org_id, {
       orgId: agent.org_id,
-      requestId: uuidv7(),
+      requestId: run.id,
       content: input.content,
       images: [],
       model: agent.model,

@@ -3,6 +3,7 @@ node_modules
 dist
 .env
 config.env
+juicefs.env
 BOOTSTRAP-ADMIN.txt
 *.local
 crates/server/data-test/

@@ -217,27 +217,15 @@ export class AgentRunStore {
     return steps;
   }
 
-  /** The oldest queued/running run for a chat journal row. Tools run inside
-   *  a turn use this to resolve the run they belong to. */
+  /** The chat's running run: the row of its current pi-durable run. Tools
+   *  and model calls inside a run use it to resolve the run they belong to. */
   async runningRunForChat(chatId: string): Promise<AgentRun | null> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${RUN_COLUMNS} FROM agent_runs r
        JOIN agent_threads t ON t.id = r.thread_id
-       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+       WHERE t.chat_id = $1 AND r.status = 'running'
        ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
       [chatId],
-    );
-    return res.rows[0] === undefined ? null : toRun(res.rows[0]);
-  }
-
-  /** The oldest queued/running run for one agent thread. A chat turn adopts
-   *  an open run instead of opening a second one. */
-  async runningRunForThread(threadId: string): Promise<AgentRun | null> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${RUN_COLUMNS} FROM agent_runs r
-       WHERE r.thread_id = $1 AND r.status IN ('queued', 'running')
-       ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
-      [threadId],
     );
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }

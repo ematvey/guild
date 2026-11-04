@@ -1,6 +1,7 @@
-// The run rows the run lifecycle settles: a chat's open run, the guarded
-// terminal update, a child chat's cancellation, the row mirrored to
-// ClickHouse, and the send_message signal that a run reached the user.
+// The run rows the run lifecycle opens and settles: a chat's running runs,
+// the queued rows a pi-durable run takes over, the guarded terminal update,
+// a child chat's cancellation, the row mirrored to ClickHouse, and the
+// send_message signal that a run reached the user.
 
 import type { PlatformPool } from "../../platform/db.js";
 import { utcText } from "../../platform/time.js";
@@ -13,18 +14,64 @@ export interface OpenChatRun {
   started_at: string;
 }
 
-/** The chat's oldest queued or running run, or null. */
-export async function openRunForChat(pool: PlatformPool, chatId: string): Promise<OpenChatRun | null> {
+/** The chat's running runs: the rows of its current pi-durable run, oldest
+ *  first. More than one when several delegated turns were placed into the
+ *  same run. */
+export async function runningRunsForChat(pool: PlatformPool, chatId: string): Promise<OpenChatRun[]> {
   const res = await pool.query<OpenChatRun>(
     `SELECT r.id, r.agent_id, r.thread_id, t.chat_id,
             ${utcText("COALESCE(r.started_at, r.created_at)")} AS started_at
      FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-     WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
-     ORDER BY r.created_at ASC, r.id ASC
-     LIMIT 1`,
+     WHERE t.chat_id = $1 AND r.status = 'running'
+     ORDER BY r.created_at ASC, r.id ASC`,
+    [chatId],
+  );
+  return res.rows;
+}
+
+/** The agent thread a chat's runs belong to; null for a chat with none. */
+export async function runThread(
+  pool: PlatformPool,
+  chatId: string,
+): Promise<{ id: string; agent_id: string; user_id: string | null; depth: number } | null> {
+  const res = await pool.query<{ id: string; agent_id: string; user_id: string | null; depth: number }>(
+    "SELECT id, agent_id, user_id, depth FROM agent_threads WHERE chat_id = $1",
     [chatId],
   );
   return res.rows[0] ?? null;
+}
+
+/** The thread's queued runs created for these requests (a delegated or
+ *  routine turn's run id is its input's request id), oldest first. */
+export async function queuedRunsFor(
+  pool: PlatformPool,
+  threadId: string,
+  requestIds: readonly string[],
+): Promise<string[]> {
+  if (requestIds.length === 0) return [];
+  const res = await pool.query<{ id: string }>(
+    `SELECT id FROM agent_runs
+     WHERE thread_id = $1 AND status = 'queued' AND id::text = ANY($2::text[])
+     ORDER BY created_at ASC, id ASC`,
+    [threadId, requestIds],
+  );
+  return res.rows.map((row) => row.id);
+}
+
+/** The member who submitted one of these requests, earliest first; null
+ *  when none was a member's turn. */
+export async function requestingMember(
+  pool: PlatformPool,
+  chatId: string,
+  requestIds: readonly string[],
+): Promise<string | null> {
+  if (requestIds.length === 0) return null;
+  const res = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM turn_commands WHERE chat_id = $1 AND id::text = ANY($2::text[])
+     ORDER BY position ASC LIMIT 1`,
+    [chatId, requestIds],
+  );
+  return res.rows[0]?.user_id ?? null;
 }
 
 export interface RunOutcome {

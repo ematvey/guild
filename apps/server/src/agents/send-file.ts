@@ -9,7 +9,7 @@ import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@ea
 import { attachmentObjectKey, safeFilename, type AttachmentStore } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { uuidv7 } from "../platform/time.js";
-import type { Agent, AgentRun } from "./types.js";
+import type { Agent } from "./types.js";
 import { normalizeRelativePath } from "./files.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
 import { readWorkspaceFile, WorkspaceFsError } from "./workspace-fs.js";
@@ -22,7 +22,6 @@ export interface SendFileContext {
   attachments: Pick<AttachmentStore, "createAgentFile">;
   objects: Pick<ObjectStore, "put">;
   agent: Agent;
-  run: AgentRun;
   chatId: string;
   /** The agent workspace volume as this process sees it. */
   workspaceRoot: string;

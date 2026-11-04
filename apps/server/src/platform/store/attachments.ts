@@ -157,6 +157,23 @@ export class AttachmentStore {
     return res.rows.map(toRow);
   }
 
+  /** The attachments an agent in this chat may fetch: the chat's own, plus
+   *  the files its child results carry (they belong to the child's chat). */
+  async reachableFromChat(orgId: string, chatId: string): Promise<AttachmentRow[]> {
+    const res = await this.pool.query<AttachmentDbRow>(
+      `SELECT ${ATTACHMENT_COLUMNS},
+         ${utcText("created_at")} AS created_at
+       FROM attachments
+       WHERE org_id = $1 AND (chat_id = $2 OR id::text IN (
+         SELECT item->>'id' FROM thread_events e,
+           jsonb_array_elements(COALESCE(e.payload->'attachments', '[]'::jsonb)) item
+         WHERE e.chat_id = $2 AND e.type = 'child_result' AND jsonb_typeof(item) = 'object'))
+       ORDER BY attachments.created_at`,
+      [orgId, chatId],
+    );
+    return res.rows.map(toRow);
+  }
+
   async get(orgId: string, id: string): Promise<AttachmentRow> {
     const res = await this.pool.query<AttachmentDbRow>(
       `SELECT ${ATTACHMENT_COLUMNS},

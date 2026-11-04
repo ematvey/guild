@@ -62,8 +62,9 @@ export interface BridgeDeps {
   spill?: { artifacts: ToolArtifactStore; objects: ObjectStore };
   /** Agent-run lifecycle hooks (agent threads only; plain chats no-op). */
   agentRuns?: {
-    assistantEvent(chatId: string, row: ThreadEventRow): Promise<void>;
-    runEnd(chatId: string, failure: string | null): Promise<void>;
+    /** The run ended: its rows settle from its answer. `inputs` are the
+     *  run's input submission ids. */
+    runEnd(chatId: string, inputs: readonly number[], failure: string | null): Promise<void>;
     /** A message posted outside a run (send_message) was projected. */
     postedMessage(chatId: string, row: ThreadEventRow): Promise<void>;
   };
@@ -293,7 +294,7 @@ export class ChatBridge {
             await this.deps.turnCommands.finish(command.id, invocationOf(Number(input)), false);
           }
         }
-        await this.deps.agentRuns?.runEnd(state.chatId, state.failure);
+        await this.deps.agentRuns?.runEnd(state.chatId, event.inputs.map(Number), state.failure);
         this.finishGeneration(state);
         return;
       }

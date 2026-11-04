@@ -97,6 +97,68 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Each stack owns its JuiceFS filesystem; the sidecar holds the volume
+  (2026-11-04).** At 16:15 a dev deploy recreated the server and the runner
+  together, the only users of the `guild_workspaces` bind volume. Docker
+  unmounted the volume, the unmount propagated through the shared host
+  directory, and the FUSE mount at `/mnt/guild` went down. Prod went with it:
+  prod never set `GUILD_WORKSPACE_HOST_DIR`, and the entrypoint hard-coded
+  `guild_meta`, so dev and prod were one filesystem (same host directory,
+  metadata database and bucket). Now: `.env` names each stack's host
+  directory, metadata database, JuiceFS volume, bucket and Docker volume with
+  no defaults; the entrypoint honours `GUILD_JUICE_META_DB` and refuses a
+  host directory that holds another volume; the `juicefs` service mounts
+  `guild_workspaces` itself, so the volume never loses its last user; the
+  JuiceFS settings reach only that service (`juicefs.env`). Dev moved to its
+  own filesystem (`/mnt/guild-dev`, `guild_meta_dev`, bucket
+  `guild-workspaces-dev`, volume `compose_guild_workspaces_dev`), its 370 MB
+  of agent folders copied and removed from prod's; prod kept its filesystem,
+  pinned in its `.env`. Open: a bucket-scoped object-store key for each
+  JuiceFS volume (RustFS user admin needs `mc`, not available here); the
+  orphaned `compose_guild_workspaces` volume record, which still binds
+  `/mnt/guild` and must not be removed while prod is mounted there (an
+  unmount of it took prod's host mount down even after `--make-rprivate`);
+  the 12 KB `agents/01a17457…` folder in prod's filesystem that matches no
+  org; prod picks up the compose change with its next deploy.
+
+- **A Turn's files reach the agent wherever they arrive from (2026-11-04,
+  branch `spike/pi-durable-runs`).** `/tmp/attachments/<run>/` was written
+  once, before the run's first tool call, from the user message nearest the
+  run's start, so files of a steer or child result placed mid-run never
+  landed. It now covers every input the run took (member messages and
+  child results since the previous run's last answer), and each tool call
+  adds files placed since. `download_attachment` only listed the chat's own
+  attachments, so a parent could not fetch the files its child results
+  carry (they belong to the child's chat). It now also reaches those, and
+  the child-result text says to fetch them with it.
+
+- **A Run is the record of exactly one pi-durable run (2026-11-04,
+  branch `spike/pi-durable-runs`).** `agent_runs` no longer infers a run's
+  end from the first answer without a tool call. A `beforeRequest` hook
+  opens the row before the run's first model call, taking over the queued
+  row a spawn, send or routine created for its input; the input's request
+  id is that row's id. The bridge's `run_end` settles it from the run's last
+  answer. A steer or child result taken after an answer is now part of the
+  same Run, and the answer delivered upward is the last one. Submit, the
+  agent turn route and child delivery no longer open runs, and delivery
+  drops its advisory lock: pi-durable's request id keeps a result to one
+  admission. A spawned child shows `queued` until its run starts. Spec:
+  `docs/specs/2026-11-04-runs-follow-pi-durable.md`.
+
+- **Runs follow pi-durable: findings (2026-11-04, branch
+  `spike/pi-durable-runs`).** `agent_runs` infers a run's end from the
+  first assistant message without a tool call, so a record can close while
+  pi-durable's run continues on a steer or child result. That run's later
+  answer never reaches the parent. pi-durable's turn is `pi.live.run`
+  (the bridge's `run_start`/`run_end`), and an input waiting at the final
+  boundary starts a new run. Plan A: make `agent_runs` a projection of that
+  run, keeping its ids, frames and URLs. Native task-owned subagents
+  (plan B) need one harness for a whole agent tree. pi-durable assumes
+  one harness per storage, with no cross-process notification, and
+  worker mode runs one harness per chat. B is therefore a product decision
+  (one worker per tree) or waits on upstream (plan C). Details:
+  `docs/specs/2026-11-04-runs-follow-pi-durable.md`.
+
 - **Integrations are their own page: installed vs catalog, landing pages,
   setup notes, usage (2026-11-04).** The Settings → Integrations section
   (a card grid in the settings column, with Catalogs, Install plugin and

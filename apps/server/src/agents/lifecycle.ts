@@ -1,8 +1,9 @@
-// Run lifecycle for agent threads: the transcript projection reports
-// assistant events, the chat bridge reports run end, and this class turns
-// those observations into one terminal agent_runs update plus the turn's
-// search chunk. The run row is the durable identity; the update is guarded
-// by status so a completion can only be written once.
+// Run lifecycle for agent threads: an agent_runs row is the database copy
+// of one pi-durable run (`pi.live.run`). The run's first model request
+// opens it, taking over the queued row a delegated or routine turn created
+// for its input, and the bridge's run_end settles it from the run's answer,
+// with the turn's search chunk. Nothing else decides when a run starts or
+// ends. The update is guarded by status so a completion is written once.
 
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
@@ -14,15 +15,20 @@ import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import { assistantTextForRun, type ChildResultDelivery, type ChildRunFinished } from "./delivery.js";
 import { chatThreadAgent, chatThreadNode } from "./store/bindings.js";
-import { turnEventsSince } from "./store/events.js";
+import { assistantTokensSince, terminalAssistantSince, turnEventsSince } from "./store/events.js";
 import {
   cancelOpenRuns,
   type OpenChatRun,
   openedThreadSince,
-  openRunForChat,
+  queuedRunsFor,
+  requestingMember,
+  runningRunsForChat,
+  runThread,
   runTraceRow,
   settleRun,
 } from "./store/run-finish.js";
+import type { AgentRunStore } from "./store/runs.js";
+import { inputRequestIds } from "../storage/postgres/queries.js";
 import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
@@ -40,6 +46,8 @@ interface TurnEvent {
 export interface AgentRunLifecycleDeps {
   pool: PlatformPool;
   log: Logger;
+  /** Opens and takes over run rows (mirrored and pushed like any write). */
+  runs: Pick<AgentRunStore, "createRun" | "updateRun">;
   /** Finishes the run's workspace-turn journal row at completion. */
   journal?: AgentConflictJournal;
   /** Mirrors the terminal run row into ClickHouse. */
@@ -96,93 +104,125 @@ function clip(text: string, max: number): string {
 }
 
 export class AgentRunLifecycle {
+  /** Per chat, the inputs of the run whose rows are open: later requests
+   *  of the same run skip the lookup. */
+  private readonly opened = new Map<string, string>();
+
   constructor(private readonly deps: AgentRunLifecycleDeps) {}
 
-  /** Called after an assistant_message row lands. A tool-call round is not
-   *  the run's end; a terminal assistant event (text/error, no tool call)
-   *  completes the run. */
-  async assistantEvent(chatId: string, row: ThreadEventRow): Promise<void> {
-    if (row.event.type !== "assistant_message") return;
-    const payload = row.event as unknown as Record<string, unknown>;
-    const hasToolCall = blocksOf(payload).some((block) => block.type === "tool_call");
-    const error = typeof payload.error === "string" ? payload.error : null;
-    if (!error && hasToolCall) return;
-    await this.finish(chatId, {
-      error,
-      summary: clip(firstTextOf(payload), MAX_SUMMARY_CHARS) || null,
-      finalSeq: row.seq,
-      eventId: row.id,
+  /** Called before every model request of a run (pi-durable's
+   *  `beforeRequest`), including a run resumed after a restart. The first
+   *  one opens the run's rows: the queued rows created for its inputs, else
+   *  a new message run. A row already running is this run's own. */
+  async runStart(chatId: string, inputs: readonly number[]): Promise<void> {
+    const key = inputs.join(",");
+    if (this.opened.get(chatId) === key) return;
+    await this.open(chatId, inputs, true);
+    this.opened.set(chatId, key);
+  }
+
+  /** Called at the chat bridge's run_end: settles the run's rows from its
+   *  answer. A run that ended before any request still settles the queued
+   *  rows created for its inputs, and a failed one is recorded. */
+  async runEnd(chatId: string, inputs: readonly number[], failure: string | null): Promise<void> {
+    if (this.opened.get(chatId) !== inputs.join(",")) await this.open(chatId, inputs, failure !== null);
+    this.opened.delete(chatId);
+    for (const run of await runningRunsForChat(this.deps.pool, chatId)) await this.finish(run, failure);
+  }
+
+  private async open(chatId: string, inputs: readonly number[], create: boolean): Promise<void> {
+    const { pool, runs } = this.deps;
+    const thread = await runThread(pool, chatId);
+    if (thread === null) return;
+    if ((await runningRunsForChat(pool, chatId)).length > 0) return;
+    const requestIds = await inputRequestIds(pool, inputs);
+    const queued = await queuedRunsFor(pool, thread.id, requestIds);
+    const startedAt = new Date().toISOString();
+    if (queued.length > 0) {
+      for (const id of queued) await runs.updateRun(id, { status: "running", started_at: startedAt });
+      return;
+    }
+    if (!create) return;
+    await runs.createRun({
+      agent_id: thread.agent_id,
+      user_id: (await requestingMember(pool, chatId, requestIds)) ?? thread.user_id,
+      thread_id: thread.id,
+      depth: Number(thread.depth),
+      trigger: "message",
+      status: "running",
+      started_at: startedAt,
     });
   }
 
-  /** Called at the chat bridge's run_end: the fallback that makes a run
-   *  with no assistant text silent (or succeeded when it sent a message). */
-  async runEnd(chatId: string, failure: string | null): Promise<void> {
-    await this.finish(chatId, { error: failure, summary: null });
-  }
-
-  private async finish(
-    chatId: string,
-    info: { error: string | null; summary: string | null; finalSeq?: number; eventId?: string },
-  ): Promise<void> {
-    const run = await this.runningRun(chatId);
-    if (run === null) return;
+  private async finish(run: OpenChatRun, error: string | null): Promise<void> {
+    const { pool } = this.deps;
     try {
       const since = run.started_at;
-      const events = await turnEventsSince(this.deps.pool, run.chat_id, since);
-      const turnEvents: TurnEvent[] = events.map((row) => ({
-        seq: Number(row.seq),
-        type: row.type,
-        payload: row.payload,
-        created_at: row.created_at,
-      }));
-      const finalText = terminalAssistantText(turnEvents);
-      const tokens = turnEvents.reduce((sum, event) => {
-        if (event.type !== "assistant_message") return sum;
-        const usage = event.payload.usage as { tokens_in?: number; tokens_out?: number } | undefined;
-        return sum + Number(usage?.tokens_in ?? 0) + Number(usage?.tokens_out ?? 0);
-      }, 0);
+      const answer = await terminalAssistantSince(pool, run.chat_id, since);
+      const finalText = answer === null ? "" : textOf(answer.payload).trim();
+      const answerError = typeof answer?.payload.error === "string" ? answer.payload.error : null;
+      const failure = error ?? answerError;
+      const tokens = await assistantTokensSince(pool, run.chat_id, since);
       const sentMessage = await this.sentMessage(run, since);
-      const status = info.error !== null ? "failed" : finalText !== "" || sentMessage ? "succeeded" : "silent";
+      const status = failure !== null ? "failed" : finalText !== "" || sentMessage ? "succeeded" : "silent";
+      const firstText = answer === null ? "" : clip(firstTextOf(answer.payload), MAX_SUMMARY_CHARS);
       const summary =
-        info.summary ?? (finalText !== "" ? clip(finalText, MAX_SUMMARY_CHARS) : sentMessage ? "Sent a message" : null);
-      const settled = await settleRun(this.deps.pool, run.id, {
+        firstText !== ""
+          ? firstText
+          : finalText !== ""
+            ? clip(finalText, MAX_SUMMARY_CHARS)
+            : sentMessage
+              ? "Sent a message"
+              : null;
+      const settled = await settleRun(pool, run.id, {
         status,
-        summary: summary === null || summary === "" ? null : summary,
+        summary,
         tokens,
-        error_code: info.error === null ? null : "run_error",
-        error_message: info.error,
+        error_code: failure === null ? null : "run_error",
+        error_message: failure,
       });
       if (!settled) return;
-      await notifySubagentTree(this.deps.pool, run.thread_id);
+      await notifySubagentTree(pool, run.thread_id);
       if (status === "succeeded" && this.deps.title !== undefined) {
-        void this.deps.title(run.chat_id, run.thread_id).catch((error: unknown) => {
-          this.deps.log.warn({ err: error, chatId: run.chat_id }, "thread title generation failed");
+        void this.deps.title(run.chat_id, run.thread_id).catch((titleError: unknown) => {
+          this.deps.log.warn({ err: titleError, chatId: run.chat_id }, "thread title generation failed");
         });
       }
-      if (info.eventId !== undefined) {
-        await this.deps.attachments?.publishAgentAttachments(run.chat_id, info.eventId).catch((error: unknown) => {
-          this.deps.log.warn({ err: error, runId: run.id, chatId }, "attachment publish failed");
+      if (answer !== null) {
+        await this.deps.attachments?.publishAgentAttachments(run.chat_id, answer.id).catch((publishError: unknown) => {
+          this.deps.log.warn({ err: publishError, runId: run.id, chatId: run.chat_id }, "attachment publish failed");
         });
       }
       await this.deps.journal?.finishRun(run.id);
       this.mirrorFinishedRun(run.id);
-      await this.indexTurn(run, turnEvents);
+      const events = await turnEventsSince(pool, run.chat_id, since);
+      await this.indexTurn(
+        run,
+        events.map((row) => ({
+          seq: Number(row.seq),
+          type: row.type,
+          payload: row.payload,
+          created_at: row.created_at,
+        })),
+      );
       if (this.deps.delivery !== undefined) {
         const finished: ChildRunFinished = {
           child_thread_id: run.thread_id,
           run_id: run.id,
           status,
-          reason: info.error === null ? null : "error",
+          reason: failure === null ? null : "error",
           final_text: finalText,
-          attachment_event_id: info.eventId ?? null,
+          attachment_event_id: answer?.id ?? null,
         };
-        await this.deps.delivery.deliver(finished).catch((error: unknown) => {
-          this.deps.log.warn({ err: error, runId: run.id, chatId }, "child result delivery failed");
+        await this.deps.delivery.deliver(finished).catch((deliveryError: unknown) => {
+          this.deps.log.warn(
+            { err: deliveryError, runId: run.id, chatId: run.chat_id },
+            "child result delivery failed",
+          );
         });
       }
-    } catch (error) {
-      this.deps.log.warn({ err: error, runId: run.id, chatId }, "agent run completion failed");
+    } catch (finishError) {
+      this.deps.log.warn({ err: finishError, runId: run.id, chatId: run.chat_id }, "agent run completion failed");
     }
   }
 
@@ -212,10 +252,6 @@ export class AgentRunLifecycle {
         });
       })
       .catch(() => {});
-  }
-
-  private async runningRun(chatId: string): Promise<OpenChatRun | null> {
-    return openRunForChat(this.deps.pool, chatId);
   }
 
   /** send_message opens a new thread; that row is the run's durable signal

@@ -53,6 +53,7 @@ describe("child result delivery", () => {
     lifecycle = new AgentRunLifecycle({
       pool: stack.env.db,
       log: pino({ level: "silent" }),
+      runs: store.runs,
       delivery: { deliver: (input) => runtime.deliverChildResult(input) },
     });
   }, 60_000);
@@ -140,7 +141,7 @@ describe("child result delivery", () => {
       started_at: new Date().toISOString(),
     });
     await threads.appendEvent(child.chat_id, { type: "user_message", content: args.text, attachments: [] });
-    const row = await threads.appendEvent(
+    await threads.appendEvent(
       child.chat_id,
       assistantMessageEvent(
         1,
@@ -150,7 +151,7 @@ describe("child result delivery", () => {
         "GLM-Test-Model",
       ),
     );
-    await lifecycle.assistantEvent(child.chat_id, row);
+    await lifecycle.runEnd(child.chat_id, [], null);
     return { threadId: child.id, runId: run.id, chatId: child.chat_id };
   }
 

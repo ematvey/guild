@@ -9,7 +9,6 @@ import { ChatStore } from "../../platform/store/chats.js";
 import { failStaleRuns } from "../../agents/reconcile.js";
 import type { ChildRunFinished } from "../../agents/delivery.js";
 import { ThreadStore } from "../../platform/store/thread.js";
-import type { GuildRuntime } from "../../harness/runtime.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
@@ -213,20 +212,5 @@ dbDescribe("stale run reconciliation", () => {
     await failStaleRuns(deps());
     expect(redelivered).not.toContain(fresh.parentChatId);
     expect(redelivered).not.toContain(shown.parentChatId);
-  });
-
-  it("beginChatRun adopts the open run instead of opening a second", async () => {
-    const runtime = (env!.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
-    const fx = await fixture({ ageMs: null });
-    const child = await env!.db.query<{ agent_id: string }>("SELECT agent_id FROM agent_threads WHERE id = $1", [
-      fx.childThreadId,
-    ]);
-    const id = await runtime.beginChatRun(child.rows[0]!.agent_id, fx.childThreadId, userId);
-    expect(id).toBe(fx.runId);
-    const open = await env!.db.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM agent_runs WHERE thread_id = $1 AND status IN ('queued','running')",
-      [fx.childThreadId],
-    );
-    expect(open.rows[0]!.count).toBe("1");
   });
 });

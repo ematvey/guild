@@ -54,6 +54,7 @@ import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { ChildResultDelivery, type ChildRunFinished } from "../agents/delivery.js";
 import { failStaleRuns } from "../agents/reconcile.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
+import { createRunHook } from "../agents/run-hook.js";
 import { createTraceHook } from "../agents/trace-hook.js";
 import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.js";
 import { ConversationRecovery } from "../chats/recovery.js";
@@ -248,16 +249,15 @@ export class GuildRuntime {
     });
     this.childDelivery = new ChildResultDelivery({
       pool,
-      store: this.agents,
       log,
       runtime: {
-        beginRun: (thread) => this.binding.beginMessageRun(thread),
         submitChildResult: (chatId, orgId, result, model) => this.submitChildResult(chatId, orgId, result, model),
       },
     });
     this.agentRuns = new AgentRunLifecycle({
       pool,
       log,
+      runs: this.agents.runs,
       journal: this.conflicts,
       trace: deps.trace,
       attachments: stores.attachments,
@@ -353,11 +353,10 @@ export class GuildRuntime {
       },
       ...(objects !== undefined ? { spill: { artifacts: stores.toolArtifacts, objects } } : {}),
       agentRuns: {
-        assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
         postedMessage: (chatId, row) => this.agentRuns.postedMessage(chatId, row),
-        runEnd: (chatId, failure) => {
+        runEnd: (chatId, inputs, failure) => {
           this.forgetRun(chatId);
-          return this.agentRuns.runEnd(chatId, failure);
+          return this.agentRuns.runEnd(chatId, inputs, failure);
         },
       },
       agentFiles: {
@@ -419,6 +418,7 @@ export class GuildRuntime {
       },
       skillRuntime: this.skillsRuntime,
       toolHooks: [
+        createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
         createConflictHook(this.conflicts, chatOfConversation),
         ...(deps.trace !== undefined ? [createTraceHook(deps.trace, this.agents, chatOfConversation)] : []),
       ],
@@ -1014,11 +1014,6 @@ export class GuildRuntime {
   /** Archiving a chat closes its agent-thread subtree. */
   closeChatSubtree(chatId: string): Promise<void> {
     return this.binding.closeSubtree(chatId);
-  }
-
-  /** Opens the run row for an adopted chat turn. */
-  beginChatRun(agentId: string, threadId: string, userId: string): Promise<string> {
-    return this.binding.beginChatRun(agentId, threadId, userId);
   }
 
   /** Delivers one terminal child run to its parent thread. The run-settle

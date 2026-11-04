@@ -187,7 +187,7 @@ export class AgentScheduler {
         }
       }
     });
-    for (const occurrence of claimed) await this.launch(occurrence, now);
+    for (const occurrence of claimed) await this.launch(occurrence);
     return claimed;
   }
 
@@ -229,7 +229,7 @@ export class AgentScheduler {
     }
   }
 
-  private async launch(row: ClaimedOccurrence, now: Date): Promise<void> {
+  private async launch(row: ClaimedOccurrence): Promise<void> {
     let runId: string | null = null;
     try {
       const title = `${row.routine_name} — ${row.scheduled_for}`;
@@ -246,7 +246,6 @@ export class AgentScheduler {
           user_id: userId,
           routine_id: row.routine_id,
           trigger: "routine",
-          started_at: now.toISOString(),
           summary: row.routine_name,
         },
         // Link the run first: from here the occurrence settles with the run.
@@ -342,7 +341,6 @@ export async function runRoutineNow(
         user_id: userId,
         routine_id: routine.id,
         trigger: "manual",
-        started_at: now.toISOString(),
         summary: routine.name,
       },
       onRunCreated: async (run) => {

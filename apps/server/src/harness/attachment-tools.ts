@@ -1,5 +1,6 @@
-// download_attachment: writes one attachment of this chat from object
-// storage into the conversation's execution environment. That environment is
+// download_attachment: writes one attachment of this chat, or a file one of
+// its child results carries, from object storage into the conversation's
+// execution environment. That environment is
 // the chat's sandbox for a plain chat and the bound project folder for a
 // machine-bound chat, so one tool delivers into both.
 
@@ -20,7 +21,7 @@ import type { ObjectStore } from "../platform/s3.js";
 const DEFAULT_DIR = "attachments";
 
 export interface DownloadAttachmentDeps {
-  attachments: Pick<AttachmentStore, "list">;
+  attachments: Pick<AttachmentStore, "reachableFromChat">;
   objects: Pick<ObjectStore, "get">;
   chatOfConversation(conversationId: ConversationId): Promise<string | null>;
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
@@ -68,9 +69,9 @@ export function createDownloadAttachmentTool(deps: DownloadAttachmentDeps): Tool
   return defineTool({
     name: "download_attachment",
     description:
-      "Download an attachment of this chat into the working folder. The file is written into the chat's sandbox, or into " +
-      "the bound project folder when the chat runs on a machine. Pass `filename` or `attachment_id`; call it with " +
-      "neither to list this chat's attachments.",
+      "Download an attachment of this chat, or a file a child thread's result carries, into the working folder. The " +
+      "file is written into the chat's sandbox, or into the bound project folder when the chat runs on a machine. Pass " +
+      "`filename` or `attachment_id`; call it with neither to list what this chat can download.",
     parameters: Type.Object({
       attachment_id: Type.Optional(Type.String({ description: "Attachment id from the list" })),
       filename: Type.Optional(
@@ -90,7 +91,7 @@ export function createDownloadAttachmentTool(deps: DownloadAttachmentDeps): Tool
         if (chatId === null) return fail("this conversation has no chat");
         const orgId = await deps.orgOfConversation(api.conversationId);
         if (orgId === null) return fail("this conversation has no org");
-        const rows = await deps.attachments.list(orgId, chatId);
+        const rows = await deps.attachments.reachableFromChat(orgId, chatId);
         if (rows.length === 0) return fail("this chat has no attachments");
         const picked = pick(rows, args.attachment_id, args.filename);
         if (typeof picked === "string") return fail(picked);

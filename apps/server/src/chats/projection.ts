@@ -157,7 +157,6 @@ export class TranscriptProjection {
         const row = await this.append(state, entry, ev);
         state.lastEventId = row.id;
         if (row.event.type === "assistant_message") {
-          await this.deps.agentRuns?.assistantEvent(state.chatId, row);
           state.turn = row.event.turn;
           state.step = row.event.step;
         }
