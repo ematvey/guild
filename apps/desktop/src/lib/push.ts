@@ -76,6 +76,39 @@ export function notificationPermission(): NotificationPermission | "unsupported"
   return Notification.permission;
 }
 
+/** Hands one subscription to the server. The row is keyed by device, so a
+ *  repeat replaces it. */
+async function registerSubscription(sub: PushSubscription): Promise<{ ok: true } | { ok: false; error: string }> {
+  const json = sub.toJSON();
+  const keys = json.keys ?? {};
+  if (json.endpoint === undefined || keys.p256dh === undefined || keys.auth === undefined) {
+    return { ok: false, error: "subscription has no keys" };
+  }
+  await postPushSubscribe({
+    device_id: deviceId(),
+    endpoint: json.endpoint,
+    keys: { p256dh: keys.p256dh, auth: keys.auth },
+    platform: navigator.userAgent.includes("Android") ? "android" : "web",
+  });
+  return { ok: true };
+}
+
+/** Registers this device's existing subscription with the server again. The
+ *  server drops a row whose endpoint the push service reported dead, and a
+ *  restored database loses every row; the browser keeps its subscription
+ *  through both, so without this the device stays silent with no switch to
+ *  turn on. Runs on boot, after the worker is ready. */
+export async function resubmitSubscription(): Promise<void> {
+  if (pushBlocker() !== null || notificationPermission() !== "granted") return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub !== null) await registerSubscription(sub);
+  } catch {
+    /* a device that cannot resubmit keeps whatever the server already has */
+  }
+}
+
 /** Subscribes this device. Must be called from a user gesture: browsers
  *  reject a permission prompt without one. */
 export async function enablePush(): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -95,18 +128,7 @@ export async function enablePush(): Promise<{ ok: true } | { ok: false; error: s
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       }));
-    const json = sub.toJSON();
-    const keys = json.keys ?? {};
-    if (json.endpoint === undefined || keys.p256dh === undefined || keys.auth === undefined) {
-      return { ok: false, error: "subscription has no keys" };
-    }
-    await postPushSubscribe({
-      device_id: deviceId(),
-      endpoint: json.endpoint,
-      keys: { p256dh: keys.p256dh, auth: keys.auth },
-      platform: navigator.userAgent.includes("Android") ? "android" : "web",
-    });
-    return { ok: true };
+    return await registerSubscription(sub);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
