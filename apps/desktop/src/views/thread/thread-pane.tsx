@@ -266,7 +266,10 @@ export function ThreadPane({
         >
           <div
             ref={scroll.setContentEl}
-            className={`mx-auto w-full space-y-5 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
+            // `space-y-8` clears the absolute hover stamp under each
+            // message (its `pt-3` plus a text-xs line); a smaller gap lets
+            // the stamp sit on the next message.
+            className={`mx-auto w-full space-y-8 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
               chatResizing ? "" : "transition-[max-width] duration-150"
             }`}
             style={{ paddingBottom: scroll.composerH + 48, maxWidth: chatWidth }}
