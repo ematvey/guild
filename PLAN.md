@@ -86,6 +86,29 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The conversation's inbox is the only queue; thread events are only
+  what happened (2026-11-04).** Pending inputs had three homes: pi-durable's
+  inbox, a `thread_events` echo marked `queued` (the desktop chip, moved on
+  placement, deleted on withdrawal), and for child results a staging table
+  (`child_result_deliveries`, added earlier the same day) whose batch was
+  merged into one inbox item. Every sync between them was a bug source. Now
+  every waiting input is one item in pi-durable's own tables (`submissions`
+  + the `pi.inbox` document), never merged: a member message is a
+  `guild.member-message` input whose user row is projected under the
+  message id at placement; a child result is a `guild.child-result` input
+  keyed by the child run id, and a sweep re-delivers ended child runs with
+  no submission and no card. Batching child results is a placement rule:
+  `steeringMode: "all"` takes every queued steer at one boundary (a
+  member's several steers too). The ThreadState frame gained `queue`
+  (`QueuedInput`: message / turn / child_result), read by SQL from the
+  inbox tables (`storage/postgres/inbox.ts`) so the harness-less server can
+  answer in worker mode; `inbox_update` republishes the view, and the
+  desktop builds its chips from it (steer/withdraw only on member
+  messages). `turn_commands.accept` no longer writes a row. Migration 0111
+  drops `child_result_deliveries` and clears `queued`/`mode` on existing
+  user rows; the wire still accepts those two fields. `turn_commands` stays
+  the HTTP idempotency and message-id → submission record.
+
 - **Every thread row with a message is projected from the conversation
   (2026-11-04).** The rule "what a thread shows as conversation, the agent
   has in its conversation" had six more breaks, all now projected from
@@ -93,14 +116,11 @@ first. Code comments describe only the present.
   (1) Child results. They were `thread_events` rows written up front, then
   sent as a steer that merged into any pending steer, including a member's
   queued message: withdrawing that message dropped results already marked
-  consumed, and a card showed before the parent had the result. Results now
-  queue in `child_result_deliveries` (migration 0110). A parent run takes
-  them and places them as one `guild.child-result` steer batch. A batch
-  merges only into a pending batch of its own kind, never into a member's
-  input, and the cards are projected from the batch entry when it is
-  placed. A stop withdraws queued inputs, so a queued batch is withdrawn
-  first and written back as an entry: it stays in context but starts no
-  run. The worker IPC carries the batch (`deliver-child-results`).
+  consumed, and a card showed before the parent had the result. They are
+  now inputs whose cards are projected at placement (the staging table
+  this entry first added is superseded by the entry above). A stop
+  withdraws queued inputs, so a queued result is withdrawn first and
+  written back as an entry: it stays in context but starts no run.
   (2) Subagent and routine prompts were echoed straight into
   `thread_events`; they are now `guild.posted-turn` inputs whose user row
   is projected at placement. The turn-tools adapter dropped the new

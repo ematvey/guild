@@ -48,9 +48,7 @@ const remotePending = new Map<
 
 /** One worker request to the server, rejected when it times out or the
  *  channel closes. */
-function remote(
-  message: Extract<WorkerToServer, { t: "remote-submit" | "remote-deliver-child-results" | "remote-write-entry" }>,
-): Promise<unknown> {
+function remote(message: Extract<WorkerToServer, { t: "remote-submit" | "remote-write-entry" }>): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       remotePending.delete(message.ref);
@@ -93,16 +91,6 @@ const runtime = new GuildRuntime({
     remote: {
       submit: async (targetChatId: string, _orgId: string, input: SubmitTurnInput) =>
         Number(await remote({ t: "remote-submit", ref: nextRef(), chatId: targetChatId, input })),
-      deliverChildResults: async (targetChatId, orgId, results, model) => {
-        await remote({
-          t: "remote-deliver-child-results",
-          ref: nextRef(),
-          chatId: targetChatId,
-          orgId,
-          results,
-          model,
-        });
-      },
       writeEntry: async (targetChatId, entry) => {
         await remote({ t: "remote-write-entry", ref: nextRef(), chatId: targetChatId, entry });
       },
@@ -190,10 +178,6 @@ process.on("message", (raw: unknown) => {
       switch (request.t) {
         case "submit":
           data = await runtime.submitTurn(chatId, request.input.orgId, request.input);
-          break;
-        case "deliver-child-results":
-          await runtime.deliverChildResults(chatId, request.orgId, request.results, request.model);
-          data = null;
           break;
         case "write-entry":
           await runtime.writeEntry(chatId, request.entry);

@@ -11,6 +11,7 @@ import type { LiveBuffers } from "./bridge.js";
 import type { DurableQueryable } from "../storage/postgres/queries.js";
 import { compactionInFlight } from "./compaction.js";
 import { serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
+import type { QueuedInput } from "@guild/wire/types";
 import { ApiError } from "../platform/errors.js";
 import type { UserRow } from "../platform/store/identity.js";
 
@@ -19,7 +20,7 @@ import type { UserRow } from "../platform/store/identity.js";
 export interface ThreadStateReads {
   readonly chats: Pick<ChatStore, "getChat" | "projectOf" | "generatingOf">;
   readonly threads: Pick<ThreadStore, "listEventPage" | "watermark">;
-  readonly runtime: { liveBuffers(chatId: string): LiveBuffers };
+  readonly runtime: { liveBuffers(chatId: string): LiveBuffers; chatQueue(chatId: string): Promise<QueuedInput[]> };
 }
 
 export interface ThreadStateCapture {
@@ -36,6 +37,9 @@ export interface ThreadStateCapture {
   /** A compaction of the chat's context is running. Undefined only for
    *  captures rebuilt from frames that did not carry it. */
   compacting?: boolean;
+  /** The inputs waiting in the chat's inbox. Undefined only for captures
+   *  rebuilt from frames that did not carry it. */
+  queue?: QueuedInput[];
 }
 
 /** Events carried by one ThreadState frame: the newest window of the log.
@@ -58,6 +62,9 @@ export async function captureThreadState(
   caller?: UserRow,
 ): Promise<ThreadStateCapture> {
   if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
+  // The queue is read before the events: an input placed between the two
+  // reads then shows as its row, never as neither.
+  const queue = await chats.runtime.chatQueue(chatId);
   const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });
   const events = page.rows;
   const seq = await chats.threads.watermark();
@@ -78,6 +85,7 @@ export async function captureThreadState(
     projectMachineLabel: project?.label ?? undefined,
     hasMoreEvents: page.hasMore,
     compacting,
+    queue,
   };
 }
 
@@ -103,5 +111,6 @@ export function threadStateMsg(capture: ThreadStateCapture): WsServerMsg {
     project_machine_label: capture.projectMachineLabel,
     has_more_events: capture.hasMoreEvents,
     compacting: capture.compacting,
+    queue: capture.queue,
   };
 }

@@ -172,7 +172,6 @@ export class ChatBridge {
   }
 
   private async restoreSnapshot(conversationId: string, state: BridgeState, snapshot: SnapshotEvent): Promise<void> {
-    await this.syncQueuedModes(state, snapshot.inbox);
     state.buffers = { text: "", thinking: "" };
     state.textStarted = false;
     if (snapshot.run) {
@@ -204,15 +203,6 @@ export class ChatBridge {
       });
     }
     this.streamSink?.dirty(state.chatId);
-  }
-
-  private async syncQueuedModes(state: BridgeState, items: readonly { id: number; mode: string }[]): Promise<void> {
-    for (const item of items) {
-      if (item.mode === "write") continue;
-      for (const command of await this.deps.turnCommands.byInvocation(invocationOf(Number(item.id)))) {
-        await this.deps.threads.setQueuedMode(state.chatId, command.id, item.mode === "steer" ? "steer" : "queue");
-      }
-    }
   }
 
   private async projectEntry(state: BridgeState, entry: EntryRecord): Promise<void> {
@@ -447,7 +437,9 @@ export class ChatBridge {
         return;
       }
       case "inbox_update":
-        await this.syncQueuedModes(state, event.items);
+        // The chat's queue (ThreadState `queue`) is read from the inbox:
+        // republish the view.
+        this.streamSink?.dirty(state.chatId);
         return;
       case "compaction_start":
       case "compaction_end":
@@ -460,39 +452,22 @@ export class ChatBridge {
         // A write leaving the inbox can be a compaction's queued summary:
         // the view's `compacting` flag may have moved.
         if (event.record.type === "write" && event.record.status !== "queued") this.streamSink?.dirty(state.chatId);
-        // Placement (queued → placed): the durable inbox actually handed
-        // the input to a run — the Codex-style queued chip becomes a real
-        // transcript message. The accept-time echo was flagged `queued`
-        // (not yet seen by the model); move it to a fresh seq with the
-        // flag cleared so the desktop renders it at the placement position.
-        // A fast run closes the placed→done window inside one watch batch,
-        // so the delivered record may only ever carry the terminal status:
-        // deliver on both (a no-op when the echo is absent or already
-        // delivered).
-        if (
-          (event.record.status === "placed" || event.record.status === "done") &&
-          typeof event.record.requestId === "string"
-        ) {
-          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId);
-          if (event.record.status === "done") {
-            for (const command of await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)))) {
-              await this.deps.turnCommands.finish(command.id, invocationOf(Number(event.record.id)), false);
-            }
+        // A placed input's row is projected from its entry; a placement
+        // changes the queue, so the view republishes.
+        if (event.record.type === "input") this.streamSink?.dirty(state.chatId);
+        if (event.record.status === "done") {
+          for (const command of await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)))) {
+            await this.deps.turnCommands.finish(command.id, invocationOf(Number(event.record.id)), false);
           }
           return;
         }
         // Settled-but-unanswered inputs (stop / archive withdrawal): mark
-        // cancelled so no waiting head wedges the chat, and drop the
-        // never-delivered queued echo — a withdrawn input leaves no
-        // transcript trace, exactly like a chip the user trashed.
+        // the command cancelled so no waiting head wedges the chat. A
+        // withdrawn input never had a row.
         if (event.record.status === "unanswered") {
-          if (event.record.entry !== undefined && event.record.requestId) {
-            await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId);
-          }
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)));
           for (const command of commands) {
             await this.deps.turnCommands.settleCancelled(command.id, invocationOf(Number(event.record.id)));
-            if (event.record.entry === undefined) await this.deps.threads.deleteQueuedEvent(state.chatId, command.id);
           }
         }
         return;

@@ -125,7 +125,23 @@
     "project_name": "Guild",
     "project_machine_label": "laptop",
     "has_more_events": true,
-    "compacting": true
+    "compacting": true,
+    "queue": [
+      {
+        "id": "018f0b7c-0000-7000-8000-000000000051",
+        "kind": "message",
+        "mode": "steer",
+        "text": "also check the tests",
+        "attachments": []
+      },
+      {
+        "id": "submission:812",
+        "kind": "child_result",
+        "mode": "steer",
+        "text": "Echo \"QA PONG test\": succeeded",
+        "attachments": []
+      }
+    ]
   },
   {
     "type": "sync_done",

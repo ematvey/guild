@@ -412,7 +412,13 @@ export function ThreadComposer({
                     <span className="shrink-0 text-xs text-muted-foreground">+{b.attachments.length}</span>
                   )}
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {b.queuedMode === "steer" ? "Steer" : "Queued"}
+                    {b.queuedKind === "child_result"
+                      ? "Subagent result"
+                      : b.queuedKind === "turn"
+                        ? "Queued turn"
+                        : b.queuedMode === "steer"
+                          ? "Steer"
+                          : "Queued"}
                   </span>
                   {b.queuedMode !== "steer" && b.eventId && (
                     <button
@@ -425,14 +431,16 @@ export function ThreadComposer({
                       {steeringMessage === b.eventId ? "Steering…" : "Steer now"}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    aria-label="Remove queued message"
-                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => void withdrawChip(b)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                  {b.eventId && (
+                    <button
+                      type="button"
+                      aria-label="Remove queued message"
+                      className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => void withdrawChip(b)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

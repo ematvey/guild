@@ -201,27 +201,20 @@ describe("worker-per-chat (fork supervisor)", () => {
       { body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("steered answer")}${sseDone()}` },
     ]);
     const runId = crypto.randomUUID();
-    await stack.env.app.platform.runtime.deliverChildResults(
+    await stack.env.app.platform.runtime.submitChildResult(
       chatId,
       stack.orgId,
-      [
-        {
-          id: crypto.randomUUID(),
-          chat_id: chatId,
-          created_at: new Date().toISOString(),
-          event: {
-            type: "child_result",
-            thread_id: crypto.randomUUID(),
-            run_id: runId,
-            chat_id: crypto.randomUUID(),
-            agent_name: "Child",
-            title: "child task",
-            status: "succeeded",
-            final_text: "a child reported back",
-            attachments: [],
-          },
-        },
-      ],
+      {
+        type: "child_result",
+        thread_id: crypto.randomUUID(),
+        run_id: runId,
+        chat_id: crypto.randomUUID(),
+        agent_name: "Child",
+        title: "child task",
+        status: "succeeded",
+        final_text: "a child reported back",
+        attachments: [],
+      },
       null,
     );
     await waitFor(async () => (await lastAssistant(chatId)).includes("steered answer"));

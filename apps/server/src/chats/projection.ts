@@ -18,10 +18,10 @@ import {
 } from "../platform/domain/thread-events.js";
 import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
 import { AGENT_MESSAGE_KIND, agentMessageOf } from "./agent-message.js";
-import { CHILD_RESULT_KIND, childResultsOf } from "./child-result.js";
+import { CHILD_RESULT_KIND, childResultOf } from "./child-result.js";
+import { MEMBER_MESSAGE_KIND, memberMessageOf } from "./member-message.js";
 import { POSTED_TURN_KIND, postedTurnText } from "./posted-turn.js";
 import { NOTICE_KIND, noticeEventOf } from "./notice.js";
-import { uuidv5 } from "../platform/time.js";
 
 export interface ProjectionState {
   chatId: string;
@@ -83,8 +83,6 @@ export class TranscriptProjection {
       if (page.items.length === 0) break;
       for (const entry of page.items) {
         const input = placed.get(Number(entry.id));
-        if (input?.requestId && input.type === "input")
-          await this.deps.threads.deliverQueuedEvent(bound.chatId, input.requestId);
         if ((entry.kind === "pi.user" || input?.type === "input") && !cursor.runOpen) {
           replay.turn++;
           replay.step = 0;
@@ -111,8 +109,8 @@ export class TranscriptProjection {
   async project(state: ProjectionState, entry: EntryRecord): Promise<void> {
     switch (entry.kind) {
       case "pi.user":
-        // The visible user echo is written by the accept path
-        // (turn_commands.accept, id = user_message_id) — never duplicated.
+        // A member's message is a guild.member-message entry. A plain user
+        // entry is history whose row was written when it was sent.
         return;
       case "pi.assistant": {
         const message = entry.model?.find((m) => m.role === "assistant");
@@ -265,17 +263,18 @@ export class TranscriptProjection {
         return;
       }
       case CHILD_RESULT_KIND: {
-        // The parent has the results from this entry on, so their cards show
-        // here, at the placement position. The first card is the entry's
-        // projected row; each further card has an id derived from the entry,
-        // so a replay re-appends nothing.
-        const [first, ...rest] = childResultsOf(entry);
-        if (first === undefined) return;
-        await this.append(state, entry, first);
-        for (const [index, event] of rest.entries()) {
-          const id = uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-entry:${Number(entry.id)}:${index + 1}`);
-          await this.deps.threads.appendEvent(state.chatId, event, id);
-        }
+        // The parent has the result from this entry on, so its card shows
+        // here, at the placement position.
+        const event = childResultOf(entry);
+        if (event !== null) await this.append(state, entry, event);
+        return;
+      }
+      case MEMBER_MESSAGE_KIND: {
+        // The member's message shows from its placement on, under its
+        // message id (the id the sender's optimistic block waits for).
+        const message = memberMessageOf(entry);
+        if (message === null) return;
+        await this.append(state, entry, userMessageEvent(message.text, message.attachments), message.message_id);
         return;
       }
       case "pi.compaction": {
@@ -298,12 +297,13 @@ export class TranscriptProjection {
     }
   }
 
-  private append(state: ProjectionState, entry: EntryRecord, event: ThreadEvent): Promise<ThreadEventRow> {
+  private append(state: ProjectionState, entry: EntryRecord, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
     return this.deps.threads.appendProjectedEntry({
       chatId: state.chatId,
       entryId: Number(entry.id),
       event,
       adoptLegacy: Number(entry.id) <= (state.legacyThrough ?? -1),
+      ...(id === undefined ? {} : { id }),
     });
   }
 }

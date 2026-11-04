@@ -61,18 +61,14 @@ import { ChatBridge, type GenerationStreamSink, type LiveBuffers } from "../chat
 import { agentMessageEntry } from "../chats/agent-message.js";
 import {
   childResultEntry,
-  childResultsText,
+  childResultOf,
+  childResultText,
   childResultWrite,
-  mergeIntoPendingBatch,
-  queuedChildResults,
-  type QueuedChildResults,
+  type ChildResultEvent,
 } from "../chats/child-result.js";
-import type { ChildResultRecord } from "../platform/store/thread.js";
-import { uuidv5 } from "../platform/time.js";
-
-/** Namespace of child-result batch request ids. */
-const CHILD_RESULT_REQUEST_NS = "1b671a64-40d5-491e-99b0-da01ff1f3341";
+import { chatQueue } from "../chats/queue.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
+import type { QueuedInput } from "@guild/wire/types";
 import { createGuildExtension } from "./extension.js";
 import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
 import { ConversationDirectory } from "./conversation-directory.js";
@@ -223,8 +219,6 @@ export class GuildRuntime {
     this.host = new ConversationHost((step, error) => log.warn({ err: error, step }, "harness teardown step failed"));
     this.turns = turnBackend(deps.placement, {
       submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
-      deliverChildResults: (chatId, orgId, results, model) =>
-        this.deliverChildResultsInProcess(chatId, orgId, results, model),
       writeEntry: (chatId, entry) => this.writeEntryInProcess(chatId, entry),
       steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
       withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
@@ -255,11 +249,10 @@ export class GuildRuntime {
     this.childDelivery = new ChildResultDelivery({
       pool,
       store: this.agents,
-      threads: stores.threads,
       log,
       runtime: {
         beginRun: (thread) => this.binding.beginMessageRun(thread),
-        deliverChildResults: (chatId, orgId, results, model) => this.deliverChildResults(chatId, orgId, results, model),
+        submitChildResult: (chatId, orgId, result, model) => this.submitChildResult(chatId, orgId, result, model),
       },
     });
     this.agentRuns = new AgentRunLifecycle({
@@ -540,11 +533,11 @@ export class GuildRuntime {
   private async reconcileStaleRuns(): Promise<void> {
     await failStaleRuns({
       pool: this.pool,
-      threads: this.stores.threads,
       log: this.log,
       runtime: {
         stopChat: (chatId) => this.stopChat(chatId),
         canStopChat: (chatId) => this.canStopChat(chatId),
+        deliverChildResult: (input) => this.childDelivery.deliver(input),
         deliverPending: (chatId) => this.childDelivery.deliverPending(chatId),
       },
     }).catch((error: unknown) => {
@@ -650,7 +643,10 @@ export class GuildRuntime {
             // thresholds), steering/follow-ups on (the inbox boundary places
             // queued inputs; "one-at-a-time" keeps turn semantics).
             compaction: { enabled: true },
-            steeringMode: "one-at-a-time",
+            // Every queued steer is placed at the next boundary together:
+            // results of children that finished close together, or a
+            // member's several steers, reach the model in one call.
+            steeringMode: "all",
             followUpMode: "one-at-a-time",
             // Same policy as pi-durable's default, with the base delay exposed
             // so tests do not spend 2+4+8 seconds on a retryable 502.
@@ -785,15 +781,14 @@ export class GuildRuntime {
     return admittedSubmission(this.pool, chatId, requestId);
   }
 
-  /** Removes a user turn that never reached the conversation: its echo
-   *  leaves the thread and its command row goes, so a retry under the same
-   *  id starts over. An admitted turn is left alone. Returns the admitted
-   *  submission id, or null when the turn was discarded. */
+  /** Drops the command of a member turn that never reached the
+   *  conversation, so a retry under the same id starts over. An admitted
+   *  turn is left alone. Returns the admitted submission id, or null when
+   *  the turn was discarded. */
   async discardUnsent(chatId: string, requestId: string): Promise<number | null> {
     const admitted = await this.admittedSubmission(chatId, requestId);
     if (admitted !== null) return admitted;
     await this.stores.turnCommands.discardUnsubmitted(requestId);
-    await this.stores.threads.deleteUnsentEcho(chatId, requestId);
     await this.stores.chats.reconcileGenerating(await this.stores.chats.requireOrgOf(chatId), chatId);
     return null;
   }
@@ -1026,46 +1021,31 @@ export class GuildRuntime {
     await this.childDelivery.deliver(input);
   }
 
-  /** Places one drained child-result batch in the parent chat (worker IPC
-   *  routes it to the chat's owner). */
-  deliverChildResults(
+  /** Submits one child result into its parent chat as a steer input whose
+   *  request id is the child run id, so a redelivery never admits it twice.
+   *  The input's entry carries the event; the card is projected from it
+   *  once placed. */
+  async submitChildResult(
     chatId: string,
     orgId: string,
-    results: ChildResultRecord[],
+    result: ChildResultEvent,
     model: string | null,
   ): Promise<void> {
-    return this.turns.deliverChildResults(chatId, orgId, results, model);
-  }
-
-  /** Merges the batch into the pending child-result steer, else submits it
-   *  as a new steer whose entry carries the events; the cards are projected
-   *  from that entry once placed. The request id is derived from the
-   *  results, so a redelivered batch is never admitted twice. */
-  private async deliverChildResultsInProcess(
-    chatId: string,
-    orgId: string,
-    results: ChildResultRecord[],
-    model: string | null,
-  ): Promise<void> {
-    await this.start();
-    const conversation = await this.conversationForChat(chatId);
-    const merged = await conversation.commit(
-      async (tx) => mergeIntoPendingBatch((await tx.doc(InboxDoc, conversation.id)).items as InboxItem[], results),
-      BACKGROUND_CONTEXT,
-    );
-    if (merged) {
-      await this.reconcileConversation(chatId, Number(conversation.id));
-      return;
-    }
     await this.submitTurn(chatId, orgId, {
       orgId,
-      requestId: uuidv5(CHILD_RESULT_REQUEST_NS, results.map((result) => result.id).join(",")),
-      content: childResultsText(results),
+      requestId: result.run_id,
+      content: childResultText(result, new Date().toISOString()),
       images: [],
       model,
       sendMode: "steer",
-      entry: childResultEntry(results.map((result) => result.event)),
+      entry: childResultEntry(result),
     });
+  }
+
+  /** The inputs waiting in a chat's inbox, as the ThreadState frame shows
+   *  them. Read from the durable tables, so any process can answer. */
+  chatQueue(chatId: string): Promise<QueuedInput[]> {
+    return chatQueue(this.pool, chatId);
   }
 
   /** Writes one entry into a chat's conversation: a posted agent message
@@ -1109,7 +1089,6 @@ export class GuildRuntime {
       .catch(async (error) => {
         if (error instanceof AdmissionCancelled) {
           await this.stores.turnCommands.settleCancelledById(input.requestId, chatId);
-          await this.stores.threads.deleteQueuedEvent(chatId, input.requestId);
           await this.stores.chats.reconcileGenerating(orgId, chatId);
         }
         throw error;
@@ -1260,7 +1239,7 @@ export class GuildRuntime {
       .catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
     for (const queued of kept) {
       await conversation
-        .submit({ type: "write", entry: childResultWrite(queued) }, BACKGROUND_CONTEXT)
+        .submit({ type: "write", entry: childResultWrite(queued.event, queued.content) }, BACKGROUND_CONTEXT)
         .catch((error) => this.log.warn({ err: error, chatId }, "stopped child result write failed"));
     }
     if (kept.length > 0) await this.reconcileConversation(chatId, Number(conversation.id));
@@ -1272,12 +1251,21 @@ export class GuildRuntime {
    *  must not vanish with it: the caller writes each withdrawn one back as
    *  an entry, which starts no run. Only results this call withdrew are
    *  returned; one placed meanwhile is already in the conversation. */
-  private async withdrawChildResults(conversation: Conversation): Promise<QueuedChildResults[]> {
+  private async withdrawChildResults(
+    conversation: Conversation,
+  ): Promise<{ submissionId: number; content: unknown; event: ChildResultEvent }[]> {
     const queued = await conversation.commit(
-      async (tx) => queuedChildResults((await tx.doc(InboxDoc, conversation.id)).items as InboxItem[]),
+      async (tx) =>
+        ((await tx.doc(InboxDoc, conversation.id)).items as InboxItem[]).flatMap((item) => {
+          if (item.mode === "write") return [];
+          // Inbox items are draft overlays bound to the commit: copy them out.
+          const copy = JSON.parse(JSON.stringify(item)) as typeof item;
+          const event = childResultOf(copy.entry as never);
+          return event === null ? [] : [{ submissionId: Number(copy.id), content: copy.content as unknown, event }];
+        }),
       BACKGROUND_CONTEXT,
     );
-    const withdrawn: QueuedChildResults[] = [];
+    const withdrawn: typeof queued = [];
     for (const item of queued) {
       const outcome = await this.harness!.abortSubmission(
         item.submissionId as SubmissionId,

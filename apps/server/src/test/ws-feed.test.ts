@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, startMockUpstream, type GatewayStack } from "./support/gateway-stack.js";
 import { ScriptedClient } from "./platform/ws-driver.js";
 import { threadStateWire } from "../chats/thread-state.js";
+import type { QueuedInput } from "@guild/wire/types";
 import { notifySubagentTree } from "../agents/tree.js";
 import type { PlatformContext } from "../composition.js";
 import type { FeedDeps } from "../hub/feed.js";
@@ -373,7 +374,9 @@ describe("member-socket feed", () => {
       projectMachineLabel: state.project_machine_label as string | undefined,
       hasMoreEvents: false,
       compacting: state.compacting as boolean | undefined,
+      queue: state.queue as QueuedInput[] | undefined,
     });
+    expect(state.queue).toEqual([]);
     expect((stateFrame as { data: string }).data).toBe(rebuilt);
 
     // A stranger's sync: the owner-gate error rides INSIDE the bracket.

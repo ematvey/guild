@@ -2,6 +2,7 @@
 // durable work, the orphan failure, and the chats holding child results no
 // turn consumed.
 
+import { undeliveredChildRuns } from "../../storage/postgres/queries.js";
 import type { PlatformPool } from "../../platform/db.js";
 import { utcText } from "../../platform/time.js";
 import { agentWorkSql } from "../../storage/postgres/queries.js";
@@ -59,19 +60,17 @@ export async function failOrphanedRun(pool: PlatformPool, runId: string): Promis
   return updated.rowCount !== 0;
 }
 
-/** Chats with a child result older than `undeliveredMs` that no run
- *  consumed and no open run will take. */
+/** Parent chats holding a child result older than `undeliveredMs` that
+ *  never reached their conversation, with no open run to take it. */
 export async function chatsWithUndeliveredResults(pool: PlatformPool, undeliveredMs: number): Promise<string[]> {
-  const res = await pool.query<{ chat_id: string }>(
-    `SELECT DISTINCT d.parent_chat_id AS chat_id
-     FROM child_result_deliveries d
-     WHERE d.consumed_by_run_id IS NULL
-       AND d.created_at < now() - ($1::bigint * interval '1 millisecond')
-       AND NOT EXISTS (
-         SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-         WHERE t.chat_id = d.parent_chat_id AND r.status IN ('queued', 'running'))
-     ORDER BY 1`,
-    [undeliveredMs],
+  const runs = await undeliveredChildRuns(pool, undeliveredMs, null);
+  const chats = [...new Set(runs.map((run) => run.parent_chat_id))];
+  if (chats.length === 0) return [];
+  const busy = await pool.query<{ chat_id: string }>(
+    `SELECT DISTINCT t.chat_id FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
+     WHERE t.chat_id = ANY($1::uuid[]) AND r.status IN ('queued', 'running')`,
+    [chats],
   );
-  return res.rows.map((row) => row.chat_id);
+  const open = new Set(busy.rows.map((row) => row.chat_id));
+  return chats.filter((chat) => !open.has(chat)).sort();
 }

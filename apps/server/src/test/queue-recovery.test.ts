@@ -86,10 +86,9 @@ describe.each(["off", "on"])("failed-run queue recovery (worker mode %s)", (mode
     expect((await stack.env.app.inject({ method: "POST", url, headers, payload: {} })).statusCode).toBe(200);
     expect((await stack.env.app.inject({ method: "POST", url, headers, payload: {} })).statusCode).toBe(200);
     expect((await record()).id).toBe(original.id);
-    const chip = (
-      await stack.env.db.query<{ payload: { mode: string } }>("SELECT payload FROM thread_events WHERE id=$1", [queued])
-    ).rows[0]!;
-    expect(chip.payload.mode).toBe("steer");
+    // The chat's queue (read from the inbox) shows the promoted mode.
+    const chip = (await stack.env.app.platform.runtime.chatQueue(chatId)).find((item) => item.id === queued);
+    expect(chip).toMatchObject({ kind: "message", mode: "steer", text: "steering correction" });
     await until(async () => (await record()).status === "done");
     const firstRecord = (
       await stack.env.db.query<{ record: string }>("SELECT record FROM submissions WHERE request_id=$1", [

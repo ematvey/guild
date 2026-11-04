@@ -24,6 +24,7 @@
     "SyncBegin": { "$ref": "#/$defs/SyncBegin" },
     "SyncDone": { "$ref": "#/$defs/SyncDone" },
     "ThreadState": { "$ref": "#/$defs/ThreadState" },
+    "QueuedInput": { "$ref": "#/$defs/QueuedInput" },
     "LiveFrame": { "$ref": "#/$defs/LiveFrame" },
     "OrgEvent": { "$ref": "#/$defs/OrgEvent" },
     "SubagentTree": { "$ref": "#/$defs/SubagentTree" },
@@ -261,6 +262,32 @@
         "compacting": {
           "type": "boolean",
           "description": "True while a compaction of the chat's context is running. Absent from servers that do not report it."
+        },
+        "queue": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/QueuedInput" },
+          "description": "The chat's inputs waiting for the agent, in the order it takes them. A row appears in `events` only once its input is taken. Absent from servers that do not report it."
+        }
+      }
+    },
+    "QueuedInput": {
+      "type": "object",
+      "required": ["id", "kind", "mode", "text", "attachments"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "A member message's message id (the id its thread row takes once placed); `submission:<n>` for any other input."
+        },
+        "kind": {
+          "enum": ["message", "turn", "child_result"],
+          "description": "message: a member's message; turn: a turn posted by an agent or routine; child_result: a child thread's result."
+        },
+        "mode": { "enum": ["steer", "queue"] },
+        "text": { "type": "string" },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/MessageAttachment" }
         }
       }
     },

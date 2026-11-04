@@ -2,7 +2,7 @@
 // socket: an older page of the durable log.
 
 import { request } from "./api/request";
-import type { ServerFrame, StreamEvent } from "@guild/wire/types";
+import type { QueuedInput, ServerFrame, StreamEvent } from "@guild/wire/types";
 import type {
   ThreadEvent,
   ThreadEventRow,
@@ -11,7 +11,7 @@ import type {
   MessageAttachment as MessageAttachmentMeta,
 } from "@guild/wire/rest";
 
-export type { StreamEvent, ThreadEvent, ThreadEventRow, UsagePayload, ThreadBlock, MessageAttachmentMeta };
+export type { QueuedInput, StreamEvent, ThreadEvent, ThreadEventRow, UsagePayload, ThreadBlock, MessageAttachmentMeta };
 
 /** The `thread_state` frame body. */
 export type ThreadState = Extract<ServerFrame, { type: "thread_state" }>;

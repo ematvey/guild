@@ -8,31 +8,8 @@
 import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
-import { isUuid, pgTimestampToRfc3339, utcText, uuidv5, uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, utcText, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
-
-export type ChildResultEvent = Extract<ThreadEvent, { type: "child_result" }>;
-
-/** One queued child result (child_result_deliveries). */
-export interface ChildResultRecord {
-  id: string;
-  chat_id: string;
-  created_at: string;
-  event: ChildResultEvent;
-}
-
-interface ChildResultDb {
-  id: string;
-  parent_chat_id: string;
-  event: unknown;
-  created_at: string;
-}
-
-function toChildResult(row: ChildResultDb): ChildResultRecord | undefined {
-  const event = normalizeThreadEvent(row.event as Record<string, unknown>);
-  if (event?.type !== "child_result") return undefined;
-  return { id: row.id, chat_id: row.parent_chat_id, created_at: pgTimestampToRfc3339(row.created_at), event };
-}
 
 export interface ProjectionCursor {
   entryId: number;
@@ -238,61 +215,18 @@ export class ThreadStore {
     });
   }
 
-  /** Queues one child result for its parent chat. A run delivers one
-   *  result: a second queue of the same run is a no-op (null). */
-  async queueChildResult(chatId: string, event: ChildResultEvent): Promise<ChildResultRecord | null> {
-    const res = await this.pool.query<ChildResultDb>(
-      `INSERT INTO child_result_deliveries (id, parent_chat_id, run_id, event)
-       VALUES ($1, $2, $3, $4::jsonb)
-       ON CONFLICT (run_id) DO NOTHING
-       RETURNING id, parent_chat_id, event, ${utcText("created_at")} AS created_at`,
-      [uuidv7(), chatId, event.run_id, JSON.stringify(event)],
-    );
-    const row = res.rows[0];
-    return row === undefined ? null : (toChildResult(row) ?? null);
-  }
-
-  /** Takes every unconsumed result of a chat in one transaction and stamps
-   *  it with the consuming run id. The lock makes concurrent drains safe: one
-   *  result belongs to exactly one run. */
-  async consumeChildResults(chatId: string, runId: string): Promise<ChildResultRecord[]> {
-    return withTransaction(this.pool, async (client) => {
-      const res = await client.query<ChildResultDb>(
-        `SELECT id, parent_chat_id, event, ${utcText("created_at")} AS created_at
-         FROM child_result_deliveries
-         WHERE parent_chat_id = $1 AND consumed_by_run_id IS NULL
-         ORDER BY created_at ASC, id ASC
-         FOR UPDATE`,
-        [chatId],
-      );
-      const rows = res.rows.flatMap((row) => toChildResult(row) ?? []);
-      if (rows.length > 0) {
-        await client.query("UPDATE child_result_deliveries SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])", [
-          rows.map((row) => row.id),
-          runId,
-        ]);
-      }
-      return rows;
-    });
-  }
-
-  /** Returns results to the unconsumed pool when their input could not be
-   *  submitted; the next drain takes them. */
-  async releaseChildResults(ids: readonly string[]): Promise<void> {
-    if (ids.length === 0) return;
-    await this.pool.query("UPDATE child_result_deliveries SET consumed_by_run_id = NULL WHERE id = ANY($1::uuid[])", [
-      ids,
-    ]);
-  }
-
+  /** Appends the row an entry projects, once per entry. `id` names the row
+   *  (a member message keeps its message id); by default it derives from
+   *  the entry. */
   appendProjectedEntry(input: {
     chatId: string;
     entryId: number;
     event: ThreadEvent;
     adoptLegacy: boolean;
+    id?: string;
   }): Promise<ThreadEventRow> {
     const { chatId, entryId, event, adoptLegacy } = input;
-    const id = uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-entry:${entryId}`);
+    const id = input.id ?? uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-entry:${entryId}`);
     return this.persistEvent({ chatId, event, id, source: { kind: "entry", id: entryId, adoptLegacy } });
   }
 
@@ -341,90 +275,11 @@ export class ThreadStore {
     );
   }
 
-  /** Delivery of one queued user_message echo (the Codex-style queued-send
-   *  UX): the echo was written at accept time flagged `queued` — not yet
-   *  seen by the model — and this moves it to a fresh seq with the flag
-   *  removed when the durable inbox actually places the input. No-op when
-   *  the row is missing or already delivered. Reserves a new watermark and
-   *  notifies so live views reconcile (the fan-out lane re-delivers the
-   *  moved row; the state lane re-captures the whole log). */
-  async deliverQueuedEvent(chatId: string, id: string): Promise<ThreadEventRow | undefined> {
-    // Submissions that are not user turns never have a queued echo, and
-    // compaction runs use "compaction:<taskId>" request ids: a non-UUID id
-    // must not reach the uuid-typed id column (the cast would throw).
-    if (!isUuid(id)) return undefined;
-    return withTransaction(this.pool, async (client) => {
-      const res = await client.query<EventRowDb>(
-        "SELECT id, chat_id, seq, type, payload, created_at FROM thread_events WHERE id = $1 AND chat_id = $2 FOR UPDATE",
-        [id, chatId],
-      );
-      const row = res.rows[0];
-      if (!row || (row.payload as Record<string, unknown> | null)?.queued !== true) {
-        return undefined;
-      }
-      const payload = { ...(row.payload as Record<string, unknown>) };
-      delete payload.queued;
-      await client.query("DELETE FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
-      // The move keeps the row's identity and content: type and created_at
-      // ride along (type is NOT NULL — omitting it fails the insert), only
-      // the seq (position) and the cleared flag change.
-      const inserted = await client.query<EventRowDb>(
-        // created_at rides through to_char like every other reader here —
-        // a raw RETURNING hands the pg driver's Date to
-        // pgTimestampToRfc3339, which expects the microsecond text shape.
-        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, " +
-          utcText("created_at") +
-          " AS created_at",
-        [id, chatId, row.type, jsonbText(payload), row.created_at],
-      );
-      await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
-      const moved = inserted.rows[0]!;
-      return toRow(moved);
-    });
-  }
-
-  async setQueuedMode(chatId: string, id: string, mode: "steer" | "queue"): Promise<void> {
-    await this.pool.query(
-      `WITH updated AS (
-      UPDATE thread_events SET payload=jsonb_set(payload,'{mode}',to_jsonb($3::text)),
-        seq=nextval(pg_get_serial_sequence('thread_events','seq'))
-      WHERE chat_id=$1 AND id=$2 AND payload->>'queued'='true' AND payload->>'mode' IS DISTINCT FROM $3
-      RETURNING chat_id
-    ) SELECT pg_notify('guild_thread_committed',chat_id::text) FROM updated`,
-      [chatId, id, mode],
-    );
-  }
-
-  /** Withdrawal of one queued echo (user trash / stop / archive): removes
-   *  the never-delivered flagged row; a delivered or absent row is left
-   *  alone. Reserves a watermark and notifies so live views reconcile. */
-  async deleteQueuedEvent(chatId: string, id: string): Promise<void> {
-    const res = await this.pool.query(
-      "DELETE FROM thread_events WHERE id = $1 AND chat_id = $2 AND payload->>'queued' = 'true'",
-      [id, chatId],
-    );
-    if (res.rowCount === 0) return;
-    await this.watermark();
-    await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
-  }
-
-  /** Removes a user echo whose input never reached the conversation (its
-   *  submit failed): the thread shows only what the agent has. */
-  async deleteUnsentEcho(chatId: string, id: string): Promise<void> {
-    const res = await this.pool.query(
-      "DELETE FROM thread_events WHERE id = $1 AND chat_id = $2 AND type = 'user_message'",
-      [id, chatId],
-    );
-    if (res.rowCount === 0) return;
-    await this.watermark();
-    await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
-  }
-
   /** The attachment ids of one run's turn: the user message nearest the
-   *  run's start (written just before or just after the run row, so the
-   *  nearest one in time is this turn's message even when later messages
-   *  are already queued) plus the child results the run consumes. */
-  async turnAttachmentIds(chatId: string, runId: string, startedAt: string): Promise<string[]> {
+   *  run's start (placed just before or just after the run row, so the
+   *  nearest one in time is this turn's message) plus the child results
+   *  placed since the run started. */
+  async turnAttachmentIds(chatId: string, startedAt: string): Promise<string[]> {
     const messages = await this.pool.query<{ payload: Record<string, unknown> }>(
       `SELECT payload FROM thread_events
        WHERE chat_id = $1 AND type = 'user_message'
@@ -433,10 +288,9 @@ export class ThreadStore {
       [chatId, startedAt],
     );
     const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
-      `SELECT event AS payload FROM child_result_deliveries
-       WHERE parent_chat_id = $1
-         AND (consumed_by_run_id IS NULL OR consumed_by_run_id = $2)`,
-      [chatId, runId],
+      `SELECT payload FROM thread_events
+       WHERE chat_id = $1 AND type = 'child_result' AND created_at >= $2::timestamptz`,
+      [chatId, startedAt],
     );
     const ids = new Set<string>();
     for (const row of [...messages.rows, ...deliveries.rows]) {

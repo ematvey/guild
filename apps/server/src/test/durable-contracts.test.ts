@@ -27,6 +27,7 @@ import { SkillRuntime } from "../harness/skills.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { postedTurnEntry } from "../chats/posted-turn.js";
 import { childResultEntry } from "../chats/child-result.js";
+import { memberMessageEntry } from "../chats/member-message.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import type { UserMcpRuntime } from "../harness/user-mcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
@@ -391,7 +392,7 @@ describe("durable integration contracts", () => {
     }
   });
 
-  it("projects posted-turn and child-result entries once, at placement", async () => {
+  it("projects posted-turn, child-result and member-message entries once, at placement", async () => {
     const id = await chat();
     const runtime = new GuildRuntime({
       config: stack.env.config,
@@ -416,6 +417,7 @@ describe("durable integration contracts", () => {
     try {
       const conversation = await runtime.conversationForChat(id);
       const now = Date.now();
+      const messageId = crypto.randomUUID();
       await conversation.submit(
         {
           type: "write",
@@ -423,14 +425,24 @@ describe("durable integration contracts", () => {
         },
         context,
       );
-      const runA = crypto.randomUUID();
-      const runB = crypto.randomUUID();
+      for (const text of ["first", "second"]) {
+        await conversation.submit(
+          {
+            type: "write",
+            entry: {
+              ...childResultEntry(result(crypto.randomUUID(), text)),
+              model: [{ role: "user", content: text, timestamp: now }],
+            },
+          },
+          context,
+        );
+      }
       await conversation.submit(
         {
           type: "write",
           entry: {
-            ...childResultEntry([result(runA, "first"), result(runB, "second")]),
-            model: [{ role: "user", content: "results", timestamp: now }],
+            ...memberMessageEntry({ message_id: messageId, text: "member text", attachments: [] }),
+            model: [{ role: "user", content: "member text", timestamp: now }],
           },
         },
         context,
@@ -443,12 +455,14 @@ describe("durable integration contracts", () => {
               ? [`result:${r.event.final_text}`]
               : [],
         );
-      await until(async () => (await shown()).length === 3);
-      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second"]);
+      await until(async () => (await shown()).length === 4);
+      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second", "user:member text"]);
+      // A member's message row keeps its message id.
+      expect((await threads.listEvents(stack.orgId, id)).some((r) => r.id === messageId)).toBe(true);
       // Recovery from the journal re-projects nothing.
       await stack.env.db.query("DELETE FROM chat_projection_cursors WHERE chat_id=$1", [id]);
       await bridge(id, conversation).recover(conversation);
-      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second"]);
+      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second", "user:member text"]);
     } finally {
       await runtime.close();
     }
@@ -491,9 +505,6 @@ describe("durable integration contracts", () => {
         dispatch: { dispatch: async () => ({ content: "unused", is_error: true, meta: null, images: [] }) },
         remote: {
           submit: async () => {
-            throw new Error("unused");
-          },
-          deliverChildResults: async () => {
             throw new Error("unused");
           },
           writeEntry: async () => {

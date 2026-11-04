@@ -339,9 +339,9 @@ export function registerChatsRoutes(
   });
 
   /** Withdraws one queued (not yet placed) mid-turn send — the desktop
-   *  queued-chip trash button. The never-delivered echo leaves the thread
-   *  log; a placed or settled input is reported 409 (the chip is already
-   *  transitioning to a delivered message on the client). */
+   *  queued-chip trash button. It leaves the chat's queue, and never had a
+   *  thread row; a placed or settled input is reported 409 (the chip is
+   *  already transitioning to a delivered message on the client). */
   const withdrawPending = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
@@ -359,7 +359,6 @@ export function registerChatsRoutes(
       }
     }
     await chats.turnCommands.settleCancelledById(messageId, chatId);
-    await chats.threads.deleteQueuedEvent(chatId, messageId);
     return sendJson(reply, { withdrawn: true });
   };
   // Deprecated alias: DELETE /api/v1/gateway/chat/:id/pending/:messageId.
@@ -378,7 +377,6 @@ export function registerChatsRoutes(
     }
     const changed = await chats.runtime.steerQueued(chatId, Number(command.invocation_id.slice(4)));
     if (!changed) throw ApiError.conflict("already_placed", "message already placed — refresh to see it delivered");
-    await chats.threads.setQueuedMode(chatId, messageId, "steer");
     return reply.send({ steering: true });
   });
 

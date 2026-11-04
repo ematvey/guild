@@ -8,7 +8,7 @@
 //! Boundary: visible blocks only. Sockets, transport and composer state
 //! stay in the component; this is a plain module, not a store.
 
-import type { MessageAttachmentMeta, StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
+import type { MessageAttachmentMeta, QueuedInput, StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
 
 // ---------- block shapes ----------
 
@@ -195,6 +195,9 @@ export interface RenderBlock {
   queued?: boolean;
   /// Requested placement for the same chip: "steer" | "queue".
   queuedMode?: "steer" | "queue";
+  /// What a queued chip waits to deliver: a member's message (the only kind
+  /// the member can steer or withdraw), a posted turn, or a child's result.
+  queuedKind?: QueuedInput["kind"];
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   /// kind === "text": the turn was stopped mid-stream; the text is the
@@ -293,6 +296,32 @@ function reconcileQueuedSends(
     if (!!b.queued === (row.event.queued === true) && (!b.queued || b.queuedMode === queued.queuedMode)) return [b];
     return [{ ...b, ...clearedQueuedFields(), ...queued }];
   });
+}
+
+/** Rebuilds a view's queued chips from the server's queue (ThreadState
+ *  `queue`, the conversation's inbox). A queued input has no thread row: its
+ *  row arrives once the inbox places it, and the user_message fold then
+ *  replaces the chip. An optimistic send keeps its own block until the
+ *  queue lists it or its row arrives. */
+function syncQueue(blocks: RenderBlock[], queue: readonly QueuedInput[]): RenderBlock[] {
+  const placed = new Set(
+    blocks.flatMap((b) => (b.kind === "user" && !b.queued && !b.pending && b.eventId ? [b.eventId] : [])),
+  );
+  const listed = new Set(queue.map((item) => item.id));
+  const kept = blocks.filter((b) => !(b.kind === "user" && b.queued && (!b.pending || listed.has(b.eventId ?? ""))));
+  const chips: RenderBlock[] = queue
+    .filter((item) => !placed.has(item.id))
+    .map((item) => ({
+      kind: "user",
+      text: item.text,
+      key: `queued-${item.id}`,
+      ...(item.kind === "message" ? { eventId: item.id } : {}),
+      attachments: item.attachments,
+      queued: true,
+      queuedMode: item.mode,
+      queuedKind: item.kind,
+    }));
+  return [...kept, ...chips];
 }
 
 // ---------- derivation (event log → blocks) ----------
@@ -1029,7 +1058,9 @@ export function createThreadReducer(): ThreadReducer {
       // message id) settles the marker; before it, keep the command visible.
       for (const [key, pending] of pendingOf(cid)) {
         const durable = state.events.some((r) => r.event.type === "user_message" && r.id === key);
-        if (durable) {
+        // The server's queue lists the send: its chip comes from there now.
+        const queued = state.queue?.some((item) => item.id === key) ?? false;
+        if (durable || queued) {
           pendingOf(cid).delete(key);
           v.blocks = v.blocks.filter((b) => !(b.key === key && b.pending));
         } else if (!v.blocks.some((b) => b.key === key)) {
@@ -1047,10 +1078,12 @@ export function createThreadReducer(): ThreadReducer {
           ];
         }
       }
-      // Queued sends reconcile against the authoritative log: withdrawal
-      // deletes the echo (no fan-out row exists to announce it) and
-      // delivery moves it — both land here via the state republish.
-      v.blocks = reconcileQueuedSends(v.blocks, state.events, state.events[0]?.seq);
+      // Queued inputs come from the server's queue. A server that sends no
+      // queue marks queued sends on their rows instead.
+      v.blocks =
+        state.queue !== undefined
+          ? syncQueue(v.blocks, state.queue)
+          : reconcileQueuedSends(v.blocks, state.events, state.events[0]?.seq);
       // A summary entry can settle the indicator before the task poll returns.
       // Agent generation state is independent of compaction completion.
       if (compactingChat === cid) {

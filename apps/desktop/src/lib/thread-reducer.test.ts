@@ -1263,3 +1263,50 @@ describe("live tool frames keep the React state contract", () => {
     expect(startedTool?.status).toBe("running");
   });
 });
+
+describe("queued inputs come from the server queue", () => {
+  it("shows a queued message as a chip until its row lands, and drops a withdrawn one", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    const item = { id: "m1", kind: "message" as const, mode: "queue" as const, text: "next", attachments: [] };
+    const result = {
+      id: "submission:9",
+      kind: "child_result" as const,
+      mode: "steer" as const,
+      text: 'Echo "task": succeeded',
+      attachments: [],
+    };
+    const queued = r.applyState({ ...state("c1", 2, []), queue: [item, result] });
+    const chips = queued.blocks.filter((b) => b.kind === "user" && b.queued);
+    expect(chips.map((b) => [b.text, b.eventId, b.queuedKind])).toEqual([
+      ["next", "m1", "message"],
+      ['Echo "task": succeeded', undefined, "child_result"],
+    ]);
+
+    // Placed: the row lands under the message id and the queue drops it.
+    const placed = r.applyState({ ...state("c1", 3, [echo(1, "next", "m1")]), queue: [result] });
+    const users = placed.blocks.filter((b) => b.kind === "user");
+    expect(users.map((b) => [b.text, !!b.queued])).toEqual([
+      ["next", false],
+      ['Echo "task": succeeded', true],
+    ]);
+
+    // Withdrawn: it leaves the queue and no row ever comes.
+    const gone = r.applyState({ ...state("c1", 4, []), queue: [] });
+    expect(gone.blocks.filter((b) => b.kind === "user" && b.queued)).toEqual([]);
+  });
+
+  it("hands an optimistic queued send over to the queue's chip", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.optimisticSend({ chatId: "c1", text: "later", key: "m2", sentAt: 0, queued: true, queuedMode: "queue" });
+    const next = r.applyState({
+      ...state("c1", 2, []),
+      queue: [{ id: "m2", kind: "message", mode: "queue", text: "later", attachments: [] }],
+    });
+    const chips = next.blocks.filter((b) => b.kind === "user" && b.queued);
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toMatchObject({ eventId: "m2", queuedKind: "message" });
+    expect(chips[0]!.pending).toBeFalsy();
+  });
+});

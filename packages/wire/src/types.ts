@@ -17,6 +17,7 @@ import type {
   EventRow,
   Json,
   MachineInfo,
+  MessageAttachment,
   Project,
   SkillCatalogItem,
   SkillInstall,
@@ -81,6 +82,16 @@ export type StreamEvent =
       reason?: string;
     };
 
+/** One input waiting in a chat's queue (ThreadState `queue`). `id` is a
+ *  member message's message id, or `submission:<n>` for any other input. */
+export interface QueuedInput {
+  id: string;
+  kind: "message" | "turn" | "child_result";
+  mode: "steer" | "queue";
+  text: string;
+  attachments: MessageAttachment[];
+}
+
 /** Server → client. */
 export type ServerFrame =
   | { type: "hello" }
@@ -126,6 +137,10 @@ export type ServerFrame =
       /** True while a compaction of the chat's context runs. Absent from
        *  servers that do not report it. */
       compacting?: boolean;
+      /** The chat's inputs waiting for the agent, in placement order. A
+       *  row reaches `events` only once its input is taken. Absent from
+       *  servers that do not report it. */
+      queue?: QueuedInput[];
     }
   | { type: "sync_done"; chat_id: Uuid }
   | { type: "pong" }

@@ -219,7 +219,7 @@ export class ConversationExecutors {
     if (this.materializedTurns.get(chatId) === run.id) return;
     this.materializedTurns.set(chatId, run.id);
     try {
-      const ids = await this.deps.threads.turnAttachmentIds(chatId, run.id, run.started_at ?? run.created_at);
+      const ids = await this.deps.threads.turnAttachmentIds(chatId, run.started_at ?? run.created_at);
       const rows = await this.deps.attachments.byIds(orgId, ids);
       await materializeTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
     } catch (error) {

@@ -1,26 +1,21 @@
-// Child-run delivery: a terminal child run queues one result for its parent
-// chat, then a parent run drains the unconsumed results in one transaction
-// and places them as one steer batch (chats/child-result.ts). The parent
-// thread's cards are projected from that batch's entry when the
-// conversation places it, so a result the parent never received never
-// shows. A delivery never enqueues its own turn.
+// Child-run delivery: a terminal child run's result is submitted to the
+// parent's conversation as one steer input, keyed by the child run id
+// (chats/child-result.ts). The conversation's inbox is the only queue: the
+// parent takes the result at its next boundary, or an idle parent starts a
+// run on it, and the parent thread's card is projected from the input's
+// entry once placed. A sweep re-delivers a result whose submit never
+// landed. A delivery never enqueues a follow-up turn.
 
 import type { Logger } from "pino";
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool } from "../platform/db.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
-import type { ThreadStore, ChildResultRecord } from "../platform/store/thread.js";
 import { modalityOf } from "../platform/domain/mime.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
+import type { ChildResultEvent } from "../chats/child-result.js";
+import { admittedSubmission, undeliveredChildRuns } from "../storage/postgres/queries.js";
 import { terminalAssistantText } from "./lifecycle.js";
 import type { AgentStore } from "./store.js";
-import {
-  childThread,
-  eventAttachments,
-  type ParentThread,
-  parentThreadById,
-  rootThreadForChat,
-  runState,
-} from "./store/delivery.js";
+import { childThread, eventAttachments, type ParentThread, parentThreadById, runState } from "./store/delivery.js";
 import { assistantEventsSince } from "./store/events.js";
 
 export interface ChildRunFinished {
@@ -38,15 +33,14 @@ export interface DeliveryRuntime {
   /** Opens a run row for a parent thread that is idle when the delivery
    *  lands. Returns the new run id. */
   beginRun(thread: { id: string; agent_id: string; user_id: string; depth: number }): Promise<string>;
-  /** Places a batch of child results in the parent chat: merged into its
-   *  pending child-result steer, else submitted as a new one. */
-  deliverChildResults(chatId: string, orgId: string, results: ChildResultRecord[], model: string | null): Promise<void>;
+  /** Submits one child result into the parent chat as a steer input whose
+   *  request id is the child run id. */
+  submitChildResult(chatId: string, orgId: string, result: ChildResultEvent, model: string | null): Promise<void>;
 }
 
 export interface ChildDeliveryDeps {
   pool: PlatformPool;
   store: AgentStore;
-  threads: ThreadStore;
   runtime: DeliveryRuntime;
   log: Logger;
 }
@@ -63,7 +57,7 @@ export class ChildResultDelivery {
   constructor(private readonly deps: ChildDeliveryDeps) {}
 
   async deliver(input: ChildRunFinished): Promise<void> {
-    const { pool, threads } = this.deps;
+    const { pool } = this.deps;
     const childRow = await childThread(pool, input.child_thread_id);
     if (childRow === null || childRow.parent_thread_id === null) return;
     // A closed child, or a closed parent subtree, stops deliveries.
@@ -83,7 +77,7 @@ export class ChildResultDelivery {
     const startedAt = run?.started_at ?? null;
 
     const attachments = await this.attachmentsOf(input.attachment_event_id ?? null);
-    await threads.queueChildResult(parentRow.chat_id, {
+    await this.place(parentRow, {
       type: "child_result",
       thread_id: input.child_thread_id,
       run_id: input.run_id,
@@ -96,65 +90,59 @@ export class ChildResultDelivery {
       final_text: input.final_text,
       attachments,
     });
-
-    await this.wake(parentRow);
   }
 
-  /** Drains the unconsumed results of one parent chat into a turn. A sweep
-   *  calls this for a chat whose earlier delivery did not land. */
-  async deliverPending(chatId: string): Promise<boolean> {
-    const parentRow = await rootThreadForChat(this.deps.pool, chatId);
-    if (parentRow === null || parentRow.parent_closed_at !== null) return false;
-    return this.wake(parentRow);
+  /** Re-delivers the results of a parent chat whose submit never landed.
+   *  The result is rebuilt from the child run: its status, its error and
+   *  its terminal text. A sweep calls this. */
+  async deliverPending(chatId: string, olderThanMs = 0): Promise<boolean> {
+    const runs = await undeliveredChildRuns(this.deps.pool, olderThanMs, chatId);
+    for (const run of runs) {
+      await this.deliver({
+        child_thread_id: run.child_thread_id,
+        run_id: run.run_id,
+        status: run.status,
+        reason: run.error_code === "orphaned" ? "orphaned" : run.status === "failed" ? "error" : null,
+        final_text: await assistantTextForRun(this.deps.pool, run.child_chat_id, run.started_at),
+      });
+    }
+    return runs.length > 0;
   }
 
-  /** Places every unconsumed result of the parent chat as one steer batch in
-   *  one run. A batch that cannot be placed goes back to the unconsumed pool
-   *  so a later attempt can still deliver it. */
-  private async wake(parentRow: ParentThread): Promise<boolean> {
-    const { store, threads, runtime, log } = this.deps;
-    const running = await store.runs.runningRunForChat(parentRow.chat_id);
-    let runId = running?.id ?? null;
-    let opened = false;
-    if (runId === null) {
-      runId = await runtime.beginRun({
-        id: parentRow.id,
-        agent_id: parentRow.agent_id,
-        user_id: parentRow.user_id,
-        depth: Number(parentRow.depth),
-      });
-      opened = true;
-    }
-
-    const batch = await threads.consumeChildResults(parentRow.chat_id, runId);
-    if (batch.length === 0) {
-      // A concurrent drain took the batch. An idle-parent run we opened has
-      // nothing to do, so it must not stay running.
-      if (opened) {
-        await store.runs.updateRun(runId, { status: "skipped", finished_at: new Date().toISOString() }).catch(() => {});
+  /** Submits one result into the parent chat. Deliveries into one parent
+   *  are serialized, so concurrent results open at most one run for an
+   *  idle parent; a result already admitted is skipped. */
+  private async place(parentRow: ParentThread, result: ChildResultEvent): Promise<void> {
+    const { pool, store, runtime, log } = this.deps;
+    await withTransaction(pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`child-delivery:${parentRow.chat_id}`]);
+      if ((await admittedSubmission(pool, parentRow.chat_id, result.run_id)) !== null) return;
+      const running = await store.runs.runningRunForChat(parentRow.chat_id);
+      const runId =
+        running?.id ??
+        (await runtime.beginRun({
+          id: parentRow.id,
+          agent_id: parentRow.agent_id,
+          user_id: parentRow.user_id,
+          depth: Number(parentRow.depth),
+        }));
+      try {
+        await runtime.submitChildResult(parentRow.chat_id, parentRow.org_id, result, parentRow.model);
+      } catch (error) {
+        if (running === null) {
+          await store.runs
+            .updateRun(runId, {
+              status: "failed",
+              error_code: "delivery_failed",
+              error_message: error instanceof Error ? error.message : String(error),
+              finished_at: new Date().toISOString(),
+            })
+            .catch(() => {});
+        }
+        throw error;
       }
-      return false;
-    }
-    try {
-      await runtime.deliverChildResults(parentRow.chat_id, parentRow.org_id, batch, parentRow.model);
-    } catch (error) {
-      await threads.releaseChildResults(batch.map((row) => row.id)).catch((releaseError: unknown) => {
-        log.warn({ err: releaseError, chatId: parentRow.chat_id }, "child result release failed");
-      });
-      if (opened) {
-        await store.runs
-          .updateRun(runId, {
-            status: "failed",
-            error_code: "delivery_failed",
-            error_message: error instanceof Error ? error.message : String(error),
-            finished_at: new Date().toISOString(),
-          })
-          .catch(() => {});
-      }
-      throw error;
-    }
-    log.info({ parentThreadId: parentRow.id, runId, count: batch.length }, "child result delivered");
-    return true;
+      log.info({ parentThreadId: parentRow.id, runId, childRunId: result.run_id }, "child result delivered");
+    });
   }
 
   private async attachmentsOf(eventId: string | null): Promise<MessageAttachment[]> {

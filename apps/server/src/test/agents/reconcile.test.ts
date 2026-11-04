@@ -7,6 +7,7 @@ import pino from "pino";
 import { AgentStore } from "../../agents/store.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { failStaleRuns } from "../../agents/reconcile.js";
+import type { ChildRunFinished } from "../../agents/delivery.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { GuildRuntime } from "../../harness/runtime.js";
 import { createAgentsTestEnv } from "./harness.js";
@@ -22,14 +23,17 @@ dbDescribe("stale run reconciliation", () => {
   let userId: string;
   const stopped: string[] = [];
   const redelivered: string[] = [];
+  const delivered: ChildRunFinished[] = [];
   const deps = () => ({
     pool: env!.db,
-    threads,
     runtime: {
       stopChat: async (chatId: string) => {
         stopped.push(chatId);
       },
       canStopChat: () => true,
+      deliverChildResult: async (input: ChildRunFinished) => {
+        delivered.push(input);
+      },
       deliverPending: async (chatId: string) => {
         redelivered.push(chatId);
         return true;
@@ -108,12 +112,17 @@ dbDescribe("stale run reconciliation", () => {
     };
   }
 
-  async function childResults(chatId: string, runId: string): Promise<Record<string, unknown>[]> {
-    const res = await env!.db.query<{ payload: Record<string, unknown> }>(
-      "SELECT event AS payload FROM child_result_deliveries WHERE parent_chat_id = $1",
-      [chatId],
+  /** The results the sweep handed to delivery for one child run. */
+  async function childResults(_chatId: string, runId: string): Promise<ChildRunFinished[]> {
+    return delivered.filter((input) => input.run_id === runId);
+  }
+
+  /** Ends a fixture's child run as succeeded, `ageMs` ago. */
+  async function finishRun(runId: string, ageMs: number): Promise<void> {
+    await env!.db.query(
+      "UPDATE agent_runs SET status = 'succeeded', finished_at = now() - ($2::bigint * interval '1 millisecond') WHERE id = $1",
+      [runId, ageMs],
     );
-    return res.rows.map((row) => row.payload).filter((payload) => payload["run_id"] === runId);
   }
 
   it("fails an old run and settles the parent strip", async () => {
@@ -128,9 +137,8 @@ dbDescribe("stale run reconciliation", () => {
     const results = await childResults(fx.parentChatId, fx.runId);
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
-      thread_id: fx.childThreadId,
+      child_thread_id: fx.childThreadId,
       run_id: fx.runId,
-      chat_id: fx.childChatId,
       status: "failed",
       reason: "orphaned",
       final_text: "",
@@ -177,35 +185,24 @@ dbDescribe("stale run reconciliation", () => {
     expect((await store.runs.getRun(fx.runId)).status).toBe("failed");
   });
 
-  it("redelivers a child result that no turn ever took", async () => {
+  it("redelivers a child result that never reached the parent's conversation", async () => {
     const fx = await fixture({ ageMs: null });
-    await threads.queueChildResult(fx.parentChatId, {
-      type: "child_result",
-      thread_id: fx.childThreadId,
-      run_id: fx.runId,
-      chat_id: fx.childChatId,
-      agent_name: "Clients",
-      title: "Child task",
-      status: "succeeded",
-      final_text: "the answer",
-      attachments: [],
-    });
-    await env!.db.query(
-      "UPDATE child_result_deliveries SET created_at = now() - interval '5 minutes' WHERE parent_chat_id = $1",
-      [fx.parentChatId],
-    );
+    await finishRun(fx.runId, 5 * 60 * 1000);
     redelivered.length = 0;
     await failStaleRuns(deps());
     expect(redelivered).toContain(fx.parentChatId);
   });
 
-  it("leaves a fresh unconsumed child result to its own delivery", async () => {
-    const fx = await fixture({ ageMs: null });
-    await threads.queueChildResult(fx.parentChatId, {
+  it("leaves a fresh result to its own delivery, and a delivered one alone", async () => {
+    const fresh = await fixture({ ageMs: null });
+    await finishRun(fresh.runId, 0);
+    const shown = await fixture({ ageMs: null });
+    await finishRun(shown.runId, 5 * 60 * 1000);
+    await threads.appendEvent(shown.parentChatId, {
       type: "child_result",
-      thread_id: fx.childThreadId,
-      run_id: fx.runId,
-      chat_id: fx.childChatId,
+      thread_id: shown.childThreadId,
+      run_id: shown.runId,
+      chat_id: shown.childChatId,
       agent_name: "Clients",
       title: "Child task",
       status: "succeeded",
@@ -214,7 +211,8 @@ dbDescribe("stale run reconciliation", () => {
     });
     redelivered.length = 0;
     await failStaleRuns(deps());
-    expect(redelivered).not.toContain(fx.parentChatId);
+    expect(redelivered).not.toContain(fresh.parentChatId);
+    expect(redelivered).not.toContain(shown.parentChatId);
   });
 
   it("beginChatRun adopts the open run instead of opening a second", async () => {

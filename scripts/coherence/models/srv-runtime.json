@@ -145,9 +145,13 @@
     },
     {
       "id": "inbox",
-      "definition": "The queued user inputs of a conversation, placed as write, steer or follow-up at a turn boundary.",
+      "definition": "The queued inputs of a conversation (pi-durable submissions and the pi.inbox document): member messages, posted turns, child results and writes, placed as write, steer or follow-up at a turn boundary. It is the only queue: a thread row exists once its input is placed, and the ThreadState frame lists the rest as QueuedInput.",
       "canonical": "apps/server/src/harness/queue-recovery.ts",
-      "types": [],
+      "types": [
+        "QueuedInput",
+        "QueuedInputKind",
+        "QueuedInputMode"
+      ],
       "aliases": [
         "inbox-doc",
         "queued-input"
@@ -164,9 +168,49 @@
         {
           "where": "apps/server/src/harness/runtime.ts",
           "role": "domain"
+        },
+        {
+          "where": "apps/server/src/storage/postgres/inbox.ts",
+          "role": "storage"
+        },
+        {
+          "where": "apps/server/src/chats/queue.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/chats/member-message.ts",
+          "role": "domain"
+        },
+        {
+          "where": "crates/protocol/src/ws.rs",
+          "role": "wire"
+        },
+        {
+          "where": "packages/wire/src/types.ts",
+          "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/lib/thread-reducer.ts",
+          "role": "ui"
         }
       ],
-      "translations": []
+      "translations": [
+        {
+          "from": "storage",
+          "to": "domain",
+          "at": "apps/server/src/chats/queue.ts"
+        },
+        {
+          "from": "domain",
+          "to": "wire",
+          "at": "apps/server/src/chats/queue.ts"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/thread-reducer.ts"
+        }
+      ]
     },
     {
       "id": "worker",

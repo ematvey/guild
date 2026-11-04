@@ -9,7 +9,6 @@ import type { Logger } from "pino";
 import { workerConfigEnv, type Config } from "../config.js";
 import type { MachineToolOutcome } from "../machines/dispatch.js";
 import type { SubmitTurnInput } from "../harness/turn-backend.js";
-import type { ChildResultRecord } from "../platform/store/thread.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import {
   failure,
@@ -378,13 +377,6 @@ export class ForkSupervisor {
       handle.lastBeat = Date.now();
       return;
     }
-    if (message.t === "remote-deliver-child-results") {
-      this.serve(handle, message.ref, async () => {
-        await this.deliverChildResults(message.chatId, message.orgId, message.results, message.model);
-        return null;
-      });
-      return;
-    }
     if (message.t === "remote-write-entry") {
       this.serve(handle, message.ref, async () => {
         await this.writeEntry(message.chatId, message.entry);
@@ -503,15 +495,6 @@ export class ForkSupervisor {
    *  submission id. */
   submit(chatId: string, input: SubmitTurnInput): Promise<number> {
     return this.request<number>(chatId, { t: "submit", input });
-  }
-
-  deliverChildResults(
-    chatId: string,
-    orgId: string,
-    results: ChildResultRecord[],
-    model: string | null,
-  ): Promise<void> {
-    return this.request<void>(chatId, { t: "deliver-child-results", orgId, results, model });
   }
 
   writeEntry(chatId: string, entry: EntryDraft): Promise<void> {

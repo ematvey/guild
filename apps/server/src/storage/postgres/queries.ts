@@ -235,3 +235,48 @@ export async function assistantEntriesSinceHead(
   );
   return result.rows.map((row) => row.record);
 }
+
+/** Child runs that ended but whose result never reached the parent's
+ *  conversation: no submission keyed by the run id there, and no card from
+ *  before results were inputs. Neither side is closed, the run ended more
+ *  than `olderThanMs` ago (a normal delivery is never raced) and less than a
+ *  day ago. `chatId` narrows to one parent chat. */
+const UNDELIVERED_SQL = `
+     FROM agent_runs r
+     JOIN agent_threads t ON t.id = r.thread_id
+     JOIN agent_threads pt ON pt.id = t.parent_thread_id
+     LEFT JOIN chat_conversations cc ON cc.chat_id = pt.chat_id
+     WHERE r.status IN ('succeeded', 'failed', 'silent', 'cancelled')
+       AND r.finished_at < now() - ($1::bigint * interval '1 millisecond')
+       AND r.finished_at > now() - interval '1 day'
+       AND t.closed_at IS NULL AND pt.closed_at IS NULL
+       AND ($2::uuid IS NULL OR pt.chat_id = $2::uuid)
+       AND NOT EXISTS (SELECT 1 FROM submissions s
+                       WHERE s.conversation_id = cc.conversation_id AND s.request_id = '"' || r.id::text || '"')
+       AND NOT EXISTS (SELECT 1 FROM thread_events e
+                       WHERE e.chat_id = pt.chat_id AND e.type = 'child_result' AND e.payload->>'run_id' = r.id::text)`;
+
+export type UndeliveredRun = {
+  run_id: string;
+  child_thread_id: string;
+  child_chat_id: string;
+  parent_chat_id: string;
+  status: string;
+  error_code: string | null;
+  started_at: string;
+};
+
+export async function undeliveredChildRuns(
+  db: DurableQueryable,
+  olderThanMs: number,
+  chatId: string | null,
+): Promise<UndeliveredRun[]> {
+  const res = await db.query<UndeliveredRun>(
+    `SELECT r.id AS run_id, t.id AS child_thread_id, t.chat_id AS child_chat_id, pt.chat_id AS parent_chat_id,
+            r.status, r.error_code, to_char(COALESCE(r.started_at, r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at
+     ${UNDELIVERED_SQL}
+     ORDER BY r.finished_at`,
+    [olderThanMs, chatId],
+  );
+  return res.rows;
+}

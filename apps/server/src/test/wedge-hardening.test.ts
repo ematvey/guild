@@ -54,15 +54,7 @@ describe("wedge hardening", () => {
 
     it("marks a never-delivered command failed", async () => {
       const id = randomUUID();
-      await commands.accept(
-        id,
-        stack.orgId,
-        stack.memberId,
-        chatId,
-        { user_message_id: id },
-        { user_message_id: id },
-        { content: "hello", attachments: [] },
-      );
+      await commands.accept(id, stack.orgId, stack.memberId, chatId, { user_message_id: id }, { user_message_id: id });
       expect((await commands.byId(id, chatId))!.status).toBe("pending");
       await commands.failUnsubmitted(id);
       expect((await commands.byId(id, chatId))!.status).toBe("failed");
@@ -80,7 +72,6 @@ describe("wedge hardening", () => {
         chatId,
         { user_message_id: fresh },
         { user_message_id: fresh },
-        { content: "fresh", attachments: [] },
       );
       // Nothing is old enough yet.
       expect(await commands.sweepExpired(15 * 60)).toHaveLength(0);
@@ -93,22 +84,14 @@ describe("wedge hardening", () => {
       expect((await commands.byId(fresh, chatId))!.status).toBe("failed");
     });
 
-    it("discards a turn the conversation never admitted, echo and command", async () => {
+    it("discards the command of a turn the conversation never admitted", async () => {
       const id = randomUUID();
-      await commands.accept(
-        id,
-        stack.orgId,
-        stack.memberId,
-        chatId,
-        { user_message_id: id },
-        { user_message_id: id },
-        { content: "never delivered", attachments: [] },
-      );
-      const echo = () => stack.env.db.query("SELECT 1 FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
-      expect((await echo()).rows).toHaveLength(1);
+      await commands.accept(id, stack.orgId, stack.memberId, chatId, { user_message_id: id }, { user_message_id: id });
+      // Accepting writes no thread row: the row comes from the placed entry.
+      const rows = await stack.env.db.query("SELECT 1 FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
+      expect(rows.rows).toHaveLength(0);
       await commands.failUnsubmitted(id);
       expect(await stack.env.app.platform.runtime.discardUnsent(chatId, id)).toBeNull();
-      expect((await echo()).rows).toHaveLength(0);
       expect(await commands.byId(id, chatId)).toBeUndefined();
     });
   });

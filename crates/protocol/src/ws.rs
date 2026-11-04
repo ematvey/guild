@@ -46,6 +46,32 @@ pub enum WsClientMsg {
     },
 }
 
+/// One input waiting in a chat's queue (`ThreadState::queue`). `id` is a
+/// member message's message id, or `submission:<n>` for any other input.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QueuedInput {
+    pub id: String,
+    pub kind: QueuedInputKind,
+    pub mode: QueuedInputMode,
+    pub text: String,
+    pub attachments: Vec<crate::api::MessageAttachment>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuedInputKind {
+    Message,
+    Turn,
+    ChildResult,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuedInputMode {
+    Steer,
+    Queue,
+}
+
 /// Server → client. ThreadState is the only rendered-content source: both
 /// sync and live updates replace the whole view at an ordered watermark.
 /// LiveFrame is a separate, non-replayable stream for command consumers.
@@ -137,6 +163,11 @@ pub enum WsServerMsg {
         /// servers that do not report it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compacting: Option<bool>,
+        /// The chat's inputs waiting for the agent, in placement order. A
+        /// row reaches `events` only once its input is taken. Absent from
+        /// servers that do not report it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queue: Option<Vec<QueuedInput>>,
     },
     SyncDone {
         chat_id: Uuid,

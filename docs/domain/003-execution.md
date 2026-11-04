@@ -29,7 +29,9 @@ An Input is placed by its mode:
 | followUp | After the running Turn ends, starting the next Turn (the default for a Member's message) |
 | write | At once when the Thread is idle, else at the running Turn's next boundary, as a log entry: compaction summaries, posted agent messages, notices |
 
-Steers and follow-ups are taken one at a time. When a Thread has no running Turn, waiting Inputs are drained in order: writes first, then the first steer and the first follow-up as one new Turn. Draining never invents an Input.
+At a boundary every queued steer is taken together; follow-ups are taken one at a time. When a Thread has no running Turn, waiting Inputs are drained in order: writes first, then the steers and the first follow-up as one new Turn. Draining never invents an Input.
+
+**The Thread's queue is the conversation's inbox, and nothing else.** Every waiting Input is its own item there (pi-durable's `submissions` rows and the `pi.inbox` document), never merged with another: a Member's message, a posted Turn, a child result, a write. Thread events record only what happened: a row exists once its Input is placed, projected from the entry, and a waiting Input has no row. The ThreadState frame carries the queue (`queue`), read from those tables, and the client renders it as chips.
 
 A Member can act on a queued Input or a running Turn through Turn commands:
 
@@ -39,7 +41,7 @@ A Member can act on a queued Input or a running Turn through Turn commands:
 | steer | Moves a queued follow-up into the running Turn |
 | withdraw | Removes a queued Input that is not yet placed |
 
-A Turn command goes `pending` → `submitted` → `running` → `completed`, `failed` or `cancelled`. A pending command older than 15 minutes fails. A Member's message whose submit fails, or whose command expires, before the conversation admitted it leaves the Thread together with its command, so a retry under the same message id starts over. One the conversation did admit stands.
+A Turn command goes `pending` → `submitted` → `running` → `completed`, `failed` or `cancelled`. A pending command older than 15 minutes fails. A Member's message is a `guild.member-message` Input; its row (under the message id) is projected when it is placed. A message whose submit fails, or whose command expires, before the conversation admitted it loses its command, so a retry under the same message id starts over. One the conversation did admit stands.
 
 A Turn that the system posts (a subagent `spawn` or `send`, a Routine prompt) is an Input of its own kind. Its message row is projected when the Input is placed, so a withdrawn one leaves nothing behind.
 
@@ -108,12 +110,12 @@ An Agent with the `subagents` tool can spawn other Agents. Each spawn creates on
 
 The tree is bounded by its shape: depth 3 and 16 children per node, both set in configuration. The child limit is checked under the parent's lock. A child gets a `<spawned_by>` block and the task, never the parent's transcript.
 
-**Downward messages are Turns. Upward messages are Turn ends.** When a child Run settles, its final text, its status and its Attachments are queued for the parent as one child result. Nothing is queued when the child or the parent is closed. The parent is then woken:
+**Downward messages are Turns. Upward messages are Turn ends.** When a child Run settles, its final text, its status and its Attachments are submitted to the parent's conversation as one child result. Nothing is submitted when the child or the parent is closed. The parent is then woken:
 
-1. The unconsumed results are taken by the parent's running Run, or by a new Run when the parent is idle. Each result is marked with the Run that took it, so a result is consumed once.
-2. They are placed as one steer batch: merged into the parent's pending child-result batch if one is queued, else submitted as a new one. A batch never merges into a Member's message, so withdrawing that message leaves the results intact.
-3. The parent Thread's child-result rows are projected from the batch when it is placed. A result the parent has not received does not show.
-4. A stop withdraws a queued batch with the other Inputs. The batch is then written into the conversation instead: the parent has it and the rows show, but no Turn starts.
+1. The result is a steer Input of its own, keyed by the child Run id, so a redelivery never admits it twice. If the parent is idle, a new Run starts with it; deliveries into one parent are serialized, so concurrent results open one Run.
+2. Results that are queued together are placed at the same boundary and reach the model in one call. A result never merges with another Input, so withdrawing a Member's message leaves it intact.
+3. The parent Thread's child-result row is projected from the Input when it is placed. A result the parent has not received shows only in the queue.
+4. A stop withdraws queued Inputs. A queued child result is then written into the conversation instead: the parent has it and the row shows, but no Turn starts.
 
 A parent never waits on a child; it ends its Turn and is woken by the delivery. A child that needs a decision ends its Turn with the question. A stop by the Member reaches the parent as `cancelled`.
 
@@ -156,7 +158,7 @@ A delivered message is an entry in the receiving Thread's conversation, written 
 
 A Turn cut off mid-Step resumes from its last recorded entry. A Tool call cut off on a Machine settles as unknown (see above).
 
-**Orphans.** Every five minutes, a sweep fails Runs that are still queued or running, whose Thread has had no event for ten minutes and holds no journal work. Such a Run ends `failed` with `orphaned`. An orphaned child also delivers a failed result to its parent. Child results left unconsumed for two minutes are delivered again.
+**Orphans.** Every five minutes, a sweep fails Runs that are still queued or running, whose Thread has had no event for ten minutes and holds no journal work. Such a Run ends `failed` with `orphaned`. An orphaned child also delivers a failed result to its parent. A child Run that ended more than two minutes ago and whose result is in neither the parent's inbox nor its Thread is delivered again, rebuilt from the Run.
 
 ## Rejected
 

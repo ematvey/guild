@@ -54,17 +54,11 @@ export class TurnCommandStore {
     return row;
   }
 
-  /** Atomic acceptance: the command row and the visible user_message echo
-   *  either both commit or neither does. Locks the chat row (archived chats
-   *  reject, deleted chats are not found), applies an explicit project
-   *  binding, inserts the command and the thread event under one id, and
-   *  notifies the thread channel.
-   *  `userEvent.queued` marks a send admitted while a turn was still
-   *  generating: the echo is visible history (the user typed it), but the
-   *  model has not seen it yet — the desktop renders it as a queued chip,
-   *  not a transcript bubble, until the inbox places it (the bridge's
-   *  delivery moves the row and clears the flag). `userEvent.mode` records
-   *  the requested placement (steer vs follow-up) for the same chip. */
+  /** Atomic acceptance of one member turn. Locks the chat row (archived
+   *  chats reject, deleted chats are not found), applies an explicit
+   *  project binding and inserts the command under the message id. The
+   *  thread row is not written here: it is projected from the
+   *  conversation entry once the inbox places the message. */
   async accept(
     id: string,
     org: string,
@@ -72,7 +66,6 @@ export class TurnCommandStore {
     chat: string,
     request: unknown,
     payload: unknown,
-    userEvent: { content: string; attachments: unknown[]; queued?: boolean; mode?: "steer" | "queue" },
   ): Promise<TurnCommand> {
     return withTransaction(this.pool, async (client) => {
       const requestedProject =
@@ -147,21 +140,6 @@ export class TurnCommandStore {
             await client.query("UPDATE chats SET project_id=$2 WHERE id=$1", [chat, binding.project]);
           }
         }
-        const eventPayload = jsonbText({
-          type: "user_message",
-          content: userEvent.content,
-          attachments: userEvent.attachments,
-          ...(userEvent.queued ? { queued: true } : {}),
-          ...(userEvent.mode ? { mode: userEvent.mode } : {}),
-        });
-        const eventRes = await client.query(
-          "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1,$2,'user_message',$3::jsonb) ON CONFLICT (id) DO NOTHING",
-          [id, chat, eventPayload],
-        );
-        if (eventRes.rowCount !== 1) {
-          throw ApiError.conflict("command_id_conflict", "message ID already identifies a thread event");
-        }
-        await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chat]);
       }
       return row;
     });

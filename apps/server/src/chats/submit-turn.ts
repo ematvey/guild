@@ -1,6 +1,7 @@
 // Turn submission: validates a turn request, adopts or binds the chat's
-// agent, resolves the route and project binding, journals the turn command
-// with its user_message echo, and submits it to the durable conversation.
+// agent, resolves the route and project binding, journals the turn command,
+// and submits the message to the durable conversation as a member-message
+// input; its thread row is projected when the inbox places it.
 // The thread routes (POST /api/v1/threads/:id/turns and its
 // /api/v1/gateway/chat alias) and the agent turn routes share it.
 
@@ -15,6 +16,7 @@ import type { UserRow } from "../platform/store/identity.js";
 import type { ChatRow } from "../platform/store/chats.js";
 import { ThreadAgentLocked } from "../harness/runtime.js";
 import { buildTurnText, loadMediaMap } from "./turn-text.js";
+import { memberMessageEntry } from "./member-message.js";
 
 export async function submitTurn(
   chats: ChatsCtx,
@@ -125,7 +127,7 @@ export async function submitTurn(
     const route = await gateway.gatewayStore.resolveRoute(user.org_id, model, gateway.masterKey());
     routeModalities = route.modalities;
   } catch {
-    // A missing route fails later at submission time; the visible echo must
+    // A missing route fails later at submission time; the visible message must
     // not depend on it.
   }
   const attachmentRows = await auth.attachments.list(user.org_id, chatId);
@@ -154,23 +156,18 @@ export async function submitTurn(
     machine_label: machineLabel,
     attachment_ids: attachmentIds,
   };
-  // Reserve "generating" before the accept's user_message echo: the capture
-  // echoing the new message must already say generating, or its socket
-  // delivery lands after the HTTP response and clobbers the client's
-  // optimistic busy (the Working indicator blinks off in the pre-turn
-  // window). A failed accept or submit recomputes the flag from durable
-  // work, so it never clears a turn another request started meanwhile.
-  const priorGenerating = await chats.chats.reserveGenerating(user.org_id, chatId);
+  // Reserve "generating" before the submission: a capture taken in the
+  // pre-turn window must already say generating, or its socket delivery
+  // lands after the HTTP response and clobbers the client's optimistic busy
+  // (the Working indicator blinks off). A failed accept or submit recomputes
+  // the flag from durable work, so it never clears a turn another request
+  // started meanwhile.
+  await chats.chats.reserveGenerating(user.org_id, chatId);
   const sendMode =
     body["send_mode"] === "steer" ? ("steer" as const) : body["send_mode"] === "queue" ? ("queue" as const) : undefined;
   let command;
   try {
-    command = await chats.turnCommands.accept(commandId, user.org_id, user.id, chatId, request, payload, {
-      content,
-      attachments: chips,
-      queued: priorGenerating,
-      mode: sendMode,
-    });
+    command = await chats.turnCommands.accept(commandId, user.org_id, user.id, chatId, request, payload);
     // The run row exists before the turn is admitted; the lifecycle closes it
     // from the transcript.
     if (adopted !== null && beginRun) {
@@ -185,6 +182,9 @@ export async function submitTurn(
       ...(sendMode !== undefined ? { sendMode } : {}),
       ...(skillsIndex !== undefined ? { skillsIndex } : {}),
       ...(agentsMd !== undefined ? { agentsMd } : {}),
+      // The thread row is projected from this entry when the inbox places
+      // the message; until then it is in the chat's queue.
+      entry: memberMessageEntry({ message_id: commandId, text: content, attachments: chips }),
     });
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
     // Name the thread from the first message while the turn runs; the run

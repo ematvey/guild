@@ -5,18 +5,18 @@
 
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
-import type { ThreadStore } from "../platform/store/thread.js";
-import { pgTimestampToRfc3339 } from "../platform/time.js";
 import { chatsWithUndeliveredResults, failOrphanedRun, staleRuns } from "./store/stale-runs.js";
 import { notifySubagentTree } from "./store/tree.js";
+import type { ChildRunFinished } from "./delivery.js";
 
 export interface ReconcileDeps {
   pool: PlatformPool;
-  threads: ThreadStore;
   runtime: {
     stopChat(chatId: string): Promise<void>;
     canStopChat(chatId: string): boolean;
-    /** Places a parent chat's unconsumed child results as one steer turn. */
+    /** Delivers one ended child run's result to its parent. */
+    deliverChildResult(input: ChildRunFinished): Promise<void>;
+    /** Re-delivers the child results a parent chat never received. */
     deliverPending(chatId: string): Promise<boolean>;
   };
   log: Logger;
@@ -47,23 +47,18 @@ export async function failStaleRuns(
     failed += 1;
     await notifySubagentTree(deps.pool, run.thread_id);
 
-    if (run.parent_thread_id !== null && run.closed_at === null && run.parent_chat_id !== null) {
-      await deps.threads
-        .queueChildResult(run.parent_chat_id, {
-          type: "child_result",
-          thread_id: run.thread_id,
+    // An orphaned child still owes its parent a result.
+    if (run.parent_thread_id !== null && run.closed_at === null) {
+      await deps.runtime
+        .deliverChildResult({
+          child_thread_id: run.thread_id,
           run_id: run.id,
-          chat_id: run.chat_id,
-          agent_name: run.agent_name,
-          title: run.title,
           status: "failed",
           reason: "orphaned",
           final_text: "",
-          attachments: [],
-          started_at: pgTimestampToRfc3339(run.started_at),
         })
         .catch((error: unknown) => {
-          deps.log.warn({ err: error, runId: run.id }, "stale run child result queue failed");
+          deps.log.warn({ err: error, runId: run.id }, "stale run child result delivery failed");
         });
     }
 

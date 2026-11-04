@@ -1,8 +1,8 @@
-// Child results: two child runs finish while the parent is busy, the parent
-// takes one turn and one message with both results, both queued results
-// carry that parent run id, and the cards are projected from the placed
-// entry. A queued result survives a withdrawn user steer and a stop. A user
-// cancel of a child wakes the parent with cancelled/user.
+// Child results: two child runs finish while the parent is busy; each is
+// its own input in the parent's inbox, both are placed at one boundary (one
+// model call), and each card is projected from its placed entry. A queued
+// result survives a withdrawn user steer and a stop. A user cancel of a
+// child wakes the parent with cancelled/user.
 
 import crypto from "node:crypto";
 import { createServer } from "node:http";
@@ -160,7 +160,7 @@ describe("child result delivery", () => {
       .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
   }
 
-  it("delivers two finished children as one parent turn and one message", async () => {
+  it("delivers two finished children as separate inputs taken in one parent call", async () => {
     const parent = await startBusyParent("Two children");
     const first = await finishChild({
       parentThreadId: parent.threadId,
@@ -176,11 +176,11 @@ describe("child result delivery", () => {
     });
 
     await until(async () => {
-      const rows = await stack.env.db.query<{ consumed_by_run_id: string | null }>(
-        "SELECT consumed_by_run_id FROM child_result_deliveries WHERE parent_chat_id = $1",
+      const rows = await stack.env.db.query(
+        "SELECT 1 FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
         [parent.chatId],
       );
-      return rows.rows.length === 2 && rows.rows.every((row) => row.consumed_by_run_id === parent.runId);
+      return rows.rows.length === 2;
     });
     await until(async () => {
       const rows = await stack.env.db.query<{ status: string }>("SELECT status FROM agent_runs WHERE id = $1", [
@@ -189,10 +189,14 @@ describe("child result delivery", () => {
       return rows.rows[0]?.status !== "running" && rows.rows[0]?.status !== "queued";
     });
 
-    // One placement: one model request carries both results in one message.
-    const carrying = stack.mock.requests.filter((request) =>
-      userTexts(request.body).some((text) => text.includes("child one result") && text.includes("child two result")),
-    );
+    // One boundary places both: one model request carries both results.
+    const carrying = stack.mock.requests.filter((request) => {
+      const texts = userTexts(request.body);
+      return (
+        texts.some((text) => text.includes("child one result")) &&
+        texts.some((text) => text.includes("child two result"))
+      );
+    });
     expect(carrying).toHaveLength(1);
     expect(
       stack.mock.requests.filter((request) =>
@@ -260,15 +264,14 @@ describe("child result delivery", () => {
     await runtime.stopChat(child.chat_id);
 
     await until(async () => {
-      const rows = await stack.env.db.query<{ payload: Record<string, unknown>; consumed_by_run_id: string | null }>(
-        "SELECT event AS payload, consumed_by_run_id FROM child_result_deliveries WHERE parent_chat_id = $1",
+      const rows = await stack.env.db.query<{ payload: Record<string, unknown> }>(
+        "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
         [parent.chatId],
       );
       return (
         rows.rows.length === 1 &&
         rows.rows[0]!.payload.status === "cancelled" &&
-        rows.rows[0]!.payload.reason === "user" &&
-        rows.rows[0]!.consumed_by_run_id === parent.runId
+        rows.rows[0]!.payload.reason === "user"
       );
     });
     await until(async () => {
@@ -317,22 +320,14 @@ describe("child result delivery", () => {
       parent.chatId,
     ]);
     expect(rows.rows).toHaveLength(0);
-    const queued = await stack.env.db.query("SELECT 1 FROM child_result_deliveries WHERE parent_chat_id = $1", [
-      parent.chatId,
-    ]);
-    expect(queued.rows).toHaveLength(0);
+    const runtime2 = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
+    expect(await runtime2.chatQueue(parent.chatId)).toEqual([]);
   }, 30_000);
-  /** Whether the parent's results are taken and the conversation holds at
-   *  least `queued` queued submissions (the batch, and any user input). */
-  async function batchQueued(chatId: string, queued: number): Promise<boolean> {
-    const rows = await stack.env.db.query<{ taken: boolean; queued: string }>(
-      `SELECT bool_and(d.consumed_by_run_id IS NOT NULL) AS taken,
-              (SELECT count(*) FROM submissions s JOIN chat_conversations c ON c.conversation_id = s.conversation_id
-               WHERE c.chat_id = $1 AND s.status = 'queued') AS queued
-       FROM child_result_deliveries d WHERE d.parent_chat_id = $1`,
-      [chatId],
-    );
-    return rows.rows[0]?.taken === true && Number(rows.rows[0].queued) >= queued;
+  /** The kinds in the parent chat's queue, as the ThreadState frame shows
+   *  them. */
+  async function queueKinds(chatId: string): Promise<string[]> {
+    const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
+    return (await runtime.chatQueue(chatId)).map((item) => item.kind);
   }
 
   it("keeps a queued child result when the user withdraws a queued steer", async () => {
@@ -356,7 +351,7 @@ describe("child result delivery", () => {
       agentId: parent.agentId,
       text: "survivor result",
     });
-    await until(async () => batchQueued(parent.chatId, 2));
+    await until(async () => (await queueKinds(parent.chatId)).sort().join() === "child_result,message");
     const withdrawn = await stack.env.app.inject({
       method: "DELETE",
       url: `/api/v1/threads/${parent.chatId}/pending/${steerId}`,
@@ -390,7 +385,7 @@ describe("child result delivery", () => {
       agentId: parent.agentId,
       text: "kept after stop",
     });
-    await until(async () => batchQueued(parent.chatId, 1));
+    await until(async () => (await queueKinds(parent.chatId)).join() === "child_result");
     const before = stack.mock.requests.length;
     const runtime = (stack.env.app as unknown as { platform: { runtime: GuildRuntime } }).platform.runtime;
     await runtime.stopChat(parent.chatId);

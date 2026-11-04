@@ -49,16 +49,6 @@ export async function parentThreadById(pool: PlatformPool, threadId: string): Pr
   return res.rows[0] ?? null;
 }
 
-/** The root thread of a chat, or null. */
-export async function rootThreadForChat(pool: PlatformPool, chatId: string): Promise<ParentThread | null> {
-  const res = await pool.query<ParentThread>(
-    `${PARENT_SELECT}
-       WHERE t.chat_id = $1 AND t.parent_thread_id IS NULL`,
-    [chatId],
-  );
-  return res.rows[0] ?? null;
-}
-
 /** A run's stored status and start, or null. */
 export async function runState(
   pool: PlatformPool,
