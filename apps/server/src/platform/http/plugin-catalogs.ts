@@ -107,9 +107,14 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
         }
         const plugins = await Promise.all(
           index.plugins.map(async (p) => {
-            const approved = await gateway.registry.approvedBundle(admin.org_id, "integration", p.slug);
+            // Installed means the org has the integration row; an approved
+            // bundle left behind by a removed integration installs again.
+            const [approved, row] = await Promise.all([
+              gateway.registry.approvedBundle(admin.org_id, "integration", p.slug),
+              gateway.integrations.getByName(admin.org_id, p.slug),
+            ]);
             const latest = p.versions[0]!;
-            const installed = approved?.[0] ?? null;
+            const installed = row === null ? null : (approved?.[0] ?? null);
             return {
               ...p,
               latest: latest.version,

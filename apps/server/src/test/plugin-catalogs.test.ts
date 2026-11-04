@@ -210,6 +210,17 @@ describe("catalogs", () => {
     list = await api("GET", "/api/v1/admin/integrations/catalogs");
     entry = list.body.catalogs[0].plugins[0];
     expect(entry).toMatchObject({ installed_version: "1.1.0", update_available: false });
+
+    // Removing the integration leaves the approved bundle; the catalog lists
+    // the plugin as not installed and installs it again.
+    const shop = await api("GET", "/api/v1/admin/integrations");
+    const row = (shop.body.items as { name: string; id: string | null }[]).find((i) => i.name === "acme-cat");
+    expect((await api("DELETE", `/api/v1/admin/integrations/${row!.id}`)).status).toBe(200);
+    list = await api("GET", "/api/v1/admin/integrations/catalogs");
+    entry = list.body.catalogs[0].plugins[0];
+    expect(entry).toMatchObject({ installed_version: null, update_available: false });
+    const again = await api("POST", `/api/v1/admin/integrations/catalogs/${id}/install`, { slug: "acme-cat" });
+    expect(again.body.created).toBe(true);
   });
 
   it("refuse a bundle that does not match the listed sha256", async () => {
