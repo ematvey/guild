@@ -34,6 +34,7 @@ import { chatsStore, resetChatStores, useSidebarRows } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
 import { ThreadHeader } from "./thread-header";
 import { ThreadComposer } from "./thread-composer";
+import { NotificationsOffer } from "./notifications-offer";
 import { SidebarSurface } from "./surfaces/sidebar-surface";
 import { RoutePage } from "./surfaces/route-page";
 import { SettingsPage } from "./surfaces/settings-page";
@@ -796,6 +797,8 @@ function ThreadView(props: ThreadProps) {
                 {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
               </div>
             )}
+
+            <NotificationsOffer />
 
             <ThreadPane
               blocks={blocks}

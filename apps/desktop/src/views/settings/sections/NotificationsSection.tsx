@@ -15,6 +15,7 @@ import {
   enablePush,
   notificationPermission,
   pushBlocker,
+  pushErrorMessage,
   sendTestPush,
   type PushBlocker,
 } from "../../../lib/push";
@@ -51,13 +52,7 @@ export function NotificationsSection() {
     try {
       const result = device === "on" ? await disablePush() : await enablePush();
       if (!result.ok) {
-        const message =
-          result.error === "blocked"
-            ? "Notifications are blocked for this site. Allow them in the browser's site settings."
-            : result.error === "dismissed"
-              ? "The permission prompt was dismissed."
-              : result.error;
-        toast.error(message);
+        toast.error(pushErrorMessage(result.error));
       } else {
         toast.success(device === "on" ? "Notifications off for this device" : "Notifications on for this device");
       }

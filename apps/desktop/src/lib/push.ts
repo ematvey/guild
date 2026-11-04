@@ -12,10 +12,9 @@ import { HAS_SHELL } from "./session";
 export type PushBlocker = "desktop" | "unsupported" | "insecure" | "ios-not-installed";
 
 const DEVICE_KEY = "guild.push.device_id";
+/** Set once the reader turned the offer down; the banner stays away. */
+const DISMISSED_KEY = "guild.push.prompt_dismissed";
 
-/** The reason this device cannot use Web Push, or null. iOS only delivers
- *  push to a web app added to the Home Screen, so a Safari tab reads as
- *  "install first" instead of a silent no-op. */
 /** Register the worker on boot in the browser app. The registration must
  *  outlive a reload — a push subscription dies with it — and an installed
  *  app needs it for installability and offline launches. */
@@ -24,6 +23,9 @@ export function ensureServiceWorker(): void {
   void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
 }
 
+/** The reason this device cannot use Web Push, or null. iOS only delivers
+ *  push to a web app added to the Home Screen, so a Safari tab reads as
+ *  "install first" instead of a silent no-op. */
 export function pushBlocker(): PushBlocker | null {
   if (HAS_SHELL) return "desktop";
   if (typeof window === "undefined") return "unsupported";
@@ -52,6 +54,52 @@ export function deviceId(): string {
   } catch {
     return "unknown";
   }
+}
+
+/** True when the app runs from the Home Screen or an installed window, not
+ *  a browser tab. iOS installs have no other signal. */
+export function installedApp(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.matchMedia?.("(display-mode: standalone)").matches === true ||
+    (navigator as { standalone?: boolean }).standalone === true
+  );
+}
+
+/** Whether to offer notifications in the app: an installed app that can push,
+ *  with the permission still undecided, no subscription of its own, and no
+ *  earlier dismissal. No browser grants a permission prompt without a tap,
+ *  so this offer is the one route to a subscribed device. */
+export async function notificationsOfferWanted(): Promise<boolean> {
+  if (pushBlocker() !== null || !installedApp()) return false;
+  if (notificationPermission() !== "default") return false;
+  if (promptDismissed()) return false;
+  return (await currentSubscription()) === null;
+}
+
+function promptDismissed(): boolean {
+  try {
+    return localStorage.getItem(DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Keeps the offer away for this install. */
+export function dismissNotificationsOffer(): void {
+  try {
+    localStorage.setItem(DISMISSED_KEY, "1");
+  } catch {
+    /* a device without storage sees the offer again; harmless */
+  }
+}
+
+/** What a failed enable means to the reader. One mapping for the settings
+ *  page and the in-app offer. */
+export function pushErrorMessage(error: string): string {
+  if (error === "blocked") return "Notifications are blocked for this site. Allow them in the browser's site settings.";
+  if (error === "dismissed") return "The permission prompt was dismissed.";
+  return error;
 }
 
 async function registration(): Promise<ServiceWorkerRegistration> {

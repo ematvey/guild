@@ -3,12 +3,34 @@
 // pin the pure parts the UI branches on.
 
 import { describe, expect, it } from "vitest";
-import { deviceId, pushBlocker, urlBase64ToUint8Array } from "./push";
+import {
+  deviceId,
+  installedApp,
+  notificationsOfferWanted,
+  pushBlocker,
+  pushErrorMessage,
+  urlBase64ToUint8Array,
+} from "./push";
 
 describe("pushBlocker", () => {
   it("reports unsupported where there is no browser at all", () => {
     // Node: no window, so no service worker and no push manager.
     expect(pushBlocker()).toBe("unsupported");
+  });
+});
+
+describe("the in-app offer", () => {
+  it("never appears where the app cannot be installed or cannot push", async () => {
+    expect(installedApp()).toBe(false);
+    expect(await notificationsOfferWanted()).toBe(false);
+  });
+});
+
+describe("pushErrorMessage", () => {
+  it("names the fix for a blocked site and passes other errors through", () => {
+    expect(pushErrorMessage("blocked")).toContain("site settings");
+    expect(pushErrorMessage("dismissed")).toContain("dismissed");
+    expect(pushErrorMessage("subscription has no keys")).toBe("subscription has no keys");
   });
 });
 
