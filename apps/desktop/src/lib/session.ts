@@ -54,6 +54,14 @@ export function serverUrl(): string {
   return serverBase() || window.location.origin;
 }
 
+/** The current page at the server's stable web address — what "copy URL"
+ * hands out. In Tauri the webview location is tauri.localhost, so the
+ * path is re-rooted on the paired server. */
+export function shareableUrl(): string {
+  const { pathname, search, hash } = window.location;
+  return `${serverUrl().replace(/\/$/, "")}${pathname}${search}${hash}`;
+}
+
 export function wsUrl(): string {
   const base = serverBase();
   if (base) {

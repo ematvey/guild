@@ -3,6 +3,7 @@
 //! (blank secret = keep current), "new" when configuring from scratch.
 //! Enabling it puts a "Continue with SSO" button on the sign-in page.
 
+import { serverUrl } from "../../../lib/session";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { deleteOidc, putOidc, SETTINGS_PATHS } from "../../../lib/api/settings";
@@ -105,7 +106,7 @@ export default function SsoSection() {
           </FactCard>
           <FactCard label="Redirect URI (registered at the identity provider)" className="sm:col-span-2">
             <p className="break-all font-mono text-sm">
-              {cfg.redirect_uri ?? `${window.location.origin}/api/v1/auth/oidc/callback`}
+              {cfg.redirect_uri ?? `${serverUrl()}/api/v1/auth/oidc/callback`}
             </p>
           </FactCard>
         </FactGrid>

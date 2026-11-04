@@ -36,6 +36,7 @@ import {
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
+import { shareableUrl } from "../../lib/session";
 import { ThreadTitle } from "./blocks";
 
 export function ThreadHeader({
@@ -171,7 +172,7 @@ export function ThreadHeader({
             )}
             <DropdownMenuItem
               onSelect={() =>
-                void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))
+                void navigator.clipboard?.writeText(shareableUrl()).then(() => toast("Thread URL copied"))
               }
             >
               <Link2 className="size-4" />

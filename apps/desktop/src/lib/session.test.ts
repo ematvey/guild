@@ -34,6 +34,16 @@ describe("session", () => {
     expect(serverUrl()).toBe("http://localhost:18080");
   });
 
+  it("copies a Tauri page URL at the paired server, not tauri.localhost", async () => {
+    vi.stubGlobal("window", {
+      __TAURI_INTERNALS__: {},
+      location: { origin: "http://tauri.localhost", pathname: "/thread/abc", search: "?x=1", hash: "#m" },
+    });
+    vi.stubGlobal("localStorage", fakeStore({ "guild.serverUrl": "https://guild.example/" }));
+    const { shareableUrl } = await import("./session");
+    expect(shareableUrl()).toBe("https://guild.example/thread/abc?x=1#m");
+  });
+
   it("round-trips the bearer token", async () => {
     vi.stubGlobal("localStorage", fakeStore());
     const { clearToken, getToken, setToken } = await import("./session");
