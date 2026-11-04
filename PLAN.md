@@ -97,6 +97,20 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Runs follow pi-durable: findings (2026-11-04, branch
+  `spike/pi-durable-runs`).** `agent_runs` infers a run's end from the
+  first assistant message without a tool call, so a record can close while
+  pi-durable's run continues on a steer or child result. That run's later
+  answer never reaches the parent. pi-durable's turn is `pi.live.run`
+  (the bridge's `run_start`/`run_end`), and an input waiting at the final
+  boundary starts a new run. Plan A: make `agent_runs` a projection of that
+  run, keeping its ids, frames and URLs. Native task-owned subagents
+  (plan B) need one harness for a whole agent tree. pi-durable assumes
+  one harness per storage, with no cross-process notification, and
+  worker mode runs one harness per chat. B is therefore a product decision
+  (one worker per tree) or waits on upstream (plan C). Details:
+  `docs/specs/2026-11-04-runs-follow-pi-durable.md`.
+
 - **Integrations are their own page: installed vs catalog, landing pages,
   setup notes, usage (2026-11-04).** The Settings → Integrations section
   (a card grid in the settings column, with Catalogs, Install plugin and
