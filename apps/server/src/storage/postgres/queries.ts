@@ -157,6 +157,22 @@ export async function chatSubmission(
   return result.rows[0] ?? null;
 }
 
+/** The submission a chat's conversation admitted under a request id; null
+ *  when the conversation never admitted it. */
+export async function admittedSubmission(
+  db: DurableQueryable,
+  chatId: string,
+  requestId: string,
+): Promise<number | null> {
+  const result = await db.query<{ id: string }>(
+    `SELECT s.id FROM submissions s JOIN chat_conversations c ON c.conversation_id = s.conversation_id
+     WHERE c.chat_id = $1 AND s.request_id = $2 LIMIT 1`,
+    [chatId, JSON.stringify(requestId)],
+  );
+  const id = result.rows[0]?.id;
+  return id === undefined ? null : Number(id);
+}
+
 /** The request id a submission carries (its JSON text unwrapped); null
  *  when the submission is gone or has none. */
 export async function submissionRequestId(db: DurableQueryable, submissionId: number): Promise<string | null> {

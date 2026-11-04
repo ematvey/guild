@@ -1,7 +1,9 @@
-// Child-run delivery: a terminal child run writes one child_result event in
-// the parent thread, then a parent run drains the unconsumed batch in one
-// transaction and receives it as one steer input. A delivery never enqueues
-// its own turn.
+// Child-run delivery: a terminal child run queues one result for its parent
+// chat, then a parent run drains the unconsumed results in one transaction
+// and places them as one steer batch (chats/child-result.ts). The parent
+// thread's cards are projected from that batch's entry when the
+// conversation places it, so a result the parent never received never
+// shows. A delivery never enqueues its own turn.
 
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
@@ -36,8 +38,9 @@ export interface DeliveryRuntime {
   /** Opens a run row for a parent thread that is idle when the delivery
    *  lands. Returns the new run id. */
   beginRun(thread: { id: string; agent_id: string; user_id: string; depth: number }): Promise<string>;
-  /** Places or merges one steer input into the parent chat. */
-  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  /** Places a batch of child results in the parent chat: merged into its
+   *  pending child-result steer, else submitted as a new one. */
+  deliverChildResults(chatId: string, orgId: string, results: ChildResultRecord[], model: string | null): Promise<void>;
 }
 
 export interface ChildDeliveryDeps {
@@ -46,27 +49,6 @@ export interface ChildDeliveryDeps {
   threads: ThreadStore;
   runtime: DeliveryRuntime;
   log: Logger;
-}
-
-function formatChildResults(rows: readonly ChildResultRecord[]): string {
-  return rows
-    .map((row) => {
-      const event = row.event;
-      const reason = event.reason === null || event.reason === undefined ? "" : ` (${event.reason})`;
-      const lines = [
-        `Child result at ${row.created_at}:`,
-        `thread ${event.thread_id} run ${event.run_id}: ${event.status}${reason}`,
-      ];
-      const text = event.final_text.trim();
-      lines.push(text === "" ? "(no final text)" : text);
-      if (event.attachments.length > 0) {
-        lines.push(
-          `Files: ${event.attachments.map((attachment) => `${attachment.filename} (${attachment.id})`).join(", ")}`,
-        );
-      }
-      return lines.join("\n");
-    })
-    .join("\n\n");
 }
 
 /** The terminal assistant text of one child run (the message with no tool
@@ -101,7 +83,7 @@ export class ChildResultDelivery {
     const startedAt = run?.started_at ?? null;
 
     const attachments = await this.attachmentsOf(input.attachment_event_id ?? null);
-    await threads.appendChildResult(parentRow.chat_id, {
+    await threads.queueChildResult(parentRow.chat_id, {
       type: "child_result",
       thread_id: input.child_thread_id,
       run_id: input.run_id,
@@ -126,7 +108,7 @@ export class ChildResultDelivery {
     return this.wake(parentRow);
   }
 
-  /** Places every unconsumed result of the parent chat as one steer input in
+  /** Places every unconsumed result of the parent chat as one steer batch in
    *  one run. A batch that cannot be placed goes back to the unconsumed pool
    *  so a later attempt can still deliver it. */
   private async wake(parentRow: ParentThread): Promise<boolean> {
@@ -154,7 +136,7 @@ export class ChildResultDelivery {
       return false;
     }
     try {
-      await runtime.deliverSteer(parentRow.chat_id, parentRow.org_id, formatChildResults(batch), parentRow.model);
+      await runtime.deliverChildResults(parentRow.chat_id, parentRow.org_id, batch, parentRow.model);
     } catch (error) {
       await threads.releaseChildResults(batch.map((row) => row.id)).catch((releaseError: unknown) => {
         log.warn({ err: releaseError, chatId: parentRow.chat_id }, "child result release failed");

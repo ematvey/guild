@@ -21,6 +21,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { UserEntry } from "@earendil-works/pi-durable";
 import { guildProviderId } from "../harness/models.js";
 import { waitFor } from "./support/wait.js";
+import { ThreadStore } from "../platform/store/thread.js";
 
 // The turn flow waits on async bridge writes + the notify round-trip.
 const TEST_TIMEOUT = 30_000;
@@ -336,13 +337,7 @@ describe("member-socket feed", () => {
     const ws = await memberSocket();
 
     // A committed event so the bracket carries rows.
-    const append = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/chats/${chat.id}/thread`,
-      headers: auth(stack.memberToken),
-      payload: { type: "system_message", content: "sync marker" },
-    });
-    expect(append.statusCode).toBe(200);
+    await new ThreadStore(stack.env.db).appendEvent(chat.id, { type: "system_message", content: "sync marker" });
     await waitFrame(ws, (f) => f.type === "thread_state" && f.chat_id === chat.id);
 
     ws.send(JSON.stringify({ type: "sync", chat_id: chat.id }));
@@ -601,13 +596,7 @@ describe("member-socket feed", () => {
     const stranger = await memberSocket(await strangerToken("fix-fanout-stranger@example.test"));
 
     const before = stranger.frames.length;
-    const res = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/chats/${chat.id}/thread`,
-      headers: auth(stack.memberToken),
-      payload: { type: "system_message", content: "fanout" },
-    });
-    expect(res.statusCode).toBe(200);
+    await new ThreadStore(stack.env.db).appendEvent(chat.id, { type: "system_message", content: "fanout" });
 
     for (const ws of [first, second]) {
       const view = await waitFrame(ws, (f) => f.type === "thread_state" && f.chat_id === chat.id);
@@ -1383,13 +1372,10 @@ describe("member-socket view routing", () => {
       // Opening the chat moves the socket's view: the next write reaches it.
       onOther.send(JSON.stringify({ type: "sync", chat_id: shown.id }));
       await waitFrame(onOther, (f) => f.type === "sync_done" && f.chat_id === shown.id);
-      const appended = await stack.env.app.inject({
-        method: "POST",
-        url: `/api/v1/chats/${shown.id}/thread`,
-        headers: auth(stack.memberToken),
-        payload: { type: "system_message", content: "after the switch" },
+      await new ThreadStore(stack.env.db).appendEvent(shown.id, {
+        type: "system_message",
+        content: "after the switch",
       });
-      expect(appended.statusCode).toBe(200);
       for (const ws of [onChat, onOther]) {
         await waitFrame(
           ws,

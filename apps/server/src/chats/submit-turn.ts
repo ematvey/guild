@@ -193,15 +193,22 @@ export async function submitTurn(
       void chats.runtime.generateThreadTitle(chatId, adopted.thread_id).catch(() => {});
     }
   } catch (error) {
-    // The delivery failed after the accept committed: mark the command so
-    // it stops claiming a pending turn (the echo stays — the user typed it).
-    await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
-    await chats.chats.reconcileGenerating(user.org_id, chatId).catch(() => {});
-    throw error;
+    // The delivery failed after the accept committed. A turn the
+    // conversation admitted stands (the failure came after it); one it never
+    // admitted leaves the thread with its command, so the thread shows only
+    // what the agent has and a retry under the same id starts over.
+    const admitted = await chats.runtime.discardUnsent(chatId, commandId).catch(() => undefined);
+    if (admitted === undefined) await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
+    if (admitted === undefined || admitted === null) {
+      await chats.chats.reconcileGenerating(user.org_id, chatId).catch(() => {});
+      throw error;
+    }
+    await chats.turnCommands.submitted(commandId, `sub:${admitted}`);
   }
   await chats.chats.reconcileGenerating(user.org_id, chatId);
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
-  return commandAck(refreshed ?? command);
+  // An admitted turn implies the accept committed, so `command` is set.
+  return commandAck(refreshed ?? command!);
 }
 
 /** The model-facing image parts of the arrival turn (data URIs), gated by

@@ -13,6 +13,8 @@ import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./threa
 import { readThreadTranscript } from "./thread-read.js";
 import { notifySubagentTree } from "./tree.js";
 import type { Agent, AgentRun, AgentThread } from "./types.js";
+import { noticeEntry } from "../chats/notice.js";
+import type { EntryDraft } from "@earendil-works/pi-durable";
 import { structured } from "../harness/tool-schema.js";
 
 export interface SubagentsRuntime {
@@ -26,8 +28,11 @@ export interface SubagentsRuntime {
       content: string;
       images: { mimeType: string; data: string }[];
       model: string | null;
+      entry?: { kind: string };
     },
   ): Promise<number>;
+  /** Writes an entry into another chat's conversation. */
+  writeEntry(chatId: string, entry: EntryDraft): Promise<void>;
   /** Stops the chat's in-flight turn. */
   stopChat(chatId: string): Promise<void>;
   /** True when this process can stop that chat's turn. A worker owns one
@@ -320,14 +325,15 @@ export async function send(
   const { run, agent: target } = await startDelegatedRun(context, thread, thread.agent_id, text, "send_submit_failed");
   // The row lives in the child's own parent chat, whichever ancestor sent
   // the message: the child's result is delivered there, so a row written in
-  // the caller's chat would never receive one.
-  const rowThread =
-    thread.parent_thread_id === null
-      ? await context.store.threads.threadById(callerThreadId(context))
-      : await context.store.threads.threadById(thread.parent_thread_id);
+  // the caller's chat would never receive one. In the caller's own chat the
+  // row shows the caller's tool call. Sent from further up, it is a notice
+  // in the parent's conversation: that agent made no call, so it reads the
+  // turn its child was given before the child's result arrives.
+  const parentThreadId = thread.parent_thread_id ?? callerThreadId(context);
+  const rowThread = await context.store.threads.threadById(parentThreadId);
   if (rowThread !== null) {
-    await context.threads.appendEvent(rowThread.chat_id, {
-      type: "child_spawned",
+    const event = {
+      type: "child_spawned" as const,
       thread_id: thread.id,
       run_id: run.id,
       chat_id: thread.chat_id,
@@ -335,7 +341,18 @@ export async function send(
       title: thread.title ?? "",
       status: "running",
       task: text,
-    });
+    };
+    if (parentThreadId === callerThreadId(context)) {
+      await context.threads.appendEvent(rowThread.chat_id, event);
+    } else {
+      await context.runtime.writeEntry(
+        rowThread.chat_id,
+        noticeEntry(
+          `An ancestor thread sent your child thread ${thread.id} ("${thread.title ?? ""}", agent ${target.name}) a new turn: ${text}`,
+          event,
+        ),
+      );
+    }
   }
   return {
     thread_id: thread.id,

@@ -28,6 +28,7 @@ import { cancelThread, closeThread } from "../../agents/subagents.js";
 import { chatSubagentNodes, chatTreeFacts } from "../../agents/tree.js";
 import { MAX_AGENT_DESCRIPTION_CHARS } from "../../agents/types.js";
 import { installSpecialists } from "../../agents/specialists.js";
+import { noticeEntry } from "../../chats/notice.js";
 import type {
   Agent,
   AgentRoutineDelivery,
@@ -671,15 +672,21 @@ export function registerAgentRoutes(
       return sendJson(reply, await cancelThread(context, thread.id));
     }
     const result = await closeThread(context, thread.id);
-    // A close leaves a row in the parent chat, so the child row stays
-    // closed after a reload. A repeat close writes nothing.
+    // A close is a notice in the parent's conversation: the parent agent
+    // learns the child takes no more sends, and the parent chat's closed
+    // row (kept across a reload) is projected from it. A repeat close
+    // writes nothing.
     if (result.closed > 0 && thread.parent_thread_id !== null) {
       const parent = await store.threads.threadById(thread.parent_thread_id);
       if (parent !== null) {
-        await chats.threads.appendEvent(parent.chat_id, {
-          type: "child_closed",
-          thread_id: thread.id,
-        });
+        const title = thread.title?.trim() || thread.id;
+        await chats.runtime.writeEntry(
+          parent.chat_id,
+          noticeEntry(
+            `The user closed child thread ${thread.id} ("${title}"): its turns are cancelled and it takes no more sends.`,
+            { type: "child_closed", thread_id: thread.id },
+          ),
+        );
       }
     }
     return sendJson(reply, result);

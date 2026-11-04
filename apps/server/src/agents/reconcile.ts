@@ -49,7 +49,7 @@ export async function failStaleRuns(
 
     if (run.parent_thread_id !== null && run.closed_at === null && run.parent_chat_id !== null) {
       await deps.threads
-        .appendChildResult(run.parent_chat_id, {
+        .queueChildResult(run.parent_chat_id, {
           type: "child_result",
           thread_id: run.thread_id,
           run_id: run.id,
@@ -63,7 +63,7 @@ export async function failStaleRuns(
           started_at: pgTimestampToRfc3339(run.started_at),
         })
         .catch((error: unknown) => {
-          deps.log.warn({ err: error, runId: run.id }, "stale run child result append failed");
+          deps.log.warn({ err: error, runId: run.id }, "stale run child result queue failed");
         });
     }
 

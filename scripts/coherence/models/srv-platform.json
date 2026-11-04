@@ -586,16 +586,6 @@
    "role": "domain"
   },
   {
-   "where": "apps/server/src/integrations/superproxy/execute.ts",
-   "concept": "integration",
-   "role": "domain"
-  },
-  {
-   "where": "apps/server/src/integrations/superproxy/integration.ts",
-   "concept": "integration",
-   "role": "domain"
-  },
-  {
    "where": "apps/server/src/platform/provider/types.ts",
    "concept": "message",
    "role": "domain"

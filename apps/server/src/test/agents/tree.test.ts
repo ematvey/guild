@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { waitFor } from "../support/wait.js";
 import { setupGatewayStack, type GatewayStack } from "../support/gateway-stack.js";
 
 let stack: GatewayStack;
@@ -286,10 +287,15 @@ describe("thread stop actions", () => {
       payload: {},
     });
     expect(first.statusCode, first.body).toBe(200);
-    const closedEvents = await stack.env.db.query<{ payload: { thread_id: string } }>(
-      "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_closed' ORDER BY seq",
-      [parentChatId],
-    );
+    // The close is a notice in the parent's conversation; the row is
+    // projected from it.
+    const closedRows = () =>
+      stack.env.db.query<{ payload: { thread_id: string } }>(
+        "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_closed' ORDER BY seq",
+        [parentChatId],
+      );
+    await waitFor(async () => (await closedRows()).rows.length === 1, 10_000, 50, "no child_closed row");
+    const closedEvents = await closedRows();
     expect(closedEvents.rows).toHaveLength(1);
     expect(closedEvents.rows[0]!.payload.thread_id).toBe(child.threadId);
 

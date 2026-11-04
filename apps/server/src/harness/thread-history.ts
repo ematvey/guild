@@ -7,6 +7,7 @@
 // SQL-side LIMIT with hard clamps, cursor pagination instead of offsets,
 // per-event text caps, and snippet-only search hits (never whole messages).
 
+import { threadEventText } from "../platform/domain/thread-events.js";
 import { Type } from "typebox";
 import {
   defineTool,
@@ -59,22 +60,6 @@ const searchOutput = Type.Object({
   ),
   truncated: Type.Boolean(),
 });
-
-/** Model-visible text of one thread event: user/system content, the
- *  assistant message's text blocks (reasoning and tool_call blocks dropped),
- *  or a tool result's content. Empty string when the event carries none. */
-function eventText(type: string, payload: Record<string, unknown>): string {
-  if (type === "user_message" || type === "system_message" || type === "tool_result") {
-    return typeof payload.content === "string" ? payload.content : "";
-  }
-  if (type === "assistant_message" && Array.isArray(payload.blocks)) {
-    return (payload.blocks as { type?: string; text?: string }[])
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => b.text)
-      .join("\n");
-  }
-  return "";
-}
 
 function clip(text: string, max = MAX_EVENT_CHARS): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
@@ -149,7 +134,7 @@ export function createThreadHistoryTools(deps: ThreadHistoryDeps): ToolRegistrat
         seq: row.seq,
         type: row.type,
         ts: row.created_at.toISOString(),
-        text: clip(eventText(row.type, row.payload)),
+        text: clip(threadEventText(row.type, row.payload)),
       }));
       return {
         structuredOutput: { events, nextBeforeSeq: more ? events[events.length - 1]!.seq : null },
@@ -193,7 +178,7 @@ export function createThreadHistoryTools(deps: ThreadHistoryDeps): ToolRegistrat
         seq: row.seq,
         type: row.type,
         ts: row.created_at.toISOString(),
-        snippet: snippetOf(clip(eventText(row.type, row.payload), 8 * MAX_EVENT_CHARS), lower),
+        snippet: snippetOf(clip(threadEventText(row.type, row.payload), 8 * MAX_EVENT_CHARS), lower),
       }));
       return { structuredOutput: { hits, truncated } };
     },

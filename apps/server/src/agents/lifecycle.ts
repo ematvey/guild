@@ -6,13 +6,14 @@
 
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
-import type { ThreadEventRow } from "../platform/domain/thread-events.js";
+import { threadEventText, type ThreadEventRow } from "../platform/domain/thread-events.js";
 import { insertChunks } from "./search.js";
+import { insertChunkOnce } from "./store/chunks.js";
 import type { AgentConflictJournal } from "./conflict.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
 import { assistantTextForRun, type ChildResultDelivery, type ChildRunFinished } from "./delivery.js";
-import { chatThreadNode } from "./store/bindings.js";
+import { chatThreadAgent, chatThreadNode } from "./store/bindings.js";
 import { turnEventsSince } from "./store/events.js";
 import {
   cancelOpenRuns,
@@ -26,6 +27,8 @@ import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
 const MAX_CHUNK_CHARS = 4_000;
+/** The conversation events a run's search chunk carries. */
+const INDEXED_TYPES = new Set(["user_message", "assistant_message", "child_result"]);
 
 interface TurnEvent {
   seq: number;
@@ -227,10 +230,10 @@ export class AgentRunLifecycle {
     let seqTo: number | null = null;
     let used = 0;
     for (const event of events) {
-      if (event.type !== "user_message" && event.type !== "assistant_message") continue;
-      const text = event.type === "user_message" ? String(event.payload.content ?? "") : textOf(event.payload);
+      if (!INDEXED_TYPES.has(event.type)) continue;
+      const text = threadEventText(event.type, event.payload);
       if (text.trim() === "") continue;
-      const role = event.type === "user_message" ? "User" : "Assistant";
+      const role = event.type === "assistant_message" ? "Assistant" : "User";
       const line = `${role}: ${text}`;
       const room = MAX_CHUNK_CHARS - used;
       if (room <= 0) break;
@@ -249,6 +252,24 @@ export class AgentRunLifecycle {
         text: parts.join("\n\n"),
       },
     ]);
+  }
+
+  /** Indexes a message posted into a thread outside its runs (send_message:
+   *  a routine feed has no run to index it at the run's end). Idempotent
+   *  per row, so a projection replay adds nothing. */
+  async postedMessage(chatId: string, row: ThreadEventRow): Promise<void> {
+    if (row.event.type !== "assistant_message") return;
+    const thread = await chatThreadAgent(this.deps.pool, chatId);
+    if (thread === null) return;
+    const text = threadEventText(row.event.type, row.event as unknown as Record<string, unknown>);
+    if (text.trim() === "") return;
+    await insertChunkOnce(this.deps.pool, {
+      thread_id: thread.id,
+      agent_id: thread.agent_id,
+      seq_from: row.seq,
+      seq_to: row.seq,
+      text: clip(`Assistant: ${text}`, MAX_CHUNK_CHARS),
+    });
   }
 
   /** A user stop of a child chat is a delivered cancellation: its queued

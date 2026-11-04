@@ -19,6 +19,8 @@ import {
   type AgentEventStream,
   type Conversation,
   type ConversationId,
+  type EntryDraft,
+  type InboxItem,
   type SubmissionId,
   type Extension,
   type Registry,
@@ -32,7 +34,7 @@ import type { Logger } from "pino";
 import { type PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
 import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
-import { chatsWithWork, durableSchemaVersion } from "../storage/postgres/queries.js";
+import { admittedSubmission, chatsWithWork, durableSchemaVersion } from "../storage/postgres/queries.js";
 import type { PlatformPool } from "../platform/db.js";
 import { assertPlatformSchema } from "../platform/migrations.js";
 import type { PlatformStores } from "../platform/stores.js";
@@ -42,7 +44,6 @@ import type { TraceStore } from "../platform/trace.js";
 import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { uuidv7 } from "../platform/time.js";
 import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
 import type { SandboxTarget } from "../sandbox/client.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
@@ -58,6 +59,19 @@ import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.j
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink, type LiveBuffers } from "../chats/bridge.js";
 import { agentMessageEntry } from "../chats/agent-message.js";
+import {
+  childResultEntry,
+  childResultsText,
+  childResultWrite,
+  mergeIntoPendingBatch,
+  queuedChildResults,
+  type QueuedChildResults,
+} from "../chats/child-result.js";
+import type { ChildResultRecord } from "../platform/store/thread.js";
+import { uuidv5 } from "../platform/time.js";
+
+/** Namespace of child-result batch request ids. */
+const CHILD_RESULT_REQUEST_NS = "1b671a64-40d5-491e-99b0-da01ff1f3341";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import { createGuildExtension } from "./extension.js";
 import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
@@ -65,7 +79,6 @@ import { ConversationDirectory } from "./conversation-directory.js";
 import { SingleFlight, ConversationAdmissions, AdmissionCancelled } from "./operations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
-import { appendToPendingSteer } from "./inbox-merge.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./user-mcp.js";
 import { SkillRuntime } from "./skills.js";
@@ -210,8 +223,9 @@ export class GuildRuntime {
     this.host = new ConversationHost((step, error) => log.warn({ err: error, step }, "harness teardown step failed"));
     this.turns = turnBackend(deps.placement, {
       submit: (chatId, orgId, input, signal) => this.admitInProcess(chatId, orgId, input, signal),
-      deliverSteer: (chatId, orgId, text, model) => this.deliverSteerInProcess(chatId, orgId, text, model),
-      deliverMessage: (chatId, orgId, text, model) => this.deliverMessageInProcess(chatId, orgId, text, model),
+      deliverChildResults: (chatId, orgId, results, model) =>
+        this.deliverChildResultsInProcess(chatId, orgId, results, model),
+      writeEntry: (chatId, entry) => this.writeEntryInProcess(chatId, entry),
       steer: (chatId, submissionId) => this.steerInProcess(chatId, submissionId),
       withdraw: (chatId, submissionId) => this.withdrawInProcess(chatId, submissionId),
       stop: (chatId) => this.stopInProcess(chatId),
@@ -233,7 +247,11 @@ export class GuildRuntime {
       chats: stores.chats,
       agents: this.agents,
     });
-    this.conflicts = new AgentConflictJournal({ pool, store: this.agents, threads: stores.threads });
+    this.conflicts = new AgentConflictJournal({
+      pool,
+      store: this.agents,
+      writeEntry: (chatId, entry) => this.writeEntry(chatId, entry),
+    });
     this.childDelivery = new ChildResultDelivery({
       pool,
       store: this.agents,
@@ -241,7 +259,7 @@ export class GuildRuntime {
       log,
       runtime: {
         beginRun: (thread) => this.binding.beginMessageRun(thread),
-        deliverSteer: (chatId, orgId, text, model) => this.deliverChildSteer(chatId, orgId, text, model),
+        deliverChildResults: (chatId, orgId, results, model) => this.deliverChildResults(chatId, orgId, results, model),
       },
     });
     this.agentRuns = new AgentRunLifecycle({
@@ -337,6 +355,7 @@ export class GuildRuntime {
       ...(objects !== undefined ? { spill: { artifacts: stores.toolArtifacts, objects } } : {}),
       agentRuns: {
         assistantEvent: (chatId, row) => this.agentRuns.assistantEvent(chatId, row),
+        postedMessage: (chatId, row) => this.agentRuns.postedMessage(chatId, row),
         runEnd: (chatId, failure) => {
           this.forgetRun(chatId);
           return this.agentRuns.runEnd(chatId, failure);
@@ -451,7 +470,7 @@ export class GuildRuntime {
       executors: this.executors,
       turns: {
         submitTurn: (chatId, orgId, input) => this.submitTurn(chatId, orgId, input),
-        deliverMessage: (chatId, orgId, text, model) => this.deliverAgentMessage(chatId, orgId, text, model),
+        writeEntry: (chatId, entry) => this.writeEntry(chatId, entry),
         stopChat: (chatId) => this.stopChat(chatId),
         canStopChat: (chatId) => this.canStopChat(chatId),
       },
@@ -753,10 +772,30 @@ export class GuildRuntime {
   private async sweepExpiredCommands(): Promise<void> {
     try {
       const swept = await this.stores.turnCommands.sweepExpired(15 * 60);
-      if (swept > 0) this.log.warn({ swept }, "expired pending turn commands failed by sweep");
+      if (swept.length > 0) this.log.warn({ swept: swept.length }, "expired pending turn commands failed by sweep");
+      for (const command of swept) await this.discardUnsent(command.chat_id, command.id);
     } catch (error) {
       this.log.warn({ err: error }, "turn command sweep failed");
     }
+  }
+
+  /** The submission a chat's conversation admitted under a request id, or
+   *  null when it never did. */
+  admittedSubmission(chatId: string, requestId: string): Promise<number | null> {
+    return admittedSubmission(this.pool, chatId, requestId);
+  }
+
+  /** Removes a user turn that never reached the conversation: its echo
+   *  leaves the thread and its command row goes, so a retry under the same
+   *  id starts over. An admitted turn is left alone. Returns the admitted
+   *  submission id, or null when the turn was discarded. */
+  async discardUnsent(chatId: string, requestId: string): Promise<number | null> {
+    const admitted = await this.admittedSubmission(chatId, requestId);
+    if (admitted !== null) return admitted;
+    await this.stores.turnCommands.discardUnsubmitted(requestId);
+    await this.stores.threads.deleteUnsentEcho(chatId, requestId);
+    await this.stores.chats.reconcileGenerating(await this.stores.chats.requireOrgOf(chatId), chatId);
+    return null;
   }
 
   /** Maps the chats whose conversation has journal work: live tasks,
@@ -987,57 +1026,67 @@ export class GuildRuntime {
     await this.childDelivery.deliver(input);
   }
 
-  /** Places one drained child-result batch as a steer input: merge into a
-   *  pending unplaced steer item, else submit a new steer. Never enqueues a
-   *  follow-up turn. */
-  deliverChildSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
-    return this.turns.deliverSteer(chatId, orgId, text, model);
-  }
-
-  /** Posts an agent message into a chat's conversation (send_message). The
-   *  write lands at once when the chat is idle, else at the turn's next
-   *  boundary; the transcript row is projected from the entry. */
-  deliverAgentMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
-    return this.turns.deliverMessage(chatId, orgId, text, model);
-  }
-
-  private async deliverMessageInProcess(
+  /** Places one drained child-result batch in the parent chat (worker IPC
+   *  routes it to the chat's owner). */
+  deliverChildResults(
     chatId: string,
     orgId: string,
-    text: string,
+    results: ChildResultRecord[],
+    model: string | null,
+  ): Promise<void> {
+    return this.turns.deliverChildResults(chatId, orgId, results, model);
+  }
+
+  /** Merges the batch into the pending child-result steer, else submits it
+   *  as a new steer whose entry carries the events; the cards are projected
+   *  from that entry once placed. The request id is derived from the
+   *  results, so a redelivered batch is never admitted twice. */
+  private async deliverChildResultsInProcess(
+    chatId: string,
+    orgId: string,
+    results: ChildResultRecord[],
     model: string | null,
   ): Promise<void> {
     await this.start();
     const conversation = await this.conversationForChat(chatId);
-    await conversation.submit({ type: "write", entry: agentMessageEntry(orgId, model, text) }, BACKGROUND_CONTEXT);
-    await this.reconcileConversation(chatId, Number(conversation.id));
-  }
-
-  private async deliverSteerInProcess(
-    chatId: string,
-    orgId: string,
-    text: string,
-    model: string | null,
-  ): Promise<void> {
-    await this.start();
-    const conversation = await this.conversationForChat(chatId);
-    const pending = await conversation.commit(async (tx) => {
-      const inbox = await tx.doc(InboxDoc, conversation.id);
-      const item = inbox.items.find((candidate) => candidate.mode === "steer");
-      return item === undefined ? null : Number(item.id);
-    }, BACKGROUND_CONTEXT);
-    if (pending !== null && (await appendToPendingSteer(conversation, pending, text))) {
+    const merged = await conversation.commit(
+      async (tx) => mergeIntoPendingBatch((await tx.doc(InboxDoc, conversation.id)).items as InboxItem[], results),
+      BACKGROUND_CONTEXT,
+    );
+    if (merged) {
       await this.reconcileConversation(chatId, Number(conversation.id));
       return;
     }
     await this.submitTurn(chatId, orgId, {
       orgId,
-      requestId: uuidv7(),
-      content: text,
+      requestId: uuidv5(CHILD_RESULT_REQUEST_NS, results.map((result) => result.id).join(",")),
+      content: childResultsText(results),
       images: [],
       model,
       sendMode: "steer",
+      entry: childResultEntry(results.map((result) => result.event)),
     });
+  }
+
+  /** Writes one entry into a chat's conversation: a posted agent message
+   *  (send_message), a notice another chat's work caused. It lands at once
+   *  when the chat is idle, else at the turn's next boundary; the transcript
+   *  row is projected from the entry. Worker IPC routes it to the chat's
+   *  owner. */
+  writeEntry(chatId: string, entry: EntryDraft): Promise<void> {
+    return this.turns.writeEntry(chatId, entry);
+  }
+
+  /** Posts an agent message into a chat's conversation (send_message). */
+  deliverAgentMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void> {
+    return this.writeEntry(chatId, agentMessageEntry(orgId, model, text));
+  }
+
+  private async writeEntryInProcess(chatId: string, entry: EntryDraft): Promise<void> {
+    await this.start();
+    const conversation = await this.conversationForChat(chatId);
+    await conversation.submit({ type: "write", entry }, BACKGROUND_CONTEXT);
+    await this.reconcileConversation(chatId, Number(conversation.id));
   }
 
   /** Submits a user turn into the chat's conversation: the model provider
@@ -1110,7 +1159,9 @@ export class GuildRuntime {
     // verbatim; images make the content an array, so only its text part
     // carries the directive.
     const directive =
-      owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
+      owner === null || input.entry !== undefined
+        ? null
+        : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
     signal.throwIfAborted();
     const submission = await conversation.submit(
       {
@@ -1123,6 +1174,7 @@ export class GuildRuntime {
               : `${content}\n\n${directive}`,
         requestId: input.requestId,
         ...(input.sendMode === "steer" ? { whenBusy: "steer" as const } : {}),
+        ...(input.entry === undefined ? {} : { entry: input.entry }),
       },
       BACKGROUND_CONTEXT,
     );
@@ -1202,10 +1254,39 @@ export class GuildRuntime {
   private async stopInProcess(chatId: string): Promise<void> {
     const conversation = await this.attachedConversation(chatId);
     if (!conversation) return;
+    const kept = await this.withdrawChildResults(conversation);
     await conversation
       .abort(BACKGROUND_CONTEXT)
       .catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
+    for (const queued of kept) {
+      await conversation
+        .submit({ type: "write", entry: childResultWrite(queued) }, BACKGROUND_CONTEXT)
+        .catch((error) => this.log.warn({ err: error, chatId }, "stopped child result write failed"));
+    }
+    if (kept.length > 0) await this.reconcileConversation(chatId, Number(conversation.id));
     await this.stores.chats.setGenerating(await this.stores.chats.requireOrgOf(chatId), chatId, false);
+  }
+
+  /** Withdraws the child-result inputs still queued in a conversation that
+   *  is being stopped. A stop withdraws every queued input, and a result
+   *  must not vanish with it: the caller writes each withdrawn one back as
+   *  an entry, which starts no run. Only results this call withdrew are
+   *  returned; one placed meanwhile is already in the conversation. */
+  private async withdrawChildResults(conversation: Conversation): Promise<QueuedChildResults[]> {
+    const queued = await conversation.commit(
+      async (tx) => queuedChildResults((await tx.doc(InboxDoc, conversation.id)).items as InboxItem[]),
+      BACKGROUND_CONTEXT,
+    );
+    const withdrawn: QueuedChildResults[] = [];
+    for (const item of queued) {
+      const outcome = await this.harness!.abortSubmission(
+        item.submissionId as SubmissionId,
+        BACKGROUND_CONTEXT,
+        conversation.id,
+      );
+      if (outcome === "aborted") withdrawn.push(item);
+    }
+    return withdrawn;
   }
 
   /** Starts a conversation-owned compaction and returns its durable task identity. */

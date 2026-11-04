@@ -1,6 +1,8 @@
 // Workspace conflict journal: two running turns on overlapping paths, with
 // the notice delivered as a system_message in the other thread.
 
+import type { EntryDraft } from "@earendil-works/pi-durable";
+import { noticeEventOf } from "../../chats/notice.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { UserRow } from "../../platform/store/identity.js";
@@ -18,6 +20,7 @@ dbDescribe("agent workspace conflict journal", () => {
   let store: AgentStore;
   let threads: ThreadStore;
   let journal: AgentConflictJournal;
+  const written: { chatId: string; entry: EntryDraft }[] = [];
   let orgId: string;
   let owner: UserRow;
   let agent: Awaited<ReturnType<AgentStore["create"]>>;
@@ -26,7 +29,17 @@ dbDescribe("agent workspace conflict journal", () => {
     if (env === null) return;
     store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
-    journal = new AgentConflictJournal({ pool: env.db, store, threads });
+    // The runtime places the notice in the other chat's conversation and the
+    // projection writes its row; the stub records it and writes the row.
+    journal = new AgentConflictJournal({
+      pool: env.db,
+      store,
+      writeEntry: async (chatId, entry) => {
+        written.push({ chatId, entry });
+        const event = noticeEventOf(entry);
+        if (event !== null) await threads.appendEvent(chatId, event);
+      },
+    });
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-conflict-org')", [orgId]);
     const res = await env.db.query(
@@ -90,6 +103,9 @@ dbDescribe("agent workspace conflict journal", () => {
     expect(system).toBeDefined();
     expect((system!.event as { content: string }).content).toContain("Second turn");
     expect((system!.event as { content: string }).content).toContain("shared.txt");
+    // The other agent reads the notice as a message in its conversation.
+    const delivered = written.find((item) => item.chatId === firstThread.chat_id);
+    expect(JSON.stringify(delivered?.entry.model)).toContain("Second turn");
     const notices = await store.notices.listNotices(owner.id, orgId);
     expect(notices.some((item) => item.kind === "workspace_conflict")).toBe(false);
 

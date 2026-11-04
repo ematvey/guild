@@ -110,7 +110,7 @@ dbDescribe("stale run reconciliation", () => {
 
   async function childResults(chatId: string, runId: string): Promise<Record<string, unknown>[]> {
     const res = await env!.db.query<{ payload: Record<string, unknown> }>(
-      "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
+      "SELECT event AS payload FROM child_result_deliveries WHERE parent_chat_id = $1",
       [chatId],
     );
     return res.rows.map((row) => row.payload).filter((payload) => payload["run_id"] === runId);
@@ -179,7 +179,7 @@ dbDescribe("stale run reconciliation", () => {
 
   it("redelivers a child result that no turn ever took", async () => {
     const fx = await fixture({ ageMs: null });
-    await threads.appendChildResult(fx.parentChatId, {
+    await threads.queueChildResult(fx.parentChatId, {
       type: "child_result",
       thread_id: fx.childThreadId,
       run_id: fx.runId,
@@ -190,9 +190,10 @@ dbDescribe("stale run reconciliation", () => {
       final_text: "the answer",
       attachments: [],
     });
-    await env!.db.query("UPDATE thread_events SET created_at = now() - interval '5 minutes' WHERE chat_id = $1", [
-      fx.parentChatId,
-    ]);
+    await env!.db.query(
+      "UPDATE child_result_deliveries SET created_at = now() - interval '5 minutes' WHERE parent_chat_id = $1",
+      [fx.parentChatId],
+    );
     redelivered.length = 0;
     await failStaleRuns(deps());
     expect(redelivered).toContain(fx.parentChatId);
@@ -200,7 +201,7 @@ dbDescribe("stale run reconciliation", () => {
 
   it("leaves a fresh unconsumed child result to its own delivery", async () => {
     const fx = await fixture({ ageMs: null });
-    await threads.appendChildResult(fx.parentChatId, {
+    await threads.queueChildResult(fx.parentChatId, {
       type: "child_result",
       thread_id: fx.childThreadId,
       run_id: fx.runId,

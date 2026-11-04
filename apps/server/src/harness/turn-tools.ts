@@ -27,6 +27,8 @@ import {
   seedAgentWorkspace,
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
+import { agentMessageEntry } from "../chats/agent-message.js";
+import type { EntryDraft } from "@earendil-works/pi-durable";
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
@@ -59,7 +61,8 @@ export interface TurnToolDeps {
   /** The turn controls the subagent tools drive on child chats. */
   readonly turns: {
     submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
-    deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+    /** Writes an entry into another chat's conversation. */
+    writeEntry(chatId: string, entry: EntryDraft): Promise<void>;
     stopChat(chatId: string): Promise<void>;
     canStopChat(chatId: string): boolean;
   };
@@ -203,7 +206,9 @@ export class TurnTools {
             content: input.content,
             images: input.images,
             model: input.model,
+            ...(input.entry === undefined ? {} : { entry: input.entry }),
           }),
+        writeEntry: (targetChatId, entry) => deps.turns.writeEntry(targetChatId, entry),
         stopChat: (childChatId) => deps.turns.stopChat(childChatId),
         canStopChat: (childChatId) => deps.turns.canStopChat(childChatId),
       },
@@ -226,7 +231,8 @@ export class TurnTools {
       agent,
       userId: ref.user_id,
       chatId,
-      deliverMessage: (targetChatId, orgId, text, model) => deps.turns.deliverMessage(targetChatId, orgId, text, model),
+      deliverMessage: (targetChatId, orgId, text, model) =>
+        deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });

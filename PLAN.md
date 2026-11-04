@@ -86,6 +86,45 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Every thread row with a message is projected from the conversation
+  (2026-11-04).** The rule "what a thread shows as conversation, the agent
+  has in its conversation" had six more breaks, all now projected from
+  journal entries:
+  (1) Child results. They were `thread_events` rows written up front, then
+  sent as a steer that merged into any pending steer, including a member's
+  queued message: withdrawing that message dropped results already marked
+  consumed, and a card showed before the parent had the result. Results now
+  queue in `child_result_deliveries` (migration 0110). A parent run takes
+  them and places them as one `guild.child-result` steer batch. A batch
+  merges only into a pending batch of its own kind, never into a member's
+  input, and the cards are projected from the batch entry when it is
+  placed. A stop withdraws queued inputs, so a queued batch is withdrawn
+  first and written back as an entry: it stays in context but starts no
+  run. The worker IPC carries the batch (`deliver-child-results`).
+  (2) Subagent and routine prompts were echoed straight into
+  `thread_events`; they are now `guild.posted-turn` inputs whose user row
+  is projected at placement. The turn-tools adapter dropped the new
+  `entry` field and is fixed.
+  (3) A failed submit left the member's echo forever, and a retry under
+  the same id only got the failed ack. If the conversation never admitted
+  the input, the echo and the command row are deleted, so a retry starts
+  over. The 15-minute expired-command sweep does the same. An admitted
+  input stands.
+  (4) A UI close, (5) an ancestor's `send` to a grandchild, and (6) the
+  workspace-conflict notice wrote rows into a chat whose agent never saw
+  them. Each is now a `guild.notice` write. Its text is a user message
+  for the agent, and its row (`child_closed`, `child_spawned`, log-only
+  `system_message`) is projected from it. `deliverMessage` became the
+  general `writeEntry` routed op.
+  The client event-append route (`POST /threads/:id/events`, alias
+  `POST /chats/:id/thread`) is removed; no client used it. Readers now
+  agree on one text per event type (`threadEventText`): `thread_history`,
+  thread search, the tree read tool and the admin reader include child
+  results, child turns, closes and compaction summaries. Search chunks
+  include child results, and a posted agent message is indexed when it is
+  projected, since a routine feed has no run to index it. Results queued
+  in `thread_events` before this deploy are not redelivered.
+
 - **Org-specific integrations live outside the repo; admins add MCP servers
   from the UI (2026-11-04).** Two paths now carry integrations that do not
   ship with Guild. (1) Private plugins: the loader imports every
@@ -124,13 +163,7 @@ first. Code comments describe only the present.
   context meter adds estimates of entries after the last measured request,
   as pi-durable's compaction trigger does. Posts written before this change
   stay display-only; the feed prompt still points at `thread_history` for
-  them. Open gaps of the same rule, found by code reading and not yet
-  fixed: a child result merged into a user's queued steer stays consumed
-  when that steer is withdrawn; a subagent/routine prompt echo written
-  outside the turn-command path survives a withdrawn input; a failed
-  submit leaves its user echo; closing a child from the UI and the
-  workspace-conflict notice never reach the other conversation; the
-  generic event-append route accepts message types.
+  them. The other gaps of the same rule are closed by the entry above.
 
 - **The domain model is written down, in numbered documents (2026-11-03).**
   `docs/domain/000`–`005` name Guild's concepts and the rules each keeps:

@@ -11,6 +11,8 @@ import { ApiError } from "../platform/errors.js";
 import { AdmissionCancelled } from "../harness/operations.js";
 import type { StreamWireEvent } from "../hub/protocol.js";
 import type { SubmitTurnInput } from "../harness/turn-backend.js";
+import type { ChildResultRecord } from "../platform/store/thread.js";
+import type { EntryDraft } from "@earendil-works/pi-durable";
 
 export type BufferUpdate = { append: string } | { replace: string };
 
@@ -35,8 +37,8 @@ export type Outcome =
 /** Server → worker: requests about the worker's own chat. */
 export type ServerRequest =
   | { t: "submit"; ref: number; input: SubmitTurnInput }
-  | { t: "deliver-steer"; ref: number; orgId: string; text: string; model: string | null }
-  | { t: "deliver-message"; ref: number; orgId: string; text: string; model: string | null }
+  | { t: "deliver-child-results"; ref: number; orgId: string; results: ChildResultRecord[]; model: string | null }
+  | { t: "write-entry"; ref: number; entry: EntryDraft }
   | { t: "steer"; ref: number; submissionId: number }
   | { t: "withdraw"; ref: number; submissionId: number }
   | { t: "stop"; ref: number }
@@ -54,11 +56,19 @@ export type WorkerRequest =
   /** A worker admitting a turn for a chat it does not own (delegation):
    *  the server owns every other chat's worker, so it forwards this. */
   | { t: "remote-submit"; ref: number; chatId: string; input: SubmitTurnInput }
-  /** A worker delivering a child result into a chat it does not own: the
+  /** A worker delivering child results into a chat it does not own: the
    *  conversation handle is invocation-bound, so the owning worker does it. */
-  | { t: "remote-deliver-steer"; ref: number; chatId: string; orgId: string; text: string; model: string | null }
-  /** A worker posting an agent message into another chat (a routine feed). */
-  | { t: "remote-deliver-message"; ref: number; chatId: string; orgId: string; text: string; model: string | null };
+  | {
+      t: "remote-deliver-child-results";
+      ref: number;
+      chatId: string;
+      orgId: string;
+      results: ChildResultRecord[];
+      model: string | null;
+    }
+  /** A worker writing an entry into another chat's conversation (an agent
+   *  message to a routine feed, a notice). */
+  | { t: "remote-write-entry"; ref: number; chatId: string; entry: EntryDraft };
 
 /** Worker → server: a fire-and-forget cancel of one of its dispatches. */
 export type WorkerCancel = { t: "dispatch_cancel"; ref: number };

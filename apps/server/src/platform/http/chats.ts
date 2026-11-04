@@ -17,14 +17,7 @@ import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireJsonBody, requireUser, sendJson } from "./error.js";
-import {
-  threadEventObject,
-  threadEventRowObject,
-  type Block,
-  type MessageAttachment,
-  type ThreadEventRow,
-  type UsagePayload,
-} from "../domain/thread-events.js";
+import { threadEventRowObject, type ThreadEventRow } from "../domain/thread-events.js";
 import type { UserRow } from "../store/identity.js";
 import type { Chat } from "@guild/wire/rest";
 import { chatWire } from "../../chats/chat-wire.js";
@@ -181,31 +174,6 @@ export function registerChatsRoutes(
   // Deprecated alias: POST /api/v1/gateway/chat/:id/stop.
   app.post("/api/v1/gateway/chat/:id/stop", stopTurn);
   app.post("/api/v1/threads/:id/stop", stopTurn);
-
-  const appendThreadEvent = async (req: FastifyRequest, reply: FastifyReply) => {
-    const user = await requireUser(auth, req);
-    const chatId = parseUuidParam(req, "id");
-    await chats.chats.getOwnChat(user.org_id, chatId, user);
-    const body = requireJsonBody(req);
-    const event = coerceThreadEvent(body);
-    // Engine-path turn join: `turn: 0` means "join the latest turn"; the
-    // server assigns the real turn number.
-    let resolved = event;
-    if (event.type === "tool_result" && event.turn === 0) {
-      const turn = await chats.threads.latestTurn(chatId);
-      resolved = { ...event, turn: Math.max(1, turn) } as typeof event;
-    }
-    const row = await chats.threads.appendEvent(chatId, resolved);
-    return sendJson(reply, {
-      created_at: row.created_at,
-      event: threadEventObject(row.event),
-      id: row.id,
-      seq: row.seq,
-    });
-  };
-  // Deprecated alias: POST /api/v1/chats/:id/thread (the engine-path append).
-  app.post("/api/v1/chats/:id/thread", appendThreadEvent);
-  app.post("/api/v1/threads/:id/events", appendThreadEvent);
 
   const setThreadProject = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
@@ -499,128 +467,4 @@ export function registerChatsRoutes(
     if (!status) throw ApiError.notFound("no such compaction");
     return reply.send(status);
   });
-}
-
-/** Parses a client-appended thread event (closed enum; an unknown type or
- *  a malformed nested shape is a bad request). Absent scalar fields take
- *  their zero value. */
-function coerceThreadEvent(body: Record<string, unknown>): ThreadEventRow["event"] {
-  const type = body["type"];
-  switch (type) {
-    case "user_message":
-      return {
-        type: "user_message",
-        content: String(body["content"] ?? ""),
-        attachments: attachmentsField(body["attachments"]),
-      };
-    case "system_message":
-      return { type: "system_message", content: String(body["content"] ?? "") };
-    case "assistant_message":
-      return {
-        type: "assistant_message",
-        turn: Number(body["turn"] ?? 0),
-        step: Number(body["step"] ?? 0),
-        blocks: blocksField(body["blocks"]),
-        usage: usageField(body["usage"]),
-        model: String(body["model"] ?? ""),
-      };
-    case "tool_result":
-      return {
-        type: "tool_result",
-        turn: Number(body["turn"] ?? 0),
-        step: Number(body["step"] ?? 0),
-        call_id: String(body["call_id"] ?? ""),
-        name: String(body["name"] ?? ""),
-        content: String(body["content"] ?? ""),
-        is_error: Boolean(body["is_error"]),
-        images: stringArrayField(body["images"], "images"),
-      };
-    case "approval_request":
-      return {
-        type: "approval_request",
-        call_id: String(body["call_id"] ?? ""),
-        name: String(body["name"] ?? ""),
-        arguments: String(body["arguments"] ?? ""),
-      };
-    case "approval_decision":
-      return {
-        type: "approval_decision",
-        call_id: String(body["call_id"] ?? ""),
-        approved: Boolean(body["approved"]),
-        expired: Boolean(body["expired"] ?? false),
-      };
-    default:
-      throw ApiError.badRequest(`unknown thread event type ${String(type)}`);
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function arrayField(value: unknown, field: string): unknown[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw ApiError.badRequest(`${field} must be an array`);
-  return value;
-}
-
-function stringArrayField(value: unknown, field: string): string[] {
-  return arrayField(value, field).map((item) => {
-    if (typeof item !== "string") throw ApiError.badRequest(`${field} must hold strings`);
-    return item;
-  });
-}
-
-function attachmentsField(value: unknown): MessageAttachment[] {
-  return arrayField(value, "attachments").map((item) => {
-    if (
-      !isRecord(item) ||
-      typeof item["id"] !== "string" ||
-      typeof item["filename"] !== "string" ||
-      typeof item["content_type"] !== "string" ||
-      typeof item["size_bytes"] !== "number" ||
-      typeof item["modality"] !== "string"
-    ) {
-      throw ApiError.badRequest("attachments must hold {id, filename, content_type, size_bytes, modality}");
-    }
-    return {
-      id: item["id"],
-      filename: item["filename"],
-      content_type: item["content_type"],
-      size_bytes: item["size_bytes"],
-      modality: item["modality"],
-    };
-  });
-}
-
-function blocksField(value: unknown): Block[] {
-  return arrayField(value, "blocks").map((item): Block => {
-    if (isRecord(item)) {
-      if ((item["type"] === "text" || item["type"] === "reasoning") && typeof item["text"] === "string") {
-        return { type: item["type"], text: item["text"] };
-      }
-      if (
-        item["type"] === "tool_call" &&
-        typeof item["id"] === "string" &&
-        typeof item["name"] === "string" &&
-        typeof item["arguments"] === "string"
-      ) {
-        return { type: "tool_call", id: item["id"], name: item["name"], arguments: item["arguments"] };
-      }
-    }
-    throw ApiError.badRequest("blocks must hold text, reasoning or tool_call blocks");
-  });
-}
-
-function usageField(value: unknown): UsagePayload {
-  if (value === undefined || value === null) return {};
-  if (!isRecord(value)) throw ApiError.badRequest("usage must be an object");
-  const usage: UsagePayload = {};
-  for (const key of ["tokens_in", "tokens_out", "cost_usd"] as const) {
-    const n = value[key];
-    if (n === undefined || n === null) continue;
-    if (typeof n !== "number" || !Number.isFinite(n)) throw ApiError.badRequest(`usage.${key} must be a number`);
-    usage[key] = n;
-  }
-  return usage;
 }

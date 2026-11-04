@@ -27,7 +27,7 @@ An Input is placed by its mode:
 | --- | --- |
 | steer | At the next tool boundary of the running Turn, joining it |
 | followUp | After the running Turn ends, starting the next Turn (the default for a Member's message) |
-| write | After the running Turn ends, as a log entry; only compaction summaries are written |
+| write | At once when the Thread is idle, else at the running Turn's next boundary, as a log entry: compaction summaries, posted agent messages, notices |
 
 Steers and follow-ups are taken one at a time. When a Thread has no running Turn, waiting Inputs are drained in order: writes first, then the first steer and the first follow-up as one new Turn. Draining never invents an Input.
 
@@ -39,7 +39,11 @@ A Member can act on a queued Input or a running Turn through Turn commands:
 | steer | Moves a queued follow-up into the running Turn |
 | withdraw | Removes a queued Input that is not yet placed |
 
-A Turn command goes `pending` → `submitted` → `running` → `completed`, `failed` or `cancelled`. A pending command older than 15 minutes fails.
+A Turn command goes `pending` → `submitted` → `running` → `completed`, `failed` or `cancelled`. A pending command older than 15 minutes fails. A Member's message whose submit fails, or whose command expires, before the conversation admitted it leaves the Thread together with its command, so a retry under the same message id starts over. One the conversation did admit stands.
+
+A Turn that the system posts (a subagent `spawn` or `send`, a Routine prompt) is an Input of its own kind. Its message row is projected when the Input is placed, so a withdrawn one leaves nothing behind.
+
+A **notice** tells a Thread's Agent about something that happened outside its Turns: a Member closed one of its child Threads, an ancestor sent a Turn to its child, or another Thread modified files this Thread is working on. It is a write whose text the Agent reads as a message. Its row (`child_closed`, `child_spawned`, or a log-only `system_message` for a file conflict) is projected from it.
 
 ### Steps and the end of a Turn
 
@@ -104,11 +108,12 @@ An Agent with the `subagents` tool can spawn other Agents. Each spawn creates on
 
 The tree is bounded by its shape: depth 3 and 16 children per node, both set in configuration. The child limit is checked under the parent's lock. A child gets a `<spawned_by>` block and the task, never the parent's transcript.
 
-**Downward messages are Turns. Upward messages are Turn ends.** When a child Run settles, its final text, its status and its Attachments are written to the parent Thread as one child result. Nothing is written when the child or the parent is closed. The parent is then woken:
+**Downward messages are Turns. Upward messages are Turn ends.** When a child Run settles, its final text, its status and its Attachments are queued for the parent as one child result. Nothing is queued when the child or the parent is closed. The parent is then woken:
 
-1. If the parent has a running Turn, the unconsumed results are placed as one steer, merged into a pending steer if there is one.
-2. If the parent is idle, a new Run starts with them.
-3. Each result is marked with the Run that took it, so a result is consumed once.
+1. The unconsumed results are taken by the parent's running Run, or by a new Run when the parent is idle. Each result is marked with the Run that took it, so a result is consumed once.
+2. They are placed as one steer batch: merged into the parent's pending child-result batch if one is queued, else submitted as a new one. A batch never merges into a Member's message, so withdrawing that message leaves the results intact.
+3. The parent Thread's child-result rows are projected from the batch when it is placed. A result the parent has not received does not show.
+4. A stop withdraws a queued batch with the other Inputs. The batch is then written into the conversation instead: the parent has it and the rows show, but no Turn starts.
 
 A parent never waits on a child; it ends its Turn and is woken by the delivery. A child that needs a decision ends its Turn with the question. A stop by the Member reaches the parent as `cancelled`.
 
@@ -137,7 +142,7 @@ A delivered message is an entry in the receiving Thread's conversation, written 
 
 ## Durability and recovery
 
-**The journal is the truth.** Each Thread maps to one durable conversation, created once. Every Input, Step, Tool call and result is a journal entry before it has effects. Thread events are a projection of that journal: each entry is copied once, behind a stored cursor. **What a Thread shows as conversation, the Agent has in its conversation:** a message is written to the journal and projected; it is never appended to Thread events alone. Display-only rows (Approval cards, Turn failures) carry no message. The Run and Turn command rows are reconciled from it the same way.
+**The journal is the truth.** Each Thread maps to one durable conversation, created once. Every Input, Step, Tool call and result is a journal entry before it has effects. Thread events are a projection of that journal: each entry is copied once, behind a stored cursor. **What a Thread shows as conversation, the Agent has in its conversation:** a message is written to the journal and projected; it is never appended to Thread events alone. Display-only rows (Approval cards, Turn failures) carry no message. A child-spawn row in the caller's own Thread shows the caller's `spawn` or `send` call. Clients cannot append Thread events. The Run and Turn command rows are reconciled from it the same way.
 
 **Hosts reopen.** A conversation's host reopens after a failure with backoff (0, 1 s, 5 s, 30 s) and resumes. In worker mode, each active Thread has its own forked worker process. The supervisor respawns a dead worker only when the journal still holds pending work. It kills a worker that stops reporting its heartbeat for 90 seconds, or that ignores a stop for 10 seconds.
 

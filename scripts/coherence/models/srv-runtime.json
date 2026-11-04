@@ -158,7 +158,7 @@
           "role": "domain"
         },
         {
-          "where": "apps/server/src/harness/inbox-merge.ts",
+          "where": "apps/server/src/chats/child-result.ts",
           "role": "domain"
         },
         {

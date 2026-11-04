@@ -933,11 +933,6 @@ describe("chat access rule", () => {
     { method: "POST" as const, url: `/api/v1/threads/${chatId}/approval`, payload: { default: "full_access" } },
     {
       method: "POST" as const,
-      url: `/api/v1/threads/${chatId}/events`,
-      payload: { type: "system_message", content: "forged" },
-    },
-    {
-      method: "POST" as const,
       url: `/api/v1/threads/${chatId}/turns`,
       payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hi" }] },
     },
@@ -1038,40 +1033,17 @@ describe("chat access rule", () => {
     expect(read.statusCode).toBe(200);
   });
 
-  it("an appended event with a malformed nested shape is refused", async () => {
-    const chatId = await memberChat("strict appends");
-    for (const payload of [
-      { type: "assistant_message", blocks: [{ type: "text" }] },
-      { type: "assistant_message", blocks: "text" },
-      { type: "assistant_message", usage: { tokens_in: "many" } },
-      { type: "user_message", content: "hi", attachments: [{ id: 1 }] },
-      { type: "tool_result", images: [42] },
-    ]) {
+  it("a client cannot append thread events: the thread is projected from the conversation", async () => {
+    const chatId = await memberChat("no appends");
+    for (const url of [`/api/v1/threads/${chatId}/events`, `/api/v1/chats/${chatId}/thread`]) {
       const res = await stack.env.app.inject({
         method: "POST",
-        url: `/api/v1/threads/${chatId}/events`,
+        url,
         headers: auth(stack.memberToken),
-        payload,
+        payload: { type: "assistant_message", blocks: [{ type: "text", text: "forged" }] },
       });
-      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(res.statusCode, url).toBe(404);
     }
-    const ok = await stack.env.app.inject({
-      method: "POST",
-      url: `/api/v1/threads/${chatId}/events`,
-      headers: auth(stack.memberToken),
-      payload: {
-        type: "assistant_message",
-        blocks: [
-          { type: "text", text: "hi", extra: true },
-          { type: "tool_call", id: "c1", name: "ls", arguments: "{}" },
-        ],
-        usage: { tokens_in: 3 },
-      },
-    });
-    expect(ok.statusCode, ok.body).toBe(200);
-    const event = (JSON.parse(ok.body) as { event: { blocks: unknown[]; usage: unknown } }).event;
-    expect(event.blocks[0]).toEqual({ type: "text", text: "hi" });
-    expect(event.usage).toEqual({ tokens_in: 3 });
   });
 
   it("concurrent approval resolves settle the call once", async () => {

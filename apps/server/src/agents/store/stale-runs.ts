@@ -63,14 +63,14 @@ export async function failOrphanedRun(pool: PlatformPool, runId: string): Promis
  *  consumed and no open run will take. */
 export async function chatsWithUndeliveredResults(pool: PlatformPool, undeliveredMs: number): Promise<string[]> {
   const res = await pool.query<{ chat_id: string }>(
-    `SELECT DISTINCT e.chat_id
-     FROM thread_events e
-     WHERE e.type = 'child_result' AND e.consumed_by_run_id IS NULL
-       AND e.created_at < now() - ($1::bigint * interval '1 millisecond')
+    `SELECT DISTINCT d.parent_chat_id AS chat_id
+     FROM child_result_deliveries d
+     WHERE d.consumed_by_run_id IS NULL
+       AND d.created_at < now() - ($1::bigint * interval '1 millisecond')
        AND NOT EXISTS (
          SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id = r.thread_id
-         WHERE t.chat_id = e.chat_id AND r.status IN ('queued', 'running'))
-     ORDER BY e.chat_id`,
+         WHERE t.chat_id = d.parent_chat_id AND r.status IN ('queued', 'running'))
+     ORDER BY 1`,
     [undeliveredMs],
   );
   return res.rows.map((row) => row.chat_id);

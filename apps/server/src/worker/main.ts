@@ -49,7 +49,7 @@ const remotePending = new Map<
 /** One worker request to the server, rejected when it times out or the
  *  channel closes. */
 function remote(
-  message: Extract<WorkerToServer, { t: "remote-submit" | "remote-deliver-steer" | "remote-deliver-message" }>,
+  message: Extract<WorkerToServer, { t: "remote-submit" | "remote-deliver-child-results" | "remote-write-entry" }>,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -93,11 +93,18 @@ const runtime = new GuildRuntime({
     remote: {
       submit: async (targetChatId: string, _orgId: string, input: SubmitTurnInput) =>
         Number(await remote({ t: "remote-submit", ref: nextRef(), chatId: targetChatId, input })),
-      deliverSteer: async (targetChatId, orgId, text, model) => {
-        await remote({ t: "remote-deliver-steer", ref: nextRef(), chatId: targetChatId, orgId, text, model });
+      deliverChildResults: async (targetChatId, orgId, results, model) => {
+        await remote({
+          t: "remote-deliver-child-results",
+          ref: nextRef(),
+          chatId: targetChatId,
+          orgId,
+          results,
+          model,
+        });
       },
-      deliverMessage: async (targetChatId, orgId, text, model) => {
-        await remote({ t: "remote-deliver-message", ref: nextRef(), chatId: targetChatId, orgId, text, model });
+      writeEntry: async (targetChatId, entry) => {
+        await remote({ t: "remote-write-entry", ref: nextRef(), chatId: targetChatId, entry });
       },
     },
   },
@@ -184,12 +191,12 @@ process.on("message", (raw: unknown) => {
         case "submit":
           data = await runtime.submitTurn(chatId, request.input.orgId, request.input);
           break;
-        case "deliver-steer":
-          await runtime.deliverChildSteer(chatId, request.orgId, request.text, request.model);
+        case "deliver-child-results":
+          await runtime.deliverChildResults(chatId, request.orgId, request.results, request.model);
           data = null;
           break;
-        case "deliver-message":
-          await runtime.deliverAgentMessage(chatId, request.orgId, request.text, request.model);
+        case "write-entry":
+          await runtime.writeEntry(chatId, request.entry);
           data = null;
           break;
         case "steer":

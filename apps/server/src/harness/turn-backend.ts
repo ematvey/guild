@@ -10,6 +10,9 @@
 import type { ForkSupervisor } from "../worker/supervisor.js";
 import type { GenerationStreamSink, LiveBuffers } from "../chats/bridge.js";
 import type { MachineDispatch } from "../machines/dispatch.js";
+import type { JsonValue } from "@earendil-works/chord";
+import type { EntryDraft } from "@earendil-works/pi-durable";
+import type { ChildResultRecord } from "../platform/store/thread.js";
 
 /** A turn submitted into a chat's conversation. The HTTP routes assemble
  *  it; worker IPC carries it unchanged. */
@@ -34,14 +37,17 @@ export interface SubmitTurnInput {
   /** The desktop's project instruction chain (global config-dir file plus
    *  the project's AGENTS.md chain); browser/server turns send none. */
   agentsMd?: string;
+  /** Place the input as this entry instead of `pi.user` (a child result, a
+   *  posted turn); the transcript row is projected from it. */
+  entry?: { kind: string; data?: JsonValue };
 }
 
 /** Turns for chats this process does not own, sent to the process that
  *  does (a worker's delegation to another chat). */
 export interface RemoteTurns {
   submit(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
-  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
-  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  deliverChildResults(chatId: string, orgId: string, results: ChildResultRecord[], model: string | null): Promise<void>;
+  writeEntry(chatId: string, entry: EntryDraft): Promise<void>;
 }
 
 export type TurnPlacement =
@@ -59,10 +65,13 @@ export type TurnPlacement =
 /** The turn operations this process runs against its own harness. */
 export interface LocalTurns {
   submit(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number>;
-  deliverSteer(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
-  /** Writes one agent message into the chat's conversation: the model sees
-   *  it as its own reply, and the transcript shows it from the entry. */
-  deliverMessage(chatId: string, orgId: string, text: string, model: string | null): Promise<void>;
+  /** Places child results in the chat's conversation: merged into a
+   *  pending child-result input, else submitted as a new steer. */
+  deliverChildResults(chatId: string, orgId: string, results: ChildResultRecord[], model: string | null): Promise<void>;
+  /** Writes one entry into the chat's conversation (a posted agent message,
+   *  a notice): at once when idle, else at the turn's next boundary. The
+   *  transcript row is projected from it. */
+  writeEntry(chatId: string, entry: EntryDraft): Promise<void>;
   steer(chatId: string, submissionId: number): Promise<boolean>;
   withdraw(chatId: string, submissionId: number): Promise<string>;
   stop(chatId: string): Promise<void>;
@@ -110,8 +119,9 @@ export function turnBackend(placement: TurnPlacement, local: LocalTurns): TurnBa
       const forker = placement.supervisor;
       return {
         submit: (chatId, _orgId, input) => forker.submit(chatId, input),
-        deliverSteer: (chatId, orgId, text, model) => forker.deliverSteer(chatId, orgId, text, model),
-        deliverMessage: (chatId, orgId, text, model) => forker.deliverMessage(chatId, orgId, text, model),
+        deliverChildResults: (chatId, orgId, results, model) =>
+          forker.deliverChildResults(chatId, orgId, results, model),
+        writeEntry: (chatId, entry) => forker.writeEntry(chatId, entry),
         steer: (chatId, submissionId) => forker.steer(chatId, submissionId),
         withdraw: (chatId, submissionId) => forker.withdraw(chatId, submissionId),
         stop: (chatId) => forker.stop(chatId),
@@ -138,14 +148,12 @@ export function turnBackend(placement: TurnPlacement, local: LocalTurns): TurnBa
         // server, which owns every chat's worker.
         submit: (chatId, orgId, input, signal) =>
           owns(chatId) ? local.submit(chatId, orgId, input, signal) : placement.remote.submit(chatId, orgId, input),
-        deliverSteer: (chatId, orgId, text, model) =>
+        deliverChildResults: (chatId, orgId, results, model) =>
           owns(chatId)
-            ? local.deliverSteer(chatId, orgId, text, model)
-            : placement.remote.deliverSteer(chatId, orgId, text, model),
-        deliverMessage: (chatId, orgId, text, model) =>
-          owns(chatId)
-            ? local.deliverMessage(chatId, orgId, text, model)
-            : placement.remote.deliverMessage(chatId, orgId, text, model),
+            ? local.deliverChildResults(chatId, orgId, results, model)
+            : placement.remote.deliverChildResults(chatId, orgId, results, model),
+        writeEntry: (chatId, entry) =>
+          owns(chatId) ? local.writeEntry(chatId, entry) : placement.remote.writeEntry(chatId, entry),
         owns,
         scope: own,
         hostsHarness: true,

@@ -11,12 +11,17 @@ import {
   compactionEvent,
   toolResultEvent,
   unwrapCompactionSummary,
+  userMessageEvent,
   type Block,
   type ThreadEvent,
   type ThreadEventRow,
 } from "../platform/domain/thread-events.js";
 import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
 import { AGENT_MESSAGE_KIND, agentMessageOf } from "./agent-message.js";
+import { CHILD_RESULT_KIND, childResultsOf } from "./child-result.js";
+import { POSTED_TURN_KIND, postedTurnText } from "./posted-turn.js";
+import { NOTICE_KIND, noticeEventOf } from "./notice.js";
+import { uuidv5 } from "../platform/time.js";
 
 export interface ProjectionState {
   chatId: string;
@@ -244,6 +249,32 @@ export class TranscriptProjection {
         if (row.event.type === "assistant_message") {
           state.turn = row.event.turn;
           state.step = 0;
+          await this.deps.agentRuns?.postedMessage(state.chatId, row);
+        }
+        return;
+      }
+      case NOTICE_KIND: {
+        const event = noticeEventOf(entry);
+        if (event !== null) await this.append(state, entry, event);
+        return;
+      }
+      case POSTED_TURN_KIND: {
+        // A posted turn shows from its placement on.
+        const text = postedTurnText(entry);
+        if (text !== null) await this.append(state, entry, userMessageEvent(text));
+        return;
+      }
+      case CHILD_RESULT_KIND: {
+        // The parent has the results from this entry on, so their cards show
+        // here, at the placement position. The first card is the entry's
+        // projected row; each further card has an id derived from the entry,
+        // so a replay re-appends nothing.
+        const [first, ...rest] = childResultsOf(entry);
+        if (first === undefined) return;
+        await this.append(state, entry, first);
+        for (const [index, event] of rest.entries()) {
+          const id = uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-entry:${Number(entry.id)}:${index + 1}`);
+          await this.deps.threads.appendEvent(state.chatId, event, id);
         }
         return;
       }

@@ -5,12 +5,14 @@
 // that overlap the page and groups them into the items the reader renders:
 // a trigger message, the run it started, and the agent's reply.
 
+import { threadEventText } from "../domain/thread-events.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
 
 /** The event types a conversation reader shows. Tool results stay inside
  *  the run detail; the conversation is the message-level story. */
-const MESSAGE_TYPES = "('user_message','assistant_message','system_message','turn_error','compaction')";
+const MESSAGE_TYPES =
+  "('user_message','assistant_message','system_message','turn_error','compaction','child_spawned','child_result','child_closed')";
 
 export interface ConversationOwner {
   id: string;
@@ -143,6 +145,12 @@ function messageRow(row: {
       return { seq, role: "error", text: clip(String(payload["message"] ?? "")), ts };
     case "compaction":
       return { seq, role: "compaction", text: clip(String(payload["summary"] ?? "")), ts };
+    // A child turn, result or close is in the agent's conversation as a
+    // message; the reader shows it as a system line.
+    case "child_spawned":
+    case "child_result":
+    case "child_closed":
+      return { seq, role: "system", text: clip(threadEventText(row.type, payload)), ts };
     default:
       return null;
   }

@@ -1,6 +1,7 @@
 // Bounded thread transcript reads shared by conversation_read and the tree
 // read tool: at most 200 events and 20k characters per call.
 
+import { threadEventText } from "../platform/domain/thread-events.js";
 import type { PlatformPool } from "../platform/db.js";
 import { transcriptEvents } from "./store/events.js";
 
@@ -13,19 +14,6 @@ export interface ThreadReadResult {
   thread_title: string;
   events: { seq: number; type: string; ts: string; text: string }[];
   truncated: boolean;
-}
-
-function eventText(type: string, payload: Record<string, unknown>): string {
-  if (type === "user_message" || type === "system_message" || type === "tool_result") {
-    return typeof payload.content === "string" ? payload.content : "";
-  }
-  if (type === "assistant_message" && Array.isArray(payload.blocks)) {
-    return (payload.blocks as { type?: string; text?: string }[])
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text!)
-      .join("\n");
-  }
-  return "";
 }
 
 function clip(text: string, max = MAX_EVENT_CHARS): string {
@@ -57,7 +45,7 @@ export async function readThreadTranscript(
   let used = 0;
   const events: ThreadReadResult["events"] = [];
   for (const row of rows) {
-    const text = clip(eventText(row.type, row.payload));
+    const text = clip(threadEventText(row.type, row.payload));
     const room = MAX_READ_CHARS - used;
     if (room <= 0) break;
     const clipped = clip(text, Math.min(MAX_EVENT_CHARS, room));

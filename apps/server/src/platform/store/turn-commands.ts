@@ -292,17 +292,27 @@ export class TurnCommandStore {
     );
   }
 
+  /** Drops a command whose input never reached the conversation, so a
+   *  retry under the same id is accepted afresh. A delivered command is
+   *  kept. */
+  async discardUnsubmitted(id: string): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM turn_commands WHERE id = $1 AND status IN ('pending', 'failed') AND invocation_id IS NULL",
+      [id],
+    );
+  }
+
   /** Fails every never-delivered command older than the bound: a pending
    *  row older than a few seconds means its submit threw (the accept and
    *  the submit run back to back), and a wedged durable layer once left
    *  such rows forever. Queued (delivered, waiting) commands carry later
-   *  statuses and are untouched. */
-  async sweepExpired(maxAgeSeconds: number): Promise<number> {
-    const res = await this.pool.query<{ count: string }>(
-      "WITH swept AS (UPDATE turn_commands SET status = 'failed', finished_at = now() WHERE status = 'pending' AND finished_at IS NULL AND created_at < now() - ($1 || ' seconds')::interval RETURNING 1) SELECT count(*) FROM swept",
+   *  statuses and are untouched. Returns the swept commands. */
+  async sweepExpired(maxAgeSeconds: number): Promise<{ id: string; chat_id: string }[]> {
+    const res = await this.pool.query<{ id: string; chat_id: string }>(
+      "UPDATE turn_commands SET status = 'failed', finished_at = now() WHERE status = 'pending' AND finished_at IS NULL AND created_at < now() - ($1 || ' seconds')::interval RETURNING id, chat_id",
       [String(maxAgeSeconds)],
     );
-    return Number(res.rows[0]?.count ?? 0);
+    return res.rows;
   }
 
   /** Finds a command by its durable submission identity (the bridge's

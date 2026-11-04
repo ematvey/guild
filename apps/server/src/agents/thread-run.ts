@@ -1,12 +1,12 @@
 // Starting a run in an existing agent thread: the one path for subagent
 // spawns and sends and for scheduled and manual routine runs. It rechecks
 // the agent (active, not being deleted) and the requester's access, opens
-// the run row, posts the user turn into the thread's chat, and marks the run
+// the run row, posts the user turn into the thread's chat as a posted-turn
+// input (its message row is projected once placed), and marks the run
 // failed when anything after the row fails.
 
 import type { UserRow } from "../platform/store/identity.js";
-import type { ThreadStore } from "../platform/store/thread.js";
-import { userMessageEvent } from "../platform/domain/thread-events.js";
+import { postedTurnEntry } from "../chats/posted-turn.js";
 import { uuidv7 } from "../platform/time.js";
 import type { AgentRunStore, AgentStore, CreateRunInput } from "./store.js";
 import type { Agent, AgentRun } from "./types.js";
@@ -21,13 +21,13 @@ export interface ThreadRunRuntime {
       content: string;
       images: { mimeType: string; data: string }[];
       model: string | null;
+      entry?: { kind: string };
     },
   ): Promise<number>;
 }
 
 export interface StartThreadRunDeps {
   store: Pick<AgentStore, "fetchAgent" | "access"> & { readonly runs: Pick<AgentRunStore, "createRun" | "updateRun"> };
-  threads: Pick<ThreadStore, "appendEvent">;
   runtime: ThreadRunRuntime;
 }
 
@@ -97,13 +97,14 @@ export async function startThreadRun(
   });
   try {
     await input.onRunCreated?.(run);
-    await deps.threads.appendEvent(input.thread.chat_id, userMessageEvent(input.content));
+    // The thread's user message is projected from the placed entry.
     await deps.runtime.submitTurn(input.thread.chat_id, agent.org_id, {
       orgId: agent.org_id,
       requestId: uuidv7(),
       content: input.content,
       images: [],
       model: agent.model,
+      entry: postedTurnEntry(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -1,6 +1,7 @@
 // writeJournal: the per-turn workspace conflict journal. Tool calls that
 // write files append their paths to agent_workspace_turns; overlapping paths between running
-// turns produce a notice in the other turn's transcript (a system_message)
+// turns produce a notice in the other turn's conversation (its agent reads
+// it at the next boundary; the thread row is a log-only system_message)
 // and, for the writer, a warning diagnostic on the tool result. The user is
 // never notified.
 //
@@ -9,10 +10,16 @@
 // `cd` prefixes are not resolved, so a command can write files the journal
 // does not see.
 
-import { hook, ToolTask, type ConversationId, type HookRegistration } from "@earendil-works/pi-durable";
+import {
+  hook,
+  ToolTask,
+  type ConversationId,
+  type EntryDraft,
+  type HookRegistration,
+} from "@earendil-works/pi-durable";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { PlatformPool } from "../platform/db.js";
-import type { ThreadStore } from "../platform/store/thread.js";
+import { noticeEntry } from "../chats/notice.js";
 import { systemMessageEvent } from "../platform/domain/thread-events.js";
 import { normalizeRelativePath } from "./files.js";
 import { threadChatId, threadTitle } from "./store/bindings.js";
@@ -36,7 +43,9 @@ const MAX_NOTICE_PATHS = 8;
 export interface ConflictJournalDeps {
   pool: PlatformPool;
   store: AgentStore;
-  threads: ThreadStore;
+  /** Writes a notice into another chat's conversation (routed to the
+   *  chat's owner). */
+  writeEntry(chatId: string, entry: EntryDraft): Promise<void>;
 }
 
 export interface WorkspaceTurnRef {
@@ -182,7 +191,7 @@ export class AgentConflictJournal {
     const title = await this.threadTitle(writer.thread_id);
     const text = `Thread ${title} modified ${clipPaths(paths)} — re-read before editing.`;
     if (await hasSystemMessageSince(this.deps.pool, chatId, text, other.started_at.toISOString())) return;
-    await this.deps.threads.appendEvent(chatId, systemMessageEvent(text));
+    await this.deps.writeEntry(chatId, noticeEntry(text, systemMessageEvent(text)));
   }
 }
 

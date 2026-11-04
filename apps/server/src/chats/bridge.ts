@@ -64,6 +64,8 @@ export interface BridgeDeps {
   agentRuns?: {
     assistantEvent(chatId: string, row: ThreadEventRow): Promise<void>;
     runEnd(chatId: string, failure: string | null): Promise<void>;
+    /** A message posted outside a run (send_message) was projected. */
+    postedMessage(chatId: string, row: ThreadEventRow): Promise<void>;
   };
   /** Files the turn attached with `send_file`, as chips for the terminal
    *  assistant message. Absent (tests without an attachment store) = none. */

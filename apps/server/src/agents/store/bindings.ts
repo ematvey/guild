@@ -68,6 +68,18 @@ export async function chatThreadKind(
   return res.rows[0] ?? null;
 }
 
+/** The chat's thread and its agent, or null for a plain chat. */
+export async function chatThreadAgent(
+  pool: PlatformPool,
+  chatId: string,
+): Promise<{ id: string; agent_id: string } | null> {
+  const res = await pool.query<{ id: string; agent_id: string }>(
+    "SELECT id, agent_id FROM agent_threads WHERE chat_id = $1",
+    [chatId],
+  );
+  return res.rows[0] ?? null;
+}
+
 /** The chat's thread with its parent link, or null for a plain chat. */
 export async function chatThreadNode(
   pool: PlatformPool,

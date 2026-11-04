@@ -11,8 +11,27 @@ import { jsonbText } from "../domain/text.js";
 import { isUuid, pgTimestampToRfc3339, utcText, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
 
-export interface ChildResultRecord extends ThreadEventRow {
-  event: Extract<ThreadEvent, { type: "child_result" }>;
+export type ChildResultEvent = Extract<ThreadEvent, { type: "child_result" }>;
+
+/** One queued child result (child_result_deliveries). */
+export interface ChildResultRecord {
+  id: string;
+  chat_id: string;
+  created_at: string;
+  event: ChildResultEvent;
+}
+
+interface ChildResultDb {
+  id: string;
+  parent_chat_id: string;
+  event: unknown;
+  created_at: string;
+}
+
+function toChildResult(row: ChildResultDb): ChildResultRecord | undefined {
+  const event = normalizeThreadEvent(row.event as Record<string, unknown>);
+  if (event?.type !== "child_result") return undefined;
+  return { id: row.id, chat_id: row.parent_chat_id, created_at: pgTimestampToRfc3339(row.created_at), event };
 }
 
 export interface ProjectionCursor {
@@ -56,12 +75,15 @@ interface MessageEventDb extends Omit<MessageEventRow, "seq"> {
   seq: string;
 }
 
-const MESSAGE_TYPES = "('user_message','assistant_message','system_message')";
+/** The events that are conversation: messages, child results and turns,
+ *  and compaction summaries (threadEventText reads each). */
+const MESSAGE_TYPES =
+  "('user_message','assistant_message','system_message','child_result','child_spawned','compaction')";
 
-/** A message event whose content or a text block matches the ILIKE
- *  pattern bound at `param`. */
+/** A message event whose text matches the ILIKE pattern bound at `param`:
+ *  content, a text block, a child's final text or task, a summary. */
 function messageTextMatch(param: string): string {
-  return `(e.payload->>'content' ILIKE ${param} OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'blocks') b WHERE b->>'type' = 'text' AND b->>'text' ILIKE ${param}))`;
+  return `(e.payload->>'content' ILIKE ${param} OR e.payload->>'final_text' ILIKE ${param} OR e.payload->>'task' ILIKE ${param} OR e.payload->>'summary' ILIKE ${param} OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.payload->'blocks') = 'array' THEN e.payload->'blocks' ELSE '[]'::jsonb END) b WHERE b->>'type' = 'text' AND b->>'text' ILIKE ${param}))`;
 }
 
 /** Escapes the LIKE metacharacters of a user query used inside an ILIKE pattern. */
@@ -216,46 +238,36 @@ export class ThreadStore {
     });
   }
 
-  /** One delivery row in the parent thread. It stays unconsumed until a
-   *  parent run takes the batch. */
-  appendChildResult(chatId: string, event: Extract<ThreadEvent, { type: "child_result" }>): Promise<ThreadEventRow> {
-    return this.appendEvent(chatId, event);
-  }
-
-  /** Unconsumed delivery rows in seq order. */
-  async unconsumedChildResults(chatId: string): Promise<ChildResultRecord[]> {
-    const res = await this.pool.query<EventRowDb>(
-      `SELECT id, chat_id, seq, payload,
-              ${utcText("created_at")} AS created_at
-       FROM thread_events
-       WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
-       ORDER BY seq ASC`,
-      [chatId],
+  /** Queues one child result for its parent chat. A run delivers one
+   *  result: a second queue of the same run is a no-op (null). */
+  async queueChildResult(chatId: string, event: ChildResultEvent): Promise<ChildResultRecord | null> {
+    const res = await this.pool.query<ChildResultDb>(
+      `INSERT INTO child_result_deliveries (id, parent_chat_id, run_id, event)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (run_id) DO NOTHING
+       RETURNING id, parent_chat_id, event, ${utcText("created_at")} AS created_at`,
+      [uuidv7(), chatId, event.run_id, JSON.stringify(event)],
     );
-    return res.rows
-      .map(toRow)
-      .filter((row): row is ChildResultRecord => row !== undefined && row.event.type === "child_result");
+    const row = res.rows[0];
+    return row === undefined ? null : (toChildResult(row) ?? null);
   }
 
-  /** Takes every unconsumed delivery row in one transaction and stamps it
-   *  with the consuming run id. The lock makes concurrent drains safe: one
-   *  batch belongs to exactly one run. */
+  /** Takes every unconsumed result of a chat in one transaction and stamps
+   *  it with the consuming run id. The lock makes concurrent drains safe: one
+   *  result belongs to exactly one run. */
   async consumeChildResults(chatId: string, runId: string): Promise<ChildResultRecord[]> {
     return withTransaction(this.pool, async (client) => {
-      const res = await client.query<EventRowDb>(
-        `SELECT id, chat_id, seq, payload,
-                ${utcText("created_at")} AS created_at
-         FROM thread_events
-         WHERE chat_id = $1 AND type = 'child_result' AND consumed_by_run_id IS NULL
-         ORDER BY seq ASC
+      const res = await client.query<ChildResultDb>(
+        `SELECT id, parent_chat_id, event, ${utcText("created_at")} AS created_at
+         FROM child_result_deliveries
+         WHERE parent_chat_id = $1 AND consumed_by_run_id IS NULL
+         ORDER BY created_at ASC, id ASC
          FOR UPDATE`,
         [chatId],
       );
-      const rows = res.rows
-        .map(toRow)
-        .filter((row): row is ChildResultRecord => row !== undefined && row.event.type === "child_result");
+      const rows = res.rows.flatMap((row) => toChildResult(row) ?? []);
       if (rows.length > 0) {
-        await client.query("UPDATE thread_events SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])", [
+        await client.query("UPDATE child_result_deliveries SET consumed_by_run_id = $2 WHERE id = ANY($1::uuid[])", [
           rows.map((row) => row.id),
           runId,
         ]);
@@ -264,16 +276,13 @@ export class ThreadStore {
     });
   }
 
-  /** Returns a batch to the unconsumed pool when its steer could not be
-   *  placed. The rows stay in the parent thread and the next drain takes
-   *  them. */
+  /** Returns results to the unconsumed pool when their input could not be
+   *  submitted; the next drain takes them. */
   async releaseChildResults(ids: readonly string[]): Promise<void> {
     if (ids.length === 0) return;
-    await this.pool.query(
-      `UPDATE thread_events SET consumed_by_run_id = NULL
-       WHERE id = ANY($1::uuid[]) AND type = 'child_result'`,
-      [ids],
-    );
+    await this.pool.query("UPDATE child_result_deliveries SET consumed_by_run_id = NULL WHERE id = ANY($1::uuid[])", [
+      ids,
+    ]);
   }
 
   appendProjectedEntry(input: {
@@ -399,6 +408,18 @@ export class ThreadStore {
     await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
   }
 
+  /** Removes a user echo whose input never reached the conversation (its
+   *  submit failed): the thread shows only what the agent has. */
+  async deleteUnsentEcho(chatId: string, id: string): Promise<void> {
+    const res = await this.pool.query(
+      "DELETE FROM thread_events WHERE id = $1 AND chat_id = $2 AND type = 'user_message'",
+      [id, chatId],
+    );
+    if (res.rowCount === 0) return;
+    await this.watermark();
+    await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
+  }
+
   /** The attachment ids of one run's turn: the user message nearest the
    *  run's start (written just before or just after the run row, so the
    *  nearest one in time is this turn's message even when later messages
@@ -412,8 +433,8 @@ export class ThreadStore {
       [chatId, startedAt],
     );
     const deliveries = await this.pool.query<{ payload: Record<string, unknown> }>(
-      `SELECT payload FROM thread_events
-       WHERE chat_id = $1 AND type = 'child_result'
+      `SELECT event AS payload FROM child_result_deliveries
+       WHERE parent_chat_id = $1
          AND (consumed_by_run_id IS NULL OR consumed_by_run_id = $2)`,
       [chatId, runId],
     );

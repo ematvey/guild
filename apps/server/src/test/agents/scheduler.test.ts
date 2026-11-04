@@ -149,11 +149,8 @@ dbDescribe("agent scheduler", () => {
     expect(
       (await store.threads.listThreads(agent.id, owner.id)).threads.some((thread) => thread.id === runs[0]!.thread_id),
     ).toBe(false);
-    const first = await env!.db.query<{ type: string; content: string }>(
-      "SELECT type, payload->>'content' AS content FROM thread_events WHERE chat_id = (SELECT chat_id FROM agent_threads WHERE id = $1) ORDER BY seq LIMIT 1",
-      [runs[0]!.thread_id],
-    );
-    expect(first.rows[0]).toEqual({ type: "user_message", content: "Coalesced run." });
+    // The prompt is posted as an input; its row is projected once placed.
+    expect(calls.map((call) => call.content)).toEqual(["Coalesced run."]);
   });
 
   it("retries an occurrence three times and then fails it with a notice", async () => {

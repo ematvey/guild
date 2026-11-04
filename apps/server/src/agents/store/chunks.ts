@@ -39,6 +39,17 @@ export async function insertChunks(pool: PlatformPool, chunks: AgentChunkInput[]
   });
 }
 
+/** Inserts one chunk unless the thread already has one over the same seq
+ *  range: a projection replay indexes nothing twice. */
+export async function insertChunkOnce(pool: PlatformPool, chunk: AgentChunkInput): Promise<void> {
+  await pool.query(
+    `INSERT INTO agent_thread_chunks (id, thread_id, agent_id, seq_from, seq_to, ts, text, tsv)
+     SELECT $1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7, to_tsvector('simple', $7)
+     WHERE NOT EXISTS (SELECT 1 FROM agent_thread_chunks WHERE thread_id = $2 AND seq_from = $4 AND seq_to = $5)`,
+    [uuidv7(), chunk.thread_id, chunk.agent_id, chunk.seq_from, chunk.seq_to, chunk.ts ?? null, chunk.text],
+  );
+}
+
 /** FTS over one user's chunks with an agent, rank/ts order, with a
  *  highlighted snippet capped at `snippetChars`. */
 export async function searchChunks(

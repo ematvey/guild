@@ -3,6 +3,9 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { POSTED_TURN_KIND } from "../../chats/posted-turn.js";
+import { noticeEventOf } from "../../chats/notice.js";
+import type { EntryDraft } from "@earendil-works/pi-durable";
 import { IdentityStore, type UserRow } from "../../platform/store/identity.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { userMessageEvent } from "../../platform/domain/thread-events.js";
@@ -46,20 +49,26 @@ async function makeUser(orgId: string, email: string, role = "member"): Promise<
 
 interface FakeRuntime {
   runtime: SubagentsRuntime;
-  submitted: { chatId: string; content: string }[];
+  submitted: { chatId: string; content: string; entry?: string }[];
+  written: { chatId: string; entry: EntryDraft }[];
   stopped: string[];
 }
 
 function fakeRuntime(overrides: Partial<SubagentsRuntime> = {}): FakeRuntime {
-  const submitted: { chatId: string; content: string }[] = [];
+  const submitted: { chatId: string; content: string; entry?: string }[] = [];
   const stopped: string[] = [];
+  const written: { chatId: string; entry: EntryDraft }[] = [];
   return {
     submitted,
+    written,
     stopped,
     runtime: {
       submitTurn: async (chatId, _orgId, input) => {
-        submitted.push({ chatId, content: input.content });
+        submitted.push({ chatId, content: input.content, entry: input.entry?.kind });
         return 1;
+      },
+      writeEntry: async (chatId, entry) => {
+        written.push({ chatId, entry });
       },
       stopChat: async (chatId) => {
         stopped.push(chatId);
@@ -168,7 +177,9 @@ dbDescribe("subagent tree tools", () => {
     expect(result.chat_id).toBe(childThread!.chat_id);
     expect(childThread?.title).toBe("quarterly report");
     expect(childThread?.title_locked).toBe(true);
-    expect(fake.submitted).toEqual([{ chatId: childThread!.chat_id, content: "Write the report" }]);
+    expect(fake.submitted).toEqual([
+      { chatId: childThread!.chat_id, content: "Write the report", entry: POSTED_TURN_KIND },
+    ]);
 
     const parentEvents = await threads.listEvents(orgId, thread.chat_id);
     const spawned = parentEvents.find((row) => row.event.type === "child_spawned");
@@ -182,12 +193,10 @@ dbDescribe("subagent tree tools", () => {
       status: "running",
       task: "Write the report",
     });
+    // The task's message row is projected once the child's conversation
+    // places the input; nothing is written before that.
     const childEvents = await threads.listEvents(orgId, childThread!.chat_id);
-    expect(childEvents[0]?.event).toMatchObject({
-      type: "user_message",
-      content: "Write the report",
-      attachments: [],
-    });
+    expect(childEvents.filter((row) => row.event.type === "user_message")).toEqual([]);
   });
 
   it("falls back to the task's first line when the spawner gives no name", async () => {
@@ -342,7 +351,7 @@ dbDescribe("subagent tree tools", () => {
     expect(out.structuredOutput?.agents.map((entry) => entry.id)).toContain(described.id);
   });
 
-  it("send to a grandchild writes its row in the grandchild's own parent chat", async () => {
+  it("send to a grandchild is a notice in the grandchild's own parent conversation", async () => {
     const thread = await store.threads.createThread(parentAgent.id, owner.id, "Send deep");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
@@ -358,10 +367,16 @@ dbDescribe("subagent tree tools", () => {
       (row) => row.event.type === "child_spawned" && row.event.thread_id === grandchild.id,
     );
     expect(rootRows).toHaveLength(0);
-    const parentRows = (await threads.listEvents(orgId, childThread.chat_id)).filter(
-      (row) => row.event.type === "child_spawned" && row.event.thread_id === grandchild.id,
-    );
-    expect(parentRows).toHaveLength(1);
+    // The intermediate agent made no call: the row is projected from a
+    // notice in its conversation, which carries the turn text.
+    expect(fake.written).toHaveLength(1);
+    expect(fake.written[0]!.chatId).toBe(childThread.chat_id);
+    expect(noticeEventOf(fake.written[0]!.entry)).toMatchObject({
+      type: "child_spawned",
+      thread_id: grandchild.id,
+      task: "next step",
+    });
+    expect(JSON.stringify(fake.written[0]!.entry.model)).toContain("next step");
   });
 
   it("send posts a turn and rejects a closed, foreign or self thread", async () => {
@@ -382,7 +397,11 @@ dbDescribe("subagent tree tools", () => {
     const run = await store.runs.getRun(sent.run_id);
     expect(run.thread_id).toBe(child.thread_id);
     expect(run.parent_run_id).toBe(parentRun.id);
-    expect(fake.submitted.at(-1)).toEqual({ chatId: childThread.chat_id, content: "next step" });
+    expect(fake.submitted.at(-1)).toEqual({
+      chatId: childThread.chat_id,
+      content: "next step",
+      entry: POSTED_TURN_KIND,
+    });
 
     const parentEvents = await threads.listEvents(orgId, thread.chat_id);
     const spawned = parentEvents.filter((row) => row.event.type === "child_spawned");
@@ -398,11 +417,7 @@ dbDescribe("subagent tree tools", () => {
       task: "next step",
     });
     const childEvents = await threads.listEvents(orgId, childThread.chat_id);
-    expect(
-      childEvents
-        .filter((row) => row.event.type === "user_message")
-        .map((row) => (row.event.type === "user_message" ? row.event.content : "")),
-    ).toEqual(["start", "next step"]);
+    expect(childEvents.filter((row) => row.event.type === "user_message")).toEqual([]);
 
     await store.tree.closeSubtree(child.thread_id);
     await expect(send(context, { thread_id: child.thread_id, text: "too late" })).rejects.toMatchObject({

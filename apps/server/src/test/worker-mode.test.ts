@@ -189,7 +189,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(stack.env.app.platform.supervisor!.pidOf(chatId)).toBeDefined();
   }, 90_000);
 
-  it("delivers a child steer into the chat's own worker", async () => {
+  it("delivers a child result into the chat's own worker", async () => {
     const chatId = await createChat("child steer chat");
     stack.mock.setResponses([
       { body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("first answer")}${sseDone()}` },
@@ -200,8 +200,37 @@ describe("worker-per-chat (fork supervisor)", () => {
     stack.mock.setResponses([
       { body: `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n${sseDelta("steered answer")}${sseDone()}` },
     ]);
-    await stack.env.app.platform.runtime.deliverChildSteer(chatId, stack.orgId, "a child reported back", null);
+    const runId = crypto.randomUUID();
+    await stack.env.app.platform.runtime.deliverChildResults(
+      chatId,
+      stack.orgId,
+      [
+        {
+          id: crypto.randomUUID(),
+          chat_id: chatId,
+          created_at: new Date().toISOString(),
+          event: {
+            type: "child_result",
+            thread_id: crypto.randomUUID(),
+            run_id: runId,
+            chat_id: crypto.randomUUID(),
+            agent_name: "Child",
+            title: "child task",
+            status: "succeeded",
+            final_text: "a child reported back",
+            attachments: [],
+          },
+        },
+      ],
+      null,
+    );
     await waitFor(async () => (await lastAssistant(chatId)).includes("steered answer"));
+    // The card is projected from the placed entry.
+    const cards = await stack.env.db.query<{ payload: { run_id: string } }>(
+      "SELECT payload FROM thread_events WHERE chat_id = $1 AND type = 'child_result'",
+      [chatId],
+    );
+    expect(cards.rows.map((row) => row.payload.run_id)).toEqual([runId]);
   }, 90_000);
 
   it("rebuilds a poisoned projection on worker restart and completes the next turn", async () => {

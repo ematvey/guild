@@ -348,7 +348,8 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
 - Health: `GET /api/v1/health`.
 - Auth/identity: `/api/v1/auth/{bootstrap,login,me,refresh,pair,oidc/*,pairing-tokens*}`, `GET /api/v1/me/approval`.
 - Threads: `POST|GET /api/v1/threads`, `GET|PATCH /api/v1/threads/{id}`,
-  `GET|POST /api/v1/threads/{id}/events`, `/threads/{id}/{project,approval,
+  `GET /api/v1/threads/{id}/events` (read-only: rows are projected from the
+  conversation), `/threads/{id}/{project,approval,
   read,agent,context}`, `/threads/{id}/pending/{messageId}/steer`,
   `/threads/{id}/compact`, `/threads/{id}/approvals/{callId}`,
   `/threads/{id}/attachments`, `/threads/{id}/tool_artifacts`. The

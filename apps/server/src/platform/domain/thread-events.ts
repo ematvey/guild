@@ -369,3 +369,37 @@ export function unwrapCompactionSummary(text: string): string {
   }
   return text;
 }
+
+/** The readable text of one stored thread event, as the history and read
+ *  tools and search show it: what the agent had in its conversation for a
+ *  message, a child result, a child turn or close, and a compaction summary.
+ *  Approval cards and turn failures carry no message and read as empty. */
+export function threadEventText(type: string, payload: Record<string, unknown>): string {
+  const str = (key: string): string => (typeof payload[key] === "string" ? (payload[key] as string) : "");
+  switch (type) {
+    case "user_message":
+    case "system_message":
+    case "tool_result":
+      return str("content");
+    case "assistant_message":
+      return Array.isArray(payload.blocks)
+        ? (payload.blocks as { type?: string; text?: string }[])
+            .filter((block) => block.type === "text" && typeof block.text === "string")
+            .map((block) => block.text!)
+            .join("\n")
+        : "";
+    case "child_result": {
+      const reason = str("reason") === "" ? "" : ` (${str("reason")})`;
+      const head = `Child result from ${str("agent_name") || "a child"} "${str("title")}": ${str("status")}${reason}`;
+      return str("final_text") === "" ? head : `${head}\n${str("final_text")}`;
+    }
+    case "child_spawned":
+      return `Turn for child ${str("agent_name") || "thread"} "${str("title")}": ${str("task")}`;
+    case "child_closed":
+      return `Child thread ${str("thread_id")} closed`;
+    case "compaction":
+      return str("summary");
+    default:
+      return "";
+  }
+}

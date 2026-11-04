@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { pendingWorkQuery } from "../storage/postgres/queries.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -24,6 +25,8 @@ import { ChatBridge } from "../chats/bridge.js";
 import { createApprovalGate } from "../harness/approvals.js";
 import { SkillRuntime } from "../harness/skills.js";
 import { GuildRuntime } from "../harness/runtime.js";
+import { postedTurnEntry } from "../chats/posted-turn.js";
+import { childResultEntry } from "../chats/child-result.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
 import type { UserMcpRuntime } from "../harness/user-mcp.js";
 import { ThreadStore } from "../platform/store/thread.js";
@@ -388,6 +391,69 @@ describe("durable integration contracts", () => {
     }
   });
 
+  it("projects posted-turn and child-result entries once, at placement", async () => {
+    const id = await chat();
+    const runtime = new GuildRuntime({
+      config: stack.env.config,
+      pool: stack.env.db,
+      log,
+      stores: createStores(stack.env.db),
+      agents: new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db) }),
+      masterKey: () => masterKeyBytes(stack.env.config.masterKeyHex),
+      placement: { kind: "in-process" },
+    });
+    const result = (runId: string, text: string) => ({
+      type: "child_result" as const,
+      thread_id: crypto.randomUUID(),
+      run_id: runId,
+      chat_id: crypto.randomUUID(),
+      agent_name: "Child",
+      title: "child task",
+      status: "succeeded",
+      final_text: text,
+      attachments: [],
+    });
+    try {
+      const conversation = await runtime.conversationForChat(id);
+      const now = Date.now();
+      await conversation.submit(
+        {
+          type: "write",
+          entry: { ...postedTurnEntry(), model: [{ role: "user", content: "Do the task", timestamp: now }] },
+        },
+        context,
+      );
+      const runA = crypto.randomUUID();
+      const runB = crypto.randomUUID();
+      await conversation.submit(
+        {
+          type: "write",
+          entry: {
+            ...childResultEntry([result(runA, "first"), result(runB, "second")]),
+            model: [{ role: "user", content: "results", timestamp: now }],
+          },
+        },
+        context,
+      );
+      const shown = async () =>
+        (await threads.listEvents(stack.orgId, id)).flatMap((r) =>
+          r.event.type === "user_message"
+            ? [`user:${r.event.content}`]
+            : r.event.type === "child_result"
+              ? [`result:${r.event.final_text}`]
+              : [],
+        );
+      await until(async () => (await shown()).length === 3);
+      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second"]);
+      // Recovery from the journal re-projects nothing.
+      await stack.env.db.query("DELETE FROM chat_projection_cursors WHERE chat_id=$1", [id]);
+      await bridge(id, conversation).recover(conversation);
+      expect(await shown()).toEqual(["user:Do the task", "result:first", "result:second"]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("first-touch worker bootstrap never rewrites another conversation's running task", async () => {
     const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(stack.env.db));
     const cid = await storage.mintId();
@@ -427,10 +493,10 @@ describe("durable integration contracts", () => {
           submit: async () => {
             throw new Error("unused");
           },
-          deliverSteer: async () => {
+          deliverChildResults: async () => {
             throw new Error("unused");
           },
-          deliverMessage: async () => {
+          writeEntry: async () => {
             throw new Error("unused");
           },
         },

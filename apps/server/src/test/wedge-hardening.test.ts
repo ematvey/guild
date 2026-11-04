@@ -83,14 +83,33 @@ describe("wedge hardening", () => {
         { content: "fresh", attachments: [] },
       );
       // Nothing is old enough yet.
-      expect(await commands.sweepExpired(15 * 60)).toBe(0);
+      expect(await commands.sweepExpired(15 * 60)).toHaveLength(0);
       expect((await commands.byId(fresh, chatId))!.status).toBe("pending");
       // Backdating the created_at makes the command expire.
       await stack.env.db.query("UPDATE turn_commands SET created_at = created_at - interval '1 hour' WHERE id = $1", [
         fresh,
       ]);
-      expect(await commands.sweepExpired(15 * 60)).toBeGreaterThanOrEqual(1);
+      expect((await commands.sweepExpired(15 * 60)).length).toBeGreaterThanOrEqual(1);
       expect((await commands.byId(fresh, chatId))!.status).toBe("failed");
+    });
+
+    it("discards a turn the conversation never admitted, echo and command", async () => {
+      const id = randomUUID();
+      await commands.accept(
+        id,
+        stack.orgId,
+        stack.memberId,
+        chatId,
+        { user_message_id: id },
+        { user_message_id: id },
+        { content: "never delivered", attachments: [] },
+      );
+      const echo = () => stack.env.db.query("SELECT 1 FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
+      expect((await echo()).rows).toHaveLength(1);
+      await commands.failUnsubmitted(id);
+      expect(await stack.env.app.platform.runtime.discardUnsent(chatId, id)).toBeNull();
+      expect((await echo()).rows).toHaveLength(0);
+      expect(await commands.byId(id, chatId)).toBeUndefined();
     });
   });
 });
