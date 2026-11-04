@@ -5,7 +5,7 @@
 // re-resolved at call time.
 
 import { randomUUID } from "node:crypto";
-import type { IntegrationToolSpec, Connector } from "./loader.js";
+import { builtinMcpByName, type IntegrationToolSpec, type Connector } from "./loader.js";
 import { traitSpec } from "@guild/integration-sdk";
 import { connectorFor, readTraitBindings, type ConnectorSource, type TraitBindings } from "./connectors.js";
 import type { OrgKvStore } from "../platform/store/org-kv.js";
@@ -88,14 +88,18 @@ export function unnamespacedTool(slug: string, tool: string): string | null {
   return null;
 }
 
-/** The manifest whose content an admin's approval covers: resolved only
- *  while the item is approved AND the approval's recorded version is still
- *  the latest — a republish resets the review status. */
-export async function registryManifestIfApproved(
+/** The manifest an integration is served under: a built-in MCP plugin's
+ *  (shipping with Guild is its approval), else the registry manifest whose
+ *  content an admin's approval covers — resolved only while the item is
+ *  approved AND the approval's recorded version is still the latest (a
+ *  republish resets the review status). */
+export async function approvedManifest(
   gateway: Pick<IntegrationGateway, "registry">,
   orgId: string,
   slug: string,
 ): Promise<JsonObject | null> {
+  const builtin = builtinMcpByName(slug);
+  if (builtin !== undefined) return builtin.manifest;
   const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) return null;
   const [version, bundleSha256] = approved;
@@ -106,12 +110,12 @@ export async function registryManifestIfApproved(
   return (stored.manifest ?? {}) as JsonObject;
 }
 
-export async function registryManifest(
+export async function requireApprovedManifest(
   gateway: Pick<IntegrationGateway, "registry">,
   orgId: string,
   slug: string,
 ): Promise<JsonObject> {
-  const manifest = await registryManifestIfApproved(gateway, orgId, slug);
+  const manifest = await approvedManifest(gateway, orgId, slug);
   if (manifest === null) {
     throw new Error(`registry item ${slug} has no approval covering its latest version and bundle`);
   }
@@ -219,7 +223,7 @@ export async function resolveIntegrations(
     // disabled) requires the live list.
     let manifest: JsonObject;
     try {
-      manifest = await registryManifest(gateway, orgId, row.name);
+      manifest = await requireApprovedManifest(gateway, orgId, row.name);
     } catch {
       warn(`integration ${row.name}: no registry manifest, skipping`);
       continue;

@@ -8,12 +8,12 @@ import { ApiError } from "../platform/errors.js";
 import { toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import { builtinByName } from "./loader.js";
+import { BUILTIN_MCP, builtinByName, builtinMcpByName } from "./loader.js";
 import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { mcpConnect } from "./mcp.js";
-import { manifestSecretNames, namespacedTool, registryManifest, registryManifestIfApproved } from "./plugins.js";
+import { approvedManifest, manifestSecretNames, namespacedTool, requireApprovedManifest } from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
 import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { parseBundle, readBundleFile } from "../platform/bundle.js";
@@ -36,7 +36,7 @@ async function latestIntegrationManifest(
   slug: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return await registryManifestIfApproved(gateway, orgId, slug);
+    return await approvedManifest(gateway, orgId, slug);
   } catch {
     return null;
   }
@@ -50,7 +50,7 @@ async function saveManifest(
   slug: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return await registryManifestIfApproved(gateway, orgId, slug);
+    return await approvedManifest(gateway, orgId, slug);
   } catch (error) {
     throw ApiError.badRequest(`invalid registry manifest: ${(error as Error).message}`);
   }
@@ -191,8 +191,36 @@ export async function integrationShop(
       ),
     );
   }
+  for (const builtin of BUILTIN_MCP) {
+    const m = builtin.manifest;
+    const auth = m["auth"] as { secret_names: string[] };
+    const row = rowByName.get(builtin.name) ?? null;
+    items.push(
+      shopEntry(
+        {
+          name: builtin.name,
+          title: m["title"] as string,
+          version: m["version"] as string,
+          publisher: m["publisher"] as string,
+          summary: m["summary"] as string,
+          description: m["description"] as string,
+          docs_url: (m["docs_url"] as string | null) ?? null,
+          logo: builtin.logo,
+          categories: ["mcp", ...((m["categories"] as string[]) ?? [])],
+          traits: {},
+          secret_names: auth.secret_names,
+          settings: m["settings"] ?? null,
+          source: "builtin",
+          readme: builtin.readme,
+          tools: [],
+        },
+        row,
+        row === null ? [] : await gateway.integrationSecrets.names(orgId, builtin.name),
+      ),
+    );
+  }
   for (const item of await gateway.registry.listItems(orgId, "integration")) {
-    if (item.review_status !== "approved") continue;
+    if (item.review_status !== "approved" || builtinMcpByName(item.slug) !== undefined) continue;
     const manifest = await latestIntegrationManifest(gateway, orgId, item.slug);
     if (manifest === null || manifest["mcp"] === null || manifest["mcp"] === undefined) continue;
     const auth = (manifest["auth"] ?? null) as Record<string, unknown> | null;
@@ -303,7 +331,7 @@ export async function integrationTools(
   }
   let manifest: Record<string, unknown>;
   try {
-    manifest = await registryManifest(gateway, orgId, integrationRow.name);
+    manifest = await requireApprovedManifest(gateway, orgId, integrationRow.name);
   } catch (error) {
     throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
   }

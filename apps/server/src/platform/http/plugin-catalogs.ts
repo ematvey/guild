@@ -26,7 +26,7 @@ import {
 } from "../../integrations/catalogs.js";
 import { installPluginBundle, type InstallOrigin, type PluginInstallDeps } from "../../integrations/plugin-install.js";
 import { orgConnectors, readTraitBindings, writeTraitBinding } from "../../integrations/connectors.js";
-import { builtinByName } from "../../integrations/loader.js";
+import { isBuiltinSlug } from "../../integrations/loader.js";
 
 function publisherOf(admin: UserRow): Publisher {
   return {
@@ -122,7 +122,7 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
               installed_version: installed,
               installed_sha256: approved?.[1] ?? null,
               update_available: installed !== null && compareVersions(latest.version, installed) > 0,
-              builtin: builtinByName(p.slug) !== undefined,
+              builtin: isBuiltinSlug(p.slug),
             };
           }),
         );
@@ -226,7 +226,7 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
           ...plugin,
           latest: plugin.versions[0]!.version,
           installed_version: row === null ? null : (approved?.[0] ?? null),
-          builtin: builtinByName(slug) !== undefined,
+          builtin: isBuiltinSlug(slug),
         },
         version: { ...version },
         manifest: preview.manifest,

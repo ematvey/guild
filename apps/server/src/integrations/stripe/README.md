@@ -21,7 +21,7 @@ What a call can actually reach is limited by the key's permissions, not by the t
 1. In the Stripe Dashboard, open **Developers → API keys → Create restricted key**.
 2. When Stripe asks how the key will be used, choose **Authorizing agent access to your account**. The key gets an **Agent** badge. From December 2026 Stripe's MCP server accepts only agent keys.
 3. Grant the permissions agents need (Read for a lookup-only setup) and create the key (`rk_live_…` or `rk_test_…`).
-4. In Guild, install Stripe from the catalog and paste the key into **Agent API key**. Connect platforms may also set **Connected account** to an `acct_…` id; every call then acts on that account.
+4. In Guild, open Stripe on the integrations page and paste the key into **Agent API key**. Connect platforms may also set **Connected account** to an `acct_…` id; every call then acts on that account.
 5. Click **Test connection**, then open **Tools** and enable the tools agents should see. Each tool's class comes from Stripe's own read-only and destructive hints. Check it before you enable it.
 6. Enable the integration, set who may add it on the **Access** tab, and add it to agents.
 

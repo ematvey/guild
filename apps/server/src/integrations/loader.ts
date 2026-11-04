@@ -2,11 +2,15 @@
 // turn resolver, and the dispatcher read. Two kinds of plugin reach it: the
 // built-ins compiled into the server (the plugin index), and code plugins an
 // org installed from its registry (code-plugins.ts loads those per org).
+// A built-in MCP plugin is no connector: it serves its registry-shaped
+// manifest, and the MCP paths treat it as an approved registry item.
 // Every manifest is validated here — a malformed built-in fails at startup,
 // a malformed code plugin fails its load and is skipped.
 
 import { readFileSync } from "node:fs";
-import { traitSpec } from "@guild/integration-sdk";
+import { isMcpPlugin, mcpRegistryManifest, traitSpec, type GuildPlugin } from "@guild/integration-sdk";
+import { validateV2, type Manifest } from "../platform/registry-manifest.js";
+import { templateSecretNames, validateHeaderTemplates } from "./mcp-headers.js";
 import { PLUGINS } from "./index.js";
 import type { JsonObject, ToolOutcome } from "./shared.js";
 import type {
@@ -142,8 +146,12 @@ function fileIn(dir: URL, name: string): string {
   }
 }
 
+function pluginDir(slug: string): URL {
+  return new URL(`./${slug}/`, import.meta.url);
+}
+
 function builtin(plugin: IntegrationPlugin): Connector {
-  const dir = new URL(`./${plugin.manifest.name}/`, import.meta.url);
+  const dir = pluginDir(plugin.manifest.name);
   return connectorOf(plugin.manifest, "builtin", { logo: fileIn(dir, "logo.svg"), readme: fileIn(dir, "README.md") }, {
     validate: (config) => plugin.validate?.(config),
     testConnection: (config, secrets) => plugin.testConnection(config, secrets),
@@ -151,19 +159,68 @@ function builtin(plugin: IntegrationPlugin): Connector {
   });
 }
 
-/** The built-in integrations, in priority order (the shop and the default
- *  trait provider order both read it). */
-export function loadBuiltins(plugins: IntegrationPlugin[]): Connector[] {
+function assertUniqueSlugs(plugins: GuildPlugin[]): void {
   const seen = new Set<string>();
   for (const plugin of plugins) {
     if (seen.has(plugin.manifest.name)) fail(plugin.manifest.name, "two plugins declare this slug");
     seen.add(plugin.manifest.name);
   }
-  return plugins.map(builtin);
+}
+
+/** The built-in code integrations, in priority order (the shop and the
+ *  default trait provider order both read it). */
+export function loadBuiltins(plugins: GuildPlugin[]): Connector[] {
+  assertUniqueSlugs(plugins);
+  return plugins.filter((p): p is IntegrationPlugin => !isMcpPlugin(p)).map(builtin);
+}
+
+/** A built-in MCP plugin: its registry-shaped manifest and pages. */
+export interface BuiltinMcp {
+  name: string;
+  manifest: JsonObject;
+  logo: string;
+  readme: string;
+}
+
+/** The built-in MCP plugins, each manifest validated as a registry bundle's
+ *  would be, and every header template naming a declared secret field. */
+export function loadBuiltinMcp(plugins: GuildPlugin[]): BuiltinMcp[] {
+  assertUniqueSlugs(plugins);
+  return plugins.filter(isMcpPlugin).map((plugin) => {
+    const m = plugin.manifest;
+    if (typeof m.name !== "string" || !SLUG.test(m.name)) fail(String(m.name), "slug must be [a-z0-9_-], at most 64 chars");
+    const manifest = mcpRegistryManifest(m) as JsonObject;
+    try {
+      validateV2(manifest as unknown as Manifest);
+      validateHeaderTemplates(m.mcp.headers ?? {});
+    } catch (error) {
+      fail(m.name, (error as Error).message);
+    }
+    const secrets = new Set(m.fields.filter((f) => f.kind === "secret").map((f) => f.name));
+    for (const name of templateSecretNames(m.mcp.headers ?? {})) {
+      if (!secrets.has(name)) fail(m.name, `header template names {${name}}, which is no secret field`);
+    }
+    for (const [tool, cls] of Object.entries(m.tool_classes ?? {})) {
+      if (!TOOL_CLASSES.has(cls)) fail(m.name, `tool ${tool} has unknown class ${cls}`);
+    }
+    const dir = pluginDir(m.name);
+    return { name: m.name, manifest, logo: fileIn(dir, "logo.svg"), readme: fileIn(dir, "README.md") };
+  });
 }
 
 export const BUILTINS: Connector[] = loadBuiltins(PLUGINS);
+export const BUILTIN_MCP: BuiltinMcp[] = loadBuiltinMcp(PLUGINS);
 
 export function builtinByName(name: string): Connector | undefined {
   return BUILTINS.find((c) => c.name === name);
+}
+
+export function builtinMcpByName(name: string): BuiltinMcp | undefined {
+  return BUILTIN_MCP.find((p) => p.name === name);
+}
+
+/** True when a built-in of either kind owns the slug: no registry item,
+ *  catalog install or org MCP server may take it. */
+export function isBuiltinSlug(name: string): boolean {
+  return builtinByName(name) !== undefined || builtinMcpByName(name) !== undefined;
 }

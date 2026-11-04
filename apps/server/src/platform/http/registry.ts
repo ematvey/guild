@@ -13,7 +13,7 @@ import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { BundleWriteError, publishRegistryBundle } from "../registry-publish.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
-import { builtinByName } from "../../integrations/loader.js";
+import { isBuiltinSlug } from "../../integrations/loader.js";
 import { CODE_ENTRY } from "../../integrations/code-plugins.js";
 
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
@@ -252,7 +252,7 @@ export function registerRegistryRoutes(
 /** A code plugin bundle carries its entry file and does not reuse a
  *  built-in slug (the built-in would shadow it). */
 export function assertCodeBundle(slug: string, parsed: ParsedBundle): void {
-  if (builtinByName(slug) !== undefined) {
+  if (isBuiltinSlug(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if (readBundleFile(parsed, CODE_ENTRY) === null) {

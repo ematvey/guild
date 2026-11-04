@@ -78,53 +78,58 @@ version in a catalog index; host the index and its `bundles/` folder in a
 public repository (served as a URL) or a private GitHub/GitLab repository
 (each org reads it with its own GitHub/GitLab integration).
 
-## MCP stubs
+## MCP plugins
 
-A remote MCP server joins a catalog as a stub: a folder with
-`manifest.json`, `README.md` and `logo.svg`, and no code. The manifest
-names the server, the settings an admin fills in, and how they reach the
-server as headers:
+A plugin can wrap a remote MCP server instead of running code. Its module
+exports `mcpIntegration(...)`: the server, the settings an admin fills in,
+and how they reach the server as headers. It declares no tools: Guild
+discovers them live once an admin configures the integration.
 
-```json
-{
-  "kind": "integration",
-  "slug": "acme",
-  "version": "1.0.0",
-  "title": "Acme",
-  "summary": "One line for the catalog card",
-  "description": "What the agent reads about this integration",
-  "publisher": "Acme",
-  "docs_url": "https://acme.example/docs/mcp",
-  "mcp": {
-    "url": "https://mcp.acme.example",
-    "headers": { "Authorization": "Bearer {acme_key}" },
-    "envelope": false
+```ts
+import { mcpIntegration } from "@guild/integration-sdk";
+
+export default mcpIntegration({
+  name: "acme",
+  title: "Acme",
+  version: "1.0.0",
+  publisher: "Acme",
+  summary: "One line for the shop card",
+  description: "What the agent reads about this integration",
+  docs_url: "https://acme.example/docs/mcp",
+  categories: ["crm"],
+  mcp: {
+    url: "https://mcp.acme.example",
+    headers: { Authorization: "Bearer {acme_key}" },
+    envelope: false,
   },
-  "auth": { "kind": "org_secret", "secret_names": ["acme_key"], "identity_key": "email" },
-  "settings": {
-    "fields": [
-      { "name": "acme_key", "kind": "secret", "label": "API key", "required": true,
-        "obtain": "Where the admin gets the value" }
-    ]
-  }
-}
+  fields: [
+    { name: "acme_key", kind: "secret", label: "API key", required: true, default: null,
+      help: null, placeholder: null, obtain: "Where the admin gets the value" },
+  ],
+  // Optional: classes for tools you know, by the server's tool name.
+  tool_classes: { delete_record: "admin" },
+});
 ```
 
 Each `{name}` in a header template is replaced by the stored secret of
-that name; a header whose secret is not stored is not sent, so an optional
+that name. A header whose secret is not stored is not sent, so an optional
 secret field makes an optional header. `envelope: false` keeps Guild's
 `x-guild-*` identity headers away from a third-party server.
 
-A stub lists no tools. Once configured, the server discovers them live:
-each arrives disabled, and its class is the admin's choice, else the one
-the server's `readOnlyHint`/`destructiveHint` suggests, else read for a
-name starting with a read verb (`get_`, `list_`, `search_` …) and write for
-anything else.
+Each discovered tool arrives disabled. Its class is the admin's choice,
+else `tool_classes`, else the class the server's `readOnlyHint` or
+`destructiveHint` suggests, else `read` for a name starting with a read
+verb (`get_`, `list_`, `search_` …) and `write` for anything else.
 
-```
-guild-plugin pack plugins/acme --out dist
-guild-plugin catalog add dist/acme-1.0.0.guildplugin --index catalog/index.json
-```
+The same module serves both ways:
+
+- **Built in:** a folder under `apps/server/src/integrations/<slug>/`
+  (`integration.ts`, `README.md`, `logo.svg`) listed in that directory's
+  `index.ts`. It ships with Guild and needs no publishing
+  (`stripe/` is the example).
+- **Published:** `guild-plugin pack <folder>/integration.ts` writes a bundle
+  of `manifest.json`, `README.md` and `logo.svg` with no code, which
+  `publish` and `catalog add` handle like any other bundle.
 
 ## Catalog format
 

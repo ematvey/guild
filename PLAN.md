@@ -97,25 +97,34 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
-- **Remote MCP servers ship in catalogs as stubs; Guild's own catalog
-  lives in `catalog/` (2026-11-04).** A catalog listed only code plugins,
-  so a known vendor MCP server (Stripe) meant every admin typing its URL,
-  header shape and key format into Add MCP server. Install already accepted
-  a manifest-only MCP bundle; what was missing: `guild-plugin pack <folder>`
-  now packs a stub folder (`manifest.json`, `README.md`, `logo.svg`, no
-  code), and the shop reads an MCP item's logo and readme from its approved
-  bundle and keeps its manifest categories. A stub lists no tools: the
-  server discovers them live, each arriving disabled. That exposed a class
-  hole: an MCP tool with no curated class and no manifest declaration ran
-  as `read`, so a catalog-installed `stripe_api_write` would have passed a
-  read-only ceiling. The fallback is now the suggestion the create form
-  already used (server `readOnlyHint`/`destructiveHint`, then a read verb
-  in the name, else `write`), at turn time and in the tools listing. Header
-  templates carry literal text (`Bearer {stripe_key}`) so the admin pastes
-  only the key, and an optional secret makes an optional header
-  (`Stripe-Account`). Stubs for third-party servers set `envelope: false`.
-  Guild's catalog sits in this repository (`catalog/index.json`), so an org
-  adds it as a GitHub source (`maintainer/guild`, ref `develop`).
+- **MCP plugins: the SDK wraps a remote MCP server, built in or published;
+  Stripe is a built-in (2026-11-05).** Adding a known vendor MCP server
+  (Stripe) meant every admin typing its URL, header shape and key format
+  into Add MCP server. `@guild/integration-sdk` now has a second plugin
+  shape, `mcpIntegration({...})`: metadata, settings fields, `mcp: { url,
+  headers, envelope }`, optional `tool_classes`, and no code or tool list.
+  The same module serves two ways. Built in: listed in
+  `integrations/index.ts` like any built-in; the loader validates it at
+  startup as a registry manifest (header templates must name secret
+  fields) and `approvedManifest` returns it first, so every MCP path (stub
+  create seeding `config.mcp`, live discovery, curation, test connection)
+  serves it with no publishing. Its slug is reserved against registry
+  items, uploads, catalogs and org MCP servers. Published:
+  `guild-plugin pack` writes a code-free bundle (manifest, README, logo)
+  that installs as an MCP item, and the shop now reads such an item's logo
+  and readme from its bundle. A same-day `catalog/` folder of
+  manifest.json stubs in this repo was dropped for this. Discovered tools
+  arrive disabled. That exposed a class hole: an MCP tool with no curated
+  class and no manifest declaration ran as `read`, so `stripe_api_write`
+  would have passed a read-only ceiling. The fallback is now the
+  suggestion the create form already used (server
+  `readOnlyHint`/`destructiveHint`, then a read verb in the name, else
+  `write`), at turn time and in the tools listing. Header templates carry
+  literal text (`Bearer {stripe_key}`) so the admin pastes only the key;
+  an optional secret makes an optional header (`Stripe-Account`). A
+  built-in's `config.mcp` is copied into the row at create, so a later
+  release that changes the server URL or headers does not reach existing
+  rows. Known gap.
 
 - **Integration access: audiences and explicit Agent Integration lists
   (2026-11-04).** An enabled Integration used to reach every Member, gated

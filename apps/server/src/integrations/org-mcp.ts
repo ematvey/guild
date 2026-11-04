@@ -22,7 +22,7 @@ import type { IntegrationSecretStore, IntegrationStore } from "../platform/store
 import type { TeamStore } from "../platform/store/teams.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { builtinByName } from "./loader.js";
+import { isBuiltinSlug } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { suggestedToolClass } from "./policy.js";
@@ -168,7 +168,7 @@ export async function createOrgMcp(
   if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
   }
-  if (builtinByName(slug) !== undefined) {
+  if (isBuiltinSlug(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if ((await deps.integrations.getByName(orgId, slug)) !== null) {

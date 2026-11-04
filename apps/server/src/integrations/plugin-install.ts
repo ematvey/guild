@@ -15,7 +15,7 @@ import type { IntegrationStore } from "../platform/store/integrations.js";
 import type { TeamStore } from "../platform/store/teams.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { builtinByName } from "./loader.js";
+import { isBuiltinSlug } from "./loader.js";
 import { CODE_ENTRY, loadCodePlugin } from "./code-plugins.js";
 
 export interface PluginInstallDeps {
@@ -62,7 +62,7 @@ export async function installPluginBundle(
   const isCode = manifest.runtime === "code";
   const isMcp = manifest.mcp !== null && manifest.mcp !== undefined;
   if (!isCode && !isMcp) throw ApiError.badRequest("the bundle is neither a code plugin nor an MCP integration");
-  if (builtinByName(slug) !== undefined) {
+  if (isBuiltinSlug(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if (isCode) {
