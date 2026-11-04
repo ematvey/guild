@@ -21,6 +21,8 @@ export interface TurnEndedEvent {
   chatId: string;
   title: string;
   failed: boolean;
+  /** The success body when the default "answer is ready" does not fit. */
+  body?: string;
 }
 
 export interface PushNotifierDeps {
@@ -104,6 +106,29 @@ export class PushNotifier {
   }
 }
 
+/** The thread reads that resolve where a routine run's message landed. */
+export interface DeliveryChatReads {
+  threadByChatId(chatId: string): Promise<{ id: string } | null>;
+  routineOfRunThread(threadId: string): Promise<{ id: string } | null>;
+  routineDeliveryChat(threadId: string): Promise<{ chat_id: string; title: string } | null>;
+}
+
+/** The chat a finished turn's push opens, or null for no push. A routine run
+ *  is a hidden transcript: its notification belongs to the chat its message
+ *  landed in, and a run that sent nothing sends nothing. Every other chat
+ *  pushes itself. */
+export async function turnEndPushTarget(
+  reads: DeliveryChatReads,
+  chatId: string,
+): Promise<{ chat_id: string; title: string | null; body?: string } | null> {
+  const thread = await reads.threadByChatId(chatId);
+  if (thread === null) return { chat_id: chatId, title: null };
+  if ((await reads.routineOfRunThread(thread.id)) === null) return { chat_id: chatId, title: null };
+  const delivered = await reads.routineDeliveryChat(thread.id);
+  if (delivered === null) return null;
+  return { chat_id: delivered.chat_id, title: delivered.title, body: "A routine posted a message." };
+}
+
 /** The collapse topic: the push service allows 32 URL-safe characters, so a
  *  chat id is hashed. Stable per chat, so a second notification replaces the
  *  first instead of stacking. */
@@ -117,7 +142,7 @@ export function pushTopic(chatId: string): string {
 export function turnEndedPayload(event: TurnEndedEvent): PushPayload {
   return {
     title: event.title === "" ? "Guild" : event.title,
-    body: event.failed ? "The run failed." : "The answer is ready.",
+    body: event.failed ? "The run failed." : (event.body ?? "The answer is ready."),
     url: `/thread/${event.chatId}`,
     tag: `chat-${event.chatId}`,
     chat_id: event.chatId,

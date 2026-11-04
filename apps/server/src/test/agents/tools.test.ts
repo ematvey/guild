@@ -14,7 +14,7 @@ import {
   sendAgentMessage,
 } from "../../agents/tools.js";
 import { insertChunks } from "../../agents/search.js";
-import { createRoutine } from "../../agents/routines.js";
+import { createRoutine, updateRoutine } from "../../agents/routines.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
@@ -200,6 +200,42 @@ dbDescribe("agent conversation tools", () => {
     const chatId = result.url.replace("/thread/", "");
     const row = (await chats.listChats(orgId, owner.id)).find((chat) => chat.id === chatId);
     expect(row?.routine).toBeNull();
+  });
+
+  it("a routine run resolves the chat its message landed in, and a silent run none", async () => {
+    const routine = await createRoutine(env!.db, agent.id, {
+      created_by_user_id: owner.id,
+      name: "Standup notes",
+      kind: "cron",
+      schedule: "every 1 hours",
+      prompt: "Write standup notes.",
+    });
+    const delivered = await routineRun(routine.id, "Standup notes — 1");
+    const sent = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: delivered.chat_id },
+      { text: "All clear today." },
+    );
+    const feedChat = sent.url.replace("/thread/", "");
+    expect(await store.threads.routineDeliveryChat(delivered.id)).toEqual({
+      chat_id: feedChat,
+      title: "Standup notes",
+    });
+
+    // A run that delivered nothing leaves the feed pointing at the older run.
+    const silent = await routineRun(routine.id, "Standup notes — 2");
+    expect(await store.threads.routineDeliveryChat(silent.id)).toBeNull();
+
+    // A new_chat delivery resolves its own chat, titled by the message.
+    await updateRoutine(env!.db, agent.id, routine.id, { delivery: "new_chat" });
+    const perChat = await routineRun(routine.id, "Standup notes — 3");
+    const opened = await sendAgentMessage(
+      { store, threads, agent, userId: owner.id, chatId: perChat.chat_id },
+      { text: "Disk is full.", title: "Disk alert" },
+    );
+    expect(await store.threads.routineDeliveryChat(perChat.id)).toEqual({
+      chat_id: opened.url.replace("/thread/", ""),
+      title: "Disk alert",
+    });
   });
 
   it("registers the routine management tools", () => {

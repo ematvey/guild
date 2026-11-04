@@ -114,6 +114,18 @@ first. Code comments describe only the present.
   the existing owner-or-admin rule: an admin reads every chat, a member
   only their own.
 
+- **A routine's notification names the chat it wrote to (2026-11-04).**
+  A routine run is a hidden transcript, and the run-end push opened that
+  transcript. The delivered message lived in another chat, so the push
+  never named it. A finished turn now resolves its push target first: a
+  routine run pushes the chat its `send_message` landed in (the feed, or the
+  chat the run opened in `new_chat` mode), titled after the routine, with
+  the body "A routine posted a message."; a run that sent nothing pushes
+  nothing. Every other chat pushes itself. `agent_threads` carries the
+  link: a delivery points its chat's `origin_thread_id` at the run thread
+  behind it, so `routineDeliveryChat` answers per run, and the notifier's
+  read check and coalescing run on the delivered chat's marker.
+
 - **A routine delivers into one chat, marked in the list (2026-11-04).**
   Every `send_message` from a routine run opened a new chat, so an hourly
   routine filled the sidebar with near-identical rows. Routine runs already

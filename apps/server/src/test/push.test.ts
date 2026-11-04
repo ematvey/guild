@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { PushStore } from "../platform/store/push.js";
-import { PushNotifier, pushTopic, turnEndedPayload } from "../push/notifier.js";
+import { PushNotifier, pushTopic, turnEndPushTarget, turnEndedPayload } from "../push/notifier.js";
 import { isPushServiceEndpoint, type PushResult, type PushSender } from "../push/sender.js";
 
 let stack: GatewayStack;
@@ -162,6 +162,42 @@ describe("the payload", () => {
     const failed = turnEndedPayload({ orgId: "o", userId: "u", chatId: "c1", title: "", failed: true });
     expect(failed.body).toBe("The run failed.");
     expect(failed.title).toBe("Guild");
+  });
+
+  it("takes a caller body for a message a routine delivered", () => {
+    const routine = turnEndedPayload({
+      orgId: "o",
+      userId: "u",
+      chatId: "c1",
+      title: "Morning digest",
+      failed: false,
+      body: "A routine posted a message.",
+    });
+    expect(routine.body).toBe("A routine posted a message.");
+  });
+});
+
+describe("the chat a finished turn pushes", () => {
+  const reads = (
+    kind: "plain" | "delivered" | "silent",
+    delivery: { chat_id: string; title: string } | null = null,
+  ) => ({
+    threadByChatId: async () => ({ id: "thread" }),
+    routineOfRunThread: async () => (kind === "plain" ? null : { id: "routine" }),
+    routineDeliveryChat: async () => delivery,
+  });
+
+  it("pushes the chat itself when the turn is not a routine run", async () => {
+    expect(await turnEndPushTarget(reads("plain"), "chat")).toEqual({ chat_id: "chat", title: null });
+  });
+
+  it("pushes the chat a routine run delivered into, named after the routine", async () => {
+    const target = await turnEndPushTarget(reads("delivered", { chat_id: "feed", title: "Morning digest" }), "run");
+    expect(target).toEqual({ chat_id: "feed", title: "Morning digest", body: "A routine posted a message." });
+  });
+
+  it("pushes nothing for a routine run that sent nothing", async () => {
+    expect(await turnEndPushTarget(reads("silent"), "run")).toBeNull();
   });
 });
 

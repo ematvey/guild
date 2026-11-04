@@ -14,7 +14,7 @@ import { pendingWorkQuery, seedRecoveryBoundary } from "./storage/postgres/queri
 import { applyPostgresMigrations } from "./storage/postgres/index.js";
 import { SharedPoolDatabase } from "./chats/durable-mapping.js";
 import { syncSeams } from "./chats/ws-sync.js";
-import { PushNotifier } from "./push/notifier.js";
+import { PushNotifier, turnEndPushTarget } from "./push/notifier.js";
 import { webPushSender } from "./push/sender.js";
 import { pushSubject, vapidKeys, type VapidKeys } from "./push/vapid.js";
 import { LiveHub } from "./hub/live.js";
@@ -304,16 +304,25 @@ export class PlatformContext implements PlatformStores {
   private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
     const owner = await this.chats.ownerOf(chatId);
     if (owner === null) return;
-    const chat = await this.chats.getChatInOrg(owner.org_id, chatId).catch((error: unknown) => {
-      this.log.warn({ err: error, chatId }, "push title read failed");
+    const target = await turnEndPushTarget(this.agents.threads, chatId).catch((error: unknown) => {
+      this.log.warn({ err: error, chatId }, "push target read failed");
       return null;
     });
+    if (target === null) return;
+    const chat =
+      target.title === null
+        ? await this.chats.getChatInOrg(owner.org_id, target.chat_id).catch((error: unknown) => {
+            this.log.warn({ err: error, chatId }, "push title read failed");
+            return null;
+          })
+        : null;
     void this.pushNotifier.turnEnded({
       orgId: owner.org_id,
       userId: owner.user_id,
-      chatId,
-      title: chat?.title ?? "",
+      chatId: target.chat_id,
+      title: target.title ?? chat?.title ?? "",
       failed,
+      ...(target.body === undefined ? {} : { body: target.body }),
     });
   }
 

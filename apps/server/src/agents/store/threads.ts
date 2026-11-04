@@ -376,6 +376,28 @@ export class AgentThreadStore {
     return { id: row.id, chat_id: row.chat_id, generating: row.generating };
   }
 
+  /** The chat a routine run's send_message landed in: the routine's feed, or
+   *  the chat the run opened in new_chat mode. Null when this run sent
+   *  nothing — the newest delivery into a feed carries that run's origin. */
+  async routineDeliveryChat(runThreadId: string): Promise<{ chat_id: string; title: string } | null> {
+    const res = await this.pool.query<{ chat_id: string; title: string }>(
+      `SELECT d.chat_id, COALESCE(NULLIF(d.title, ''), r.name) AS title
+       FROM agent_threads t
+       JOIN LATERAL (
+         SELECT rn.routine_id FROM agent_runs rn
+         WHERE rn.thread_id = t.id AND rn.routine_id IS NOT NULL
+         ORDER BY rn.created_at DESC LIMIT 1
+       ) lr ON true
+       JOIN agent_routines r ON r.id = lr.routine_id
+       JOIN agent_threads d ON d.routine_id = r.id AND d.user_id = t.user_id
+         AND d.origin_thread_id = t.id AND d.closed_at IS NULL
+       WHERE t.id = $1 AND t.type = 'routine'
+       ORDER BY d.created_at DESC LIMIT 1`,
+      [runThreadId],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Points a routine feed at the run thread behind its newest message. */
   async setOrigin(threadId: string, originThreadId: string): Promise<void> {
     await this.pool.query("UPDATE agent_threads SET origin_thread_id = $2 WHERE id = $1", [threadId, originThreadId]);
