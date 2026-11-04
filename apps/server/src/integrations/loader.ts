@@ -3,7 +3,7 @@
 // plugin is validated here once — a malformed manifest fails at startup, not
 // in a chat.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { PLUGINS } from "./index.js";
 import { traitSpec } from "./traits.js";
 import type { JsonObject, ToolOutcome } from "./shared.js";
@@ -81,24 +81,46 @@ function secretNames(m: IntegrationManifest): string[] {
   return m.fields.filter((f) => f.kind === "secret").map((f) => f.name);
 }
 
-const logos = new Map<string, string>();
-
-/** The plugin's logo.svg, read once. A plugin without one gets an empty
- *  string and the shop renders its monogram fallback. */
-function logoOf(slug: string): string {
-  const cached = logos.get(slug);
-  if (cached !== undefined) return cached;
-  let svg = "";
+/** The plugin folder's logo.svg. A plugin without one gets an empty string
+ *  and the shop renders its monogram fallback. */
+function logoIn(dir: URL): string {
   try {
-    svg = readFileSync(new URL(`./${slug}/logo.svg`, import.meta.url), "utf8");
+    return readFileSync(new URL("logo.svg", dir), "utf8");
   } catch {
-    svg = "";
+    return "";
   }
-  logos.set(slug, svg);
-  return svg;
 }
 
-function load(plugin: IntegrationPlugin): BuiltinIntegration {
+/** One plugin and the folder it was loaded from (its logo sits there). */
+export interface PluginSource {
+  plugin: IntegrationPlugin;
+  dir: URL;
+}
+
+/** The organization's own plugins: every `private/<folder>/integration.ts`
+ *  default export, in folder-name order. The folder is gitignored, so a
+ *  checkout without it serves the built-ins only. */
+async function privatePlugins(root: URL): Promise<PluginSource[]> {
+  if (!existsSync(root)) return [];
+  const folders = readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith(".") && d.name !== "node_modules")
+    .map((d) => d.name)
+    .sort();
+  const out: PluginSource[] = [];
+  for (const folder of folders) {
+    const dir = new URL(`${folder}/`, root);
+    const entry = new URL("integration.ts", dir);
+    if (!existsSync(entry)) continue;
+    const mod = (await import(entry.href)) as { default?: IntegrationPlugin };
+    if (mod.default === undefined || typeof mod.default !== "object" || mod.default.manifest === undefined) {
+      throw new Error(`private integration ${folder}: integration.ts has no default plugin export`);
+    }
+    out.push({ plugin: mod.default, dir });
+  }
+  return out;
+}
+
+function load({ plugin, dir }: PluginSource): BuiltinIntegration {
   const m = plugin.manifest;
   validateManifest(m);
   const classes = Object.fromEntries(m.tools.map((t) => [t.name, t.class]));
@@ -106,7 +128,7 @@ function load(plugin: IntegrationPlugin): BuiltinIntegration {
     ...m,
     secret_names: secretNames(m),
     classes,
-    logo: logoOf(m.name),
+    logo: logoIn(dir),
     toolSpecs(config: JsonObject): IntegrationToolSpec[] {
       plugin.validate?.(config);
       return m.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
@@ -116,9 +138,25 @@ function load(plugin: IntegrationPlugin): BuiltinIntegration {
   };
 }
 
-/** Every integration, in plugin-index order (the shop and the trait
- *  provider priority both read this order). */
-export const INTEGRATIONS: BuiltinIntegration[] = PLUGINS.map(load);
+/** Every integration, in priority order: the organization's private plugins
+ *  first, then the built-ins of the plugin index (the shop and the trait
+ *  provider priority both read this order). A private plugin may not reuse
+ *  a built-in slug. */
+export function loadIntegrations(sources: PluginSource[]): BuiltinIntegration[] {
+  const seen = new Set<string>();
+  for (const { plugin } of sources) {
+    if (seen.has(plugin.manifest.name)) fail(plugin.manifest.name, "two plugins declare this slug");
+    seen.add(plugin.manifest.name);
+  }
+  return sources.map(load);
+}
+
+const PRIVATE_ROOT = new URL("./private/", import.meta.url);
+
+export const INTEGRATIONS: BuiltinIntegration[] = loadIntegrations([
+  ...(await privatePlugins(PRIVATE_ROOT)),
+  ...PLUGINS.map((plugin) => ({ plugin, dir: new URL(`./${plugin.manifest.name}/`, import.meta.url) })),
+]);
 
 export function integrationByName(name: string): BuiltinIntegration | undefined {
   return INTEGRATIONS.find((c) => c.name === name);

@@ -3,7 +3,7 @@
 
 import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
 import type { JsonObject } from "./shared.js";
-import { classRank, isToolClass } from "../platform/domain/tool-class.js";
+import { classRank, isToolClass, manifestToolClass, type ToolClass } from "../platform/domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
 export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
@@ -14,7 +14,7 @@ export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
 export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
 
 /** One tool's admin curation as stored on the integration row's config:
- *  `config.tools[<raw tool name>] = { enabled, approval }`. Absent from the
+ *  `config.tools[<raw tool name>] = { enabled, approval, class? }`. Absent from the
  *  stored config: adapter-bound (built-in connector) → enabled, follow user
  *  policy; MCP-bound (live discovery) → disabled — nothing is exposed that
  *  the admin did not approve. Unknown approval values read as the default. */
@@ -22,7 +22,7 @@ export function toolCurate(
   rowConfig: JsonObject,
   mcp: boolean,
   rawTool: string,
-): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
+): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean; cls: ToolClass | null } {
   const tools = rowConfig["tools"];
   const stored =
     tools !== null && typeof tools === "object" && !Array.isArray(tools) ? (tools as JsonObject)[rawTool] : undefined;
@@ -32,9 +32,17 @@ export function toolCurate(
       enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : !mcp,
       alwaysAsk: c["approval"] === TOOL_APPROVAL_ALWAYS_ASK,
       alwaysAllow: c["approval"] === TOOL_APPROVAL_ALWAYS_ALLOW,
+      cls: mcp && isToolClass(c["class"]) ? c["class"] : null,
     };
   }
-  return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false };
+  return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false, cls: null };
+}
+
+/** The class an MCP tool runs under: the admin's curated class when set,
+ *  else the registry manifest's declaration (read when it declares none).
+ *  A compiled-in tool's class is its code declaration only. */
+export function mcpToolClass(rowConfig: JsonObject, manifest: JsonObject | null, rawTool: string): ToolClass {
+  return toolCurate(rowConfig, true, rawTool).cls ?? (manifestToolClass(manifest, rawTool) as ToolClass);
 }
 
 /** Classes one role may call. Default policy: member read-only, admin

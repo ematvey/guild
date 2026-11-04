@@ -24,3 +24,8 @@ deploy/compose/.env.bak*
 
 # Python bytecode from scripts/coherence
 __pycache__/
+
+# Organization-specific integration plugins: their own repository, checked
+# out in place (apps/server/src/integrations/private/README.md).
+/apps/server/src/integrations/private/*
+!/apps/server/src/integrations/private/README.md

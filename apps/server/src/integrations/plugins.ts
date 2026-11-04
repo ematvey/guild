@@ -7,7 +7,9 @@
 import { randomUUID } from "node:crypto";
 import { integrationByName, traitForTool, type IntegrationToolSpec } from "./loader.js";
 import { traitSpec } from "./traits.js";
-import { manifestToolClass, toolClassOf } from "../platform/domain/tool-class.js";
+import { toolClassOf } from "../platform/domain/tool-class.js";
+import { mcpRequestHeaders } from "./mcp-headers.js";
+import { mcpToolClass } from "./policy.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
 
@@ -124,37 +126,14 @@ export function manifestSecretNames(manifest: JsonObject): string[] {
   return [];
 }
 
-/** The identity envelope headers (x-guild-org / -caller / -acting-as /
- *  -call-id) plus the secret headers, for the MCP transport. Secrets appear
- *  only here — never in logs or events. */
-export function envelopeHeaders(
-  callId: string,
-  orgId: string,
-  caller: string | null,
-  actingAs: string | null,
-  secrets: [string, string][],
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "x-guild-org": orgId,
-    "x-guild-call-id": callId,
-  };
-  if (caller !== null) headers["x-guild-caller"] = caller;
-  if (actingAs !== null) headers["x-guild-acting-as"] = actingAs;
-  for (const [name, value] of secrets) {
-    if (!/^[a-z0-9_-]+$/.test(name)) continue; // undeclarable name — never leak it by other means
-    headers[`x-guild-secret-${name}`] = value;
-  }
-  return headers;
-}
-
-function toMcpToolInfo(slug: string, manifest: JsonObject, tool: McpTool): IntegrationToolInfo {
+function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject, tool: McpTool): IntegrationToolInfo {
   return {
     spec: {
       name: namespacedTool(slug, tool.name),
       description: tool.description,
       parameters: tool.inputSchema,
     },
-    class: manifestToolClass(manifest, tool.name),
+    class: mcpToolClass(rowConfig, manifest, tool.name),
     raw: tool.name,
   };
 }
@@ -234,7 +213,10 @@ export async function resolveIntegrations(
     }
     let peer;
     try {
-      peer = await mcpConnect(mcpUrl, envelopeHeaders(randomUUID(), orgId, null, null, secrets));
+      peer = await mcpConnect(
+        mcpUrl,
+        mcpRequestHeaders(config, { callId: randomUUID(), orgId, caller: null, actingAs: null }, secrets),
+      );
     } catch {
       warn(`integration ${row.name} unreachable, skipping`);
       continue;
@@ -251,7 +233,7 @@ export async function resolveIntegrations(
       executor: "mcp",
       slug: row.name,
       description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
-      tools: listed.map((t) => toMcpToolInfo(row.name, manifest, t)),
+      tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),
       rowConfig: config,
       secretNames,
       identityKey:

@@ -60,7 +60,14 @@ The tree tools are one entry because an Agent that can spawn but not cancel or c
 
 ### Integrations
 
-An Integration is a plugin with a manifest: its fields, its Tools, its Traits and how it authenticates. A built-in Integration runs in the server. An MCP Integration comes from an approved registry item, and it runs only while that approval covers the item's latest version and hash.
+An Integration is a plugin with a manifest: its fields, its Tools, its Traits and how it authenticates. It comes in two kinds:
+
+| Kind | Where it comes from | How it runs |
+| --- | --- | --- |
+| Built-in | A plugin folder compiled into the server: the shipped ones, plus the Org's private plugins in `integrations/private/`, which are loaded first and may not reuse a shipped slug | In the server process. A Tool's class is its code declaration |
+| MCP | An approved registry item naming a remote MCP server. An admin adds one from the Integrations page, which publishes and approves the item in the same step | On the remote server, only while the approval covers the item's latest version and hash. A Tool's class is the admin's choice for that row, else the manifest's, else `read` |
+
+An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. A Tool the server starts serving later arrives disabled.
 
 Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and role policy decide which of its Tools a Member's Turn sees (see 002).
 

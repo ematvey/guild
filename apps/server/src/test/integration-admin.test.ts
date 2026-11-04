@@ -30,6 +30,8 @@ let e: Env;
 let connectorServer: Server;
 let connectorHits: string[] = [];
 let mcpServer: Server;
+/** The headers of the fake MCP server's last request. */
+let mcpLastHeaders: Record<string, unknown> = {};
 
 beforeAll(async () => {
   const env = await createObjectStoreStack("error", {}, "m7");
@@ -79,11 +81,6 @@ beforeAll(async () => {
       );
       return;
     }
-    if ((req.url ?? "").startsWith("/v1/fetch")) {
-      res.writeHead(200, { "content-type": "text/markdown" }); // superproxy shape
-      res.end("# page");
-      return;
-    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"ok": true}');
   });
@@ -93,6 +90,14 @@ beforeAll(async () => {
   mcpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== "POST") {
       res.writeHead(req.method === "DELETE" ? 200 : 405);
+      res.end();
+      return;
+    }
+    mcpLastHeaders = req.headers;
+    // The /auth-mcp path stands in for a third-party server: it wants a
+    // bearer token in Authorization.
+    if ((req.url ?? "").startsWith("/auth-mcp") && req.headers["authorization"] !== "Bearer s3cret") {
+      res.writeHead(401);
       res.end();
       return;
     }
@@ -140,6 +145,7 @@ beforeAll(async () => {
                   name: "echo",
                   description: "Echo the input.",
                   inputSchema: { type: "object", properties: { text: { type: "string" } } },
+                  annotations: { readOnlyHint: true },
                 },
                 { name: "write_thing", description: "Write something.", inputSchema: { type: "object" } },
               ],
@@ -449,7 +455,7 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
 
 describe("admin integration save path", () => {
   it("a create-stub (name only) registers the row disabled and empty — byte-identical response shape to Rust", async () => {
-    const res = await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "superproxy" });
+    const res = await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "hubspot" });
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as Record<string, unknown>;
     expect(parsed["enabled"]).toBe(false);
@@ -458,7 +464,7 @@ describe("admin integration save path", () => {
   });
 
   it("a duplicate create is a 409 already_configured; an unknown kind is a 404", async () => {
-    const dup = await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "superproxy" });
+    const dup = await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "hubspot" });
     expect(dup.statusCode).toBe(409);
     expect(JSON.parse(dup.body).error.code).toBe("already_configured");
     const unknown = await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "not_a_connector" });
@@ -467,11 +473,11 @@ describe("admin integration save path", () => {
   });
 
   it("a valid save with connection test persists config + secrets (test passed against the fake backend)", async () => {
-    await seedIntegration("superproxy", {}, false);
+    await seedIntegration("gitlab", {}, false);
     const rows = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
       items: { id: string; name: string }[];
     };
-    const id = rows.items.find((r) => r.name === "superproxy")!.id;
+    const id = rows.items.find((r) => r.name === "gitlab")!.id;
     connectorHits = [];
     const res = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
       config: { base_url: connectorBase() },
@@ -480,13 +486,13 @@ describe("admin integration save path", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ ok: true });
-    expect(connectorHits.some((h) => h.startsWith("/v1/fetch"))).toBe(true);
+    expect(connectorHits.some((h) => h.startsWith("/api/v4/user"))).toBe(true);
     const row = (await e.env.db.query("SELECT enabled, config FROM integrations WHERE id = $1", [id])).rows[0]!;
     expect(row.enabled).toBe(true);
     expect(row.config.base_url).toBe(connectorBase());
     const secretRow = (
       await e.env.db.query(
-        "SELECT secret_enc, masked FROM integration_secrets WHERE org_id = $1 AND integration = 'superproxy'",
+        "SELECT secret_enc, masked FROM integration_secrets WHERE org_id = $1 AND integration = 'gitlab'",
         [e.orgId],
       )
     ).rows[0]!;
@@ -700,6 +706,119 @@ describe("MCP plugin rows", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.content).toBe("echo:hi");
     expect(parsed.meta).toBeNull();
+  });
+});
+
+describe("org MCP servers added from the admin UI", () => {
+  const authUrl = (): string => `http://127.0.0.1:${(mcpServer.address() as AddressInfo).port}/auth-mcp`;
+  const headers = [{ name: "Authorization", value: "Bearer s3cret" }];
+
+  it("the probe reaches the server with the configured header and suggests a class per tool", async () => {
+    const refused = await call("POST", "/api/v1/admin/integrations/mcp/probe", e.adminToken, { url: authUrl() });
+    expect(refused.statusCode).toBe(400);
+    expect(JSON.parse(refused.body).error.message).toMatch(/401/);
+    const res = await call("POST", "/api/v1/admin/integrations/mcp/probe", e.adminToken, { url: authUrl(), headers });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).tools).toEqual([
+      { name: "echo", description: "Echo the input.", class: "read" },
+      { name: "write_thing", description: "Write something.", class: "write" },
+    ]);
+    const member = await call("POST", "/api/v1/admin/integrations/mcp/probe", e.memberToken, {
+      url: authUrl(),
+      headers,
+    });
+    expect(member.statusCode).toBe(403);
+  });
+
+  it("create publishes an approved manifest, stores the enabled row, and the runtime calls through the header", async () => {
+    const res = await call("POST", "/api/v1/admin/integrations/mcp", e.adminToken, {
+      slug: "corp-mcp",
+      title: "Corp MCP",
+      description: "Internal tools.",
+      url: authUrl(),
+      headers,
+      envelope: false,
+      tools: [{ name: "write_thing", enabled: false }],
+    });
+    expect(res.statusCode).toBe(200);
+    const id = JSON.parse(res.body).id as string;
+
+    const shop = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
+      items: { name: string; configured: boolean; enabled: boolean; secret_names: string[]; categories: string[] }[];
+    };
+    const entry = shop.items.find((i) => i.name === "corp-mcp")!;
+    expect(entry).toMatchObject({
+      configured: true,
+      enabled: true,
+      secret_names: ["authorization"],
+      categories: ["mcp"],
+    });
+    const registry = JSON.parse((await call("GET", "/api/v1/registry/integration", e.adminToken)).body) as {
+      items: { slug: string; review_status: string }[];
+    };
+    expect(registry.items.find((i) => i.slug === "corp-mcp")!.review_status).toBe("approved");
+    const secretRow = (
+      await e.env.db.query(
+        "SELECT secret_enc FROM integration_secrets WHERE org_id = $1 AND integration = 'corp-mcp' AND name = 'authorization'",
+        [e.orgId],
+      )
+    ).rows[0]!;
+    expect(secretRow.secret_enc).not.toContain("s3cret");
+
+    const member = await call("GET", "/api/v1/integrations/corp-mcp/tools", e.memberToken);
+    expect(JSON.parse(member.body).tools.map((t: { name: string }) => t.name)).toEqual(["corp-mcp_echo"]);
+    const exec = await call("POST", "/api/v1/integrations/corp-mcp/tools/echo", e.memberToken, { text: "hi" });
+    expect(JSON.parse(exec.body)).toMatchObject({ ok: true, content: "echo:hi" });
+    expect(mcpLastHeaders["authorization"]).toBe("Bearer s3cret");
+    expect(Object.keys(mcpLastHeaders).filter((h) => h.startsWith("x-guild-"))).toEqual([]);
+
+    // The admin reclassifies echo as write: the member's read-only default
+    // no longer reaches it.
+    const put = await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, {
+      enabled: true,
+      approval: "default",
+      class: "write",
+    });
+    expect(put.statusCode).toBe(200);
+    const after = await call("GET", "/api/v1/integrations/corp-mcp/tools", e.memberToken);
+    expect(JSON.parse(after.body).tools).toEqual([]);
+    const listing = JSON.parse((await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken)).body) as {
+      tools: { name: string; class: string; enabled: boolean }[];
+    };
+    expect(listing.tools.map((t) => [t.name, t.class, t.enabled])).toEqual([
+      ["echo", "write", true],
+      ["write_thing", "write", false],
+    ]);
+    // A curation write without a class keeps the stored one.
+    await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, {
+      enabled: true,
+      approval: "always_ask",
+    });
+    const kept = JSON.parse((await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken)).body) as {
+      tools: { name: string; class: string }[];
+    };
+    expect(kept.tools.find((t) => t.name === "echo")!.class).toBe("write");
+  });
+
+  it("refuses a taken slug, a built-in slug, and a class change on a built-in row", async () => {
+    const dup = await call("POST", "/api/v1/admin/integrations/mcp", e.adminToken, {
+      slug: "corp-mcp",
+      url: authUrl(),
+      headers,
+    });
+    expect(dup.statusCode).toBe(409);
+    const builtin = await call("POST", "/api/v1/admin/integrations/mcp", e.adminToken, {
+      slug: "github",
+      url: authUrl(),
+      headers,
+    });
+    expect(builtin.statusCode).toBe(409);
+    const id = await seedIntegration("searxng", { base_url: "http://searx.test" }, false);
+    const cls = await call("PUT", `/api/v1/admin/integrations/${id}/tools/web_search`, e.adminToken, {
+      enabled: true,
+      class: "admin",
+    });
+    expect(cls.statusCode).toBe(400);
   });
 });
 

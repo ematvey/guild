@@ -6,7 +6,8 @@
 // `api` tool in integrations/api-tool.ts).
 
 import { mcpConnect, type McpPeer } from "./mcp.js";
-import { envelopeHeaders, type PluginSecretSource, type IntegrationTurn } from "./plugins.js";
+import type { PluginSecretSource, IntegrationTurn } from "./plugins.js";
+import { mcpRequestHeaders } from "./mcp-headers.js";
 import { callSignals, type JsonObject, type ToolOutcome } from "./shared.js";
 import { integrationByName } from "./loader.js";
 
@@ -54,7 +55,7 @@ export async function callPlugin(
   const masterKey = source.masterKey();
   if (turn.executor === "builtin") {
     // Every stored secret of the slug rides to execute — the connector
-    // picks what it needs (superproxy's optional gateway token included);
+    // picks what it needs (an optional credential included);
     // values never reach logs or events.
     const names = await source.integrationSecrets.names(identity.orgId, turn.slug);
     const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, names, masterKey);
@@ -67,7 +68,11 @@ export async function callPlugin(
   const url = (turn.rowConfig as JsonObject)["mcp"];
   const mcpUrl = url !== null && typeof url === "object" ? (url as JsonObject)["url"] : undefined;
   if (typeof mcpUrl !== "string") throw new Error("mcp url missing");
-  const headers = envelopeHeaders(identity.callId, identity.orgId, identity.callerId, identity.actingAs, secrets);
+  const headers = mcpRequestHeaders(
+    turn.rowConfig,
+    { callId: identity.callId, orgId: identity.orgId, caller: identity.callerId, actingAs: identity.actingAs },
+    secrets,
+  );
   let peer: McpPeer;
   try {
     peer = await mcpConnect(mcpUrl, headers, signal);

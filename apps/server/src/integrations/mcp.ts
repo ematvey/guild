@@ -15,7 +15,12 @@ export interface McpTool {
   description: string;
   /** The tool's JSON Schema input. */
   inputSchema: unknown;
+  /** The server's behavior hints (MCP tool annotations), when it sends them. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
+
+/** tools/list pages followed before the listing stops. */
+const MAX_TOOL_PAGES = 20;
 
 export interface McpToolResult {
   /** The joined text of the result's text content blocks. */
@@ -184,22 +189,40 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
     },
 
     async listTools(): Promise<McpTool[]> {
-      const res = await post(rpcRequest(1, "tools/list", {}));
-      if (!res.ok) {
-        throw new Error(`mcp tools/list failed: server returned ${res.status}`);
+      const out: McpTool[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+        const id = nextId++;
+        const res = await post(rpcRequest(id, "tools/list", cursor === null ? {} : { cursor }));
+        if (!res.ok) {
+          throw new Error(`mcp tools/list failed: server returned ${res.status}`);
+        }
+        const result = await readRpcResponse(res, id);
+        const tools = result["tools"];
+        if (!Array.isArray(tools)) throw new Error("mcp tools/list result missing tools");
+        for (const t of tools) {
+          const tool = t as JsonObject;
+          const description = typeof tool["description"] === "string" ? tool["description"] : "";
+          const listed: McpTool = {
+            name: String(tool["name"] ?? ""),
+            description,
+            inputSchema: tool["inputSchema"] ?? {},
+          };
+          const hints = tool["annotations"];
+          if (hints !== null && typeof hints === "object" && !Array.isArray(hints)) {
+            const h = hints as JsonObject;
+            listed.annotations = {
+              ...(typeof h["readOnlyHint"] === "boolean" ? { readOnlyHint: h["readOnlyHint"] } : {}),
+              ...(typeof h["destructiveHint"] === "boolean" ? { destructiveHint: h["destructiveHint"] } : {}),
+            };
+          }
+          out.push(listed);
+        }
+        const next = result["nextCursor"];
+        if (typeof next !== "string" || next === "") break;
+        cursor = next;
       }
-      const result = await readRpcResponse(res, 1);
-      const tools = result["tools"];
-      if (!Array.isArray(tools)) throw new Error("mcp tools/list result missing tools");
-      return tools.map((t) => {
-        const tool = t as JsonObject;
-        const description = typeof tool["description"] === "string" ? tool["description"] : "";
-        return {
-          name: String(tool["name"] ?? ""),
-          description,
-          inputSchema: tool["inputSchema"] ?? {},
-        };
-      });
+      return out;
     },
   };
 }

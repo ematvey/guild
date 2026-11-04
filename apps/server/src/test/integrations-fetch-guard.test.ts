@@ -8,7 +8,6 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertPublicFetchTarget } from "../integrations/fetch-target.js";
 import { readBodyCapped, requestJson, jsonErrors } from "../integrations/shared.js";
-import { superproxyExecute } from "../integrations/superproxy/execute.js";
 import { firecrawlExecute } from "../integrations/firecrawl/execute.js";
 
 describe("assertPublicFetchTarget", () => {
@@ -39,7 +38,7 @@ describe("assertPublicFetchTarget", () => {
     await expect(assertPublicFetchTarget("https://docs.example/page")).resolves.toBeInstanceOf(URL);
   });
 
-  it("superproxy and firecrawl refuse a private target before calling the service", async () => {
+  it("firecrawl refuses a private target before calling the service", async () => {
     let calls = 0;
     const server = createServer((_req, res) => {
       calls += 1;
@@ -48,9 +47,6 @@ describe("assertPublicFetchTarget", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
-      await expect(
-        superproxyExecute({ base_url: base }, "web_fetch", { url: "http://169.254.169.254/" }, [], null),
-      ).rejects.toThrow(/not allowed/);
       await expect(
         firecrawlExecute({ base_url: base }, "web_fetch", { url: "http://127.0.0.1:5432/" }, [], null),
       ).rejects.toThrow(/not allowed/);

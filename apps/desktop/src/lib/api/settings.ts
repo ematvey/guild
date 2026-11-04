@@ -194,6 +194,14 @@ export function deleteIntegration(id: string): Promise<void> {
   return request<void>("DELETE", `${SETTINGS_PATHS.integrations}/${id}`);
 }
 
+export function probeOrgMcp<T>(body: unknown): Promise<T> {
+  return request<T>("POST", `${SETTINGS_PATHS.integrations}/mcp/probe`, body);
+}
+
+export function createOrgMcp<T>(body: unknown): Promise<T> {
+  return request<T>("POST", `${SETTINGS_PATHS.integrations}/mcp`, body);
+}
+
 export function putIntegrationTool(id: string, toolName: string, body: unknown): Promise<void> {
   return request<void>("PUT", `${integrationToolsPath(id)}/${encodeURIComponent(toolName)}`, body);
 }

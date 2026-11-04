@@ -8,6 +8,9 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam, optionalJsonBody } from "./error.js";
 import { createIntegration, integrationShop, integrationTools, saveIntegration } from "../../integrations/admin.js";
+import { createOrgMcp, probeOrgMcp } from "../../integrations/org-mcp.js";
+import { isToolClass } from "../domain/tool-class.js";
+import type { ObjectStore } from "../s3.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
 import { defaultPersona } from "../../harness/extension.js";
 import { APPROVAL_POLICY_PROMPT_KEY, ASSISTANT_PROMPT_KEY } from "../store/org-kv.js";
@@ -138,7 +141,12 @@ async function setOrgPrompt(ctx: IdentityCtx, orgId: string, key: string, req: F
   }
 }
 
-export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: GatewayCtx, identity: IdentityCtx): void {
+export function registerAdminIntegrationRoutes(
+  app: FastifyInstance,
+  gateway: GatewayCtx,
+  identity: IdentityCtx,
+  objects: ObjectStore,
+): void {
   // The integration shop: every installed plugin with its storefront
   // metadata and this org's install state, plus the approved registry v2
   // plugins. One list; the client filters and renders it.
@@ -166,6 +174,41 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
       config: created!.config,
       enabled: created!.enabled,
     });
+    return reply;
+  });
+
+  // Org MCP servers: the probe connects with the would-be URL and headers
+  // and lists the tools with a suggested class; the create publishes and
+  // approves the manifest and stores the enabled row in one step.
+  app.post("/api/v1/admin/integrations/mcp/probe", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const tools = await probeOrgMcp(admin.org_id, requireJsonBody(req));
+    sendJson(reply, { tools });
+    return reply;
+  });
+
+  app.post("/api/v1/admin/integrations/mcp", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const slug = await createOrgMcp(
+      {
+        integrations: gateway.integrations,
+        integrationSecrets: gateway.integrationSecrets,
+        registry: gateway.registry,
+        teams: identity.teams,
+        events: identity.events,
+        objects,
+        masterKey: () => gateway.masterKey(),
+      },
+      {
+        orgId: admin.org_id,
+        userId: admin.id,
+        role: admin.role,
+        label: admin.display_name && admin.display_name !== "" ? admin.display_name : admin.email,
+      },
+      requireJsonBody(req),
+    );
+    const created = await gateway.integrations.getByName(admin.org_id, slug);
+    sendJson(reply, { id: created!.id, name: created!.name });
     return reply;
   });
 
@@ -200,13 +243,27 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     if (approval !== "default" && approval !== "always_ask" && approval !== "always_allow") {
       throw ApiError.badRequest("approval must be default, always_ask or always_allow");
     }
-    const name = await gateway.integrations.curateTool(admin.org_id, id, tool, enabled, approval);
+    // An MCP tool's class is the admin's call (a compiled-in tool's class
+    // is its code declaration).
+    let cls: string | null = null;
+    if (record["class"] !== undefined) {
+      if (!isToolClass(record["class"])) throw ApiError.badRequest("class must be read, write or admin");
+      const row = await gateway.integrations.get(admin.org_id, id);
+      if (row === null) throw ApiError.notFound("unknown integration");
+      const mcp = (row.config as Record<string, unknown> | null)?.["mcp"];
+      if (mcp === null || typeof mcp !== "object") {
+        throw ApiError.badRequest("only an MCP integration's tool classes can be changed");
+      }
+      cls = record["class"];
+    }
+    const name = await gateway.integrations.curateTool(admin.org_id, id, tool, enabled, approval, cls);
     // Durable, org-queryable audit of the governance change.
     await identity.events.emit(admin.org_id, "integration.tool_curated", {
       integration: name,
       tool,
       enabled,
       approval,
+      ...(cls !== null ? { class: cls } : {}),
       by: admin.id,
     });
     sendJson(reply, { name: tool, enabled, approval });

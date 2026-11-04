@@ -5,7 +5,9 @@
 //! adds the integration when the admin asks for it, and then renders the
 //! settings form from the manifest field schema (no per-connector UI), the
 //! secrets editor (masked previews, write-only values), and per-tool
-//! curation (enable/disable + approval policy per declared tool).
+//! curation (enable/disable + approval policy per declared tool). "Add MCP
+//! server" (/settings/integrations/_add-mcp) connects a remote MCP server for
+//! the whole organization.
 
 import { useMemo, useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
@@ -20,6 +22,7 @@ import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../../../components/page-header";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
+import { ADD_MCP_DETAIL, AddOrgMcp } from "./integration-mcp-add";
 import {
   CategoryBadges,
   ConfiguredIntegration,
@@ -44,6 +47,18 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
     if (q === "") return items;
     return items.filter((i) => `${i.name} ${i.title} ${i.summary} ${i.categories.join(" ")}`.toLowerCase().includes(q));
   }, [items, query]);
+
+  if (detail === ADD_MCP_DETAIL) {
+    return (
+      <AddOrgMcp
+        onBack={() => open(null)}
+        onCreated={(slug) => {
+          reload();
+          open(slug);
+        }}
+      />
+    );
+  }
 
   if (detail !== null) {
     if (items === null) {
@@ -86,6 +101,11 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
       <PageHeader
         title="Integrations"
         description="Connect the tools your chats use. Each integration brings its own tools, its own settings, and its own credentials."
+        actions={
+          <Button size="sm" onClick={() => open(ADD_MCP_DETAIL)}>
+            <Plus className="mr-1 size-4" /> Add MCP server
+          </Button>
+        }
       />
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
       <div className="mb-4 max-w-sm">
@@ -108,7 +128,7 @@ export default function IntegrationsSection({ detail = null, onDetailChange }: S
           title={query === "" ? "No integrations available" : "No matches"}
           hint={
             query === ""
-              ? "This build ships no integrations and the registry has no approved plugins."
+              ? "This build ships no integrations yet. Add an MCP server to connect one."
               : "Try another word."
           }
         />

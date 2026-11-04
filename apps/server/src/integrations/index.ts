@@ -4,7 +4,6 @@
 
 import grafana from "./grafana/integration.js";
 import searxng from "./searxng/integration.js";
-import superproxy from "./superproxy/integration.js";
 import firecrawl from "./firecrawl/integration.js";
 import googleWorkspace from "./google_workspace/integration.js";
 import hubspot from "./hubspot/integration.js";
@@ -18,7 +17,6 @@ import type { IntegrationPlugin } from "./types.js";
 export const PLUGINS: IntegrationPlugin[] = [
   grafana,
   searxng,
-  superproxy,
   firecrawl,
   googleWorkspace,
   hubspot,

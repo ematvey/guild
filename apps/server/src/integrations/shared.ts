@@ -93,12 +93,6 @@ export function searxngBaseUrl(config: JsonObject): string {
   return trimTrailingSlash(base);
 }
 
-export function superproxyBaseUrl(config: JsonObject): string {
-  const base = configString(config, "base_url");
-  if (base === undefined) throw new Error("superproxy config requires base_url");
-  return trimTrailingSlash(base);
-}
-
 export function atlassianSite(config: JsonObject, secrets: [string, string][]): string {
   const site = configString(config, "site") ?? secretOrNull(secrets, "site");
   if (site === undefined || site === null || site === "") throw new Error("atlassian requires the site setting");

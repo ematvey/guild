@@ -5,19 +5,14 @@
 
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
-import { isToolClass, manifestToolClass, toolClassOf } from "../platform/domain/tool-class.js";
+import { isToolClass, toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
 import { INTEGRATIONS, integrationByName } from "./loader.js";
 import { mcpConnect } from "./mcp.js";
-import {
-  envelopeHeaders,
-  manifestSecretNames,
-  namespacedTool,
-  registryManifest,
-  registryManifestIfApproved,
-} from "./plugins.js";
-import { toolCurate } from "./policy.js";
+import { manifestSecretNames, namespacedTool, registryManifest, registryManifestIfApproved } from "./plugins.js";
+import { mcpToolClass, toolCurate } from "./policy.js";
+import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 
 /** The stores the admin paths read and write. */
 export interface IntegrationAdminDeps {
@@ -240,7 +235,7 @@ export async function integrationTools(
   } catch (error) {
     throw ApiError.conflict("missing_secrets", (error as Error).message);
   }
-  const headers = envelopeHeaders(randomUUID(), orgId, null, null, secrets);
+  const headers = mcpRequestHeaders(rowConfig, { callId: randomUUID(), orgId, caller: null, actingAs: null }, secrets);
   let peer;
   try {
     peer = await mcpConnect(mcpUrl, headers);
@@ -254,7 +249,14 @@ export async function integrationTools(
     throw ApiError.badRequest(`MCP tools/list failed: ${(error as Error).message}`);
   }
   const tools = listed.map((t) =>
-    curatedToolJson(t.name, integrationRow.name, manifestToolClass(manifest, t.name), t.description, true, rowConfig),
+    curatedToolJson(
+      t.name,
+      integrationRow.name,
+      mcpToolClass(rowConfig, manifest, t.name),
+      t.description,
+      true,
+      rowConfig,
+    ),
   );
   return { resolved: true, kind: "mcp", tools };
 }
@@ -283,6 +285,14 @@ function validateMcpConfig(config: Record<string, unknown>): void {
   if (typeof url === "string" && !url.startsWith("http://") && !url.startsWith("https://")) {
     throw ApiError.badRequest("mcp.url must be an absolute http(s) URL");
   }
+  const templates = mcpHeaderTemplates(config);
+  if (templates !== null) {
+    try {
+      validateHeaderTemplates(templates);
+    } catch (error) {
+      throw ApiError.badRequest((error as Error).message);
+    }
+  }
   const policy = config["tool_policy"];
   if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
     for (const [role, classes] of Object.entries(policy as Record<string, unknown>)) {
@@ -303,8 +313,13 @@ function validateMcpConfig(config: Record<string, unknown>): void {
 
 /** Connection test for an MCP plugin: a full pool connect plus tools/list
  *  handshake with the would-be secret headers. */
-async function mcpTestConnection(url: string, secrets: [string, string][], orgId: string): Promise<void> {
-  const headers = envelopeHeaders(randomUUID(), orgId, null, null, secrets);
+async function mcpTestConnection(
+  config: Record<string, unknown>,
+  url: string,
+  secrets: [string, string][],
+  orgId: string,
+): Promise<void> {
+  const headers = mcpRequestHeaders(config, { callId: randomUUID(), orgId, caller: null, actingAs: null }, secrets);
   let peer;
   try {
     peer = await mcpConnect(url, headers);
@@ -404,7 +419,7 @@ export async function saveIntegration(
         if (missing.length > 0) {
           throw ApiError.conflict("missing_secrets", `missing secrets: ${missing.join(", ")}`);
         }
-        await mcpTestConnection(readMcpUrl(config) ?? "", secrets, orgId);
+        await mcpTestConnection(config, readMcpUrl(config) ?? "", secrets, orgId);
       }
     }
     await gateway.integrations.saveWithSecrets(

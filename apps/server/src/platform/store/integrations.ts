@@ -79,13 +79,21 @@ export class IntegrationStore {
     });
   }
 
-  /** Sets one tool's per-tool curation (`enabled`, `approval`) under a row
+  /** Sets one tool's per-tool curation (`enabled`, `approval`, and for an
+   *  MCP tool its `class`; a null class keeps the stored one) under a row
    *  lock: the read-modify-write of `config.tools` runs in one transaction —
    *  two concurrent PUTs (or a racing settings save) must never drop each
    *  other's curation entry. Entries for not-currently-declared tools are
    *  allowed — they are how a preset survives a bundle republish. Returns
    *  the integration row's name (for the caller's org audit event). */
-  async curateTool(orgId: string, id: string, tool: string, enabled: boolean, approval: string): Promise<string> {
+  async curateTool(
+    orgId: string,
+    id: string,
+    tool: string,
+    enabled: boolean,
+    approval: string,
+    cls: string | null = null,
+  ): Promise<string> {
     return withTransaction(this.pool, async (client) => {
       const rowRes = await client.query(
         "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
@@ -102,7 +110,13 @@ export class IntegrationStore {
         config["tools"] !== null && typeof config["tools"] === "object" && !Array.isArray(config["tools"])
           ? { ...(config["tools"] as Record<string, unknown>) }
           : {};
-      tools[tool] = { enabled, approval };
+      const prior = tools[tool];
+      const priorClass =
+        prior !== null && typeof prior === "object" && !Array.isArray(prior)
+          ? (prior as Record<string, unknown>)["class"]
+          : undefined;
+      const keptClass = cls ?? (typeof priorClass === "string" ? priorClass : null);
+      tools[tool] = keptClass === null ? { enabled, approval } : { enabled, approval, class: keptClass };
       config["tools"] = tools;
       await client.query("UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3", [
         orgId,

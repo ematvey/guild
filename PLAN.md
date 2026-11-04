@@ -86,6 +86,29 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Org-specific integrations live outside the repo; admins add MCP servers
+  from the UI (2026-11-04).** Two paths now carry integrations that do not
+  ship with Guild. (1) Private plugins: the loader imports every
+  `apps/server/src/integrations/private/<folder>/integration.ts` at startup,
+  ahead of the built-ins, so a private trait provider wins its trait. The
+  folder is gitignored (an org keeps its own repository there) and plugins
+  import only `integrations/sdk.ts`, so the server's internals can move
+  without breaking them. A slug clash refuses to start. Superproxy moved
+  there: it is Acme infrastructure, not a product integration. A
+  checkout without the folder serves the built-ins only, and rows of a
+  missing plugin are skipped. (2) Org MCP servers: Settings → Integrations →
+  Add MCP server takes a URL, credential headers and the identity-envelope
+  switch, probes the server, and lets the admin pick tools and classes. The
+  create publishes a generated registry manifest and approves it in the
+  same step (the admin is the reviewer), then stores the enabled row. An MCP
+  row's `config.mcp.headers` maps header names to `{secret}` templates, so
+  third-party servers get `Authorization: Bearer …` from the encrypted
+  store instead of `x-guild-secret-*`; `config.mcp.envelope: false` drops
+  the `x-guild-*` identity headers. An MCP tool's class is now admin state
+  (`config.tools[<tool>].class`, over the manifest's declaration): the
+  probe suggests one from the server's `readOnlyHint`/`destructiveHint` and
+  a read verb in the name, else write. `tools/list` follows `nextCursor`.
+
 - **A posted agent message is a conversation entry (2026-11-04).** Rule:
   what a thread shows as conversation, the agent has in its conversation.
   `send_message` appended an `assistant_message` straight to

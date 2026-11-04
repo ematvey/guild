@@ -658,6 +658,7 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
       await putIntegrationTool(id, tool.name, {
         enabled: patch.enabled ?? tool.enabled,
         approval: patch.approval ?? tool.approval,
+        ...(patch.class !== undefined ? { class: patch.class } : {}),
       });
       res.reload();
     } catch (e) {
@@ -675,7 +676,7 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
           <p className="text-sm font-medium">Tools</p>
           <p className="text-xs text-muted-foreground">
             {isMcp
-              ? "Discovered live from the MCP server; unconfigured tools stay disabled."
+              ? "Discovered live from the MCP server; new tools arrive disabled. The class decides who may call a tool."
               : "Declared by the integration; all are enabled unless you turn one off."}
           </p>
         </div>
@@ -708,9 +709,11 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-mono text-xs">{t.name}</span>
-                  <Badge variant="secondary" className="capitalize">
-                    {t.class}
-                  </Badge>
+                  {!isMcp && (
+                    <Badge variant="secondary" className="capitalize">
+                      {t.class}
+                    </Badge>
+                  )}
                   {TRAIT_LABELS[t.name] !== undefined && (
                     <Badge variant="outline" className="gap-1">
                       <Check className="size-3" /> Guild-provided
@@ -719,6 +722,19 @@ function ToolCuration({ id, isMcp }: { id: string; isMcp: boolean }) {
                 </div>
                 {t.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.description}</p>}
               </div>
+              {isMcp && (
+                <select
+                  aria-label={`Class of ${t.name}`}
+                  className="h-8 shrink-0 rounded-md border border-border bg-card px-2 text-xs"
+                  disabled={busyTool === t.name}
+                  value={t.class}
+                  onChange={(e) => update(t, { class: e.target.value })}
+                >
+                  <option value="read">Read</option>
+                  <option value="write">Write</option>
+                  <option value="admin">Admin</option>
+                </select>
+              )}
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <input
                   type="checkbox"

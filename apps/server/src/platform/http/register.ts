@@ -84,7 +84,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerTeamRoutes(scope, auth);
     registerAdminUserRoutes(scope, auth);
     registerAdminPromptRoutes(scope, auth);
-    registerAdminIntegrationRoutes(scope, gateway, auth);
+    registerAdminIntegrationRoutes(scope, gateway, auth, ctx.objects);
     registerUserMcpRoutes(scope, auth);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
   });
