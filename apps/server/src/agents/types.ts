@@ -120,7 +120,7 @@ export interface AgentThread {
   title: string;
   title_locked: boolean;
   type: AgentThreadType;
-  /** The user's Main thread with this agent; one per (agent, user). */
+  /** The Main thread the agent was created with; only its creator has one. */
   is_default: boolean;
   /** The spawning thread, or null for a root thread. */
   parent_thread_id: string | null;

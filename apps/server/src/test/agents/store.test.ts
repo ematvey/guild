@@ -231,15 +231,10 @@ dbDescribe("AgentStore", () => {
     });
   });
 
-  it("gives every user of a shared agent their own default thread", async () => {
+  it("keeps the Main thread its creator's alone", async () => {
     const agent = await store.create(owner, { name: "Defaults", model: "GLM-Test", visibility: "org" });
-    const ownerDefault = await store.threads.ensureDefaultThread(agent.id, owner.id);
-    const memberDefault = await store.threads.ensureDefaultThread(agent.id, member.id);
-    expect(ownerDefault.id).not.toBe(memberDefault.id);
-    expect(ownerDefault.user_id).toBe(owner.id);
-    expect(memberDefault.user_id).toBe(member.id);
-    // Idempotent: the second call returns the same row.
-    expect((await store.threads.ensureDefaultThread(agent.id, member.id)).id).toBe(memberDefault.id);
+    expect(await store.threads.mainThread(agent.id, owner.id)).not.toBeNull();
+    expect(await store.threads.mainThread(agent.id, member.id)).toBeNull();
   });
 
   it("creates one personal agent per user and refuses to archive or delete it", async () => {

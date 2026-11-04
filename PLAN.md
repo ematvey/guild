@@ -97,6 +97,16 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Reading an agent never creates a thread (2026-11-04).** Listing an
+  agent's threads created the reader's Main thread, so an admin who opened
+  another Member's agent got an empty "Main thread" that stayed in their
+  thread list for good. `ensureDefaultThread` is gone: the Main thread is
+  made only with the agent, for its creator. A turn sent to an agent without
+  `thread_id` goes to the caller's Main thread, or to a new thread of theirs
+  when they have none. Migration 0113 deletes Main threads that never held a
+  turn (no events, runs, durable conversation or child threads) — 11 on dev,
+  10 on prod.
+
 - **Each stack owns its JuiceFS filesystem; the sidecar holds the volume
   (2026-11-04).** At 16:15 a dev deploy recreated the server and the runner
   together, the only users of the `guild_workspaces` bind volume. Docker

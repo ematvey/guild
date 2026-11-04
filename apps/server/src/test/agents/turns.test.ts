@@ -103,6 +103,34 @@ describe("agent turns", () => {
   }, 40_000);
 });
 
+describe("reading another member's agent", () => {
+  it("creates no thread for the reader", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Someone's agent", model: "GLM-Test-Model", visibility: "private" },
+    });
+    expect(created.statusCode).toBe(200);
+    const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
+
+    const listed = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/agents/${agent.id}/threads`,
+      headers: { authorization: `Bearer ${stack.adminToken}` },
+    });
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect((JSON.parse(listed.body) as { threads: unknown[] }).threads).toEqual([]);
+
+    const rows = await stack.env.db.query<{ n: string }>(
+      "SELECT count(*) AS n FROM agent_threads WHERE agent_id = $1",
+      [agent.id],
+    );
+    // Only the owner's Main thread, made with the agent.
+    expect(Number(rows.rows[0]!.n)).toBe(1);
+  });
+});
+
 describe("skills stay out of the agent workspace", () => {
   it("publishing and installing a skill copies nothing into the agent workspace", async () => {
     const published = await stack.env.app.inject({

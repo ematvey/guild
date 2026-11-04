@@ -209,22 +209,8 @@ export class AgentThreadStore {
     return this.getThread(agentId, userId, id);
   }
 
-  /** The user's default thread with this agent, created on first use. A
-   *  shared agent therefore gives each user their own default thread. */
-  async ensureDefaultThread(agentId: string, userId: string): Promise<AgentThread> {
-    const existing = await this.defaultThread(agentId, userId);
-    if (existing !== null) return existing;
-    try {
-      return await this.createThread(agentId, userId, "Main thread", "user", { isDefault: true });
-    } catch (error) {
-      // A concurrent first turn may have created it between the two queries.
-      const raced = await this.defaultThread(agentId, userId);
-      if (raced !== null) return raced;
-      throw error;
-    }
-  }
-
-  private async defaultThread(agentId: string, userId: string): Promise<AgentThread | null> {
+  /** The user's Main thread with this agent, when they have one. */
+  async mainThread(agentId: string, userId: string): Promise<AgentThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS} FROM agent_threads t
        WHERE t.agent_id = $1 AND t.user_id = $2 AND t.is_default`,

@@ -549,9 +549,6 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    // The caller's default thread exists from their first visit, so the
-    // pinned row is always there and a turn never has to create it first.
-    await store.threads.ensureDefaultThread(agentId, user.id);
     const page = await store.threads.listThreads(agentId, user.id);
     return sendJson(reply, { threads: page.threads });
   });
@@ -601,9 +598,14 @@ export function registerAgentRoutes(
       const thread = await store.threads.getThread(agentId, user.id, requested);
       return agentTurn(req, reply, user, agent, thread);
     }
-    // The caller's own default thread: a shared agent never posts into
-    // another user's conversation.
-    return agentTurn(req, reply, user, agent, await store.threads.ensureDefaultThread(agentId, user.id));
+    // The caller's own Main thread, or a new thread of theirs: a shared agent
+    // never posts into another user's conversation, and reading an agent
+    // never creates a thread.
+    refuseDeletingAgent(agent);
+    requiredString(jsonBody(req), "message");
+    const thread =
+      (await store.threads.mainThread(agentId, user.id)) ?? (await store.threads.createThread(agentId, user.id, ""));
+    return agentTurn(req, reply, user, agent, thread);
   });
 
   /** The chat header's tree facts, behind the chat's read gate. */
