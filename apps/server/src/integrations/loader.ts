@@ -39,6 +39,9 @@ export interface Connector extends IntegrationManifest {
   classes: Record<string, string>;
   /** The shop logo as SVG markup. */
   logo: string;
+  /** The plugin's README.md: the landing page people read. Empty when the
+   *  plugin ships none. */
+  readme: string;
   /** Validates the row config (throws on a broken one) and declares the
    *  tool surface the integration contributes. */
   toolSpecs(config: JsonObject): Promise<IntegrationToolSpec[]>;
@@ -105,7 +108,7 @@ export function validatePluginManifest(m: IntegrationManifest): void {
 export function connectorOf(
   m: IntegrationManifest,
   origin: ConnectorOrigin,
-  logo: string,
+  files: { logo: string; readme: string },
   fns: {
     validate(config: JsonObject): Promise<void> | void;
     testConnection: Connector["testConnection"];
@@ -118,7 +121,8 @@ export function connectorOf(
     origin,
     secret_names: m.fields.filter((f) => f.kind === "secret").map((f) => f.name),
     classes: Object.fromEntries(m.tools.map((t) => [t.name, t.class])),
-    logo,
+    logo: files.logo,
+    readme: files.readme,
     async toolSpecs(config: JsonObject): Promise<IntegrationToolSpec[]> {
       await fns.validate(config);
       return m.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
@@ -128,11 +132,11 @@ export function connectorOf(
   };
 }
 
-/** The plugin folder's logo.svg. A plugin without one gets an empty string
- *  and the shop renders its monogram fallback. */
-function logoIn(dir: URL): string {
+/** One file of the plugin folder as text: logo.svg (a plugin without one
+ *  gets the shop's monogram fallback) or README.md. Missing reads as "". */
+function fileIn(dir: URL, name: string): string {
   try {
-    return readFileSync(new URL("logo.svg", dir), "utf8");
+    return readFileSync(new URL(name, dir), "utf8");
   } catch {
     return "";
   }
@@ -140,7 +144,7 @@ function logoIn(dir: URL): string {
 
 function builtin(plugin: IntegrationPlugin): Connector {
   const dir = new URL(`./${plugin.manifest.name}/`, import.meta.url);
-  return connectorOf(plugin.manifest, "builtin", logoIn(dir), {
+  return connectorOf(plugin.manifest, "builtin", { logo: fileIn(dir, "logo.svg"), readme: fileIn(dir, "README.md") }, {
     validate: (config) => plugin.validate?.(config),
     testConnection: (config, secrets) => plugin.testConnection(config, secrets),
     execute: (config, tool, args, secrets, actingAs) => plugin.execute(config, tool, args, secrets, actingAs),

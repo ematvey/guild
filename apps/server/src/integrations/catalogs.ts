@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { parseBundle, readBundleFile } from "../platform/bundle.js";
 import type { OrgKvStore } from "../platform/store/org-kv.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import { fetchTimeout, githubApiUrl, gitlabBaseUrl, transportCause, type JsonObject } from "./shared.js";
@@ -337,4 +338,50 @@ export async function fetchCatalogBundle(
 export function fetchBundleUrl(url: string): Promise<Buffer> {
   if (!/^https?:\/\//.test(url)) throw new CatalogError("bundle url must be an absolute http(s) URL");
   return fetchCapped(url, {}, BUNDLE_MAX_BYTES, url);
+}
+
+/** A catalog plugin's landing-page content, read from its bundle before
+ *  any install: the registry manifest (fields, declared tools, traits),
+ *  README.md and logo.svg. The bundle is fetched and checked against the
+ *  listed sha256 like an install, then parsed; plugin.js never runs. */
+export interface BundlePreview {
+  sha256: string;
+  manifest: Record<string, unknown>;
+  readme: string;
+  logo: string;
+}
+
+/** Previews by bundle hash: the hash pins the bytes, so a preview never
+ *  goes stale. Bounded; the oldest entry leaves first. */
+const previews = new Map<string, BundlePreview>();
+const PREVIEW_CACHE = 64;
+
+export async function previewCatalogBundle(
+  deps: CatalogDeps,
+  orgId: string,
+  catalog: CatalogConfig,
+  version: CatalogVersion,
+  sha256: (bytes: Buffer) => string,
+): Promise<BundlePreview> {
+  const cached = previews.get(version.sha256);
+  if (cached !== undefined) return cached;
+  const bytes = await fetchCatalogBundle(deps, orgId, catalog, version, sha256);
+  const parsed = await parseBundle(bytes);
+  const manifestBytes = readBundleFile(parsed, "manifest.json");
+  if (manifestBytes === null) throw new CatalogError(`bundle ${version.bundle} has no manifest.json`);
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(manifestBytes.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    throw new CatalogError(`bundle ${version.bundle} has an unreadable manifest.json`);
+  }
+  const preview: BundlePreview = {
+    sha256: version.sha256,
+    manifest,
+    readme: readBundleFile(parsed, "README.md")?.toString("utf8") ?? "",
+    logo: readBundleFile(parsed, "logo.svg")?.toString("utf8") ?? "",
+  };
+  if (previews.size >= PREVIEW_CACHE) previews.delete(previews.keys().next().value!);
+  previews.set(version.sha256, preview);
+  return preview;
 }

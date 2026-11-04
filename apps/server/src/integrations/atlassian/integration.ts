@@ -33,6 +33,10 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "Your Jira/Confluence cloud site",
         placeholder: "https://yourorg.atlassian.net",
+        obtain:
+          "The address you open Jira or Confluence at, `https://<yourorg>.atlassian.net`, with no " +
+          "path after the host. Only Atlassian Cloud works: the tools call the Cloud REST APIs " +
+          "(`/rest/api/3`, `/wiki/rest/api`).",
       },
       {
         name: "email",
@@ -42,6 +46,10 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "The account the API token belongs to",
         placeholder: null,
+        obtain:
+          "The email of the Atlassian account that owns the API token. Calls run as this account, " +
+          "so use a dedicated user that can browse the Jira projects and Confluence spaces agents " +
+          "should reach, and add pages where they should write.",
       },
       {
         name: "token",
@@ -51,6 +59,11 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: null,
+        obtain:
+          "Sign in as the account above and open [Atlassian account → Security → API " +
+          "tokens](https://id.atlassian.com/manage-profile/security/api-tokens). Choose **Create " +
+          "API token** (the classic token, without scopes) and copy it. Scoped tokens only work " +
+          "through `api.atlassian.com`, not the site URL used here.",
       },
     ],
     tools: [

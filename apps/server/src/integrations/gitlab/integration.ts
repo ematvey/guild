@@ -32,6 +32,10 @@ const plugin: IntegrationPlugin = {
         default: "https://gitlab.com/api/v4",
         help: "Override for self-hosted GitLab (API root)",
         placeholder: null,
+        obtain:
+          "Leave the default for gitlab.com. For self-managed GitLab enter its address, such as " +
+          "`https://gitlab.example.com`; Guild adds `/api/v4` to a bare host. If GitLab is served " +
+          "under a path, enter the full API root, such as `https://example.com/gitlab/api/v4`.",
       },
       {
         name: "token",
@@ -41,6 +45,12 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "glpat-…",
+        obtain:
+          "Create a personal access token under [User settings → Access " +
+          "tokens](https://gitlab.com/-/user_settings/personal_access_tokens) (or a group or " +
+          "project access token under **Settings → Access tokens**) with the `api` scope. " +
+          "`read_api` is enough if agents should not open issues. The token's user needs at least " +
+          "the Reporter role on the projects agents should read.",
       },
     ],
     tools: [

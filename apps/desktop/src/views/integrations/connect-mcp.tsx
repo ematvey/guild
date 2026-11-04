@@ -1,5 +1,5 @@
-//! AddOrgMcp — the integration shop's "Add MCP server" page
-//! (/settings/integrations/_add-mcp). An admin names a remote MCP server for
+//! AddOrgMcp — the integrations page's "Connect an MCP server" page
+//! (/integrations/connect/mcp). An admin names a remote MCP server for
 //! the whole organization: URL, credential headers (write-only values, each
 //! stored as an encrypted secret), and whether Guild's identity headers ride
 //! along. Connect lists the server's tools with a suggested class; the admin
@@ -12,13 +12,9 @@ import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
-import { PageHeader } from "../../../components/page-header";
-import { createOrgMcp, probeOrgMcp } from "../../../lib/api/settings";
-import { Field } from "../components/field";
-
-/** The detail id of the add page. Integration slugs start with a letter or
- *  digit, so it never names an integration. */
-export const ADD_MCP_DETAIL = "_add-mcp";
+import { createOrgMcp, probeOrgMcp } from "../../lib/api/settings";
+import { Field } from "../settings/components/field";
+import { PageTitle } from "./page-title";
 
 type ToolClass = "read" | "write" | "admin";
 
@@ -53,7 +49,7 @@ const CLASS_HINT: Record<ToolClass, string> = {
   admin: "admins only",
 };
 
-export function AddOrgMcp({ onBack, onCreated }: { onBack: () => void; onCreated: (slug: string) => void }) {
+export function AddOrgMcp({ onCreated }: { onCreated: (slug: string) => void }) {
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
@@ -116,16 +112,15 @@ export function AddOrgMcp({ onBack, onCreated }: { onBack: () => void; onCreated
   const enabledCount = tools?.filter((t) => t.enabled).length ?? 0;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Add MCP server"
+    <div className="max-w-3xl space-y-5">
+      <PageTitle
+        title="Connect an MCP server"
         description="Connect a remote MCP server for the whole organization. Its tools reach every chat the integration policy allows."
-        back={{ label: "Integrations", onClick: onBack }}
       />
 
       <div className="space-y-4 rounded-lg border border-border bg-card p-5">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name" hint="Shown in the integration shop.">
+          <Field label="Name" hint="Shown on the integrations page.">
             <Input value={title} placeholder="Internal docs" onChange={(e) => setTitle(e.target.value)} />
           </Field>
           <Field label="Slug" hint={`Tools reach the model as ${effectiveSlug || "<slug>"}_<tool>.`}>

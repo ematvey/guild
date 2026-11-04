@@ -75,17 +75,44 @@ function shopEntry(
     /** builtin: compiled into the server; registry: an installed code
      *  plugin; mcp: a remote MCP server. */
     source: "builtin" | "registry" | "mcp";
+    /** The README the landing page renders; "" when none ships. */
+    readme: string;
+    /** The tools the manifest declares (an MCP server's are served live). */
+    tools: { name: string; class: string; description: string }[];
   },
   row: { id: string; org_id: string; config: unknown; enabled: boolean } | null,
+  storedSecrets: string[],
 ): Record<string, unknown> {
   return {
     ...base,
+    missing: row === null ? [] : missingRequired(base.settings, row.config, storedSecrets),
     configured: row !== null,
     id: row?.id ?? null,
     org_id: row?.org_id ?? null,
     config: row?.config ?? {},
     enabled: row?.enabled ?? false,
   };
+}
+
+/** The labels of the required settings and credentials a row has not
+ *  filled yet: the "needs setup" state. */
+export function missingRequired(settings: unknown, config: unknown, storedSecrets: string[]): string[] {
+  const fields = (settings as { fields?: unknown } | null)?.fields;
+  if (!Array.isArray(fields)) return [];
+  const values = (config ?? {}) as Record<string, unknown>;
+  const missing: string[] = [];
+  for (const f of fields as { name: string; kind: string; label?: string | null; required?: boolean }[]) {
+    if (f.required !== true) continue;
+    const value = values[f.name];
+    const filled =
+      f.kind === "secret"
+        ? storedSecrets.includes(f.name)
+        : f.kind === "boolean"
+          ? typeof value === "boolean"
+          : (typeof value === "string" && value !== "") || typeof value === "number";
+    if (!filled) missing.push(f.label ?? f.name);
+  }
+  return missing;
 }
 
 /** The integration shop: every connector of the org (built-ins and
@@ -121,8 +148,11 @@ export async function integrationShop(
           secret_names: connector.secret_names,
           settings: connector.fields.length > 0 ? { fields: connector.fields } : null,
           source: connector.origin,
+          readme: connector.readme,
+          tools: connector.tools.map((t) => ({ name: t.name, class: t.class, description: t.description })),
         },
         row,
+        row === null ? [] : await gateway.integrationSecrets.names(orgId, connector.name),
       ),
     );
   }
@@ -153,8 +183,11 @@ export async function integrationShop(
           secret_names: secretNames,
           settings: manifest["settings"] ?? null,
           source: "mcp",
+          readme: typeof manifest["readme"] === "string" ? (manifest["readme"] as string) : "",
+          tools: [],
         },
         rowByName.get(item.slug) ?? null,
+        rowByName.has(item.slug) ? await gateway.integrationSecrets.names(orgId, item.slug) : [],
       ),
     );
   }
@@ -522,6 +555,44 @@ export async function saveIntegration(
     submitted,
     master,
   );
+}
+
+/** Runs the integration's connection test against what is stored: the
+ *  saved config and secrets, nothing submitted, nothing written. Throws the
+ *  same errors a save would; resolves with the elapsed milliseconds. */
+export async function testIntegration(
+  gateway: IntegrationAdminDeps,
+  orgId: string,
+  name: string,
+  existing: { config: unknown },
+): Promise<number> {
+  const started = Date.now();
+  const config = (existing.config ?? {}) as Record<string, unknown>;
+  const secrets = await gateway.integrationSecrets.resolve(
+    orgId,
+    name,
+    await gateway.integrationSecrets.names(orgId, name),
+    gateway.masterKey(),
+  );
+  const manifest = await saveManifest(gateway, orgId, name);
+  const mcpUrl = readMcpUrl(config);
+  if ((manifest !== null && manifest["mcp"] != null) || mcpUrl !== null) {
+    if (mcpUrl === null) throw ApiError.badRequest("no MCP server URL is configured");
+    await mcpTestConnection(config, mcpUrl, secrets, orgId);
+    return Date.now() - started;
+  }
+  const connector = await connectorOrError(gateway, orgId, name);
+  if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
+  const missing = connector.fields
+    .filter((f) => f.kind === "secret" && f.required && !secrets.some(([n]) => n === f.name))
+    .map((f) => f.label ?? f.name);
+  if (missing.length > 0) throw ApiError.conflict("missing_secrets", `missing secrets: ${missing.join(", ")}`);
+  try {
+    await connector.testConnection(config, secrets);
+  } catch (error) {
+    throw ApiError.badRequest((error as Error).message);
+  }
+  return Date.now() - started;
 }
 
 /** One declared/served tool with its stored per-tool curation, as the admin

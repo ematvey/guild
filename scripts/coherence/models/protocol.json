@@ -200,6 +200,7 @@
         "SettingsManifest",
         "AuthManifest",
         "ToolsManifest",
+        "DeclaredTool",
         "TriggerSpec",
         "FieldSpec"
       ],

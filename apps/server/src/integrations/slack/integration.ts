@@ -41,6 +41,7 @@ const plugin: IntegrationPlugin = {
         default: "https://slack.com/api",
         help: "Override only for a Slack API proxy",
         placeholder: null,
+        obtain: "Leave the default. Change it only when Slack API traffic must go through a proxy.",
       },
       {
         name: "bot_token",
@@ -50,6 +51,12 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "xoxb-…",
+        obtain:
+          "At [api.slack.com/apps](https://api.slack.com/apps) choose **Create New App → From " +
+          "scratch**. Under **OAuth & Permissions → Bot Token Scopes** add `channels:read`, " +
+          "`groups:read`, `channels:history`, `groups:history`, `channels:join`, `users:read` and " +
+          "`chat:write`. Click **Install to Workspace** and copy the **Bot User OAuth Token** " +
+          "(`xoxb-…`).",
       },
     ],
     tools: [

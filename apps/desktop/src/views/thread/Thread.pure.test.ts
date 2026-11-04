@@ -211,6 +211,9 @@ describe("parseChatRoute / chatRoutePath", () => {
       r.settingsSection,
       r.settingsDetail,
       r.newChat,
+      r.agents,
+      r.usage,
+      r.integrations,
     );
   };
 
@@ -261,7 +264,14 @@ describe("parseChatRoute / chatRoutePath", () => {
       "/work/device",
       "/settings",
       "/settings/models",
-      "/settings/integrations/my-slug",
+      "/settings/models/my-slug",
+      "/integrations",
+      "/integrations/github",
+      "/integrations/github/usage",
+      "/integrations/catalog",
+      "/integrations/catalog/superproxy",
+      "/integrations/connect/mcp",
+      "/integrations/sources",
       "/skills",
       "/skills/activity",
       "/skills/machine",
@@ -376,6 +386,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -392,6 +403,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: { kind: "device" },
       skills: null,
       agents: null,
+      integrations: null,
       newChat: false,
     });
     // /help deep links alias the onboarding guide (the guide IS the help
@@ -410,6 +422,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: { kind: "onboard" },
       skills: null,
       agents: null,
+      integrations: null,
       newChat: false,
     });
     // onboarding: chat-independent top-level surface, prefixes drop
@@ -423,6 +436,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: { kind: "onboard" },
       skills: null,
       agents: null,
+      integrations: null,
       newChat: false,
     });
     expect(parseChatRoute("/project/p1/thread/c1/onboard")).toMatchObject({
@@ -440,20 +454,22 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: { kind: "install" },
       skills: null,
       agents: null,
+      integrations: null,
       newChat: false,
     });
     expect(parseChatRoute("/project/p1/thread/c1/install")).toMatchObject({
       chatId: null,
       overlay: { kind: "install" },
     });
-    expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
+    expect(parseChatRoute("/settings/models/a/b")).toEqual({
       chatId: null,
       projectId: null,
       tab: "settings",
       overlay: null,
       skills: null,
       agents: null,
-      settingsSection: "integrations",
+      integrations: null,
+      settingsSection: "models",
       settingsDetail: "a/b",
       usage: DEFAULT_USAGE,
       newChat: false,
@@ -465,6 +481,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -477,6 +494,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -485,7 +503,7 @@ describe("parseChatRoute / chatRoutePath", () => {
     });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
-    const deep = parseChatRoute("/settings/integrations/my%2Fslug");
+    const deep = parseChatRoute("/settings/models/my%2Fslug");
     const once = chatRoutePath(
       deep.chatId,
       deep.projectId,
@@ -496,7 +514,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       deep.settingsDetail,
       deep.newChat,
     );
-    expect(parseChatRoute(once).settingsSection).toBe("integrations");
+    expect(parseChatRoute(once).settingsSection).toBe("models");
     expect(parseChatRoute(once).settingsDetail).toBe("my/slug");
   });
 
@@ -507,6 +525,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
@@ -519,6 +538,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
@@ -534,6 +554,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,

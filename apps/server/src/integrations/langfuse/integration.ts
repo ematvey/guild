@@ -32,6 +32,10 @@ const plugin: IntegrationPlugin = {
         default: "https://cloud.langfuse.com",
         help: "Override for self-hosted Langfuse",
         placeholder: "https://langfuse.example.com",
+        obtain:
+          "`https://cloud.langfuse.com` is Langfuse Cloud's EU region. Use " +
+          "`https://us.cloud.langfuse.com` for the US region, or your self-hosted Langfuse address " +
+          "with no `/api` suffix.",
       },
       {
         name: "public_key",
@@ -41,6 +45,9 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "pk-lf-…",
+        obtain:
+          "In Langfuse, open the project and go to **Settings → API Keys → Create new API keys**. " +
+          "A key pair belongs to one project: the tools see only that project's traces and prompts.",
       },
       {
         name: "secret_key",
@@ -50,6 +57,9 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "sk-lf-…",
+        obtain:
+          "Shown next to the public key when you create the key pair. Copy it then: Langfuse does " +
+          "not show it again.",
       },
     ],
     tools: [

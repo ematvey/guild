@@ -34,6 +34,11 @@ const plugin: IntegrationPlugin = {
         default: FIRECRAWL_DEFAULT_BASE_URL,
         help: "Self-hosted Firecrawl API URL",
         placeholder: null,
+        obtain:
+          "The root URL of your self-hosted Firecrawl API as the Guild server reaches it; its `/` " +
+          "page must answer with \"Firecrawl API\". The default `http://host.docker.internal:13002` " +
+          "fits a Firecrawl container on the Docker host. The tools call `/v1/scrape`, " +
+          "`/v1/search` and `/v1/map`.",
       },
       {
         name: "api_key",
@@ -43,6 +48,10 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "Sent as the Bearer token; the self-hosted API does not require it",
         placeholder: null,
+        obtain:
+          "Leave empty when your instance runs without authentication (the self-hosted default). " +
+          "If it enforces API keys, paste one it issued; Guild sends it as `Authorization: Bearer " +
+          "<key>`.",
       },
     ],
     tools: [

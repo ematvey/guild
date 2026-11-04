@@ -43,6 +43,9 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "Base URL of the Grafana instance",
         placeholder: "https://grafana.example.com",
+        obtain:
+          "The address you open Grafana at, including any sub-path it is served under, such as " +
+          "`https://grafana.example.com`. It must be reachable from the Guild server.",
       },
       {
         name: "org_id",
@@ -52,6 +55,9 @@ const plugin: IntegrationPlugin = {
         default: 1,
         help: "Grafana organization the token belongs to",
         placeholder: "1",
+        obtain:
+          "The `orgId=` value in the URL of any Grafana page. Single-organization installs use " +
+          "`1`. The service account token must belong to this organization.",
       },
       {
         name: "prometheus_datasource",
@@ -61,6 +67,9 @@ const plugin: IntegrationPlugin = {
         default: "Prometheus",
         help: "Name or uid the metrics tools use when the call names none",
         placeholder: "Prometheus",
+        obtain:
+          "The name or uid of a Prometheus data source, from **Connections → Data sources**. The " +
+          "uid is the last segment of the data source's edit page URL.",
       },
       {
         name: "loki_datasource",
@@ -70,6 +79,9 @@ const plugin: IntegrationPlugin = {
         default: "Loki",
         help: "Name or uid the log tools use when the call names none",
         placeholder: "Loki",
+        obtain:
+          "The name or uid of a Loki data source, from **Connections → Data sources**. The uid is " +
+          "the last segment of the data source's edit page URL.",
       },
       {
         name: "token",
@@ -79,6 +91,11 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "glsa_…",
+        obtain:
+          "In Grafana open **Administration → Users and access → Service accounts → Add service " +
+          "account**, give it the **Viewer** role, then **Add service account token** and copy it " +
+          "(`glsa_…`). Create it in the organization set above. See [Grafana service " +
+          "accounts](https://grafana.com/docs/grafana/latest/administration/service-accounts/).",
       },
     ],
     tools: [

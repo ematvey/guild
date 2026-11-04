@@ -26,6 +26,9 @@ export function registryManifest(m: IntegrationManifest): Record<string, unknown
       identity_key: m.identity_key,
     },
     settings: { fields: m.fields },
-    tools: { classes: Object.fromEntries(m.tools.map((t) => [t.name, t.class])) },
+    tools: {
+      classes: Object.fromEntries(m.tools.map((t) => [t.name, t.class])),
+      declared: m.tools.map((t) => ({ name: t.name, class: t.class, description: t.description })),
+    },
   };
 }

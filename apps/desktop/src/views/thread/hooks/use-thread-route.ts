@@ -34,6 +34,7 @@ export function routePath(resolved: ChatRoute): string {
     resolved.newChat,
     resolved.agents,
     resolved.usage,
+    resolved.integrations,
   );
 }
 

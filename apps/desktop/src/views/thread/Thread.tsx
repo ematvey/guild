@@ -40,6 +40,8 @@ import { RoutePage } from "./surfaces/route-page";
 import { SettingsPage } from "./surfaces/settings-page";
 import { SkillsPage } from "./surfaces/skills-page";
 import { AgentsPage } from "./surfaces/agents-page";
+import { IntegrationsSurface } from "./surfaces/integrations-page";
+import { INTEGRATIONS_HOME } from "../integrations/integrations-route";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
@@ -522,7 +524,13 @@ function ThreadView(props: ThreadProps) {
   // The skills and agents pages raise their own rail entry while their URL
   // is live.
   const railTab: RailTab =
-    route.skills !== null ? "skills" : route.agents !== null ? agentsRailTab(route.agents) : route.tab;
+    route.skills !== null
+      ? "skills"
+      : route.integrations !== null
+        ? "integrations"
+        : route.agents !== null
+          ? agentsRailTab(route.agents)
+          : route.tab;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
@@ -536,19 +544,24 @@ function ThreadView(props: ThreadProps) {
         tab: tab === "settings" || tab === "work" ? tab : "chats",
         skills: tab === "skills" ? SKILLS_CATALOG : null,
         agents: tab === "agents" ? AGENTS_DIRECTORY : tab === "activity" ? AGENTS_ACTIVITY : null,
+        integrations: tab === "integrations" ? INTEGRATIONS_HOME : null,
       },
       isMobile,
     );
     if (tab === "skills") {
-      pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG });
+      pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG, agents: null, integrations: null });
+      return;
+    }
+    if (tab === "integrations") {
+      pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: INTEGRATIONS_HOME });
       return;
     }
     if (tab === "agents") {
-      pushRoute({ ...SURFACE_BASE, skills: null, agents: AGENTS_DIRECTORY });
+      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_DIRECTORY });
       return;
     }
     if (tab === "activity") {
-      pushRoute({ ...SURFACE_BASE, skills: null, agents: AGENTS_ACTIVITY });
+      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_ACTIVITY });
       return;
     }
     // Panel tabs navigate too: each owns its address, back/forward walks
@@ -575,7 +588,7 @@ function ThreadView(props: ThreadProps) {
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: RailTab) => {
-    if (tab === "agents" || tab === "activity" || tab === "skills") {
+    if (tab === "agents" || tab === "activity" || tab === "skills" || tab === "integrations") {
       switchTab(tab);
       setOpen(false);
       return;
@@ -647,6 +660,10 @@ function ThreadView(props: ThreadProps) {
           pushRoute={pushRoute}
           onOpenChat={openChat}
         />
+      </RoutePage>
+    ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (
+      <RoutePage isMobile={isMobile} title="Integrations" onOpenDrawer={openDrawer}>
+        <IntegrationsSurface route={route.integrations} isMobile={isMobile} pushRoute={pushRoute} />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
       <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>

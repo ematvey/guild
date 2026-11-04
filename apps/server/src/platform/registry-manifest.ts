@@ -68,10 +68,17 @@ export function validateManifest(m: Manifest): void {
   }
 }
 
+/** Path segments of the integrations page (`/integrations/<segment>`): an
+ *  integration named like one could not be addressed. */
+export const RESERVED_INTEGRATION_SLUGS = ["catalog", "connect", "sources"];
+
 /** Validates v2 integration manifest fields. v1 manifests with no v2
  *  fields pass unchanged. */
 export function validateV2(m: Manifest): void {
   validateManifest(m);
+  if (m.kind === "integration" && RESERVED_INTEGRATION_SLUGS.includes(String(m.slug))) {
+    throw new Error(`integration slug ${String(m.slug)} is reserved`);
+  }
   // Storefront metadata: optional, but each present field is one string.
   for (const key of ["title", "summary", "logo", "publisher", "docs_url"] as const) {
     const value = m[key];

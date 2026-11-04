@@ -32,6 +32,10 @@ const plugin: IntegrationPlugin = {
         default: "https://api.github.com",
         help: "Override for GitHub Enterprise Server",
         placeholder: null,
+        obtain:
+          "Leave the default for github.com. For GitHub Enterprise Server enter " +
+          "`https://<your-host>/api/v3`; for GitHub Enterprise Cloud with data residency, " +
+          "`https://api.<subdomain>.ghe.com`.",
       },
       {
         name: "token",
@@ -41,6 +45,12 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "ghp_…",
+        obtain:
+          "Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new): " +
+          "set **Resource owner** to your organization and pick the repositories agents may reach, " +
+          "then grant repository permissions **Contents: Read**, **Issues: Read and write** and " +
+          "**Pull requests: Read** (Metadata: Read is added automatically). Your org may have to " +
+          "approve the token before it works. A classic token needs the `repo` scope.",
       },
     ],
     tools: [

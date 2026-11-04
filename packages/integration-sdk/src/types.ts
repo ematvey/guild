@@ -16,6 +16,9 @@ export interface IntegrationField {
   default: unknown;
   help: string | null;
   placeholder: string | null;
+  /** Markdown: where an admin gets this value (a secret's console page,
+   *  the scopes to grant). The setup page shows it beside the field. */
+  obtain?: string | null;
 }
 
 /** One tool the integration contributes. `class` is the policy floor:
@@ -40,7 +43,8 @@ export interface IntegrationManifest {
   publisher: string;
   /** One line for the shop card. */
   summary: string;
-  /** Markdown for the shop detail page. */
+  /** Markdown the agent reads about the integration; the people-facing
+   *  landing page is the plugin's README.md. */
   description: string;
   docs_url: string | null;
   categories: string[];

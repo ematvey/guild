@@ -1,50 +1,14 @@
 /// <reference types="vite/client" />
-import integrationSource from "./integration-config.tsx?raw";
 import gatewaySource from "./GatewaySection.tsx?raw";
 import deviceSetupSource from "../../device-setup.tsx?raw";
-import { transpile } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 // Execute the production closures with controlled state and deferred transport.
 // This keeps the regression focused without requiring a browser renderer.
 function source(file: string, start: string, end: string): string {
-  const text = file.includes("integration-config") ? integrationSource : gatewaySource;
+  const text = file.includes("GatewaySection") ? gatewaySource : "";
   return text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
 }
-
-describe("round 3 integration config", () => {
-  it.each([false, true])("excludes required secrets with MCP=%s", (isMcp) => {
-    const code = transpile(source("./integration-config.tsx", "  const buildConfig =", "  const save ="));
-    const build = new Function(
-      "isMcp",
-      "advancedText",
-      "initialConfig",
-      "mcpUrl",
-      "fields",
-      "draft",
-      "policy",
-      "cleanPolicy",
-      "fieldLabel",
-      `${code}; return buildConfig;`,
-    )(
-      isMcp,
-      "{}",
-      {},
-      "https://example.test/mcp",
-      [
-        { name: "api_key", kind: "secret", required: true },
-        { name: "label", kind: "string", required: true },
-      ],
-      { label: "changed" },
-      {},
-      () => ({}),
-      (field: { name: string }) => field.name,
-    );
-    // New credentials and retained stored credentials both bypass ordinary config.
-    expect(build()).toMatchObject({ label: "changed" });
-    expect(build()).not.toHaveProperty("api_key");
-  });
-});
 
 describe("round 3 API key cache", () => {
   it("ignores a creation response after sign-out", async () => {

@@ -31,6 +31,9 @@ const plugin: IntegrationPlugin = {
         default: "https://www.googleapis.com",
         help: "Override only for a Google API proxy",
         placeholder: null,
+        obtain:
+          "Leave the default. Change it only when Google API traffic must go through a proxy; then " +
+          "enter the proxy's base URL.",
       },
       {
         name: "token_url",
@@ -40,6 +43,9 @@ const plugin: IntegrationPlugin = {
         default: "https://oauth2.googleapis.com/token",
         help: "Override only for a Google API proxy",
         placeholder: null,
+        obtain:
+          "Leave the default. Change it only when Google's OAuth token endpoint must be reached " +
+          "through a proxy.",
       },
       {
         name: "admin_email",
@@ -49,6 +55,10 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "Workspace admin the service account acts as by default",
         placeholder: "admin@yourorg.com",
+        obtain:
+          "A Workspace admin who can read the user directory (a super admin works). Guild acts as " +
+          "this user for **Test connection** and for calls made without a member identity; " +
+          "`directory_users` lists this user's domain by default.",
       },
       {
         name: "service_account_json",
@@ -58,6 +68,15 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "{ … }",
+        obtain:
+          "1. In [Google Cloud → IAM & Admin → Service " +
+          "accounts](https://console.cloud.google.com/iam-admin/serviceaccounts), create a service " +
+          "account, then **Keys → Add key → Create new key → JSON**. Paste the whole file here.\n2. " +
+          "In the same project, enable the Gmail, Google Calendar, Google Drive and Admin SDK " +
+          "APIs.\n3. In [Admin console → Security → API controls → Domain-wide " +
+          "delegation](https://admin.google.com/ac/owl/domainwidedelegation), add the service " +
+          "account's client ID with these scopes:\n   " +
+          "`https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/drive.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly`",
       },
     ],
     tools: [

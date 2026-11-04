@@ -29,7 +29,16 @@ export function fixtureManifest(slug: string, version: string): IntegrationManif
         help: null,
         placeholder: null,
       },
-      { name: "token", kind: "secret", label: "Token", required: true, default: null, help: null, placeholder: null },
+      {
+        name: "token",
+        kind: "secret",
+        label: "Token",
+        required: true,
+        default: null,
+        help: null,
+        placeholder: null,
+        obtain: "Create one under **Settings → Tokens**.",
+      },
     ],
     tools: [
       { name: "echo", class: "read", description: "Echo the text", parameters: { type: "object" } },
@@ -68,13 +77,14 @@ export default {
 export function fixtureBundle(
   slug: string,
   version: string,
-  opts: { source?: string; manifest?: IntegrationManifest } = {},
+  opts: { source?: string; manifest?: IntegrationManifest; readme?: string } = {},
 ): { bytes: Buffer; sha256: string } {
   const manifest = opts.manifest ?? fixtureManifest(slug, version);
   const bytes = packBundle({
     "manifest.json": JSON.stringify(registryManifest(manifest)),
     "plugin.js": opts.source ?? fixtureSource(manifest),
     "logo.svg": "<svg/>",
+    ...(opts.readme !== undefined ? { "README.md": opts.readme } : {}),
   });
   return { bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
 }

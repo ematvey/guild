@@ -31,6 +31,12 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: "Base URL of the SearxNG instance, without /search",
         placeholder: "http://searxng:8080",
+        obtain:
+          "The root URL of your SearxNG instance as the Guild server reaches it, such as " +
+          "`http://searxng:8080` for a container on the same Docker network. The instance must " +
+          "allow JSON results: add `json` to `search.formats` in its `settings.yml` " +
+          "([docs](https://docs.searxng.org/admin/settings/settings_search.html)), or requests " +
+          "fail with 403.",
       },
     ],
     tools: [

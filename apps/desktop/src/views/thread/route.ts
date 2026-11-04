@@ -33,6 +33,11 @@
 //                                main pane): tab views, a detail page, the
 //                                editor in edit or create mode. See
 //                                skills-route.ts for the state contract.
+//   /integrations[/...]        — the integrations page (admin; top-level
+//                                like skills): installed integrations, the
+//                                catalog and its landing pages. See
+//                                integrations-route.ts; old
+//                                /settings/integrations links land here.
 // Back/forward, reloads and deep links all resolve through parseChatRoute.
 import {
   AGENTS_ACTIVITY,
@@ -42,6 +47,12 @@ import {
   type AgentsRoute,
 } from "../agents/agents-route";
 import { clampSkillsRoute, parseSkillsRoute, skillsRoutePath, type SkillsRoute } from "../skills/skills-route";
+import {
+  fromSettingsDetail,
+  integrationsRoutePath,
+  parseIntegrationsRoute,
+  type IntegrationsRoute,
+} from "../integrations/integrations-route";
 import { canonicalSettings } from "../settings/section-nav";
 import { DEFAULT_USAGE, parseUsageQuery, usageQueryString, type UsageQuery } from "../settings/usage-route";
 
@@ -69,6 +80,8 @@ export interface ChatRoute {
   skills: SkillsRoute | null;
   /** The agents surface route, or null when the URL is not an agents one. */
   agents: AgentsRoute | null;
+  /** The integrations page route, or null when the URL is not one. */
+  integrations: IntegrationsRoute | null;
   /** Which rail panel tab the URL names: /chats, /work or /settings. */
   tab: "chats" | "work" | "settings";
   /** The addressed scratch composer: /chats/new, /work/new or
@@ -119,6 +132,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -137,6 +151,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills: null,
       agents: AGENTS_ACTIVITY,
+      integrations: null,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -153,6 +168,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -171,6 +187,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills: null,
       agents,
+      integrations: null,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -210,6 +227,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: { kind: "device" },
       skills: null,
       agents: null,
+      integrations: null,
       settingsSection: null,
       settingsDetail: null,
       usage,
@@ -223,6 +241,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: { kind: "onboard" },
       skills: null,
       agents: null,
+      integrations: null,
       settingsSection: null,
       settingsDetail: null,
       usage,
@@ -236,11 +255,44 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: { kind: "install" },
       skills: null,
       agents: null,
+      integrations: null,
       settingsSection: null,
       settingsDetail: null,
       usage,
       newChat: false,
     };
+  // Integrations moved out of Settings into their own page: old deep links
+  // land on the matching integrations address.
+  if (parts[0] === "settings" && parts[1] === "integrations") {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents: null,
+      integrations: fromSettingsDetail(parts.length > 2 ? parts.slice(2).join("/") : null),
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+    };
+  }
+  if (parts[0] === "integrations") {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents: null,
+      integrations: parseIntegrationsRoute(parts.slice(1), search),
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+    };
+  }
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -258,6 +310,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills: null,
       agents: null,
+      integrations: null,
       settingsSection: section,
       settingsDetail: detail,
       usage,
@@ -274,6 +327,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       overlay: null,
       skills,
       agents: null,
+      integrations: null,
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
@@ -288,6 +342,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     overlay: null,
     skills: null,
     agents: null,
+    integrations: null,
     settingsSection: null,
     settingsDetail: null,
     usage,
@@ -301,6 +356,7 @@ export interface RoutePatch {
   overlay?: ChatOverlay;
   skills?: SkillsRoute | null;
   agents?: AgentsRoute | null;
+  integrations?: IntegrationsRoute | null;
   tab?: ChatRoute["tab"];
   newChat?: boolean;
   settingsSection?: string | null;
@@ -316,6 +372,7 @@ export const SURFACE_BASE = { chatId: null, projectId: null, overlay: null } as 
 export const CHAT_ROOT = {
   ...SURFACE_BASE,
   skills: null,
+  integrations: null,
   newChat: false,
 } as const satisfies RoutePatch;
 
@@ -330,10 +387,14 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   // The skills page is replaced by anything that names a chat or opens a
   // dialog overlay — those are chat-context surfaces. An overlay close
   // (overlay: null) keeps it: the dialog was rendered over the skills page.
+  // A surface the patch opens replaces the others it does not name.
+  const opensIntegrations = next.integrations !== undefined && next.integrations !== null;
+  const opensOther =
+    (next.skills !== undefined && next.skills !== null) || (next.agents !== undefined && next.agents !== null);
   const sk =
     "skills" in next
       ? (next.skills as SkillsRoute | null)
-      : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
+      : "chatId" in next || (next.overlay !== undefined && next.overlay !== null) || opensIntegrations
         ? null
         : route.skills;
   // The agents surface is chat-independent too: naming an agents route
@@ -341,9 +402,16 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   const ag =
     "agents" in next
       ? (next.agents as AgentsRoute | null)
-      : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
+      : "chatId" in next || (next.overlay !== undefined && next.overlay !== null) || opensIntegrations
         ? null
         : route.agents;
+  // The integrations page is chat-independent like skills and agents.
+  const ig =
+    "integrations" in next
+      ? (next.integrations as IntegrationsRoute | null)
+      : "chatId" in next || (next.overlay !== undefined && next.overlay !== null) || opensOther || "tab" in next
+        ? null
+        : route.integrations;
   // The scratch composer is chatless: it drops with any open thread,
   // overlay, skills page or agents page, and never rides on Settings.
   const newChat =
@@ -352,6 +420,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
     ov === null &&
     sk === null &&
     ag === null &&
+    ig === null &&
     tab !== "settings";
   // The Settings tab owns its section in the URL: a navigation naming a
   // section/detail carries it, one leaving the tab drops it, and a
@@ -361,7 +430,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   const settingsSection =
     "settingsSection" in next
       ? (next.settingsSection as string | null)
-      : tab === "settings" && sk === null && ag === null
+      : tab === "settings" && sk === null && ag === null && ig === null
         ? route.settingsSection
         : null;
   const settingsDetail =
@@ -369,7 +438,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
       ? (next.settingsDetail as string | null)
       : "settingsSection" in next
         ? null
-        : tab === "settings" && sk === null && ag === null
+        : tab === "settings" && sk === null && ag === null && ig === null
           ? route.settingsDetail
           : null;
   return {
@@ -378,6 +447,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
     overlay: ov,
     skills: sk,
     agents: ag,
+    integrations: ig,
     tab,
     newChat,
     settingsSection,
@@ -398,10 +468,20 @@ const pathSegments = (pathname: string): string[] | null => {
  *  read past, or an old alias. Null when the address already is the
  *  canonical one, or the route is neither surface. */
 export const canonicalSurfacePath = (route: ChatRoute, pathname: string): string | null => {
-  if (route.agents === null && route.skills === null) return null;
-  const canonical = chatRoutePath(null, null, null, route.skills, "chats", null, null, false, route.agents).split(
-    "?",
-  )[0];
+  if (route.agents === null && route.skills === null && route.integrations === null) return null;
+  const canonical = chatRoutePath(
+    null,
+    null,
+    null,
+    route.skills,
+    "chats",
+    null,
+    null,
+    false,
+    route.agents,
+    DEFAULT_USAGE,
+    route.integrations,
+  ).split("?")[0];
   const want = pathSegments(canonical);
   const have = pathSegments(pathname);
   if (want === null || have === null) return null;
@@ -419,9 +499,11 @@ export const chatRoutePath = (
   newChat = false,
   agents: AgentsRoute | null = null,
   usage: UsageQuery = DEFAULT_USAGE,
+  integrations: IntegrationsRoute | null = null,
 ): string => {
   // The agents surface is chat-independent: its route owns the whole URL.
   if (agents !== null) return agentsRoutePath(agents);
+  if (integrations !== null) return integrationsRoutePath(integrations);
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) return skillsRoutePath(skills);
   // The scratch composer is a chatless surface: the project-bound form
@@ -498,6 +580,7 @@ export function canonicalRoute(route: ChatRoute, ctx: RouteContext): RoutePatch 
       return { agents: { view: "agent", agentId: a.agentId, tab: "overview" } };
     }
   }
+  if (route.integrations !== null && ctx.role !== "admin") return { ...CHAT_ROOT, tab: "chats" };
   if (route.tab === "settings" && route.overlay === null && route.skills === null && a === null) {
     const shown = canonicalSettings(route.settingsSection, route.settingsDetail, ctx.role);
     if (shown.section !== route.settingsSection || shown.detail !== route.settingsDetail) {

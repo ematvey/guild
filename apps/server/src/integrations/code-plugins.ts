@@ -129,6 +129,7 @@ async function load(bytes: Buffer, sha256: string, slug: string, version: string
   const code = readBundleFile(parsed, CODE_ENTRY);
   if (code === null) throw new Error(`integration ${slug}: code bundle has no ${CODE_ENTRY}`);
   const logo = readBundleFile(parsed, "logo.svg")?.toString("utf8") ?? "";
+  const readme = readBundleFile(parsed, "README.md")?.toString("utf8") ?? "";
   const host = new PluginHost(materialize(sha256, code), `integration ${slug}`);
   const manifest = (await host.call("manifest", null, MANIFEST_DEADLINE_MS)) as IntegrationManifest;
   if (manifest?.name !== slug) {
@@ -139,7 +140,7 @@ async function load(bytes: Buffer, sha256: string, slug: string, version: string
     await host.close();
     throw new Error(`integration ${slug}: plugin.js declares version ${manifest.version}, the bundle ${version}`);
   }
-  return connectorOf(manifest, "registry", logo, {
+  return connectorOf(manifest, "registry", { logo, readme }, {
     validate: async (config) => {
       await host.call("validate", { config });
     },

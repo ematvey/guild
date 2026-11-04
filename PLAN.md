@@ -97,6 +97,38 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Integrations are their own page: installed vs catalog, landing pages,
+  setup notes, usage (2026-11-04).** The Settings → Integrations section
+  (a card grid in the settings column, with Catalogs, Install plugin and
+  Traits as side pages) is replaced by an admin rail surface,
+  `/integrations` (`views/integrations/`, route contract in
+  `integrations-route.ts`; old `/settings/integrations/...` links redirect).
+  It is a list pane (Installed, grouped needs attention / on / off with a
+  status line each; Catalog, grouped by where an entry comes from) beside a
+  wide page. An installed integration has Overview (what needs the admin,
+  30-day usage, its tools, which shared tools it answers, with "Use this
+  one"), Configuration (each field beside its "How to get it" note; Save
+  tests first; Test connection checks what is stored), Tools, Usage and
+  About (README, update from a catalog, remove). A catalog entry has a
+  landing page: README, what you will need, tools, source and hash, one
+  Install that lands on Configuration. Content comes from the plugin: a
+  `README.md` (beside a built-in, inside a bundle; `guild-plugin pack`
+  includes it) and an `obtain` markdown note per field (SDK
+  `IntegrationField`, wire `FieldSpec`); the bundle manifest now carries
+  `tools.declared` (name, class, description) so a catalog page lists
+  tools without running the plugin. All ten built-ins ship a README and
+  notes. New admin endpoints: `POST /admin/integrations/:id/test`,
+  `GET /admin/integrations/usage` (per slug, 7 days) and `/:id/usage`
+  (totals, by day, tool, person, recent failures), and
+  `GET /admin/integrations/catalogs/:id/plugins/:slug` (the bundle read and
+  sha-checked, cached by hash, never run). Usage reads the
+  `integration.tool_called` audit events, which now record `ms` and the
+  capped `error`; a partial index serves them (migration 0112). The list
+  stays an admin editing list and usage windowed analytics (005), so no
+  socket frame. The slugs `catalog`, `connect` and `sources` are reserved.
+  Also fixed the same day: a catalog plugin counts as installed only while
+  the org has its row, so a removed plugin installs again.
+
 - **Integration plugins ship as registry bundles; orgs install them from
   catalogs (2026-11-04).** The gitignored `integrations/private/` folder
   (same day, below) tied company plugins to a server checkout and an image

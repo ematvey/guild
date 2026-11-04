@@ -11,7 +11,12 @@ import { ApiError } from "../platform/errors.js";
 import { isToolClass, type ToolClass } from "../platform/domain/tool-class.js";
 import { packBundle } from "../platform/bundle.js";
 import { BundleWriteError, bundleSha256, publishRegistryBundle, type Publisher } from "../platform/registry-publish.js";
-import { singleLineDescription, validateV2, type Manifest } from "../platform/registry-manifest.js";
+import {
+  RESERVED_INTEGRATION_SLUGS,
+  singleLineDescription,
+  validateV2,
+  type Manifest,
+} from "../platform/registry-manifest.js";
 import { nextVersion, type RegistryStore } from "../platform/store/registry.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { TeamStore } from "../platform/store/teams.js";
@@ -171,6 +176,9 @@ export async function createOrgMcp(
   const slug = str(body, "slug");
   if (!SLUG.test(slug)) {
     throw ApiError.badRequest("slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
+  }
+  if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
+    throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
   }
   if (builtinByName(slug) !== undefined) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);

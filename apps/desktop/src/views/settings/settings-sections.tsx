@@ -11,7 +11,6 @@ import {
   KeyRound,
   Layers,
   Palette,
-  Plug,
   Sparkles,
   User,
   Users,
@@ -32,7 +31,6 @@ import UsageSection from "./sections/UsageSection";
 import UsersSection from "./sections/UsersSection";
 import TeamsSection from "./sections/TeamsSection";
 import ModelsSection from "./sections/ModelsSection";
-import IntegrationsSection from "./sections/IntegrationsSection";
 import McpSection from "./sections/McpSection";
 import SsoSection from "./sections/SsoSection";
 import RegistrySection from "./sections/RegistrySection";
@@ -68,12 +66,6 @@ export const SETTINGS_SECTIONS: SectionDef[] = (
     { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace" },
     { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace" },
     { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
-    {
-      id: "integrations",
-      label: "Integrations",
-      icon: <Plug className="size-4" />,
-      group: "workspace",
-    },
     { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
     { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
     { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
@@ -192,8 +184,6 @@ function SectionBody({
       return <TeamsSection detail={detail} onDetailChange={onDetailChange} />;
     case "models":
       return <ModelsSection detail={detail} onDetailChange={onDetailChange} />;
-    case "integrations":
-      return <IntegrationsSection detail={detail} onDetailChange={onDetailChange} />;
     case "mcp":
       return <McpSection detail={detail} onDetailChange={onDetailChange} />;
     case "sso":

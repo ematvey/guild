@@ -382,7 +382,7 @@
   {
    "id": "integration-trait",
    "definition": "A capability (web search, web fetch) with one Guild-provided tool name, description, and argument schema; an integration supplies the implementation.",
-   "canonical": "apps/server/src/integrations/traits.ts",
+   "canonical": "packages/integration-sdk/src/traits.ts",
    "types": [
     "TraitSpec"
    ],
@@ -391,7 +391,7 @@
    ],
    "representations": [
     {
-     "where": "apps/server/src/integrations/traits.ts",
+     "where": "packages/integration-sdk/src/traits.ts",
      "role": "domain"
     },
     {
@@ -399,7 +399,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx",
+     "where": "apps/desktop/src/views/integrations/installed.tsx",
      "role": "ui"
     }
    ],
@@ -407,7 +407,7 @@
     {
      "from": "domain",
      "to": "ui",
-     "at": "apps/desktop/src/views/settings/sections/IntegrationsSection.tsx"
+     "at": "apps/desktop/src/views/integrations/installed.tsx"
     }
    ]
   },
@@ -641,17 +641,17 @@
    "role": "domain"
   },
   {
-   "where": "apps/server/src/integrations/types.ts",
+   "where": "packages/integration-sdk/src/types.ts",
    "concept": "integration",
    "role": "domain"
   },
   {
-   "where": "apps/server/src/integrations/probe.ts",
+   "where": "packages/integration-sdk/src/probe.ts",
    "concept": "integration",
    "role": "domain"
   },
   {
-   "where": "apps/server/src/integrations/api-tool.ts",
+   "where": "packages/integration-sdk/src/api-tool.ts",
    "concept": "integration-tool",
    "role": "domain"
   },
@@ -666,7 +666,7 @@
    "role": "domain"
   },
   {
-   "where": "apps/server/src/integrations/traits.ts",
+   "where": "packages/integration-sdk/src/traits.ts",
    "concept": "integration-trait",
    "role": "domain"
   }

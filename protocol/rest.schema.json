@@ -40,6 +40,7 @@
     "SettingsManifest": { "$ref": "#/$defs/SettingsManifest" },
     "AuthManifest": { "$ref": "#/$defs/AuthManifest" },
     "ToolsManifest": { "$ref": "#/$defs/ToolsManifest" },
+    "DeclaredTool": { "$ref": "#/$defs/DeclaredTool" },
     "TriggerSpec": { "$ref": "#/$defs/TriggerSpec" },
     "Chat": { "$ref": "#/$defs/Chat" },
     "ChatRoutine": { "$ref": "#/$defs/ChatRoutine" },
@@ -616,6 +617,10 @@
         "placeholder": {
           "description": "Always serialized. null when unset. `#[serde(default)]` on an Option, with no skip.",
           "type": ["string", "null"]
+        },
+        "obtain": {
+          "description": "Markdown: where an admin gets this value (a console page, the scopes to grant). Omitted when unset.",
+          "type": "string"
         }
       }
     },
@@ -663,7 +668,23 @@
           "type": "object",
           "description": "A BTreeMap from tool name to class. Always serialized. `#[serde(default)]` only. The keys are tool names, so this object is a map, not a struct: `additionalProperties` carries the value type.",
           "additionalProperties": { "type": "string" }
+        },
+        "declared": {
+          "description": "The declared tools with their descriptions, for the catalog landing page. Omitted when empty.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/DeclaredTool" }
         }
+      }
+    },
+    "DeclaredTool": {
+      "description": "One declared tool of a code plugin, as its landing page lists it.",
+      "type": "object",
+      "required": ["name", "class", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "class": { "type": "string", "description": "`read`, `write` or `admin`." },
+        "description": { "type": "string" }
       }
     },
     "TriggerSpec": {

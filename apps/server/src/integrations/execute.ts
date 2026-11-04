@@ -102,3 +102,10 @@ export async function callPlugin(
   }
   return { content: result.content };
 }
+
+/** A failed call's error message as the audit event keeps it: capped, so
+ *  a vendor's error page does not land in the event log whole. */
+export function auditError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > 500 ? `${message.slice(0, 500)}…` : message;
+}

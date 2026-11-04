@@ -66,7 +66,6 @@ const SECTION_DETAILS = {
   users: entityDetailCodec,
   teams: entityDetailCodec,
   models: rowDetailCodec,
-  integrations: rowDetailCodec,
   mcp: rowDetailCodec,
   sso: null,
   registry: registryDetailCodec,
@@ -89,7 +88,6 @@ const ADMIN_SECTIONS: ReadonlySet<SettingsSectionId> = new Set<SettingsSectionId
   "users",
   "teams",
   "models",
-  "integrations",
   "sso",
   "registry",
 ]);

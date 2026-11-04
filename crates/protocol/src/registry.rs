@@ -54,6 +54,9 @@ pub struct FieldSpec {
     pub help: Option<String>,
     #[serde(default)]
     pub placeholder: Option<String>,
+    /// Markdown: where an admin gets this value. Omitted when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obtain: Option<String>,
 }
 
 /// Typed settings schema for an integration: its configuration fields —
@@ -115,6 +118,20 @@ fn default_identity_key() -> String {
 pub struct ToolsManifest {
     #[serde(default)]
     pub classes: std::collections::BTreeMap<String, String>,
+    /// The declared tools with their descriptions, for the catalog landing
+    /// page. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared: Vec<DeclaredTool>,
+}
+
+/// One declared tool of a code plugin, as its landing page lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeclaredTool {
+    pub name: String,
+    /// read | write | admin
+    pub class: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 /// v1-compatible trigger descriptor (same shape as routine.json entries).

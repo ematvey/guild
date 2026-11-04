@@ -429,6 +429,8 @@ export interface FieldSpec {
   default: Json | null;
   help: string | null;
   placeholder: string | null;
+  /** Markdown: where an admin gets this value. Omitted when unset. */
+  obtain?: string;
 }
 
 /** The typed settings schema of an integration. */
@@ -445,8 +447,18 @@ export interface AuthManifest {
 }
 
 /** Per-tool class declarations from the connector. */
+/** One declared tool of a code plugin, as its landing page lists it. */
+export interface DeclaredTool {
+  name: string;
+  /** `read`, `write` or `admin`. */
+  class: string;
+  description: string;
+}
+
 export interface ToolsManifest {
   classes: Record<string, string>;
+  /** The declared tools with their descriptions. Omitted when empty. */
+  declared?: DeclaredTool[];
 }
 
 /** A v1-compatible trigger descriptor. */

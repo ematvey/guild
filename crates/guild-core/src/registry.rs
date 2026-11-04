@@ -394,6 +394,7 @@ mod tests {
                 default: None,
                 help: None,
                 placeholder: None,
+                obtain: None,
             }],
         });
         validate_v2(&m).unwrap();
@@ -419,6 +420,7 @@ mod tests {
                 default: Some(json!("https://x")),
                 help: None,
                 placeholder: None,
+                obtain: None,
             }],
         });
         validate_v2(&m).unwrap();

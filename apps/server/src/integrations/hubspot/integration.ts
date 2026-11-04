@@ -47,6 +47,7 @@ const plugin: IntegrationPlugin = {
         default: "https://api.hubapi.com",
         help: "Override only for a HubSpot API proxy",
         placeholder: null,
+        obtain: "Leave the default. Change it only when HubSpot API traffic must go through a proxy.",
       },
       {
         name: "token",
@@ -56,6 +57,13 @@ const plugin: IntegrationPlugin = {
         default: null,
         help: null,
         placeholder: "pat-…",
+        obtain:
+          "As a HubSpot super admin, open **Settings → Integrations → Private Apps → Create a " +
+          "private app** (in newer accounts: **Development → Legacy apps → Create → Private**). " +
+          "Under **Scopes** grant `crm.objects.contacts.read`, `crm.objects.companies.read`, " +
+          "`crm.objects.deals.read` and `crm.objects.deals.write`, create the app, and copy its " +
+          "access token (`pat-…`). See [HubSpot private " +
+          "apps](https://developers.hubspot.com/docs/api/private-apps).",
       },
     ],
     tools: [

@@ -16,6 +16,8 @@ const PASSWORD = "hunter227";
 let env: ObjectStoreStack;
 let token: string;
 let memberToken: string;
+let orgId: string;
+let adminId: string;
 let files: Server;
 let filesBase: string;
 /** Paths the fake file host served, and the authorization each carried. */
@@ -54,7 +56,8 @@ async function api(method: string, url: string, body?: unknown, as = token) {
 
 beforeAll(async () => {
   env = await createObjectStoreStack("error", {}, "plugins");
-  const orgId = crypto.randomUUID();
+  orgId = crypto.randomUUID();
+  adminId = crypto.randomUUID();
   const suffix = crypto.randomUUID().slice(0, 8);
   const { hashPassword } = await import("../platform/crypto.js");
   const hash = await hashPassword(PASSWORD);
@@ -62,7 +65,7 @@ beforeAll(async () => {
   await env.db.query(
     "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) VALUES " +
       "($1, $2, $3, $4, 'admin', 'managed'), ($5, $2, $6, $4, 'member', 'managed')",
-    [crypto.randomUUID(), orgId, `pa-${suffix}@example.test`, hash, crypto.randomUUID(), `pm-${suffix}@example.test`],
+    [adminId, orgId, `pa-${suffix}@example.test`, hash, crypto.randomUUID(), `pm-${suffix}@example.test`],
   );
   const login = async (email: string) => {
     const res = await env.app.inject({
@@ -115,7 +118,7 @@ afterAll(async () => {
 
 describe("uploaded code plugins", () => {
   it("install approved, show in the shop, and save through the plugin's own connection test", async () => {
-    const { bytes } = fixtureBundle("acme-upload", "1.0.0");
+    const { bytes } = fixtureBundle("acme-upload", "1.0.0", { readme: "## What agents can do\n\nEcho." });
     const up = await api("POST", "/api/v1/admin/integrations/plugins/upload", bytes);
     expect(up.status).toBe(200);
     expect(up.body).toMatchObject({ slug: "acme-upload", version: "1.0.0", runtime: "code", created: true });
@@ -124,6 +127,11 @@ describe("uploaded code plugins", () => {
     const item = shop.body.items.find((i: { name: string }) => i.name === "acme-upload");
     expect(item).toMatchObject({ source: "registry", configured: true, enabled: false, logo: "<svg/>" });
     expect(item.secret_names).toEqual(["token"]);
+    expect(item.readme).toContain("What agents can do");
+    expect(item.missing).toEqual(["Token"]);
+    expect(item.tools.map((t: { name: string }) => t.name)).toEqual(["echo", "search", "hang", "crash"]);
+    const untested = await api("POST", `/api/v1/admin/integrations/${item.id}/test`);
+    expect(untested.body).toEqual({ ok: false, error: "missing secrets: Token" });
 
     const bad = await api("PUT", `/api/v1/admin/integrations/${item.id}`, {
       config: { greeting: "hey" },
@@ -138,6 +146,13 @@ describe("uploaded code plugins", () => {
       enabled: true,
     });
     expect(ok.status).toBe(200);
+    const tested = await api("POST", `/api/v1/admin/integrations/${item.id}/test`);
+    expect(tested.body).toMatchObject({ ok: true });
+    expect(typeof tested.body.ms).toBe("number");
+    const after = (await api("GET", "/api/v1/admin/integrations")).body.items.find(
+      (i: { name: string }) => i.name === "acme-upload",
+    );
+    expect(after.missing).toEqual([]);
 
     const tools = await api("GET", `/api/v1/admin/integrations/${item.id}/tools`);
     expect(tools.body.kind).toBe("connector");
@@ -151,6 +166,43 @@ describe("uploaded code plugins", () => {
     const res = await api("POST", "/api/v1/admin/integrations/plugins/upload", broken.bytes);
     expect(res.status).toBe(400);
     expect(JSON.stringify(res.body)).toContain("failed to start");
+  });
+
+  it("may not take a slug the integrations page reserves", async () => {
+    const { bytes } = fixtureBundle("catalog", "1.0.0");
+    const res = await api("POST", "/api/v1/admin/integrations/plugins/upload", bytes);
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toContain("reserved");
+  });
+
+  it("report usage from their audit events", async () => {
+    const shop = await api("GET", "/api/v1/admin/integrations");
+    const item = shop.body.items.find((i: { name: string }) => i.name === "acme-upload");
+    const emit = (tool: string, ok: boolean, ms: number, error: string | null = null) =>
+      env.db.query("INSERT INTO events (id, org_id, kind, payload) VALUES ($1, $2, 'integration.tool_called', $3)", [
+        crypto.randomUUID(),
+        orgId,
+        JSON.stringify({ slug: "acme-upload", tool, caller: adminId, ok, via: "chat", ms, error }),
+      ]);
+    await emit("echo", true, 100);
+    await emit("echo", true, 300);
+    await emit("search", false, 50, "acme is down");
+    const usage = await api("GET", `/api/v1/admin/integrations/${item.id}/usage?days=7`);
+    expect(usage.status).toBe(200);
+    expect(usage.body.totals).toMatchObject({ calls: 3, errors: 1, people: 1, p50_ms: 100 });
+    expect(usage.body.by_tool[0]).toMatchObject({ tool: "echo", calls: 2, errors: 0 });
+    expect(usage.body.by_person[0]).toMatchObject({ user_id: adminId, calls: 3, errors: 1 });
+    expect(usage.body.recent_failures).toEqual([
+      expect.objectContaining({ tool: "search", error: "acme is down", via: "chat" }),
+    ]);
+    expect(usage.body.by_day.reduce((n: number, d: { calls: number }) => n + d.calls, 0)).toBe(3);
+    const summary = await api("GET", "/api/v1/admin/integrations/usage");
+    expect(summary.body.items.find((u: { slug: string }) => u.slug === "acme-upload")).toMatchObject({
+      calls: 3,
+      errors: 1,
+      last_ok: false,
+      last_error: "acme is down",
+    });
   });
 
   it("are admin-only", async () => {
@@ -189,6 +241,21 @@ describe("catalogs", () => {
       source: { kind: "url", url: `${filesBase}/cat/index.json` },
     });
     expect(dup.status).toBe(409);
+
+    const landing = await api("GET", `/api/v1/admin/integrations/catalogs/${id}/plugins/acme-cat`);
+    expect(landing.status).toBe(200);
+    expect(landing.body.version).toMatchObject({ version: "1.1.0", sha256: v2.sha256 });
+    expect(landing.body.plugin).toMatchObject({ slug: "acme-cat", installed_version: null, latest: "1.1.0" });
+    expect(landing.body.logo).toBe("<svg/>");
+    expect(landing.body.manifest.tools.declared[0]).toEqual({
+      name: "echo",
+      class: "read",
+      description: "Echo the text",
+    });
+    expect(landing.body.manifest.settings.fields[1].obtain).toContain("Settings → Tokens");
+    const older = await api("GET", `/api/v1/admin/integrations/catalogs/${id}/plugins/acme-cat?version=1.0.0`);
+    expect(older.body.version.version).toBe("1.0.0");
+    expect((await api("GET", `/api/v1/admin/integrations/catalogs/${id}/plugins/nope`)).status).toBe(404);
 
     const old = await api("POST", `/api/v1/admin/integrations/catalogs/${id}/install`, {
       slug: "acme-cat",

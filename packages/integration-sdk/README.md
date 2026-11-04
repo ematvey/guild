@@ -19,8 +19,8 @@ const plugin: IntegrationPlugin = {
     title: "Acme",
     version: "1.0.0",             // bump for every release
     publisher: "Acme Inc.",
-    summary: "One line for the shop card",
-    description: "Markdown for the shop detail page",
+    summary: "One line for the integrations list",
+    description: "What the agent reads about the integration",
     docs_url: null,
     categories: ["search"],
     traits: { web_search: "search" },   // trait -> the tool implementing it
@@ -28,7 +28,8 @@ const plugin: IntegrationPlugin = {
     identity_key: "email",
     fields: [
       { name: "base_url", kind: "string", label: "API URL", required: true, default: null, help: null, placeholder: null },
-      { name: "token", kind: "secret", label: "API token", required: true, default: null, help: null, placeholder: null },
+      { name: "token", kind: "secret", label: "API token", required: true, default: null, help: null, placeholder: null,
+        obtain: "Create one under **Settings → API tokens** with the `read` scope." },
     ],
     tools: [
       { name: "search", class: "read", description: "Search Acme", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
@@ -48,6 +49,14 @@ export default plugin;
 
 - **Settings** are the `fields`; `secret`-kind fields are stored encrypted
   and reach `testConnection`/`execute` as `secrets` pairs, never in config.
+  A field's `obtain` (markdown) tells the admin where the value comes from;
+  the configuration page shows it beside the input.
+- **README.md** beside the plugin (the entry's folder or any parent up to
+  the working directory) is the landing page admins read before
+  installing: what agents can do, what to prepare, the setup steps,
+  permissions and troubleshooting. `pack` puts it in the bundle next to
+  `logo.svg`; the catalog page reads it from the bundle without running
+  the plugin.
 - **Tool classes** (`read`, `write`, `admin`) are the policy floor: members
   get `read` tools by default.
 - **Traits** (`web_search`, `web_fetch`) give a tool Guild's shared name,

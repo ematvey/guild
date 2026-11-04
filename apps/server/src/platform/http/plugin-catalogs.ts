@@ -18,6 +18,7 @@ import {
   fetchCatalogBundle,
   listCatalogs,
   parseCatalogConfig,
+  previewCatalogBundle,
   readIndex,
   saveCatalogs,
   type CatalogConfig,
@@ -196,6 +197,46 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
       throw ApiError.badRequest(`the bundle declares slug ${installed.slug}, the catalog ${slug}`);
     }
     sendJson(reply, installed);
+    return reply;
+  });
+
+  // One catalog plugin's landing page: the index entry with this org's
+  // install state, and the chosen version's bundle content (manifest,
+  // README, logo) read without installing or running it.
+  app.get("/api/v1/admin/integrations/catalogs/:id/plugins/:slug", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const catalog = await catalogById(admin.org_id, pathParam(req, "id"));
+    const slug = pathParam(req, "slug");
+    const wanted = queryParam(req, "version") ?? null;
+    let body: Record<string, unknown>;
+    try {
+      const index = await readIndex(catalogDeps, admin.org_id, catalog, false);
+      const plugin = index.plugins.find((p) => p.slug === slug);
+      if (plugin === undefined) throw ApiError.notFound(`the catalog has no plugin ${slug}`);
+      const version = wanted === null ? plugin.versions[0]! : plugin.versions.find((v) => v.version === wanted);
+      if (version === undefined) throw ApiError.notFound(`the catalog has no ${slug} ${wanted}`);
+      const preview = await previewCatalogBundle(catalogDeps, admin.org_id, catalog, version, bundleSha256);
+      const [approved, row] = await Promise.all([
+        gateway.registry.approvedBundle(admin.org_id, "integration", slug),
+        gateway.integrations.getByName(admin.org_id, slug),
+      ]);
+      body = {
+        catalog: { id: catalog.id, name: index.name || catalog.name, label: describeSource(catalog.source) },
+        plugin: {
+          ...plugin,
+          latest: plugin.versions[0]!.version,
+          installed_version: row === null ? null : (approved?.[0] ?? null),
+          builtin: builtinByName(slug) !== undefined,
+        },
+        version: { ...version },
+        manifest: preview.manifest,
+        readme: preview.readme,
+        logo: preview.logo,
+      };
+    } catch (error) {
+      catalogError(error);
+    }
+    sendJson(reply, body);
     return reply;
   });
 

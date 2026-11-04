@@ -8,7 +8,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { callPlugin } from "../../integrations/execute.js";
+import { auditError, callPlugin } from "../../integrations/execute.js";
 import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../../integrations/plugins.js";
 import { resolveActingAs, toolAllowed, toolCurate } from "../../integrations/policy.js";
 import { sendJson } from "./error.js";
@@ -172,6 +172,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     // as the ok:false result (never an HTTP error).
     const callId = crypto.randomUUID();
     let body: Record<string, unknown>;
+    const started = Date.now();
     try {
       const outcome = await callPlugin(gateway, turn, raw, args as Record<string, unknown>, {
         orgId: caller.org,
@@ -193,6 +194,8 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
         acting_as: actingAs,
         ok: body["ok"] === true,
         via: "script",
+        ms: Date.now() - started,
+        error: body["ok"] === true ? null : auditError(body["error"]),
       });
     } catch {
       // Best-effort.

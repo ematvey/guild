@@ -116,16 +116,18 @@ async function pack(positional: string[], flags: Record<string, string | true>):
     "manifest.json": `${JSON.stringify(registryManifest(m), null, 2)}\n`,
     "plugin.js": code,
   };
-  // The nearest logo.svg from the entry's folder up to the working
-  // directory (a plugin folder keeps it beside src/).
+  // The nearest logo.svg and README.md from the entry's folder up to the
+  // working directory (a plugin folder keeps them beside src/).
   const stop = path.resolve(".");
-  for (let dir = path.dirname(entry); ; dir = path.dirname(dir)) {
-    const candidate = path.join(dir, "logo.svg");
-    if (existsSync(candidate)) {
-      files["logo.svg"] = readFileSync(candidate);
-      break;
+  for (const name of ["logo.svg", "README.md"]) {
+    for (let dir = path.dirname(entry); ; dir = path.dirname(dir)) {
+      const candidate = path.join(dir, name);
+      if (existsSync(candidate)) {
+        files[name] = readFileSync(candidate);
+        break;
+      }
+      if (dir === stop || dir === path.dirname(dir) || !dir.startsWith(stop)) break;
     }
-    if (dir === stop || dir === path.dirname(dir) || !dir.startsWith(stop)) break;
   }
   const bytes = packFiles(files);
   const out = path.join(outDir, `${m.name}-${m.version}.guildplugin`);

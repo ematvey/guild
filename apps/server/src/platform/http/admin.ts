@@ -6,8 +6,23 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { parseUuidParam, requireJsonBody, requireAdminUser, sendJson, pathParam, optionalJsonBody } from "./error.js";
-import { createIntegration, integrationShop, integrationTools, saveIntegration } from "../../integrations/admin.js";
+import {
+  parseUuidParam,
+  requireJsonBody,
+  requireAdminUser,
+  sendJson,
+  pathParam,
+  optionalJsonBody,
+  queryParam,
+} from "./error.js";
+import {
+  createIntegration,
+  integrationShop,
+  integrationTools,
+  saveIntegration,
+  testIntegration,
+} from "../../integrations/admin.js";
+import { clampDays, integrationUsage, usageSummary } from "../store/integration-usage.js";
 import { createOrgMcp, probeOrgMcp } from "../../integrations/org-mcp.js";
 import { isToolClass } from "../domain/tool-class.js";
 import type { ObjectStore } from "../s3.js";
@@ -280,6 +295,43 @@ export function registerAdminIntegrationRoutes(
     const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     sendJson(reply, await integrationTools(gateway, admin.org_id, id));
+    return reply;
+  });
+
+  // Runs the connection test against the stored config and secrets. A
+  // failed test is the answer, not a request error: { ok: false, error }.
+  app.post("/api/v1/admin/integrations/:id/test", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const id = parseUuidParam(req, "id");
+    const existing = await gateway.integrations.get(admin.org_id, id);
+    if (existing === null) throw ApiError.notFound("unknown integration");
+    try {
+      const ms = await testIntegration(gateway, admin.org_id, existing.name, existing);
+      sendJson(reply, { ok: true, ms });
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      sendJson(reply, { ok: false, error: error.message });
+    }
+    return reply;
+  });
+
+  // Calls, failures and last-call state per integration over the window
+  // (?days=, default 7): the installed list's status and counts.
+  app.get("/api/v1/admin/integrations/usage", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const days = clampDays(queryParam(req, "days"), 7);
+    sendJson(reply, { days, items: await usageSummary(identity.events.pool, admin.org_id, days) });
+    return reply;
+  });
+
+  // One integration's usage over the window (?days=, default 30).
+  app.get("/api/v1/admin/integrations/:id/usage", async (req, reply) => {
+    const admin = await requireAdminUser(identity, req);
+    const id = parseUuidParam(req, "id");
+    const existing = await gateway.integrations.get(admin.org_id, id);
+    if (existing === null) throw ApiError.notFound("unknown integration");
+    const days = clampDays(queryParam(req, "days"), 30);
+    sendJson(reply, await integrationUsage(identity.events.pool, admin.org_id, existing.name, days));
     return reply;
   });
 

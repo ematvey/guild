@@ -31,7 +31,7 @@ import type { EventStore } from "../platform/store/events.js";
 import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
-import { callPlugin } from "../integrations/execute.js";
+import { auditError, callPlugin } from "../integrations/execute.js";
 import type { JsonObject, ToolOutcome } from "../integrations/shared.js";
 import type { IntegrationGateway } from "../integrations/plugins.js";
 import {
@@ -460,6 +460,7 @@ export class IntegrationsRuntime {
       return { content: "not permitted by integration policy", isError: true };
     }
     const raw = info.raw;
+    const started = Date.now();
     const outcome = await callPlugin(
       this.deps.gateway,
       turn,
@@ -486,6 +487,8 @@ export class IntegrationsRuntime {
         acting_as: snapshot.caller?.email ?? null,
         ok,
         via: "chat",
+        ms: Date.now() - started,
+        error: outcome.ok ? null : auditError(outcome.error),
       });
     } catch (error) {
       this.warn(`integration audit emit failed: ${(error as Error).message}`);
@@ -566,3 +569,4 @@ export class IntegrationsRuntime {
 }
 
 export { parseAutoTool, integrationTarget };
+
