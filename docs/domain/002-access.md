@@ -114,7 +114,7 @@ An Approval is answered once: the first answer wins under the Thread's lock. No 
 
 ## Activity and usage
 
-An admin reads the whole Org's usage, Runs, traces and conversations. A Member reads only their own. Raw model payloads are admin-only.
+An admin reads the whole Org's usage, Runs, traces and conversations. A Member reads only their own. Raw model payloads are admin-only. An admin's personal Agent carries the same read as its `guild` tools; no other Agent has it, and no admin read is a write.
 
 ## Rejected
 

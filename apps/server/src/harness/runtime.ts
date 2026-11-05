@@ -39,6 +39,7 @@ import type { PlatformStores } from "../platform/stores.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillReadSink } from "../platform/skill-reads.js";
 import type { TraceStore } from "../platform/trace.js";
+import type { UsageReports } from "../platform/store/usage.js";
 import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
@@ -132,6 +133,8 @@ export interface RuntimeDeps {
   readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">;
   /** The LLM trace sink: the approval judge self-reports through it. */
   readonly trace?: TraceStore;
+  /** The org usage reports the admin assistant's guild tools read. */
+  readonly usageReports?: UsageReports;
 }
 
 /** The pause between stale-run sweeps. */
@@ -466,6 +469,8 @@ export class GuildRuntime {
       threads: stores.threads,
       chats: stores.chats,
       identity: stores.identity,
+      teams: stores.teams,
+      ...(deps.usageReports === undefined ? {} : { usageReports: deps.usageReports }),
       attachments: stores.attachments,
       ...(objects === undefined ? {} : { objects }),
       conversations: stores.conversations,

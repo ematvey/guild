@@ -76,6 +76,40 @@ export interface ChatListRow {
   routine: { id: string; name: string } | null;
 }
 
+/** One row of the org-wide thread list an admin reads: the chat, its owner
+ *  and the agent thread it holds (a chat with no thread row is a user chat). */
+export interface OrgChatRow {
+  id: string;
+  user_id: string;
+  email: string;
+  title: string | null;
+  type: AgentThreadType;
+  agent_id: string | null;
+  agent_name: string | null;
+  created_at: string;
+  last_activity_at: string;
+  archived: boolean;
+  deleted: boolean;
+}
+
+/** The org thread list's filters; an omitted field does not narrow. */
+export interface OrgChatFilters {
+  /** One owner's chats. */
+  userId?: string;
+  /** A substring of the owner's email, case-insensitive. */
+  email?: string;
+  agentId?: string;
+  /** Only chats whose last activity falls in [from, to). */
+  from?: Date;
+  to?: Date;
+  archived?: boolean;
+  deleted?: boolean;
+  limit?: number;
+}
+
+/** The org thread list's row count cap: one page, newest activity first. */
+export const MAX_ORG_CHATS = 500;
+
 const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
     ${utcText("created_at")} AS created_at,
     machine_id, machine_label, generating, project_id,
@@ -353,6 +387,83 @@ export class ChatStore {
     const row = res.rows[0];
     if (!row) throw ApiError.notFound("no such chat");
     return rowToChat(row);
+  }
+
+  /** Every chat of the org, whoever owns it: the admin's org-wide thread
+   *  list. Deleted chats are excluded unless `deleted` asks for them. */
+  async listOrgChats(orgId: string, filters: OrgChatFilters = {}): Promise<OrgChatRow[]> {
+    const limit = Math.min(Math.max(filters.limit ?? MAX_ORG_CHATS, 1), MAX_ORG_CHATS);
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT c.id, c.user_id, u.email, c.title,
+         ${utcText("c.created_at")} AS created_at,
+         ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
+         COALESCE(xt.type, 'user') AS type, xt.agent_id, a.name AS agent_name,
+         c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
+       FROM chats c
+       JOIN users u ON u.id = c.user_id
+       LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+       LEFT JOIN agents a ON a.id = xt.agent_id
+       LEFT JOIN LATERAL (
+         SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
+       ) le ON true
+       WHERE c.org_id = $1
+         AND ($2::uuid IS NULL OR c.user_id = $2)
+         AND ($3::text IS NULL OR u.email ILIKE '%' || $3 || '%')
+         AND ($4::uuid IS NULL OR xt.agent_id = $4)
+         AND ($5::timestamptz IS NULL OR COALESCE(le.created_at, c.created_at) >= $5)
+         AND ($6::timestamptz IS NULL OR COALESCE(le.created_at, c.created_at) < $6)
+         AND ($7::boolean IS NULL OR (c.archived_at IS NOT NULL) = $7)
+         AND ($8::boolean IS NULL OR (c.deleted_at IS NOT NULL) = $8)
+       ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC
+       LIMIT $9`,
+      [
+        orgId,
+        filters.userId ?? null,
+        filters.email ?? null,
+        filters.agentId ?? null,
+        filters.from ?? null,
+        filters.to ?? null,
+        filters.archived ?? null,
+        filters.deleted ?? null,
+        limit,
+      ],
+    );
+    return res.rows.map((r) => ({
+      id: r.id as string,
+      user_id: r.user_id as string,
+      email: r.email as string,
+      title: (r.title as string | null) ?? null,
+      type: r.type as AgentThreadType,
+      agent_id: (r.agent_id as string | null) ?? null,
+      agent_name: (r.agent_name as string | null) ?? null,
+      created_at: pgTimestampToRfc3339(r.created_at as string),
+      last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
+      archived: Boolean(r.archived),
+      deleted: Boolean(r.deleted),
+    }));
+  }
+
+  /** The org's chat counts: all chats, the ones active since `since`, the
+   *  archived and the deleted — the admin overview's one aggregate read. */
+  async orgChatCounts(
+    orgId: string,
+    since: Date,
+  ): Promise<{ total: number; active: number; archived: number; deleted: number }> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT count(*) AS total,
+         count(*) FILTER (WHERE COALESCE(le.created_at, c.created_at) >= $2) AS active,
+         count(*) FILTER (WHERE c.archived_at IS NOT NULL) AS archived,
+         count(*) FILTER (WHERE c.deleted_at IS NOT NULL) AS deleted
+       FROM chats c
+       LEFT JOIN LATERAL (
+         SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
+       ) le ON true
+       WHERE c.org_id = $1`,
+      [orgId, since],
+    );
+    const row = res.rows[0] ?? {};
+    const num = (key: string): number => Number(row[key] ?? 0);
+    return { total: num("total"), active: num("active"), archived: num("archived"), deleted: num("deleted") };
   }
 
   /** Loads a chat by org + id without an owner check. Callers must have

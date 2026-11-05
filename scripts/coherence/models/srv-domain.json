@@ -529,6 +529,26 @@
       "role": "domain"
     },
     {
+      "where": "apps/server/src/agents/guild-tools.ts",
+      "concept": "agent",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/guild-tools.ts",
+      "concept": "agent-thread",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/guild-tools.ts",
+      "concept": "usage-event",
+      "role": "domain"
+    },
+    {
+      "where": "apps/server/src/agents/guild-tools.ts",
+      "concept": "user",
+      "role": "domain"
+    },
+    {
       "where": "apps/server/src/agents/subagents.ts",
       "concept": "agent",
       "role": "domain"

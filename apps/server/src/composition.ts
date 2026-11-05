@@ -33,6 +33,7 @@ import { clickhouseFromConfig, type ClickhouseClient } from "./platform/clickhou
 import { reportMalformedEventRows } from "./hub/protocol.js";
 import { SkillReadSink } from "./platform/skill-reads.js";
 import { UsageSink } from "./platform/usage.js";
+import { UsageReports } from "./platform/store/usage.js";
 import { TraceStore } from "./platform/trace.js";
 import { masterKeyBytes } from "./platform/crypto.js";
 import { IdpRecheck } from "./platform/idp-recheck.js";
@@ -90,6 +91,8 @@ export class PlatformContext implements PlatformStores {
    *  credentials. */
   readonly idpRecheck: IdpRecheck;
   readonly usage: UsageSink;
+  /** The org usage reads the admin assistant's guild tools make. */
+  readonly usageReports: UsageReports;
   /** The agent trace store (agent_traces + agent_spans + opt-in
    *  llm_payloads; trace.ts). */
   readonly trace: TraceStore;
@@ -174,6 +177,7 @@ export class PlatformContext implements PlatformStores {
     });
     this.clickhouse = clickhouseFromConfig(config);
     this.usage = new UsageSink(this.clickhouse);
+    this.usageReports = new UsageReports(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
     this.conversationHistory = stores.conversationHistory;
     this.skillReads = new SkillReadSink(this.clickhouse);
@@ -207,6 +211,7 @@ export class PlatformContext implements PlatformStores {
       hub: this.hub,
       skillReads: this.skillReads,
       trace: this.trace,
+      usageReports: this.usageReports,
     });
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
