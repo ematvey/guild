@@ -87,6 +87,108 @@ export function guildToolsAllowed(agent: { is_personal: boolean }, ownerRole: st
   return agent.is_personal && ownerRole === "admin";
 }
 
+const overviewOutput = Type.Object({
+  window_days: Type.Number(),
+  members: Type.Object({ total: Type.Number(), admins: Type.Number(), members: Type.Number() }),
+  agents: Type.Object({
+    total: Type.Number(),
+    personal: Type.Number(),
+    shared: Type.Number(),
+    archived: Type.Number(),
+  }),
+  threads: Type.Object({
+    total: Type.Number(),
+    active: Type.Number(),
+    active_in_window: Type.Number(),
+    archived: Type.Number(),
+    deleted: Type.Number(),
+  }),
+  usage: Type.Object({
+    today_cost_usd: Type.Number(),
+    today_tokens: Type.Number(),
+    month_cost_usd: Type.Number(),
+    month_tokens: Type.Number(),
+  }),
+});
+
+const memberOutput = Type.Object({
+  user_id: Type.String(),
+  email: Type.String(),
+  role: Type.String(),
+  identity_type: Type.String(),
+  created_at: Type.String(),
+  teams: Type.Array(Type.String()),
+});
+
+const membersOutput = Type.Object({ members: Type.Array(memberOutput) });
+
+const usageOutput = Type.Object({
+  group_by: Type.Optional(Type.String()),
+  bucket: Type.Optional(Type.String()),
+  since: Type.Optional(Type.String()),
+  cost_usd: Type.Optional(Type.Number()),
+  tokens: Type.Optional(Type.Number()),
+  rows: Type.Optional(
+    Type.Array(
+      Type.Object({
+        bucket: Type.Optional(Type.String()),
+        group: Type.String(),
+        tokens_in: Type.Number(),
+        tokens_out: Type.Number(),
+        cost_usd: Type.Number(),
+        requests: Type.Number(),
+      }),
+    ),
+  ),
+});
+
+const orgThreadOutput = Type.Object({
+  thread_id: Type.String(),
+  user_id: Type.String(),
+  email: Type.String(),
+  title: Type.Union([Type.String(), Type.Null()]),
+  type: Type.String(),
+  agent_id: Type.Union([Type.String(), Type.Null()]),
+  agent_name: Type.Union([Type.String(), Type.Null()]),
+  created_at: Type.String(),
+  last_activity_at: Type.String(),
+  archived: Type.Boolean(),
+  deleted: Type.Boolean(),
+});
+
+const orgThreadsOutput = Type.Object({ threads: Type.Array(orgThreadOutput) });
+
+const transcriptOutput = Type.Object({
+  thread_id: Type.String(),
+  thread_title: Type.String(),
+  events: Type.Array(
+    Type.Object({
+      seq: Type.Number(),
+      type: Type.String(),
+      ts: Type.String(),
+      text: Type.String(),
+    }),
+  ),
+  truncated: Type.Boolean(),
+});
+
+const agentRowOutput = Type.Object({
+  agent_id: Type.String(),
+  name: Type.String(),
+  description: Type.String(),
+  owner_user_id: Type.String(),
+  owner_email: Type.Union([Type.String(), Type.Null()]),
+  model: Type.String(),
+  model_alias: Type.Union([Type.String(), Type.Null()]),
+  visibility: Type.String(),
+  personal: Type.Boolean(),
+  status: Type.String(),
+  tools_mode: Type.String(),
+  created_at: Type.String(),
+});
+
+const orgAgentsOutput = Type.Object({ agents: Type.Array(agentRowOutput) });
+
 /** The guild tools, in prompt order. */
 export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
   const orgId = deps.admin.org_id;
@@ -99,6 +201,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
       parameters: Type.Object({
         days: Type.Optional(Type.Number({ description: "Activity window in days for the thread counts; default 7" })),
       }),
+      structuredOutputSchema: overviewOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 16 * 1024 },
@@ -150,6 +253,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
         query: Type.Optional(Type.String({ description: "Substring of the email" })),
         limit: Type.Optional(Type.Number({ description: `Max rows, 1–${MAX_LIST}` })),
       }),
+      structuredOutputSchema: membersOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 64 * 1024 },
@@ -202,6 +306,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
         to: Type.Optional(Type.String({ description: "Window end, RFC 3339 or YYYY-MM-DD" })),
         team_id: Type.Optional(Type.String({ description: "Only this team's usage" })),
       }),
+      structuredOutputSchema: usageOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 64 * 1024 },
@@ -283,6 +388,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
         deleted: Type.Optional(Type.Boolean({ description: "true = deleted only; omit or false hides them" })),
         limit: Type.Optional(Type.Number({ description: `Max rows, 1–${MAX_THREADS}; default ${DEFAULT_THREADS}` })),
       }),
+      structuredOutputSchema: orgThreadsOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 64 * 1024 },
@@ -331,6 +437,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
         from_seq: Type.Optional(Type.Number({ description: "First seq to return" })),
         to_seq: Type.Optional(Type.Number({ description: "Last seq to return" })),
       }),
+      structuredOutputSchema: transcriptOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 64 * 1024 },
@@ -365,6 +472,7 @@ export function createGuildTools(deps: GuildToolDeps): ToolRegistration[] {
         ),
         limit: Type.Optional(Type.Number({ description: `Max rows, 1–${MAX_LIST}` })),
       }),
+      structuredOutputSchema: orgAgentsOutput,
       replay: "safe",
       callers: ["tools"],
       outputLimits: { maxBytes: 64 * 1024 },

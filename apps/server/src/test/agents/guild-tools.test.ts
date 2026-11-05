@@ -13,6 +13,7 @@ import { AgentStore } from "../../agents/store.js";
 import { createGuildTools, guildToolsAllowed } from "../../agents/guild-tools.js";
 import type { UserRow } from "../../platform/store/identity.js";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { Value } from "typebox/value";
 
 let stack: GatewayStack;
 let stores: PlatformStores;
@@ -65,7 +66,10 @@ async function call(list: ToolRegistration[], name: string, args: object = {}): 
     isError?: boolean;
   };
   if (result.isError === true) throw new Error(result.output?.[0]?.text ?? "tool failed");
-  return result.structuredOutput ?? {};
+  const out = result.structuredOutput ?? {};
+  const schema = tool(list, name).structuredOutputSchema;
+  expect(Value.Check(schema as never, out)).toBe(true);
+  return out;
 }
 
 describe("the guild tools", () => {
@@ -75,8 +79,9 @@ describe("the guild tools", () => {
     expect(guildToolsAllowed({ is_personal: false }, "admin")).toBe(false);
   });
 
-  it("are the six org reads", () => {
-    expect(tools(admin).map((entry) => entry.name)).toEqual([
+  it("are the six org reads, each declaring its structured output", () => {
+    const list = tools(admin);
+    expect(list.map((entry) => entry.name)).toEqual([
       "guild_overview",
       "guild_members",
       "guild_usage",
@@ -84,6 +89,7 @@ describe("the guild tools", () => {
       "guild_thread_read",
       "guild_agents",
     ]);
+    for (const entry of list) expect(entry.structuredOutputSchema).toBeDefined();
   });
 
   it("lists every member with their role", async () => {
