@@ -26,7 +26,11 @@ interface Hit {
 
 const hits: Hit[] = [];
 
-function route(req: IncomingMessage, url: URL, body: string): { status: number; body: string } {
+function route(
+  req: IncomingMessage,
+  url: URL,
+  body: string,
+): { status: number; body: string | Buffer; contentType?: string } {
   hits.push({
     method: req.method ?? "GET",
     path: url.pathname,
@@ -89,6 +93,46 @@ function route(req: IncomingMessage, url: URL, body: string): { status: number; 
     return {
       status: 200,
       body: JSON.stringify({ files: [{ id: "f-1", name: "report", mimeType: "application/pdf" }] }),
+    };
+  }
+  // Drive: an uploaded blob and a native spreadsheet, one metadata call each.
+  if (p === "/drive/v3/files/f-1") {
+    if (url.searchParams.get("alt") === "media") {
+      return { status: 200, body: Buffer.from([0x25, 0x50, 0x44, 0x46]), contentType: "application/pdf" };
+    }
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "f-1",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        capabilities: { canDownload: true },
+      }),
+    };
+  }
+  if (p === "/drive/v3/files/f-sheet") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "f-sheet",
+        name: "Budget",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        capabilities: { canDownload: true },
+      }),
+    };
+  }
+  if (p === "/drive/v3/files/f-sheet/export") {
+    return { status: 200, body: Buffer.from("sheet,rows\n1,2\n"), contentType: "text/csv" };
+  }
+  if (p === "/drive/v3/files/f-locked") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "f-locked",
+        name: "Board minutes",
+        mimeType: "application/vnd.google-apps.document",
+        capabilities: { canDownload: false },
+      }),
     };
   }
   // Directory.
@@ -256,7 +300,7 @@ beforeAll(async () => {
     req.on("end", () => {
       const url = new URL(req.url ?? "/", "http://vendor.test");
       const out = route(req, url, body);
-      res.writeHead(out.status, { "content-type": "application/json" });
+      res.writeHead(out.status, { "content-type": out.contentType ?? "application/json" });
       res.end(out.body);
     });
   });
@@ -385,6 +429,58 @@ describe("google_workspace execute (mock backend)", () => {
     expect(out.artifact).toBeDefined();
     expect([...out.artifact!.bytes]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
     expect(out.artifact!.contentType).toBe("image/jpeg");
+  });
+
+  it("drive_get_file downloads an uploaded file byte for byte through alt=media", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "google_workspace",
+      googleConfig(),
+      "drive_get_file",
+      { file_id: "f-1" },
+      GOOGLE_SECRETS,
+      "member@example.test",
+    );
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
+    expect(out.artifact!.filename).toBe("report.pdf");
+    expect(out.artifact!.contentType).toBe("application/pdf");
+    expect([...out.artifact!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
+    const hit = lastHit("/drive/v3/files/f-1");
+    expect(hit.query.get("alt")).toBe("media");
+    expect(hit.headers["authorization"]).toBe("Bearer tok-1");
+  });
+
+  it("drive_get_file exports a native Google Sheet as csv", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "google_workspace",
+      googleConfig(),
+      "drive_get_file",
+      { file_id: "f-sheet" },
+      GOOGLE_SECRETS,
+      "member@example.test",
+    );
+    expect(out.artifact!.filename).toBe("Budget.csv");
+    expect(out.artifact!.contentType).toBe("text/csv");
+    expect(out.artifact!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
+    expect(lastHit("/drive/v3/files/f-sheet/export").query.get("mimeType")).toBe("text/csv");
+  });
+
+  it("drive_get_file refuses a file the member cannot download", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "google_workspace",
+        googleConfig(),
+        "drive_get_file",
+        { file_id: "f-locked" },
+        GOOGLE_SECRETS,
+        "member@example.test",
+      ),
+    ).rejects.toThrow("Board minutes cannot be downloaded by this member");
   });
 
   it("calendar, drive, directory, and the api tool reach their endpoints", async () => {

@@ -8,6 +8,7 @@ import {
   urlencode,
   requestJson,
   fetchJson,
+  fetchBytes,
   clampNumber,
   callVendorApi,
   googleApiBase,
@@ -366,6 +367,92 @@ async function driveSearch(config: JsonObject, args: JsonObject, token: string):
   return { content: out };
 }
 
+/** Native Google files are not blobs: they export through files.export.
+ *  Every other type downloads through alt=media. */
+const GOOGLE_NATIVE_MIME_PREFIX = "application/vnd.google-apps.";
+
+/** The export format per native type: the form an agent can read, not the
+ *  vendor binary. `mime_type` overrides it. */
+const GOOGLE_EXPORT_DEFAULTS: Record<string, string> = {
+  "application/vnd.google-apps.document": "text/markdown",
+  "application/vnd.google-apps.spreadsheet": "text/csv",
+  "application/vnd.google-apps.presentation": "application/pdf",
+  "application/vnd.google-apps.drawing": "image/png",
+};
+
+/** The file extension per export format. A format absent here is refused,
+ *  never given a guessed extension. */
+const GOOGLE_EXPORT_EXTENSIONS: Record<string, string> = {
+  "text/markdown": "md",
+  "text/plain": "txt",
+  "text/csv": "csv",
+  "text/tab-separated-values": "tsv",
+  "text/html": "html",
+  "application/pdf": "pdf",
+  "application/rtf": "rtf",
+  "application/zip": "zip",
+  "application/epub+zip": "epub",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/svg+xml": "svg",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.oasis.opendocument.text": "odt",
+  "application/vnd.oasis.opendocument.spreadsheet": "ods",
+  "application/vnd.oasis.opendocument.presentation": "odp",
+};
+
+/** Downloads one Drive file as a chat artifact. A blob (an uploaded .xlsx, a
+ *  PDF, an image) comes back byte for byte through alt=media; a native Google
+ *  file comes back as an export of the requested or default format. */
+async function driveGetFile(config: JsonObject, args: JsonObject, token: string): Promise<ToolOutcome> {
+  const id = args["file_id"];
+  if (typeof id !== "string" || id === "") throw new Error("drive_get_file requires file_id");
+  const meta = await googleGetJson(
+    `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}?fields=id,name,mimeType,capabilities(canDownload)`,
+    token,
+    "drive",
+  );
+  const name = typeof meta["name"] === "string" && meta["name"] !== "" ? meta["name"] : id;
+  const mime = typeof meta["mimeType"] === "string" ? meta["mimeType"] : "application/octet-stream";
+  const capabilities = (meta["capabilities"] ?? {}) as JsonObject;
+  if (capabilities["canDownload"] === false) {
+    throw new Error(`drive_get_file: ${name} cannot be downloaded by this member`);
+  }
+  const requested = typeof args["mime_type"] === "string" && args["mime_type"] !== "" ? args["mime_type"] : null;
+  let url: string;
+  let contentType: string;
+  let filename: string;
+  if (mime.startsWith(GOOGLE_NATIVE_MIME_PREFIX)) {
+    const chosen = requested ?? GOOGLE_EXPORT_DEFAULTS[mime];
+    if (chosen === undefined) {
+      throw new Error(`drive_get_file: ${mime} has no default export format; pass mime_type`);
+    }
+    const extension = GOOGLE_EXPORT_EXTENSIONS[chosen];
+    if (extension === undefined) {
+      throw new Error(
+        `drive_get_file: unsupported export format ${chosen}; use one of ${Object.keys(GOOGLE_EXPORT_EXTENSIONS).join(", ")}`,
+      );
+    }
+    contentType = chosen;
+    filename = `${name}.${extension}`;
+    url = `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}/export?mimeType=${urlencode(chosen)}`;
+  } else {
+    if (requested !== null) {
+      throw new Error(`drive_get_file: ${name} is a binary file; mime_type does not apply to it`);
+    }
+    contentType = mime;
+    filename = name;
+    url = `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}?alt=media`;
+  }
+  const bytes = await fetchBytes(url, { headers: { authorization: `Bearer ${token}` } }, "drive");
+  return {
+    content: `file ${filename} (${bytes.length} bytes, ${contentType})`,
+    artifact: { filename, contentType, bytes },
+  };
+}
+
 async function directoryUsers(
   config: JsonObject,
   args: JsonObject,
@@ -433,6 +520,10 @@ export async function googleWorkspaceExecute(
     case "drive_search": {
       const token = await googleAccessTokenFor(config, secrets, actingAs);
       return driveSearch(config, args, token);
+    }
+    case "drive_get_file": {
+      const token = await googleAccessTokenFor(config, secrets, actingAs);
+      return driveGetFile(config, args, token);
     }
     case "directory_users": {
       const token = await googleAccessTokenFor(config, secrets, actingAs);
