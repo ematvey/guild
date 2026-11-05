@@ -383,7 +383,7 @@ export const GENUI_COMPONENTS = {
   Image: {
     props: ImageProps,
     description:
-      'An image. src is "attachment:<id>" (the id send_file returned; always shown), or an https URL (shown per the workspace policy; may need a click). Always give alt.',
+      'An image. src is "attachment:<id>" (the id send_file returned; always shown), or an https URL. Always give alt.',
   },
   ImageGallery: { props: ImageGalleryProps, description: "A grid of images." },
   CodeBlock: { props: CodeBlockProps, description: "Code with an optional language and title." },
