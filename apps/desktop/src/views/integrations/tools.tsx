@@ -16,8 +16,14 @@ interface CuratedTool {
   tool: string;
   class: string;
   description: string;
-  enabled: boolean;
+  /** Unset means on: a tool no admin has turned off is enabled. */
+  enabled?: boolean;
   approval: "default" | "always_ask" | "always_allow";
+}
+
+/** Whether a tool is on: only an explicit `false` turns it off. */
+export function toolOn(tool: Pick<CuratedTool, "enabled">): boolean {
+  return tool.enabled !== false;
 }
 
 interface ToolsResponse {
@@ -44,7 +50,7 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
     setBusyTool(tool.name);
     try {
       await putIntegrationTool(id, tool.name, {
-        enabled: patch.enabled ?? tool.enabled,
+        enabled: patch.enabled ?? toolOn(tool),
         approval: patch.approval ?? tool.approval,
         ...(patch.class !== undefined ? { class: patch.class } : {}),
       });
@@ -56,7 +62,7 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
     }
   };
 
-  const enabledCount = data?.tools.filter((t) => t.enabled).length ?? 0;
+  const enabledCount = data?.tools.filter(toolOn).length ?? 0;
 
   return (
     <div>
@@ -112,7 +118,7 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
                 return (
                   <tr
                     key={t.name}
-                    className={`border-b border-border/70 align-top ${t.enabled ? "" : "text-muted-foreground"}`}
+                    className={`border-b border-border/70 align-top ${toolOn(t) ? "" : "text-muted-foreground"}`}
                   >
                     <td className="py-3 pr-3">
                       <input
@@ -120,7 +126,7 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
                         aria-label={`Turn ${t.name} on`}
                         className="mt-0.5 size-4 accent-foreground"
                         disabled={busy}
-                        checked={t.enabled}
+                        checked={toolOn(t)}
                         onChange={(e) => update(t, { enabled: e.target.checked })}
                       />
                     </td>
