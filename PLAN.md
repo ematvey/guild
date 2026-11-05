@@ -182,6 +182,20 @@ first. Code comments describe only the present.
   http(s)/mailto. lang-core's postinstall reports installs to its vendor;
   npm 11 blocks it by default and the image sets
   `OPENUI_TELEMETRY_DISABLED`.
+- **The chat picker offers only the member's own personal agent
+  (2026-11-05).** Since admins see every agent (50da6ae8), an admin's agent
+  list holds every member's personal "Assistant", and the composer's
+  default took the first personal agent in it. An admin's chats then ran on
+  another member's agent, with that member's Integrations: a Stripe check
+  on prod answered "no Stripe" from a member's agent. The composer now
+  offers the member's own personal agent and the shared agents they can
+  use, and waits for the pushed profile before choosing the default. The
+  Agents list still shows admins every agent, for inspection and analytics.
+  002 had kept the pre-50da6ae8 rule that admins never see a personal
+  agent; it now says what the code does. Open: the server still resolves
+  an admin as owner of any agent, so the API lets an admin chat with or
+  edit another member's personal agent; 002's manage row says admins manage
+  non-personal agents only.
 - **Discovered MCP tools are on by default (2026-11-05).** A tool an MCP
   server serves with no stored curation used to read as disabled, so a
   configured Stripe offered agents nothing until an admin switched each tool
