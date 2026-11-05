@@ -38,8 +38,14 @@ export const HANDLE_METHODS: Record<HandleKind, readonly string[]> = {
   textLineReader: ["readLine", "close"],
   binaryReader: ["info", "read", "scanLines", "close"],
   dirReader: ["next", "close"],
+  // The wire keeps `close` for a watcher; it calls `FileWatcher.stop`.
   watcher: ["close"],
 };
+
+/** The handle's own method a wire handle method calls: a watcher's wire
+ *  `close` is `FileWatcher.stop`. */
+export const handleMethodName = (kind: HandleKind, wireName: string): string =>
+  kind === "watcher" && wireName === "close" ? "stop" : wireName;
 
 /** ExecutionEnv members callable over the wire whose results are plain
  *  Results (no handle in the value). */

@@ -1,10 +1,11 @@
-import type { AgentEventStream, Harness, Storage } from "@earendil-works/pi-durable";
+import type { Harness, Storage } from "@earendil-works/pi-durable";
+import type { ConversationEvents } from "../chats/conversation-events.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 
 export interface ConversationLifetime {
   harness: Harness;
   storage: Storage;
-  watches: Map<string, AgentEventStream>;
+  watches: Map<string, ConversationEvents>;
 }
 
 /** Owns exactly one scheduler lifetime, including unsuccessful initialization. */
@@ -40,7 +41,7 @@ export class ConversationHost {
         if (this.stopped) throw new Error("conversation host closed during initialization");
         this.active = value;
         void value.harness.closed.then((end) => {
-          if (this.active === value && !this.stopped && end.reason === "failed") failed(end.error);
+          if (this.active === value && !this.stopped && end.kind === "failed") failed(end.error);
         });
       } catch (error) {
         await this.dispose(value);

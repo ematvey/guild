@@ -7,7 +7,8 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, defineDoc, Harness } from "@earendil-works/pi-durable";
 import { createModels } from "@earendil-works/pi-ai";
-import type { ConversationRecord } from "@earendil-works/pi-durable";
+import type { ConversationRecord, StorageWrite } from "@earendil-works/pi-durable";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
 import { afterAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import type { PostgresDatabase, PostgresExecutor, PostgresRow } from "../storage/postgres/index.js";
@@ -81,8 +82,7 @@ async function withStorage(run: (storage: PostgresDurableStorage, db: FlakyDb) =
   }
 }
 
-const conversationWrite = (id: number) =>
-  ({ type: "conversation", value: { id } }) as never as Parameters<PostgresDurableStorage["commit"]>[0][number];
+const conversationWrite = (id: number) => ({ type: "conversation", value: { id } }) as never as StorageWrite;
 
 describe("durable Postgres resilience", () => {
   it("adopts an already-applied batch once the outcome became ambiguous", async () => {
@@ -90,11 +90,15 @@ describe("durable Postgres resilience", () => {
       const id = await storage.mintId();
       const writes = [conversationWrite(id)];
       db.loseCommitReply = true;
-      const seq = await storage.commit(writes, BACKGROUND_CONTEXT);
+      const seq = await commitWrites(storage, writes, BACKGROUND_CONTEXT);
       expect(seq).toBeGreaterThan(0);
-      await expect(storage.commit(writes, BACKGROUND_CONTEXT)).rejects.toThrow("already belongs to conversation");
+      await expect(commitWrites(storage, writes, BACKGROUND_CONTEXT)).rejects.toThrow(
+        "already belongs to conversation",
+      );
       db.failTransactions = 1;
-      await expect(storage.commit(writes, BACKGROUND_CONTEXT)).rejects.toThrow("already belongs to conversation");
+      await expect(commitWrites(storage, writes, BACKGROUND_CONTEXT)).rejects.toThrow(
+        "already belongs to conversation",
+      );
       const record = await storage.conversation(id as never, BACKGROUND_CONTEXT);
       expect((record as ConversationRecord | undefined)?.id).toBe(id);
     });
@@ -103,7 +107,7 @@ describe("durable Postgres resilience", () => {
   it("does not adopt an older checkpoint touching the same task", async () => {
     await withStorage(async (storage, db) => {
       const conversationId = await storage.mintId();
-      await storage.commit([conversationWrite(conversationId)], BACKGROUND_CONTEXT);
+      await commitWrites(storage, [conversationWrite(conversationId)], BACKGROUND_CONTEXT);
       const id = await storage.mintId();
       const task = {
         id,
@@ -115,16 +119,18 @@ describe("durable Postgres resilience", () => {
         abortRequested: false,
         state: { status: "pending", checkpoint: { n: 1 } },
       };
-      const first = await storage.commit([{ type: "task", value: task }] as never, BACKGROUND_CONTEXT);
+      const first = await commitWrites(storage, [{ type: "task", value: task }] as never, BACKGROUND_CONTEXT);
       db.failTransactions = 1;
-      const second = await storage.commit(
+      const second = await commitWrites(
+        storage,
         [{ type: "task", value: { ...task, state: { status: "pending", checkpoint: { n: 2 } } } }] as never,
         BACKGROUND_CONTEXT,
       );
       expect(second).toBeGreaterThan(first);
       expect((await storage.task(id as never, BACKGROUND_CONTEXT))?.state).toMatchObject({ checkpoint: { n: 2 } });
       db.loseCommitReply = true;
-      await storage.commit(
+      await commitWrites(
+        storage,
         [{ type: "task", value: { ...task, state: { status: "pending", checkpoint: { n: 3 } } } }] as never,
         BACKGROUND_CONTEXT,
       );
@@ -141,6 +147,7 @@ describe("durable Postgres resilience", () => {
         history: "latest",
         fork: "initial",
         initial: () => ({ n: 0 }),
+        checkpointWhen: () => false,
       });
       const h = await Harness.open(storage, { models: createModels(), registry: createRegistry() }, BACKGROUND_CONTEXT);
       try {
@@ -166,7 +173,7 @@ describe("durable Postgres resilience", () => {
     await withStorage(async (storage, db) => {
       const id = await storage.mintId();
       db.failTransactions = 2;
-      const seq = await storage.commit([conversationWrite(id)], BACKGROUND_CONTEXT);
+      const seq = await commitWrites(storage, [conversationWrite(id)], BACKGROUND_CONTEXT);
       expect(seq).toBeGreaterThan(0);
       const record = await storage.conversation(id as never, BACKGROUND_CONTEXT);
       expect((record as ConversationRecord | undefined)?.id).toBe(id);
@@ -196,7 +203,7 @@ describe("durable Postgres resilience", () => {
       const storage = await PostgresDurableStorage.open(db);
       try {
         const id = await storage.mintId();
-        await storage.commit([conversationWrite(id)], BACKGROUND_CONTEXT);
+        await commitWrites(storage, [conversationWrite(id)], BACKGROUND_CONTEXT);
         state.failQueries = 1;
         const record = await storage.conversation(id as never, BACKGROUND_CONTEXT);
         expect((record as ConversationRecord | undefined)?.id).toBe(id);

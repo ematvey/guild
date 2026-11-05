@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/conte
 import { err, FileError, type ExecutionEnv, type Result, type ShellExecOptions } from "@earendil-works/pi-durable/env";
 import {
   HANDLE_METHODS,
+  handleMethodName,
   HANDLE_RETURNING_METHODS,
   PLAIN_METHODS,
   decodeValue,
@@ -57,7 +58,11 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
       if (entry === undefined || !HANDLE_METHODS[entry.kind].includes(name)) {
         throw new Error(`unknown handle method ${method} on ${handleId}`);
       }
-      const result = await entry.target[name]!.call(entry.target, ...args.slice(1), context);
+      const result = await entry.target[handleMethodName(entry.kind, name)]!.call(
+        entry.target,
+        ...args.slice(1),
+        context,
+      );
       // A closed handle answers later calls itself (use-after-close errors,
       // idempotent close) for a while, then is forgotten.
       if (name === "close") setTimeout(() => handles.delete(handleId), 60_000).unref();
@@ -135,7 +140,7 @@ export function serveEnv(env: ExecutionEnv, wire: Wire): Promise<void> {
     wire.onClose(() => {
       for (const controller of inflight.values()) controller.abort(new Error("connection closed"));
       const closing = [...handles.values()].map((entry) =>
-        entry.target["close"]!.call(entry.target, BACKGROUND_CONTEXT).catch(() => {}),
+        entry.target[handleMethodName(entry.kind, "close")]!.call(entry.target, BACKGROUND_CONTEXT).catch(() => {}),
       );
       handles.clear();
       void Promise.all(closing)

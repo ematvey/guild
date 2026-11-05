@@ -174,6 +174,27 @@ export const DURABLE_POSTGRES_MIGRATIONS = [
           AND outcome_status IN ('failed','faulted','orphaned')`,
     ],
   },
+  {
+    version: 7,
+    statements: [
+      // pi-durable 1.4 adds the `sleeping` task status (durable backoffs and
+      // sleeps hold no invocation).
+      `DO $$
+      DECLARE c RECORD;
+      BEGIN
+        FOR c IN SELECT conname FROM pg_constraint
+          WHERE conrelid = 'tasks'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%status%'
+        LOOP
+          EXECUTE format('ALTER TABLE tasks DROP CONSTRAINT %I', c.conname);
+        END LOOP;
+      END $$`,
+      `ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+        CHECK (status IN ('pending', 'running', 'waiting', 'sleeping', 'completing', 'terminal'))`,
+      // pi-durable 1.5 stores a group of commits per storage call: a receipt
+      // covers the call's consecutive seqs from `seq`.
+      "ALTER TABLE durable_commits ADD COLUMN stored INTEGER NOT NULL DEFAULT 1",
+    ],
+  },
 ];
 
 export const CURRENT_POSTGRES_SCHEMA_VERSION = DURABLE_POSTGRES_MIGRATIONS.at(-1)?.version ?? 0;

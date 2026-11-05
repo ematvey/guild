@@ -5,6 +5,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, type ConversationId, type TaskId } from "@earendil-works/pi-durable";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { SharedPoolDatabase } from "../chats/durable-mapping.js";
@@ -147,7 +148,7 @@ describe("ScopedDurableStorage (worker-per-chat boundary)", () => {
       };
       const harness = await Harness.open(
         scopedA,
-        { models: {} as never, registry: createRegistry(), onReport: () => {} },
+        { models: createModels(), registry: createRegistry(), onReport: () => {} },
         BACKGROUND_CONTEXT,
       );
       try {

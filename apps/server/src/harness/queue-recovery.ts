@@ -59,6 +59,7 @@ export async function drainIdleInbox(conversation: Conversation): Promise<boolea
         { ownership: { kind: "conversation" }, conversationId: conversation.id },
       ),
       inputs,
+      turns: 0,
     };
     return true;
   }, BACKGROUND_CONTEXT);

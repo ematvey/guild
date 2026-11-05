@@ -11,7 +11,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Result } from "@earendil-works/pi-durable/env";
 import { SandboxExecutionEnv } from "../../sandbox/env.js";
-import { HANDLE_METHODS, wirePair, type HandleKind } from "../../sandbox/protocol.js";
+import { HANDLE_METHODS, handleMethodName, wirePair, type HandleKind } from "../../sandbox/protocol.js";
 import { serveEnv } from "../../sandbox/serve.js";
 
 function unwrap<T>(result: Result<T, unknown>): T {
@@ -44,11 +44,14 @@ describe("sandbox handle proxy", () => {
       for (const [kind, methods] of Object.entries(HANDLE_METHODS)) {
         const handle = handles[kind as HandleKind] as Record<string, unknown>;
         for (const method of methods) {
-          expect(typeof handle[method], `${kind}.${method}`).toBe("function");
+          expect(typeof handle[handleMethodName(kind as HandleKind, method)], `${kind}.${method}`).toBe("function");
         }
       }
-      for (const handle of Object.values(handles) as { close(context: typeof BACKGROUND_CONTEXT): Promise<void> }[]) {
-        await handle.close(BACKGROUND_CONTEXT);
+      for (const [kind, handle] of Object.entries(handles)) {
+        const close = (handle as Record<string, (context: typeof BACKGROUND_CONTEXT) => Promise<void>>)[
+          handleMethodName(kind as HandleKind, "close")
+        ]!;
+        await close.call(handle, BACKGROUND_CONTEXT);
       }
     } finally {
       env.disconnect();

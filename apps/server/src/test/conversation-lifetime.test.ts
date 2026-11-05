@@ -36,7 +36,7 @@ describe("conversation ownership", () => {
         () => {},
       ),
     ).rejects.toThrow("reconciliation unavailable");
-    expect((await candidate.harness.closed).reason).toBe("closed");
+    expect((await candidate.harness.closed).kind).toBe("closed");
     expect(host.value).toBeUndefined();
     await host.replace(
       create,

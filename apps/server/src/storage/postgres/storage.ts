@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { apply, applyImmutable, type Op } from "@earendil-works/chord/delta";
 import type { Context } from "@earendil-works/chord";
-import { StorageRequestError } from "@earendil-works/pi-durable";
+import { LiveDoc, StorageRequestError } from "@earendil-works/pi-durable";
 import type {
+  CommitResult,
   ConversationId,
   ConversationQuery,
   ConversationRecord,
@@ -33,7 +34,7 @@ import type {
   TaskQuery,
   TaskRecord,
 } from "@earendil-works/pi-durable";
-import type { PostgresDatabase, PostgresExecutor } from "./executor.js";
+import type { PostgresDatabase, PostgresExecutor, PostgresRow } from "./executor.js";
 import { rebuildLiveProjection } from "./live-projection.js";
 import { applyPostgresMigrations } from "./migrations.js";
 import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
@@ -165,6 +166,68 @@ interface DocumentAction {
   liveValue?: JsonObject;
 }
 
+/** An executor that records whether one of its database calls failed. */
+const watchCalls = (executor: PostgresExecutor, calls: { failed: boolean }): PostgresExecutor => ({
+  query: async <T extends PostgresRow>(sql: string, params?: readonly unknown[]) => {
+    try {
+      return await executor.query<T>(sql, params);
+    } catch (error) {
+      calls.failed = true;
+      throw error;
+    }
+  },
+});
+
+/** The live-projection caches as one commit call sees them: the batches it
+ *  applied so far over the storage's committed caches. `commit()` writes the
+ *  staged entries through once the transaction committed. */
+class LiveStage {
+  private readonly revisions = new Map<DocumentId, number | undefined>();
+  private readonly values = new Map<DocumentId, JsonObject | undefined>();
+
+  constructor(
+    private readonly committedRevisions: Map<DocumentId, number>,
+    private readonly committedValues: Map<DocumentId, JsonObject>,
+  ) {}
+
+  revision(id: DocumentId): number | undefined {
+    return this.revisions.has(id) ? this.revisions.get(id) : this.committedRevisions.get(id);
+  }
+
+  value(id: DocumentId): JsonObject | undefined {
+    return this.values.has(id) ? this.values.get(id) : this.committedValues.get(id);
+  }
+
+  adopt(actions: Map<DocumentId, DocumentAction>, seq: Seq): void {
+    for (const [id, action] of actions) {
+      if (this.revision(id) === undefined && action.create?.kind !== "pi.live" && action.liveValue === undefined)
+        continue;
+      if (action.retire) {
+        this.revisions.set(id, undefined);
+        this.values.set(id, undefined);
+        continue;
+      }
+      if (!action.content) continue;
+      this.revisions.set(id, Number(seq));
+      const value = action.liveValue ?? (action.content.kind === "base" ? action.content.value : undefined);
+      // A delta without a computed value leaves no cached value: the next
+      // check materializes the document from storage.
+      this.values.set(id, value === undefined ? undefined : structuredClone(value));
+    }
+  }
+
+  commit(): void {
+    for (const [id, revision] of this.revisions) {
+      if (revision === undefined) this.committedRevisions.delete(id);
+      else this.committedRevisions.set(id, revision);
+    }
+    for (const [id, value] of this.values) {
+      if (value === undefined) this.committedValues.delete(id);
+      else this.committedValues.set(id, value);
+    }
+  }
+}
+
 /**
  * Portable Postgres implementation of the pi-durable `Storage` contract.
  *
@@ -266,7 +329,7 @@ export class PostgresDurableStorage implements Storage {
             "SELECT seq,kind,version,content FROM document_revisions WHERE document_id=$1 ORDER BY seq",
             [id],
           );
-          if (revisions.some((revision) => revision.version !== 1)) throw error;
+          if (revisions.some((revision) => revision.version > LiveDoc.definition.version)) throw error;
           const value = await rebuildLiveProjection(tx, Number(row.owner_id));
           // Also fence writers holding a revision beyond the metadata watermark.
           const repairSeq = revisions.reduce((next, revision) => Math.max(next, Number(revision.seq) + 1), seq);
@@ -276,8 +339,8 @@ export class PostgresDurableStorage implements Storage {
           );
           await tx.query("DELETE FROM document_revisions WHERE document_id=$1", [id]);
           await tx.query(
-            "INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',1,$3)",
-            [id, repairSeq, recordJsonText(value)],
+            "INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',$3,$4)",
+            [id, repairSeq, LiveDoc.definition.version, recordJsonText(value)],
           );
           seq = repairSeq + 1;
           this.liveRevisions.delete(id);
@@ -290,40 +353,55 @@ export class PostgresDurableStorage implements Storage {
     });
   }
 
-  async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
+  /** Commit `batches` in one Postgres transaction, each at its own seq.
+   *  Each batch is checked before it writes anything, against the state the
+   *  batches before it left; the first one Durable's own checks refuse ends
+   *  the call, and the transaction commits the ones before it. A failed
+   *  database call during the checks is not a refusal: it rejects the call
+   *  and rolls every batch back with the transaction. */
+  async commit(
+    batches: readonly (readonly StorageWrite[])[],
+    receive: (index: number, seq: Seq) => void,
+    _context: Context,
+  ): Promise<CommitResult> {
     this.assertOpen();
-    const documentActions = this.prepareDocumentActions(writes);
-    const candidateNextId = this.candidateNextId(writes);
     const commitKey = `commit:${randomUUID()}`;
     // Adoption and retry arm only after THIS call saw a connection-class
     // failure: that is the only situation where the outcome is genuinely
-    // unknown. A clean attempt (a first-seen ID conflict, say) must reject
+    // unknown. A clean attempt (a first-seen ID conflict, say) must refuse
     // exactly as the storage contract demands — the conformance suite
-    // re-commits already-claimed IDs and expects the throw.
+    // re-commits already-claimed IDs and expects the refusal.
     let sawTransient = false;
     for (let attempt = 0; ; attempt++) {
       try {
         const started = performance.now();
-        const seq = await this.commitOnce(writes, documentActions, candidateNextId, commitKey);
-        this.stats.commits++;
+        const outcome = await this.commitOnce(batches, commitKey);
+        this.stats.commits += outcome.seqs.length;
         this.stats.commitMs += performance.now() - started;
-        this.acknowledgeReceipt(commitKey);
-        return seq;
+        if (outcome.seqs.length > 0) this.acknowledgeReceipt(commitKey);
+        for (const [index, seq] of outcome.seqs.entries()) receive(index, seq);
+        return outcome.refused === undefined
+          ? { stored: outcome.seqs.length }
+          : { stored: outcome.seqs.length, refused: outcome.refused.error };
       } catch (error) {
         if (isTransientDbError(error)) sawTransient = true;
         // The failed attempt may have committed: the connection can die
         // after the backend applied the transaction but before the client
-        // learns the outcome. The durable_commits row identifies an
-        // applied batch by its invocation identity — adopt instead of
-        // double-applying (the ID claims would reject the retry) or
-        // failing the session.
-        if (sawTransient && commitKey !== undefined) {
+        // learns the outcome. The durable_commits row identifies an applied
+        // call by its invocation identity — adopt instead of double-applying
+        // (the ID claims would refuse the retry) or failing the session.
+        if (sawTransient) {
           const adopted = await this.adoptCommit(commitKey).catch(() => undefined);
           if (adopted !== undefined) {
-            this.nextId = Math.max(this.nextId, candidateNextId);
-            this.adoptLiveValues(documentActions, adopted);
+            const seqs = this.adoptStored(batches, adopted);
             this.acknowledgeReceipt(commitKey);
-            return adopted;
+            for (const [index, seq] of seqs.entries()) receive(index, seq);
+            return seqs.length === batches.length
+              ? { stored: seqs.length }
+              : {
+                  stored: seqs.length,
+                  refused: new Error("Storage refused a batch of a commit recovered after a connection failure"),
+                };
           }
         }
         if (!sawTransient || attempt >= RETRY_DELAYS_MS.length) throw error;
@@ -333,66 +411,100 @@ export class PostgresDurableStorage implements Storage {
   }
 
   private async commitOnce(
-    writes: readonly StorageWrite[],
-    documentActions: Map<DocumentId, DocumentAction>,
-    candidateNextId: number,
-    commitKey: string | undefined,
-  ): Promise<Seq> {
-    const seq = await this.db.transaction(async (tx) => {
-      // FOR UPDATE serializes concurrent commits on the metadata row.
-      const lockStarted = performance.now();
-      const metadata = await tx.query<{ next_id: number; next_seq: number }>(
-        "SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1 FOR UPDATE",
-      );
-      this.stats.lockWaitMs += performance.now() - lockStarted;
-      if (metadata.length === 0) throw new Error("Durable Postgres metadata is missing");
-      const committedSeq = asSeq(metadata[0]!.next_seq);
-      // The metadata lock also waits for an earlier ambiguous attempt. Check
-      // its receipt before applying any deltas a second time.
-      if (commitKey !== undefined) {
-        const receipt = await tx.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [commitKey]);
-        if (receipt[0]) return asSeq(receipt[0].seq);
-      }
-      await this.checkGlobalIds(tx, writes);
-      await this.checkDocumentActions(tx, documentActions);
-      for (const write of writes) await this.applyTableWrite(tx, write, committedSeq);
-      await this.applyDocumentActions(tx, documentActions, committedSeq);
-      if (commitKey !== undefined) {
-        await tx.query("INSERT INTO durable_commits (key, seq) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [
-          commitKey,
-          committedSeq,
-        ]);
-      }
-      await tx.query("UPDATE durable_metadata SET next_id = $1, next_seq = $2 WHERE singleton = 1", [
-        Math.max(metadata[0]!.next_id, candidateNextId),
-        committedSeq + 1,
-      ]);
-      return committedSeq;
-    });
+    batches: readonly (readonly StorageWrite[])[],
+    commitKey: string,
+  ): Promise<{ seqs: Seq[]; refused?: { error: unknown } }> {
+    const live = new LiveStage(this.liveRevisions, this.liveValues);
+    let candidateNextId = this.nextId;
+    const result = await this.db.transaction(
+      async (
+        tx,
+      ): Promise<{ adopted: { seq: number; stored: number } } | { seqs: Seq[]; refused?: { error: unknown } }> => {
+        // FOR UPDATE serializes concurrent commits on the metadata row.
+        const lockStarted = performance.now();
+        const metadata = await tx.query<{ next_id: number; next_seq: number }>(
+          "SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1 FOR UPDATE",
+        );
+        this.stats.lockWaitMs += performance.now() - lockStarted;
+        if (metadata.length === 0) throw new Error("Durable Postgres metadata is missing");
+        // The metadata lock also waits for an earlier ambiguous attempt. Check
+        // its receipt before applying any batch a second time.
+        const receipt = await tx.query<{ seq: number; stored: number }>(
+          "SELECT seq, stored FROM durable_commits WHERE key = $1",
+          [commitKey],
+        );
+        if (receipt[0]) return { adopted: { seq: Number(receipt[0].seq), stored: Number(receipt[0].stored) } };
+        let next = Number(metadata[0]!.next_seq);
+        const seqs: Seq[] = [];
+        let refused: { error: unknown } | undefined;
+        // Whether a database call of a batch's checks failed: then the
+        // failure is an unknown outcome, not a refusal.
+        const calls = { failed: false };
+        const checked = watchCalls(tx, calls);
+        for (const writes of batches) {
+          let documentActions: Map<DocumentId, DocumentAction>;
+          calls.failed = false;
+          try {
+            documentActions = this.prepareDocumentActions(writes);
+            await this.checkGlobalIds(checked, writes);
+            await this.checkDocumentActions(checked, documentActions, live);
+            await this.resolveCopies(checked, documentActions);
+          } catch (error) {
+            if (calls.failed) throw error;
+            refused = { error };
+            break;
+          }
+          const seq = asSeq(next++);
+          for (const write of writes) await this.applyTableWrite(tx, write, seq);
+          await this.applyDocumentActions(tx, documentActions, seq);
+          live.adopt(documentActions, seq);
+          seqs.push(seq);
+          candidateNextId = Math.max(candidateNextId, this.candidateNextId(writes));
+        }
+        if (seqs.length > 0) {
+          await tx.query(
+            "INSERT INTO durable_commits (key, seq, stored) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING",
+            [commitKey, seqs[0], seqs.length],
+          );
+          await tx.query("UPDATE durable_metadata SET next_id = $1, next_seq = $2 WHERE singleton = 1", [
+            Math.max(metadata[0]!.next_id, candidateNextId),
+            next,
+          ]);
+        }
+        return refused === undefined ? { seqs } : { seqs, refused };
+      },
+    );
+    if ("adopted" in result) return { seqs: this.adoptStored(batches, result.adopted) };
     this.nextId = Math.max(this.nextId, candidateNextId);
-    this.adoptLiveValues(documentActions, seq);
-    return seq;
+    live.commit();
+    return result;
   }
 
-  private adoptLiveValues(actions: Map<DocumentId, DocumentAction>, seq: Seq): void {
-    for (const [id, action] of actions) {
-      if (!this.liveRevisions.has(id) && action.create?.kind !== "pi.live" && action.liveValue === undefined) continue;
-      if (action.retire) {
-        this.liveRevisions.delete(id);
-        this.liveValues.delete(id);
-        continue;
+  /** The seqs an earlier attempt of this call stored. The live caches of the
+   *  documents its batches touched are dropped; the next read reloads them. */
+  private adoptStored(batches: readonly (readonly StorageWrite[])[], adopted: { seq: number; stored: number }): Seq[] {
+    const seqs: Seq[] = [];
+    for (let index = 0; index < adopted.stored; index++) {
+      const writes = batches[index]!;
+      seqs.push(asSeq(adopted.seq + index));
+      this.nextId = Math.max(this.nextId, this.candidateNextId(writes));
+      for (const write of writes) {
+        if (write.type === "document.change" || write.type === "document.retire") {
+          this.liveRevisions.delete(write.id);
+          this.liveValues.delete(write.id);
+        }
       }
-      if (!action.content) continue;
-      this.liveRevisions.set(id, Number(seq));
-      const value = action.liveValue ?? (action.content.kind === "base" ? action.content.value : undefined);
-      if (value !== undefined) this.liveValues.set(id, structuredClone(value));
     }
+    return seqs;
   }
 
-  /** The sequence stored by an earlier attempt of this commit invocation. */
-  private async adoptCommit(commitKey: string): Promise<Seq | undefined> {
-    const rows = await this.db.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [commitKey]);
-    return rows.length === 0 ? undefined : asSeq(rows[0]!.seq);
+  /** The first seq and batch count stored by an earlier attempt of this commit call. */
+  private async adoptCommit(commitKey: string): Promise<{ seq: number; stored: number } | undefined> {
+    const rows = await this.db.query<{ seq: number; stored: number }>(
+      "SELECT seq, stored FROM durable_commits WHERE key = $1",
+      [commitKey],
+    );
+    return rows.length === 0 ? undefined : { seq: Number(rows[0]!.seq), stored: Number(rows[0]!.stored) };
   }
 
   async mintId<I extends Id<string>>(): Promise<I> {
@@ -887,7 +999,11 @@ export class PostgresDurableStorage implements Storage {
     return actions;
   }
 
-  private async checkDocumentActions(tx: PostgresExecutor, actions: Map<DocumentId, DocumentAction>): Promise<void> {
+  private async checkDocumentActions(
+    tx: PostgresExecutor,
+    actions: Map<DocumentId, DocumentAction>,
+    live: LiveStage,
+  ): Promise<void> {
     const liveCounts = new Map<string, number>();
     for (const [id, action] of actions) {
       if (action.copy !== undefined && actions.has(action.copy.id)) {
@@ -914,25 +1030,25 @@ export class PostgresDurableStorage implements Storage {
           "SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1",
           [id],
         );
-        const expected = this.liveRevisions.get(id);
+        const expected = live.revision(id);
         if (expected !== undefined && expected !== Number(rows[0]!.seq)) {
           throw new StorageRequestError(`Live projection ${id} has a stale writer`);
         }
         if (action.content?.kind === "delta") {
           // A matching revision lets validation reuse the committed value rather
           // than replay the growing delta chain on every streaming update.
-          const value = this.liveValues.get(id) ?? (await this.materializeDocument(tx, id, "current"))!.value;
+          const value = live.value(id) ?? (await this.materializeDocument(tx, id, "current"))!.value;
           action.liveValue = applyImmutable(value, action.content.ops);
         } else if (action.content?.kind === "base") {
           action.liveValue = action.content.value;
         }
       }
       const key = addressKey(record);
-      let live = liveCounts.get(key);
-      if (live === undefined) live = (await this.currentDocumentId(tx, record)) === undefined ? 0 : 1;
-      if (action.retire && existing !== undefined) live--;
-      if (action.create !== undefined && !action.retire) live++;
-      liveCounts.set(key, live);
+      let count = liveCounts.get(key);
+      if (count === undefined) count = (await this.currentDocumentId(tx, record)) === undefined ? 0 : 1;
+      if (action.retire && existing !== undefined) count--;
+      if (action.create !== undefined && !action.retire) count++;
+      liveCounts.set(key, count);
     }
     for (const live of liveCounts.values()) {
       if (live > 1) throw new Error("Document address already has a current incarnation");
@@ -1040,36 +1156,42 @@ export class PostgresDurableStorage implements Storage {
     }
   }
 
+  /** Resolves each copy to a base of its source's state before this batch,
+   *  which may not change the source. Part of a batch's checks: a source
+   *  that cannot be read or does not match refuses the batch. */
+  private async resolveCopies(tx: PostgresExecutor, actions: Map<DocumentId, DocumentAction>): Promise<void> {
+    for (const [id, action] of actions) {
+      if (action.copy === undefined) continue;
+      try {
+        const stored = await this.materializeDocument(tx, action.copy.id, action.copy.at);
+        if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
+        const create = action.create;
+        if (create === undefined) throw new Error(`Document copy ${id} has no creation record`);
+        if (
+          stored.record.scope.kind !== "conversation" ||
+          create.scope.kind !== "conversation" ||
+          stored.record.kind !== create.kind ||
+          stored.record.key !== create.key ||
+          stored.record.history !== create.history ||
+          stored.record.fork !== create.fork
+        ) {
+          throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
+        }
+        action.content = { kind: "base", version: stored.version, value: stored.value };
+      } catch (error) {
+        throw new Error(`Document copy ${id} was rejected`, { cause: error });
+      }
+    }
+  }
+
   private async applyDocumentActions(
     tx: PostgresExecutor,
     actions: Map<DocumentId, DocumentAction>,
     seq: Seq,
   ): Promise<void> {
     for (const [id, action] of actions) {
-      let content = action.content;
-      if (action.copy !== undefined) {
-        try {
-          const stored = await this.materializeDocument(tx, action.copy.id, action.copy.at);
-          if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
-          const create = action.create;
-          if (create === undefined) {
-            throw new Error(`Document copy ${id} has no creation record`);
-          }
-          if (
-            stored.record.scope.kind !== "conversation" ||
-            create.scope.kind !== "conversation" ||
-            stored.record.kind !== create.kind ||
-            stored.record.key !== create.key ||
-            stored.record.history !== create.history ||
-            stored.record.fork !== create.fork
-          ) {
-            throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
-          }
-          content = { kind: "base", version: stored.version, value: stored.value };
-        } catch (error) {
-          throw new Error(`Document copy ${id} was rejected`, { cause: error });
-        }
-      }
+      // Copies are resolved to their content by `resolveCopies()`.
+      const content = action.content;
       let record: DocumentRecord;
       if (action.create !== undefined) {
         record = {

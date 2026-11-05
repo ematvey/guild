@@ -1,8 +1,10 @@
-import type { TSchema } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord";
 
+/** A JSON Schema object for a tool's arguments. */
+export type ToolInputSchema = { readonly type: "object"; readonly [keyword: string]: unknown };
+
 /** External schemas enter the typed registry through this validation seam. */
-export function toolSchema(value: unknown): TSchema {
+export function toolSchema(value: unknown): ToolInputSchema {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("tool input schema must be an object");
   const schema = value as Record<string, unknown>;
@@ -12,7 +14,7 @@ export function toolSchema(value: unknown): TSchema {
     (!schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties))
   )
     throw new Error("invalid schema properties");
-  return schema as TSchema;
+  return schema as ToolInputSchema;
 }
 
 /** Reject non-JSON metadata before it crosses the durable result seam. */
