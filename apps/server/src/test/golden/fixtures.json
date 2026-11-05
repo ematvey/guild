@@ -945,7 +945,7 @@
         "status": 200,
         "headers": {
           "content-type": "text/plain",
-          "content-disposition": "attachment; filename=\"note.txt\""
+          "content-disposition": "attachment; filename=\"note.txt\"; filename*=UTF-8''note.txt"
         },
         "body": {
           "base64": "aGVsbG8gYXR0YWNobWVudA==",

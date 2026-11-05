@@ -8,6 +8,7 @@ import {
   canonicalRoute,
   chatRoutePath,
   parseChatRoute,
+  previewQuery,
   type ChatRoute,
   type RoutePatch,
   writeAddress,
@@ -23,7 +24,7 @@ export type PushRoute = (next: RoutePatch, options?: RouteNavOptions) => void;
 
 /** The address a resolved route lives at. */
 export function routePath(resolved: ChatRoute): string {
-  return chatRoutePath(
+  const path = chatRoutePath(
     resolved.chatId,
     resolved.projectId,
     resolved.overlay,
@@ -36,6 +37,8 @@ export function routePath(resolved: ChatRoute): string {
     resolved.usage,
     resolved.integrations,
   );
+  const query = previewQuery(resolved);
+  return query === "" ? path : `${path}?${query}`;
 }
 
 /** Applies one navigation to the history stack: a new entry, or a rewrite of

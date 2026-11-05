@@ -56,6 +56,9 @@ import { useChatColumnWidth, useSidebarWidth } from "./hooks/use-column-resize";
 import { useMobileGestures } from "./hooks/use-mobile-gestures";
 import { useScrollPin } from "./hooks/use-scroll-pin";
 import { useMemberProfile } from "../../lib/profile-store";
+import { PreviewPane, type PreviewTab } from "./preview/PreviewPane";
+import { PreviewProvider, type OpenPreview } from "./preview/PreviewContext";
+import type { PreviewRef } from "./route";
 
 type ThreadProps = {
   email: string;
@@ -124,6 +127,42 @@ function ThreadView(props: ThreadProps) {
   useEffect(() => resetChatStores, []);
   const { chats, chatStatus, subagentTrees, archivedChats, projects, machines } = useChatData();
   const { route, pushRoute } = useThreadRoute({ role });
+  // The preview pane: the open files (per session), the one the address
+  // names, and whether it fills the window. The address is the source of
+  // truth for what is on screen; the tab list is the reader's session.
+  const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>([]);
+  const previewRef = route.preview ?? null;
+  const openPreview = useCallback<OpenPreview>(
+    (ref, meta) => {
+      setPreviewTabs((tabs) => {
+        const rest = tabs.filter((t) => !(t.ref.kind === ref.kind && t.ref.id === ref.id));
+        return [...rest, meta === undefined ? { ref } : { ref, meta }];
+      });
+      pushRoute({ preview: ref, previewFull: false });
+    },
+    [pushRoute],
+  );
+  const selectPreview = useCallback(
+    (ref: PreviewRef) => pushRoute({ preview: ref }),
+    [pushRoute],
+  );
+  const closePreviewTab = useCallback(
+    (ref: PreviewRef) => {
+      const rest = previewTabs.filter((t) => !(t.ref.kind === ref.kind && t.ref.id === ref.id));
+      setPreviewTabs(rest);
+      const wasActive = previewRef !== null && previewRef.kind === ref.kind && previewRef.id === ref.id;
+      if (wasActive) pushRoute({ preview: rest.length === 0 ? null : rest[rest.length - 1]!.ref, previewFull: false });
+    },
+    [previewTabs, previewRef, pushRoute],
+  );
+  const closePreview = useCallback(() => {
+    setPreviewTabs([]);
+    pushRoute({ preview: null, previewFull: false });
+  }, [pushRoute]);
+  const togglePreviewFull = useCallback(
+    () => pushRoute({ preview: previewRef, previewFull: !(route.previewFull === true) }),
+    [pushRoute, previewRef, route.previewFull],
+  );
   const chatId = route.chatId;
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
@@ -797,7 +836,8 @@ function ThreadView(props: ThreadProps) {
           </div>
         )}
         {routePage ?? (
-          <>
+          <div className="flex min-h-0 min-w-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ThreadHeader
               isMobile={isMobile}
               collapsed={collapsed}
@@ -827,6 +867,7 @@ function ThreadView(props: ThreadProps) {
 
             <NotificationsOffer />
 
+            <PreviewProvider value={openPreview}>
             <GenuiHostContext.Provider value={genuiHost}>
               <ThreadPane
                 blocks={blocks}
@@ -857,6 +898,7 @@ function ThreadView(props: ThreadProps) {
                 isMobile={isMobile}
               />
             </GenuiHostContext.Provider>
+            </PreviewProvider>
 
             <ThreadComposer
               composer={composer}
@@ -889,7 +931,20 @@ function ThreadView(props: ThreadProps) {
                 pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })
               }
             />
-          </>
+            </div>
+            {previewRef !== null && (
+              <PreviewPane
+                tabs={previewTabs}
+                active={previewRef}
+                full={route.previewFull === true}
+                isMobile={isMobile}
+                onSelect={selectPreview}
+                onClose={closePreviewTab}
+                onCloseAll={closePreview}
+                onToggleFull={togglePreviewFull}
+              />
+            )}
+          </div>
         )}
       </div>
 

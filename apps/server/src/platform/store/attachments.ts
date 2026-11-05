@@ -39,11 +39,14 @@ export function attachmentObjectKey(orgId: string, id: string, filename: string)
   return `attachments/${orgId}/${id}/${filename}`;
 }
 
-/** Only safe path segments for object keys. */
+/** A safe path segment for object keys: letters and digits of any script,
+ *  and `.`, `-`, `_`. A Cyrillic or CJK name survives, because the name is
+ *  what the user sees and the key is what stores it; path separators,
+ *  control characters and quotes do not. */
 export function safeFilename(name: string): string | null {
   let cleaned = "";
   for (const c of name) {
-    cleaned += /[a-zA-Z0-9.\-_]/.test(c) ? c : "_";
+    cleaned += /[\p{L}\p{N}.\-_]/u.test(c) ? c : "_";
   }
   if (cleaned === "" || cleaned.length > 128 || cleaned.startsWith(".")) return null;
   return cleaned;

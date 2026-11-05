@@ -46,17 +46,17 @@ const att = (over: Partial<MessageAttachmentMeta>): MessageAttachmentMeta => ({
 });
 
 describe("AttachmentFileChip", () => {
-  it("renders a download button in a transcript bubble", () => {
+  it("opens the file in the preview pane from a transcript bubble", () => {
     const html = renderToStaticMarkup(<AttachmentFileChip att={att({})} />);
     expect(html).toContain("notes.pdf");
     expect(html).toContain("2.0 KB");
-    expect(html).toContain('title="Download"');
+    expect(html).toContain('title="Open notes.pdf"');
   });
 
   it("renders a removable chip in the composer", () => {
     const html = renderToStaticMarkup(<AttachmentFileChip att={att({})} onRemove={() => {}} />);
     expect(html).toContain('title="Remove"');
-    expect(html).not.toContain('title="Download"');
+    expect(html).not.toContain('title="Open notes.pdf"');
   });
 });
 

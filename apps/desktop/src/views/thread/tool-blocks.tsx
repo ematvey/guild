@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   Download,
+  Eye,
   FileCode2,
   FileDiff,
   FileDown,
@@ -19,6 +20,7 @@ import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../mark
 import { highlightJs } from "../js-highlight";
 import { openExternal } from "../../lib/open-external";
 import { toolArtifactBlobUrl } from "../../lib/api/chats";
+import { usePreview } from "./preview/PreviewContext";
 import { artifactCardOf, type ArtifactCard, type CodemodeCallRow, type ToolBlock } from "../../lib/thread-reducer";
 import { formatBytes } from "../../lib/format";
 import { argOf, codemodeDuration, parseSearchResults, safeUrl, toolKind, toolLabel, toolPreview } from "./tool-text";
@@ -78,6 +80,7 @@ function ToolKindIcon({ kind }: { kind: string }) {
 /// retry.
 function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const openPreview = usePreview();
   const download = async () => {
     setState("busy");
     try {
@@ -110,8 +113,17 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
       )}
       <button
         type="button"
+        title={`Open ${card.filename}`}
+        className="ml-auto flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs hover:bg-accent"
+        onClick={() => openPreview({ kind: "artifact", id: card.id }, { filename: card.filename, contentType: card.content_type })}
+      >
+        <Eye className="size-3" />
+        Open
+      </button>
+      <button
+        type="button"
         title={state === "failed" ? "Download failed — retry" : "Download"}
-        className="ml-auto flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+        className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
         disabled={state === "busy"}
         onClick={() => void download()}
       >

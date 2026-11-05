@@ -4,6 +4,11 @@
 //   /chats[/new]               — the Chats tab (default; "/" aliases);
 //                                /new is the addressed scratch composer
 //   /work[/new]                — the Work tab, with its scratch composer
+//   /thread/<id>?preview=<kind>:<id>[&full=1]
+//                              — the thread with its preview pane open on
+//                                one file (`attachment` or `artifact`); full
+//                                screen when full=1. The pane is thread
+//                                state, so leaving the thread drops it.
 //   /thread/<id>               — open thread (the only thread address; an
 //                                agent thread's /agents/<id>/threads/<tid>
 //                                form redirects here)
@@ -98,6 +103,17 @@ export interface ChatRoute {
   /** Set when the pathname held a malformed escape: the route is the default
    *  one and the caller rewrites the address (a reload must not re-enter it). */
   invalid?: true;
+  /** The thread's preview pane: the file it shows, named in the address
+   *  (`?preview=<kind>:<id>`). Absent or null when the pane is closed. */
+  preview?: PreviewRef | null;
+  /** The preview pane fills the window (`?preview=…&full=1`). */
+  previewFull?: boolean;
+}
+
+/** One file in the thread's preview pane. */
+export interface PreviewRef {
+  kind: "attachment" | "artifact";
+  id: string;
 }
 
 /** Decodes one path segment; null when the escape is malformed. */
@@ -335,6 +351,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       newChat: false,
     };
   }
+  const preview = parsePreview(search);
   return {
     chatId,
     projectId,
@@ -347,8 +364,39 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     settingsDetail: null,
     usage,
     newChat,
+    // The pane shows a thread's file, so it exists only with an open thread.
+    ...(chatId === null || preview === null ? {} : { preview, previewFull: previewFullOf(search) }),
   };
 };
+
+const PREVIEW_KINDS = new Set(["attachment", "artifact"]);
+
+/** `?preview=<kind>:<id>`: the file the preview pane shows. A malformed value
+ *  is no preview, not an error — the pane simply stays closed. */
+export function parsePreview(search: string): PreviewRef | null {
+  const value = new URLSearchParams(search).get("preview");
+  if (value === null) return null;
+  const sep = value.indexOf(":");
+  if (sep === -1) return null;
+  const kind = value.slice(0, sep);
+  const id = value.slice(sep + 1);
+  if (!PREVIEW_KINDS.has(kind) || !UUID_SHAPE.test(id)) return null;
+  return { kind: kind as PreviewRef["kind"], id };
+}
+
+const previewFullOf = (search: string): boolean => new URLSearchParams(search).get("full") === "1";
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The preview query for an address: the pane's file, and whether it fills
+ *  the window. */
+export function previewQuery(route: ChatRoute): string {
+  if (route.chatId === null || route.preview === undefined || route.preview === null) return "";
+  const params = new URLSearchParams();
+  params.set("preview", `${route.preview.kind}:${route.preview.id}`);
+  if (route.previewFull === true) params.set("full", "1");
+  return params.toString();
+}
 
 export interface RoutePatch {
   chatId?: string | null;
@@ -362,6 +410,8 @@ export interface RoutePatch {
   settingsSection?: string | null;
   settingsDetail?: string | null;
   usage?: UsageQuery;
+  preview?: PreviewRef | null;
+  previewFull?: boolean;
 }
 
 /** Leaves any chat, project and overlay: the base a top-level surface
@@ -441,6 +491,17 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
         : tab === "settings" && sk === null && ag === null && ig === null
           ? route.settingsDetail
           : null;
+  // The preview pane belongs to a thread: naming another chat closes it, and
+  // a patch that does not mention it keeps the one that is open.
+  const preview =
+    chatId === null
+      ? null
+      : "preview" in next
+        ? (next.preview as PreviewRef | null)
+        : "chatId" in next && next.chatId !== route.chatId
+          ? null
+          : (route.preview ?? null);
+  const previewFull = preview !== null && ("previewFull" in next ? !!next.previewFull : route.previewFull === true);
   return {
     chatId,
     projectId,
@@ -453,6 +514,8 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
     settingsSection,
     settingsDetail,
     usage: "usage" in next ? (next.usage as UsageQuery) : route.usage,
+    preview,
+    previewFull,
   };
 };
 

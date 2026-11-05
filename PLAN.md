@@ -1,3 +1,20 @@
+## 0.6.81 — the preview pane, and a download that is a download
+
+An attachment or an artifact chip opened a file by minting a blob and
+saving it: `content-disposition: attachment` on both byte routes meant the
+browser could never show the file it already had. The two routes now take
+`?inline=1`, and the name travels in the RFC 5987 form, so a Cyrillic or CJK
+filename arrives as itself (`safeFilename` keeps letters of any script; the
+object key is unchanged in shape).
+
+The thread gained a preview pane: the chat on the left, the open file on the
+right, one tab per file. HTML renders in a sandboxed frame with an opaque
+origin (no `allow-same-origin`), PDFs in a frame, images as images, text as
+text; anything else offers the download. The pane is address state —
+`?preview=<kind>:<id>` with `&full=1` for full screen — so a reload reopens
+the same file and a navigation to another chat closes it. On a narrow screen
+the pane fills the window.
+
 # PLAN — current state and future directions
 
 Guild is a self-hosted Codex/Cowork replacement: a TypeScript cloud

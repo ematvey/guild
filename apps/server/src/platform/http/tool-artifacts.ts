@@ -6,7 +6,8 @@ import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
-import { parseUuidParam, requireUser, sendJson } from "./error.js";
+import { parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
+import { contentDisposition } from "../domain/mime.js";
 import { toolArtifactObjectKey } from "../store/tool-artifacts.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -47,10 +48,12 @@ export function registerToolArtifactRoutes(
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${String(error)}`);
     }
+    const mode = queryParam(req, "inline") === "1" ? "inline" : "attachment";
     return reply
       .status(200)
       .type(row.content_type)
-      .header("content-disposition", `attachment; filename="${row.filename}"`)
+      .header("content-disposition", contentDisposition(row.filename, mode))
+      .header("x-content-type-options", "nosniff")
       .send(bytes);
   });
 }

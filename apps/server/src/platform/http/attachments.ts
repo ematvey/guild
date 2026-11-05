@@ -8,6 +8,7 @@ import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireUser, queryParam } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
+import { contentDisposition } from "../domain/mime.js";
 import type { ChatStore } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
 
@@ -87,10 +88,15 @@ export function registerAttachmentRoutes(
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }
+    // `?inline=1` is the preview path: the viewer renders the bytes instead
+    // of saving them. The sandboxed iframe the client puts around HTML is
+    // what keeps a hostile page off this origin.
+    const mode = queryParam(req, "inline") === "1" ? "inline" : "attachment";
     return reply
       .status(200)
       .type(row.content_type)
-      .header("content-disposition", `attachment; filename="${row.filename}"`)
+      .header("content-disposition", contentDisposition(row.filename, mode))
+      .header("x-content-type-options", "nosniff")
       .send(bytes);
   });
 }

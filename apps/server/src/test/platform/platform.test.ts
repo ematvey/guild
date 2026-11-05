@@ -652,7 +652,9 @@ describe("attachments + object storage", () => {
     expect(download.statusCode).toBe(200);
     expect(download.body).toBe("%PDF-fake");
     expect(download.headers["content-type"]).toBe("application/pdf");
-    expect(download.headers["content-disposition"]).toBe('attachment; filename="report.pdf"');
+    expect(download.headers["content-disposition"]).toBe(
+      `attachment; filename="report.pdf"; filename*=UTF-8''report.pdf`,
+    );
 
     // member cannot reach another member's chat
     const memberToken = (await login(memberEmail, PASSWORD)).token!;

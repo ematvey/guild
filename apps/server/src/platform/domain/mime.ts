@@ -111,3 +111,12 @@ export function isTextual(contentType: string, filename?: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   return TEXTUAL_EXTENSIONS.has(ext);
 }
+
+/** The Content-Disposition value for a download. The ASCII form is the
+ *  fallback every client understands; the RFC 5987 form carries the real
+ *  name, so a Cyrillic or CJK filename arrives as itself and not as a row of
+ *  underscores. `inline` asks the browser to render instead of save. */
+export function contentDisposition(filename: string, mode: "attachment" | "inline" = "attachment"): string {
+  const ascii = [...filename].map((c) => (/[\x20-\x7e]/.test(c) && c !== '"' && c !== "\\" ? c : "_")).join("");
+  return `${mode}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}

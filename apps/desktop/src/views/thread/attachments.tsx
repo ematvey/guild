@@ -5,6 +5,7 @@ import { FileText, Film, Image as ImageIcon, Music, X as XIcon } from "lucide-re
 import { openExternal } from "../../lib/open-external";
 import { formatBytes } from "../../lib/format";
 import { attachmentBlobUrl } from "../../lib/api/chats";
+import { usePreview } from "./preview/PreviewContext";
 import type { MessageAttachmentMeta } from "../../lib/thread-events";
 
 export function modalityOf(contentType: string): string {
@@ -64,13 +65,19 @@ export function AttachmentImageThumb({
   onRemove?: () => void;
 }) {
   const url = useAttachmentPreview(att);
+  const openPreview = usePreview();
   const img = (
     <button
       type="button"
       title={att.filename}
       className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-border bg-secondary"
       onClick={() => {
-        if (!onRemove && url) openExternal(url);
+        if (onRemove) return;
+        if (att.id.startsWith("pending-")) {
+          if (url) openExternal(url);
+          return;
+        }
+        openPreview({ kind: "attachment", id: att.id }, { filename: att.filename, contentType: att.content_type });
       }}
     >
       {url ? (
@@ -108,6 +115,7 @@ export function AttachmentFileChip({
   att: MessageAttachmentMeta & { previewUrl?: string };
   onRemove?: () => void;
 }) {
+  const openPreview = usePreview();
   const body = (
     <>
       <AttachmentFileIcon att={att} />
@@ -132,18 +140,11 @@ export function AttachmentFileChip({
   return (
     <button
       type="button"
-      title="Download"
+      title={`Open ${att.filename}`}
       className={`${cls} hover:bg-accent`}
       onClick={() => {
-        if (!att.id.startsWith("pending-"))
-          void attachmentBlobUrl(att.id).then((u) => {
-            if (!u) return;
-            const a = document.createElement("a");
-            a.href = u;
-            a.download = att.filename;
-            a.click();
-            URL.revokeObjectURL(u);
-          });
+        if (att.id.startsWith("pending-")) return;
+        openPreview({ kind: "attachment", id: att.id }, { filename: att.filename, contentType: att.content_type });
       }}
     >
       {body}
