@@ -146,6 +146,24 @@ const plugin: IntegrationPlugin = {
         },
       },
       {
+        name: "drive_get_file",
+        class: "read",
+        description:
+          "Download one Drive file as a chat file. An uploaded file (xlsx, pdf, image, docx…) comes back byte for byte. A native Google Doc, Sheet, Slide or Drawing is exported: markdown, csv, pdf and png by default, or the format given in mime_type. Get the id from drive_search.",
+        parameters: {
+          type: "object",
+          properties: {
+            file_id: { type: "string", description: "Drive file id" },
+            mime_type: {
+              type: "string",
+              description:
+                "Export format for a native Google file (optional): text/markdown, text/plain, text/csv, text/tab-separated-values, text/html, application/pdf, application/rtf, application/zip, application/epub+zip, image/png, image/jpeg, image/svg+xml, the Office and OpenDocument formats. Ignored for uploaded files, which have one format.",
+            },
+          },
+          required: ["file_id"],
+        },
+      },
+      {
         name: "directory_users",
         class: "read",
         description: "List Google Workspace directory users (defaults to the admin's domain).",

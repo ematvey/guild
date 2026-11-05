@@ -6,6 +6,7 @@ Lets agents read each member's own Google Workspace data: search their Gmail and
 - Download a Gmail attachment as a file in the chat.
 - List upcoming events on the primary calendar, optionally within a time window.
 - Search Drive files by name.
+- Download a Drive file as a file in the chat: an uploaded file byte for byte, a native Google Doc, Sheet, Slide or Drawing as an export.
 - List users in the Workspace directory.
 - Call any Google API endpoint through the generic `api` tool. Its token carries only read-only scopes, so it cannot change anything.
 

@@ -103,13 +103,13 @@ export function excerpt(text: string, max = MAX_BODY_SNIPPET): string {
  *  error; a text body is cut there. */
 export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-/** Reads a response body as UTF-8, at most `maxBytes`. A longer body is cut
- *  there, the rest is cancelled unread, and `truncated` is set. */
-export async function readBodyCapped(
+/** Reads a response body as raw bytes, at most `maxBytes`. A longer body is
+ *  cut there, the rest is cancelled unread, and `truncated` is set. */
+export async function readBodyBytesCapped(
   res: Response,
   maxBytes = MAX_RESPONSE_BYTES,
-): Promise<{ text: string; truncated: boolean }> {
-  if (res.body === null) return { text: "", truncated: false };
+): Promise<{ bytes: Buffer; truncated: boolean }> {
+  if (res.body === null) return { bytes: Buffer.alloc(0), truncated: false };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -131,7 +131,17 @@ export async function readBodyCapped(
     if (truncated) await reader.cancel().catch(() => {});
     else reader.releaseLock();
   }
-  return { text: new TextDecoder().decode(Buffer.concat(chunks)), truncated };
+  return { bytes: Buffer.concat(chunks), truncated };
+}
+
+/** Reads a response body as UTF-8, at most `maxBytes`. A longer body is cut
+ *  there, the rest is cancelled unread, and `truncated` is set. */
+export async function readBodyCapped(
+  res: Response,
+  maxBytes = MAX_RESPONSE_BYTES,
+): Promise<{ text: string; truncated: boolean }> {
+  const { bytes, truncated } = await readBodyBytesCapped(res, maxBytes);
+  return { text: new TextDecoder().decode(bytes), truncated };
 }
 
 /** The error text one vendor gives each failure of a JSON request. */
@@ -191,6 +201,37 @@ export async function fetchJson(
   timeoutMs = CALL_TIMEOUT_MS,
 ): Promise<JsonObject> {
   return requestJson(url, init, timeoutMs, jsonErrors(api));
+}
+
+/** One binary request: the timeout and call signal, a bounded body, and the
+ *  `<api>` wording for each failure. `maxBytes` is a hard cap — a longer body
+ *  is an error, never a cut file. */
+export async function fetchBytes(
+  url: string,
+  init: RequestInit,
+  api: string,
+  maxBytes = MAX_RESPONSE_BYTES,
+  timeoutMs = CALL_TIMEOUT_MS,
+): Promise<Buffer> {
+  let res: Response;
+  try {
+    res = await fetch(url, fetchTimeout(timeoutMs, init));
+  } catch (error) {
+    throw new Error(`${api} unreachable: ${transportCause(error)}`);
+  }
+  if (!res.ok) {
+    const body = await readBodyCapped(res);
+    throw new Error(`${api} returned ${res.status}: ${excerpt(body.text)}`);
+  }
+  let bytes: Buffer;
+  let truncated: boolean;
+  try {
+    ({ bytes, truncated } = await readBodyBytesCapped(res, maxBytes));
+  } catch (error) {
+    throw new Error(`${api} body unreadable: ${transportCause(error)}`);
+  }
+  if (truncated) throw new Error(`${api} response exceeds ${maxBytes} bytes`);
+  return bytes;
 }
 
 export function clampNumber(args: JsonObject, name: string, dflt: number, cap: number): number {
