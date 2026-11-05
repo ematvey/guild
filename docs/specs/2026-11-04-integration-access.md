@@ -24,10 +24,13 @@ today any Member's agent can search them.
 1. **An Integration has an audience.** Like Agent visibility, it is one of
    `org`, `team` (with team grants) or `admins`. A new Integration starts at
    `admins`.
-2. **An Agent lists its Integrations explicitly.** `tools_mode = all`
-   covers built-in tools only. An Integration reaches an Agent only when it
-   is in the Agent's Integration list, so enabling an Integration reaches no
-   Agent by itself. This applies to personal Agents too.
+2. **A `selected` Agent lists its Integrations explicitly; an `all` Agent
+   follows the audiences.** With `selected` tools an Integration reaches the
+   Agent only when it is in the Agent's list. With `all` tools (revised
+   2026-11-05) the list is derived: every enabled Integration that everyone
+   who can use the Agent may reach, at the lowest ceiling among them, with
+   nothing to set on the Agent. A personal Agent follows its owner; a
+   shared one never widens anyone's reach, so it never warns.
 3. **Only someone in an Integration's audience can add it to an Agent**,
    and only if they can manage that Agent. Removing an Integration from an
    Agent needs only manage.
@@ -137,4 +140,4 @@ phase is planned.
 | --- | --- |
 | Composing Agent and caller permissions at call time | Two Members would get different tools from one Agent, and the Workspace leaks anyway. The warning makes the mismatch visible instead |
 | Guild-side argument filters (repo, channel or pipeline allowlists) | Per-vendor, easy to get wrong, and the raw `api` tool goes around them. The vendor token is the scope |
-| `tools_mode = all` covering Integrations | An Integration enabled for one team would reach every `all` Agent with no one deciding it |
+| `tools_mode = all` covering every enabled Integration | An Integration enabled for one team would reach every `all` Agent with no one deciding it. The 2026-11-05 revision covers only what the audience already grants everyone who uses the Agent |

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import {
   agentWarnings,
+  allModeIntegrations,
   memberCeiling,
   type AccessContext,
   type IntegrationAudience,
@@ -106,6 +107,62 @@ describe("audience rules", () => {
       { ...ctx, userGrants: new Map() },
     );
     expect(leftOwner.map((w) => [w.subject, w.subject_id])).toEqual([["member", "guest"]]);
+  });
+});
+
+describe("an agent with all tools", () => {
+  const ctx: AccessContext = {
+    audiences: new Map([
+      ["hubspot", audience({})],
+      ["search", audience({ id: "i-2", slug: "search", audience: "org", org_ceiling: "read" })],
+      ["vault", audience({ id: "i-3", slug: "vault", audience: "admins" })],
+      ["off", audience({ id: "i-4", slug: "off", audience: "org", enabled: false })],
+    ]),
+    members: new Map([
+      ["seller", member("seller", "member", [SALES])],
+      ["helper", member("helper", "member", [SUPPORT])],
+      ["boss", member("boss", "admin", [])],
+    ]),
+    teams: new Map([
+      [SALES, "Sales"],
+      [SUPPORT, "Support"],
+    ]),
+    userGrants: new Map(),
+  };
+  const agent = (owner: string, more: Record<string, unknown> = {}) => ({
+    id: "agent",
+    owner_user_id: owner,
+    visibility: "private",
+    is_personal: true,
+    ...more,
+  });
+
+  it("a personal agent reaches every enabled Integration its owner may, at the owner's ceiling", () => {
+    expect(allModeIntegrations(agent("seller"), ctx)).toEqual([
+      { slug: "hubspot", ceiling: "write" },
+      { slug: "search", ceiling: "read" },
+    ]);
+    expect(allModeIntegrations(agent("boss"), ctx)).toEqual([
+      { slug: "hubspot", ceiling: "admin" },
+      { slug: "search", ceiling: "admin" },
+      { slug: "vault", ceiling: "admin" },
+    ]);
+  });
+
+  it("a shared agent reaches only what everyone who can use it may, at the lowest ceiling", () => {
+    const sales = agent("boss", { is_personal: false, visibility: "team", team_ids: [SALES] });
+    expect(allModeIntegrations(sales, ctx)).toEqual([
+      { slug: "hubspot", ceiling: "write" },
+      { slug: "search", ceiling: "read" },
+    ]);
+    const both = agent("seller", { is_personal: false, visibility: "team", team_ids: [SALES, SUPPORT] });
+    expect(allModeIntegrations(both, ctx)).toEqual([{ slug: "search", ceiling: "read" }]);
+    const granted = agent("seller", { is_personal: false });
+    expect(allModeIntegrations(granted, { ...ctx, userGrants: new Map([["agent", ["helper"]]]) })).toEqual([
+      { slug: "search", ceiling: "read" },
+    ]);
+    const derived = allModeIntegrations(both, ctx);
+    expect(agentWarnings({ ...both, integrations: derived }, ctx)).toEqual([]);
   });
 });
 
@@ -232,6 +289,58 @@ describe("integration access over HTTP", () => {
     const removed = await call(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}`, { integrations: [] });
     expect(removed.statusCode).toBe(200);
     expect((JSON.parse(removed.body) as { agent: { integrations: unknown[] } }).agent.integrations).toEqual([]);
+  });
+
+  it("an all-tools agent follows the admin's audiences and takes no list of its own", async () => {
+    const row = await stack.env.db.query(
+      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'crm2', '{}', true) RETURNING id",
+      [stack.orgId],
+    );
+    const crmId = row.rows[0].id as string;
+    const created = await call(stack.memberToken, "POST", "/api/v1/agents", {
+      name: `all-${randomUUID().slice(0, 8)}`,
+      model: "GLM-Test-Model",
+      tools: [],
+      tools_mode: "all",
+      visibility: "private",
+      integrations: [{ slug: "crm2", ceiling: "read" }],
+    });
+    expect(created.statusCode).toBe(200);
+    const agentId = (JSON.parse(created.body) as { agent: { id: string } }).agent.id;
+    const read = async () =>
+      (JSON.parse((await call(stack.memberToken, "GET", `/api/v1/agents/${agentId}`)).body) as {
+        agent: { integrations: { slug: string; ceiling: string }[]; integration_warnings: unknown[] };
+      }).agent;
+    expect((await read()).integrations.find((e) => e.slug === "crm2")).toBeUndefined();
+
+    await call(stack.adminToken, "PUT", `/api/v1/admin/integrations/${crmId}/access`, {
+      audience: "org",
+      org_ceiling: "write",
+    });
+    const opened = await read();
+    expect(opened.integrations.find((e) => e.slug === "crm2")).toEqual({ slug: "crm2", ceiling: "write" });
+    expect(opened.integration_warnings).toEqual([]);
+    const stored = await stack.env.db.query("SELECT 1 FROM agent_integrations WHERE agent_id = $1", [agentId]);
+    expect(stored.rows).toEqual([]);
+
+    const thread = await stack.env.db.query("SELECT chat_id FROM agent_threads WHERE agent_id = $1 LIMIT 1", [agentId]);
+    const scope = await integrationScopeForChat(
+      new IntegrationAccessStore(stack.env.db),
+      thread.rows[0].chat_id as string,
+    );
+    expect(scope.integrations.get("crm2")).toBe("write");
+
+    const view = await call(stack.adminToken, "GET", `/api/v1/admin/integrations/${crmId}/access`);
+    const agents = (JSON.parse(view.body) as { agents: { id: string; ceiling: string }[] }).agents;
+    expect(agents.find((a) => a.id === agentId)?.ceiling).toBe("write");
+
+    const ignored = await call(stack.memberToken, "PATCH", `/api/v1/agents/${agentId}`, { integrations: [] });
+    expect(ignored.statusCode).toBe(200);
+    expect((await read()).integrations.find((e) => e.slug === "crm2")).toBeDefined();
+
+    await call(stack.adminToken, "PUT", `/api/v1/admin/integrations/${crmId}/access`, { audience: "admins" });
+    expect((await read()).integrations.find((e) => e.slug === "crm2")).toBeUndefined();
+    await stack.env.db.query("DELETE FROM integrations WHERE id = $1", [crmId]);
   });
 
   it("the script API follows the caller's audience", async () => {

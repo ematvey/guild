@@ -99,7 +99,7 @@ export function AgentSettings({
         generative_ui: generativeUi,
         visibility,
         team_ids: visibility === "team" ? teamIds : [],
-        integrations,
+        ...(toolsMode === "selected" ? { integrations } : {}),
       });
       setSaved(true);
     } catch (err) {
@@ -248,7 +248,8 @@ export function AgentSettings({
             <span className="min-w-0">
               <span className="block text-sm font-medium">All available tools</span>
               <span className="block text-xs text-muted-foreground">
-                Every built-in tool, including ones added in later releases. Integrations are chosen below.
+                Every built-in tool and every integration an admin makes available to the people who use this
+                agent, at the access the admin grants. Nothing else to set.
               </span>
             </span>
           </label>
@@ -267,10 +268,17 @@ export function AgentSettings({
           </label>
         </div>
         <p className="mb-3 text-xs text-muted-foreground">
-          Codemode is always available. Integrations are chosen in their own section.
+          {toolsMode === "all"
+            ? "Codemode is always available."
+            : "Codemode is always available. Integrations are chosen in their own section."}
         </p>
         {toolsMode === "all" ? (
-          <p className="text-sm text-muted-foreground">This agent uses every built-in tool.</p>
+          <div className="space-y-1.5">
+            <p className="text-sm text-muted-foreground">
+              This agent uses every built-in tool and these integrations, as an admin set them up:
+            </p>
+            <DerivedIntegrations entries={agent.integrations} />
+          </div>
         ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             The org tool catalog did not load. The current allowlist is shown below.
@@ -325,18 +333,20 @@ export function AgentSettings({
         )}
       </Section>
 
-      <Section title="Integrations" description={integrations.length === 0 ? "None" : `${integrations.length} added`}>
-        <p className="mb-3 text-xs text-muted-foreground">
-          Everyone who can use this agent reaches what is listed here, whatever their own access.
-        </p>
-        <AgentIntegrationsEditor
-          value={integrations}
-          onChange={setIntegrations}
-          attachable={attachable}
-          warnings={agent.integration_warnings}
-          isAdmin={viewer.role === "admin"}
-        />
-      </Section>
+      {toolsMode === "selected" && (
+        <Section title="Integrations" description={integrations.length === 0 ? "None" : `${integrations.length} added`}>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Everyone who can use this agent reaches what is listed here, whatever their own access.
+          </p>
+          <AgentIntegrationsEditor
+            value={integrations}
+            onChange={setIntegrations}
+            attachable={attachable}
+            warnings={agent.integration_warnings}
+            isAdmin={viewer.role === "admin"}
+          />
+        </Section>
+      )}
 
       {error !== null && (
         <p role="alert" className="text-sm text-destructive">
@@ -368,6 +378,22 @@ export function AgentSettings({
           Signed in as {viewer.email}. Owner and admin actions are audited.
         </p>
       </Section>
+    </div>
+  );
+}
+
+/** An `all`-tools agent's integrations: what the admin's integration
+ *  access gives everyone who uses it. Read-only. */
+function DerivedIntegrations({ entries }: { entries: AgentIntegration[] }) {
+  if (entries.length === 0) return <p className="text-xs text-muted-foreground">No integrations yet.</p>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map((entry) => (
+        <span key={entry.slug} className="rounded-md border border-border px-2 py-0.5 text-xs">
+          <span className="font-mono">{entry.slug}</span>{" "}
+          <span className="text-muted-foreground">{CLASS_LABEL[entry.ceiling].toLowerCase()}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -404,7 +430,7 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
           <dt className="text-muted-foreground">Tools</dt>
           <dd className="mt-1 flex flex-wrap gap-1.5">
             {agent.tools_mode === "all" ? (
-              <span className="text-xs">Every built-in tool</span>
+              <span className="text-xs">Every built-in tool and integration an admin makes available</span>
             ) : (
               agent.tools.map((tool) => <Mono key={tool}>{tool}</Mono>)
             )}

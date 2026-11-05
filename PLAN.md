@@ -182,6 +182,23 @@ first. Code comments describe only the present.
   http(s)/mailto. lang-core's postinstall reports installs to its vendor;
   npm 11 blocks it by default and the image sets
   `OPENUI_TELEMETRY_DISABLED`.
+- **"All available tools" covers Integrations through their audiences
+  (2026-11-05).** After the 11-04 access change, `all` covered built-in
+  tools only, and a personal Agent had to have each new Integration added
+  by hand; a Stripe integration an admin set up never reached it. Now an
+  `all` Agent's Integration list is derived at every read and has nothing to
+  set: every enabled Integration that everyone who can use the Agent may
+  reach, at the lowest ceiling the audience grants any of them
+  (`allModeIntegrations` in `domain/integration-access.ts`). A personal
+  Agent follows its owner's reach. A shared Agent gets only what its whole
+  audience already holds, so it never widens access and never warns, which
+  answers the spec's reason for rejecting `all` over Integrations. The
+  derived list feeds the agent wire (REST and `agent_list`, re-pushed on the
+  existing `guild_agents` notifies), the Turn scope and the Integration
+  Access tab. Stored entries of an `all` Agent are kept but unused, and a
+  submitted list is ignored. The settings page shows the derived list
+  read-only and hides the editor. Switching to Choose tools starts from the
+  derived list.
 - **Test connection tests the form, not only what is stored
   (2026-11-05).** An admin pasted a Stripe key and pressed Test
   connection before saving; the test ran against the stored row, which
