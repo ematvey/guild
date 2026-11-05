@@ -13,7 +13,7 @@ import { AgentStore } from "../../agents/store.js";
 import { createGuildTools, guildToolsAllowed } from "../../agents/guild-tools.js";
 import type { UserRow } from "../../platform/store/identity.js";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
-import { Value } from "typebox/value";
+import { compile } from "@earendil-works/pi-schema";
 
 let stack: GatewayStack;
 let stores: PlatformStores;
@@ -67,8 +67,9 @@ async function call(list: ToolRegistration[], name: string, args: object = {}): 
   };
   if (result.isError === true) throw new Error(result.output?.[0]?.text ?? "tool failed");
   const out = result.structuredOutput ?? {};
-  const schema = tool(list, name).structuredOutputSchema;
-  expect(Value.Check(schema as never, out)).toBe(true);
+  // The bridge's own validator: a schema the harness refuses fails here.
+  const validator = compile(tool(list, name).structuredOutputSchema as never, { unresolvedRefs: "reject" });
+  expect(validator.check(out)).toBe(true);
   return out;
 }
 
