@@ -17,6 +17,7 @@ import type { ChatRow } from "../platform/store/chats.js";
 import { ThreadAgentLocked } from "../harness/runtime.js";
 import { buildTurnText, loadMediaMap } from "./turn-text.js";
 import { memberMessageEntry } from "./member-message.js";
+import { mediaRefOf } from "../platform/media-ref.js";
 
 export async function submitTurn(
   chats: ChatsCtx,
@@ -131,7 +132,7 @@ export async function submitTurn(
   const media = await loadMediaMap(objects, user.org_id, attachmentRows, [], attachmentIds);
   const { chips, inline } = buildTurnText(attachmentIds, media, attachmentRows, routeModalities);
   const content = [userMessageText, inline].filter((part) => part !== "").join("\n\n");
-  const { images } = mediaPartsFor(routeModalities, chips, media);
+  const { images } = mediaPartsFor(routeModalities, chips);
   // The machine turn's client-assembled skills index (additive wire field;
   // the desktop sends it, browser clients do not).
   const skillsIndex = typeof body["skills_index"] === "string" ? body["skills_index"] : undefined;
@@ -203,20 +204,19 @@ export async function submitTurn(
   return commandAck(refreshed ?? command!);
 }
 
-/** The model-facing image parts of the arrival turn (data URIs), gated by
- *  the route's modalities. */
+/** The model-facing image parts of the arrival turn, gated by the route's
+ *  modalities. The part names its attachment; the bytes stay in object
+ *  storage and the model request resolves them (chats/media-ref.ts), so no
+ *  image rides the durable entry. */
 function mediaPartsFor(
   modalities: string[],
   chips: MessageAttachment[],
-  media: Map<string, { mime: string; b64: string }>,
 ): { images: { mimeType: string; data: string }[] } {
   const images: { mimeType: string; data: string }[] = [];
   if (!modalities.includes("image")) return { images };
   for (const chip of chips) {
     if (modalityOf(chip.content_type) !== "image") continue;
-    const m = media.get(chip.id);
-    if (!m) continue;
-    images.push({ mimeType: m.mime, data: m.b64 });
+    images.push({ mimeType: chip.content_type, data: mediaRefOf("attachment", chip.id) });
   }
   return { images };
 }

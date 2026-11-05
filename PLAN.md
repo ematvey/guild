@@ -97,6 +97,19 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **No image bytes in the database (2026-11-05).** A durable entry names its
+  images instead of carrying them. A tool result's image parts and a member
+  message's image attachments become `guild-media:<store>:<id>` — an artifact
+  or an attachment row — and the bytes stay in object storage. The write
+  side is one seam, the registry's `install`: every extension's tools are
+  wrapped, so a tool Guild adds later (an integration, an MCP server, a
+  client tool registered per turn) is covered without naming it, and a tool
+  that already spilled passes through. The read side is the gateway's
+  `dispatch`: image references resolve to data URIs before the provider call,
+  through a process cache, because every step of a turn resends the history
+  and the same images with it. `scripts/spill-entry-images.mjs` moves the
+  rows that predate the rule.
+
 - **A ThreadState frame is bounded by bytes, not rows (2026-11-05).** One
   prod thread shipped 6.7 MB of base64 PNG in every frame: a tool result's
   images rode its event at any size, and the 120-row window counted rows.
