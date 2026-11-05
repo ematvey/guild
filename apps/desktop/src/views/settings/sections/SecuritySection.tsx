@@ -22,12 +22,12 @@ const OPTIONS: { value: RemoteImagesPolicy; title: string; detail: string }[] = 
   {
     value: "click",
     title: "Load on click",
-    detail: "A remote image shows as a placeholder with its domain until the reader clicks it.",
+    detail: "A remote image shows as a placeholder with its full URL until the reader clicks it.",
   },
   {
     value: "never",
     title: "Never load",
-    detail: "Remote images show only their description and domain.",
+    detail: "Remote images show only their description and full URL.",
   },
 ];
 

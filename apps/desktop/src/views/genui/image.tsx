@@ -7,7 +7,7 @@
 // injected URL can carry data out — the policy is the admin's trade-off.
 // Anything else shows the alt text.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ImageIcon, ImageOff } from "lucide-react";
 import { attachmentBlobUrl } from "../../lib/api/chats";
 import { useWorkspaceIdentity } from "../../lib/workspace-store";
@@ -81,29 +81,23 @@ export function ContentImage({
     setBroken(false);
     setAllowed(false);
   }, [url]);
-  const host = remote && url ? hostOf(url) : "";
   if (remote && policy === "never") {
     return (
-      <span
-        className={`inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground ${className ?? ""}`}
-        title={`Remote images are off in this workspace (${host})`}
-      >
-        <ImageOff className="size-3.5 shrink-0" aria-hidden />
-        {alt || "Image"} · {host}
-      </span>
+      <RemotePlaceholder
+        icon={<ImageOff className="size-3.5 shrink-0" aria-hidden />}
+        label={`${alt || "Image"} · not loaded (remote images are off)`}
+        url={url ?? ""}
+      />
     );
   }
   if (remote && policy === "click" && !allowed) {
     return (
-      <button
-        type="button"
+      <RemotePlaceholder
+        icon={<ImageIcon className="size-3.5 shrink-0" aria-hidden />}
+        label={`Load image${alt ? `: ${alt}` : ""}`}
+        url={url ?? ""}
         onClick={() => setAllowed(true)}
-        className={`inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground ${className ?? ""}`}
-        title={url ?? undefined}
-      >
-        <ImageIcon className="size-3.5 shrink-0" aria-hidden />
-        Load image{alt ? `: ${alt}` : ""} · {host}
-      </button>
+      />
     );
   }
   if (failed || broken) {
@@ -134,10 +128,43 @@ export function ContentImage({
   );
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
+/** A remote image that is not shown: what it is, and the full URL it would
+ *  request — the path and query are where an exfiltration attempt would
+ *  sit, so the reader sees all of it (three lines; the rest on hover). */
+function RemotePlaceholder({
+  icon,
+  label,
+  url,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  url: string;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <span className="flex items-center gap-1.5 text-foreground/80">
+        {icon}
+        <span className="min-w-0 truncate">{label}</span>
+      </span>
+      <span className="line-clamp-3 font-mono text-2xs break-all">{url}</span>
+    </>
+  );
+  const cls =
+    "flex w-fit max-w-full flex-col items-start gap-1 rounded-md border border-border px-2.5 py-1.5 text-left text-xs text-muted-foreground";
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      title={url}
+      className={`${cls} border-dashed hover:bg-muted hover:text-foreground`}
+    >
+      {body}
+    </button>
+  ) : (
+    <span title={url} className={cls}>
+      {body}
+    </span>
+  );
 }
