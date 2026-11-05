@@ -97,6 +97,24 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A ThreadState frame is bounded by bytes, not rows (2026-11-05).** One
+  prod thread shipped 6.7 MB of base64 PNG in every frame: a tool result's
+  images rode its event at any size, and the 120-row window counted rows.
+  A live turn republishes that frame on each buffer change, so the socket
+  writer stalled behind it, the client's 15 s watchdog reaped the silent
+  link, and every reconnect asked for the same frame again — a hang loop
+  that reads as "long threads hang". Images now obey the same 64 KiB
+  threshold as the result text they belong to (the durable entry keeps the
+  model's copy; the event's was display-only and no client renders it), and
+  the capture drops the window's oldest rows until the frame fits 512 KiB,
+  with `has_more_events` saying the rest loads on demand.
+
+- **A hidden tab keeps its socket (2026-11-05).** A background tab's timers
+  are throttled by the browser, not stopped by the network, so its app-level
+  pings drop to one a minute and the 15 s watchdog closed a healthy link
+  once a minute. The watchdog now stands down while `document.hidden`, and
+  the existing wake check owns the return to visibility.
+
 - **The guild namespace: the admin's assistant reads the org (2026-11-05).**
   An admin's personal Agent now carries six script-callable tools under the
   code-mode `guild` namespace: `guild_overview` (member, agent and thread
