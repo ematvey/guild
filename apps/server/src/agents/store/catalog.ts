@@ -15,6 +15,7 @@ import { AGENT_COLUMNS, toAgent } from "./rows.js";
 
 export interface CreateAgentInput {
   tools_mode?: AgentToolsMode;
+  generative_ui?: boolean;
   name: string;
   description?: string;
   model: string;
@@ -26,6 +27,7 @@ export interface CreateAgentInput {
 
 export interface UpdateAgentInput {
   tools_mode?: AgentToolsMode;
+  generative_ui?: boolean;
   name?: string;
   description?: string;
   model?: string;
@@ -89,8 +91,8 @@ export class AgentCatalog {
     try {
       await withTransaction(this.pool, async (client) => {
         await client.query(
-          `INSERT INTO agents (id, org_id, owner_user_id, name, description, model, tools, tools_mode, visibility, resources)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)`,
+          `INSERT INTO agents (id, org_id, owner_user_id, name, description, model, tools, tools_mode, visibility, resources, generative_ui)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)`,
           [
             id,
             user.org_id,
@@ -106,6 +108,7 @@ export class AgentCatalog {
                 ? DEFAULT_AGENT_RESOURCES
                 : input.resources,
             ),
+            input.generative_ui ?? true,
           ],
         );
         if (input.team_ids !== undefined && input.team_ids.length > 0) {
@@ -255,6 +258,7 @@ export class AgentCatalog {
     if (patch.name !== undefined) add("name", patch.name);
     if (patch.description !== undefined) add("description", patch.description);
     if (patch.tools_mode !== undefined) add("tools_mode", patch.tools_mode);
+    if (patch.generative_ui !== undefined) add("generative_ui", patch.generative_ui);
     if (patch.model !== undefined) add("model", patch.model);
     if (patch.tools !== undefined) add("tools", jsonbText(patch.tools), "::jsonb");
     if (patch.visibility !== undefined) {

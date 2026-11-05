@@ -1,6 +1,6 @@
 # 004 Capabilities
 
-Capabilities are what a Turn can use: the model behind each Step, the Tools it can call and the Skills it can load. The Org supplies all three. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
+Capabilities are what a Turn can use: the model behind each Step, the Tools it can call, the Skills it can load and the Generated UI it can write. The Org supplies all of them. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
 
 ## Concepts
 
@@ -13,6 +13,7 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Has an audience that decides who may add it to an Agent (see 002). Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
+| Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
 
 ## Models and the gateway
@@ -116,6 +117,18 @@ The Machine converges its folder to the list: it verifies each bundle's sha256, 
 
 The specialist pack is a set of ordinary Org Agents: Source, Ops and Clients. Each has a fixed tool list and a playbook written into its `AGENTS.md`. Installing the pack is admin-only. It creates a missing file and never overwrites an existing one.
 
+## Generated UI
+
+An Agent with `generative_ui` on gets a `<generated_ui>` section in its instructions: when a UI block helps, the OpenUI Lang syntax and the signature of every component in the library (`packages/genui`). The section is static, so prompt caching holds across Turns. A spawned child's reply goes to its parent Agent, not a person, so its Threads never get the section.
+
+The reply stays Markdown. A fenced block tagged `openui` renders in place as components, streaming as it arrives; every other fence stays code. The library is layout (Stack, Card, Grid, Tabs), content (Text, Metric, Callout, List, Facts, Tags, Progress), data (Table, BarChart, LineChart, PieChart) and interaction (Buttons, Form and its fields). A program can only instantiate those components:
+
+- `@ToAssistant(message)` sends the message as the Member's next message in the Thread, with the submitted Form's values as `name: value` lines. It queues while a Turn runs, like any send.
+- `@OpenUrl(url)` opens an `http`, `https` or `mailto` link outside the app; any other scheme is dropped.
+- `Query`, `Mutation` and custom actions have no provider: a block never calls a Tool, so every Tool still passes the Approval and exec-policy gates of a Turn.
+
+Controls stay disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
+
 ## Org prompts
 
 An admin can replace two built-in prompts, each up to 10,000 characters; an empty value restores the default:
@@ -130,6 +143,8 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 | Rejected | Reason |
 | --- | --- |
 | A model choice per Thread | The model belongs to the Agent (see 001) |
+| Generated UI that calls Tools from the block (OpenUI `Query`/`Mutation`) | It would run Tools outside a Turn, past Approvals and exec policy; a button asks the Agent instead |
+| The vendor's hosted gateway or chat client for Generated UI | Org traffic stays on the Org gateway, and the Thread stays on the member socket |
 | Showing provider model ids | Members see the Org's aliases, and the id stays a wire identifier |
 | Vendor tool names for search and fetch | Traits keep one name across vendors |
 | An approval that survives a new version | A review covers one version and hash, so a change returns the item to draft |

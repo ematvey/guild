@@ -2,7 +2,7 @@
 // lives in the hooks under thread/hooks/ and the chat stores, pure
 // derivations in the sibling modules, the parts in their own components, and
 // this file assembles the component tree.
-import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 
 import { Button } from "@guild/ui/components/button";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
@@ -32,6 +32,7 @@ import {
 import { CHAT_ROOT, SURFACE_BASE } from "./route";
 import { chatsStore, resetChatStores, useSidebarRows } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
+import { GenuiHostContext, type GenuiHost } from "../genui/actions";
 import { ThreadHeader } from "./thread-header";
 import { ThreadComposer } from "./thread-composer";
 import { NotificationsOffer } from "./notifications-offer";
@@ -221,6 +222,12 @@ function ThreadView(props: ThreadProps) {
     justCreatedChatRef,
     pushRoute,
   });
+  // Generated UI buttons send through the same path as the composer. The
+  // host stays one object for the view's life; it reaches the current
+  // send through a ref.
+  const sendRef = useRef(outgoing.send);
+  sendRef.current = outgoing.send;
+  const genuiHost = useMemo<GenuiHost>(() => ({ send: (text) => void sendRef.current("normal", text) }), []);
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef } = useMemberSocket({
     signOut,
@@ -817,34 +824,36 @@ function ThreadView(props: ThreadProps) {
 
             <NotificationsOffer />
 
-            <ThreadPane
-              blocks={blocks}
-              loading={threadLoading}
-              viewChatId={viewChatId}
-              noModels={models !== null && models.length === 0}
-              navigating={navigating}
-              hasMore={hasMore}
-              loadingEarlier={loadingEarlier}
-              onLoadEarlier={loadEarlierNearTop}
-              compacting={compacting}
-              busy={busy}
-              stopping={stopping}
-              subagentNodes={subagentNodes}
-              originLink={childTree?.origin ?? null}
-              onOpenChat={openChat}
-              onOpenChildChat={openChildChat}
-              scroll={{
-                pane,
-                onScroll: scroll.onScroll,
-                setContentEl: scroll.setContentEl,
-                composerH: scroll.composerH,
-                onFrameToggle: scroll.onFrameToggle,
-                atBottom,
-                scrollToBottom: scroll.scrollToBottom,
-              }}
-              column={column}
-              isMobile={isMobile}
-            />
+            <GenuiHostContext.Provider value={genuiHost}>
+              <ThreadPane
+                blocks={blocks}
+                loading={threadLoading}
+                viewChatId={viewChatId}
+                noModels={models !== null && models.length === 0}
+                navigating={navigating}
+                hasMore={hasMore}
+                loadingEarlier={loadingEarlier}
+                onLoadEarlier={loadEarlierNearTop}
+                compacting={compacting}
+                busy={busy}
+                stopping={stopping}
+                subagentNodes={subagentNodes}
+                originLink={childTree?.origin ?? null}
+                onOpenChat={openChat}
+                onOpenChildChat={openChildChat}
+                scroll={{
+                  pane,
+                  onScroll: scroll.onScroll,
+                  setContentEl: scroll.setContentEl,
+                  composerH: scroll.composerH,
+                  onFrameToggle: scroll.onFrameToggle,
+                  atBottom,
+                  scrollToBottom: scroll.scrollToBottom,
+                }}
+                column={column}
+                isMobile={isMobile}
+              />
+            </GenuiHostContext.Provider>
 
             <ThreadComposer
               composer={composer}

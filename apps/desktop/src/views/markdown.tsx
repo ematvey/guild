@@ -1,12 +1,31 @@
 // Shared markdown rendering for thread content and the skill editor's
 // read-only preview: the body styling classes plus the link/image anchor
 // components (links open externally; model-controlled images render as
-// placeholders instead of loading).
+// placeholders instead of loading) and the Generated UI blocks.
 
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { openExternal } from "../lib/open-external";
+import { GenuiBlock, isGenuiLanguage } from "./genui/genui-block";
+
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastNode[];
+}
+
+/** A fenced block's language class and text, read from the `pre` node. */
+function fencedCode(node: HastNode | undefined): { className: string; text: string } | null {
+  const code = node?.children?.find((c) => c.type === "element" && c.tagName === "code");
+  if (!code) return null;
+  const cls = code.properties?.className;
+  const className = Array.isArray(cls) ? cls.join(" ") : typeof cls === "string" ? cls : "";
+  const text = (code.children ?? []).map((c) => (c.type === "text" ? (c.value ?? "") : "")).join("");
+  return { className, text };
+}
 
 /// Plugin set for chat text: GFM tables and task lists, plus a line break at
 /// every newline the model wrote. CommonMark folds a single newline into a
@@ -20,6 +39,12 @@ export const CHAT_MD_PLUGINS = [remarkGfm, remarkBreaks];
 /// could otherwise exfiltrate via the image request; a rendered placeholder
 /// links out instead.
 export const mdComponents: Components = {
+  // A fenced `openui` block is Generated UI: it renders as components.
+  pre: ({ node, children, ...rest }) => {
+    const code = fencedCode(node as HastNode | undefined);
+    if (code !== null && isGenuiLanguage(code.className)) return <GenuiBlock source={code.text} />;
+    return <pre {...rest}>{children}</pre>;
+  },
   a: ({ node: _node, href, children, ...rest }) => (
     <a
       {...rest}

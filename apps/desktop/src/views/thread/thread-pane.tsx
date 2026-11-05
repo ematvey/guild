@@ -16,6 +16,7 @@ import type { RenderBlock } from "../../lib/thread-reducer";
 import { ThreadSkeleton, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
+import { GenuiStreamingContext } from "../genui/actions";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 
 /** A settled agent text block. Markdown parsing dominates a long transcript,
@@ -23,11 +24,14 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
  *  and state publishes, so this memo hits for every settled block. */
 const TextBlock = memo(function TextBlock({
   b,
+  live,
   showInterrupted,
   origin,
   onOpenOrigin,
 }: {
   b: RenderBlock;
+  /** The turn is still writing this block: its Generated UI stays inert. */
+  live: boolean;
   showInterrupted: boolean;
   /** The run this message was delivered from. Rendered in the body so the
    *  timestamp stays under the link. */
@@ -37,9 +41,11 @@ const TextBlock = memo(function TextBlock({
   return (
     <div className="group">
       <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-        <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
-          {b.text}
-        </Markdown>
+        <GenuiStreamingContext.Provider value={live}>
+          <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
+            {b.text}
+          </Markdown>
+        </GenuiStreamingContext.Provider>
         {b.attachments && b.attachments.length > 0 && (
           <div className="flex max-w-full flex-wrap items-start gap-2">
             {b.attachments
@@ -214,6 +220,7 @@ export function ThreadPane({
           <TextBlock
             key={e.b.key}
             b={e.b}
+            live={busy && i === displayEntries.length - 1}
             showInterrupted={!busy}
             origin={i === firstTextIndex ? originLink : null}
             onOpenOrigin={onOpenChat}

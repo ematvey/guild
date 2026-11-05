@@ -166,6 +166,9 @@ export interface Agent {
   model_alias: string | null;
   tools: string[];
   tools_mode: "selected" | "all";
+  /** Replies may carry Generated UI (`openui` blocks) the client renders
+   *  as components. */
+  generative_ui: boolean;
   visibility: AgentVisibility;
   /** The agent's sandbox budget. */
   resources: Json;

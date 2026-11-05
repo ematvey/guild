@@ -19,7 +19,7 @@ import type {
 } from "../types.js";
 
 export const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.description, a.model,
-  a.tools, a.tools_mode, a.visibility, a.resources, a.status, a.is_personal,
+  a.tools, a.tools_mode, a.generative_ui, a.visibility, a.resources, a.status, a.is_personal,
   (SELECT COALESCE(u.display_name, u.email) FROM users u WHERE u.id = a.owner_user_id) AS owner_label,
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
   (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
@@ -65,6 +65,7 @@ export function toAgent(row: Record<string, unknown>): Agent {
     model_alias: (row.model_alias as string | null) ?? null,
     tools: (row.tools as AgentToolRef[] | null) ?? [],
     tools_mode: (row.tools_mode as AgentToolsMode | null) ?? "selected",
+    generative_ui: row.generative_ui === undefined || row.generative_ui === null ? true : Boolean(row.generative_ui),
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,

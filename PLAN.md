@@ -97,6 +97,30 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Generated UI: agents write OpenUI Lang blocks the client renders as
+  components (2026-11-05).** Answers with several numbers, comparisons,
+  trends or a need for structured input read badly as Markdown. An agent
+  can now put an `openui` fenced block in a reply: a program in OpenUI
+  Lang (Thesys, MIT, `@openuidev/lang-core` and `react-lang` 1.1.0, pinned)
+  over Guild's own component library, `packages/genui`. That package holds
+  the component schemas and the prompt section; the server teaches it in a
+  static `<generated_ui>` block of the agent's instructions (about 2.5k
+  tokens; no Tool calls, no `$` bindings, no builtin functions, to keep it
+  small), and the desktop maps each component to a React renderer on the
+  app kit (`views/genui`). The block rides the message text, so it streams,
+  persists and syncs like any message: no new frame or event. A per-agent
+  switch, `agents.generative_ui` (migration 0115), on by default and off
+  for spawned threads, whose replies go to an agent. Kept out of the
+  vendor's stack: the hosted gateway and Autofix (Org traffic stays on the
+  Org gateway), `AgentInterface`/`fetchLLM` (the thread stays on the member
+  socket), `Query`/`Mutation` (no `toolProvider`, so a block never runs a
+  Tool past Approvals), and the dev-mode inspector that loads from a CDN
+  (`lib/openui-devtools-off.ts`). `@ToAssistant` sends through the
+  composer's send path with explicit text (queued while busy, the draft
+  untouched) and appends the submitted form's values; `@OpenUrl` takes only
+  http(s)/mailto. lang-core's postinstall reports installs to its vendor;
+  npm 11 blocks it by default and the image sets
+  `OPENUI_TELEMETRY_DISABLED`.
 - **MCP plugins: the SDK wraps a remote MCP server, built in or published;
   Stripe is a built-in (2026-11-05).** Adding a known vendor MCP server
   (Stripe) meant every admin typing its URL, header shape and key format

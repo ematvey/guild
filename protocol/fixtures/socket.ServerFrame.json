@@ -272,6 +272,7 @@
           "write"
         ],
         "tools_mode": "selected",
+        "generative_ui": true,
         "visibility": "team",
         "resources": {
           "vcpu": 1,

@@ -98,6 +98,9 @@ export interface Agent {
   tools: AgentToolRef[];
   /** `all` takes every built-in tool; `selected` uses `tools`. */
   tools_mode: AgentToolsMode;
+  /** Replies may carry Generated UI blocks: the agent's instructions teach
+   *  the component library, the client renders the blocks. */
+  generative_ui: boolean;
   visibility: AgentVisibility;
   resources: Record<string, unknown>;
   status: AgentStatus;

@@ -1,6 +1,8 @@
-// The system instructions of an agent thread: identity, workspace, sharing
-// and the workspace config files. Pure over the files it is given.
+// The system instructions of an agent thread: identity, workspace, sharing,
+// Generated UI and the workspace config files. Pure over the files it is
+// given.
 
+import { genuiPrompt } from "@guild/genui";
 import {
   AGENT_WORKSPACE_PATH,
   CONFIG_FILES,
@@ -28,7 +30,7 @@ export interface ThreadInstructionContext {
  *  Each file is a tagged block carrying its full path, so the two sources
  *  stay distinguishable. Pure over the files it is given. */
 export function composeAgentInstructions(
-  agent: { name: string; description?: string; is_personal: boolean },
+  agent: { name: string; description?: string; is_personal: boolean; generative_ui?: boolean },
   config: AgentConfigFiles,
   projectInstructions?: string,
   machineBound = false,
@@ -48,6 +50,12 @@ export function composeAgentInstructions(
     sharing,
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
   ];
+  // Generated UI is for a person reading the thread; a spawned child's reply
+  // goes to its parent agent. Static text, placed ahead of the files that
+  // change between turns.
+  if (agent.generative_ui === true && spawnedBy === undefined) {
+    parts.push(`<generated_ui>\n${genuiPrompt()}\n</generated_ui>`);
+  }
   const workspace: string[] = [
     machineBound
       ? "Your own files. Read them with agent_read and edit them with agent_write/agent_edit; " +

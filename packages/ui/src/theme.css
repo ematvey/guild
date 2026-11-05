@@ -89,6 +89,14 @@
   /* Chat body text: the full-strength foreground reads aggressive white on
      dark; the chat pane dims it while bold spans keep the bright color. */
   --chat-foreground: var(--foreground);
+  /* Categorical series colors for charts the content supplies (Generated
+     UI): distinguishable from each other and readable on the card. */
+  --chart-1: #2563eb;
+  --chart-2: #d97706;
+  --chart-3: #059669;
+  --chart-4: #db2777;
+  --chart-5: #7c3aed;
+  --chart-6: #0891b2;
 }
 
 .dark {
@@ -114,6 +122,12 @@
   --sidebar-accent: #262320;
   --radius: 0.625rem;
   --chat-foreground: oklch(0.872 0.01 258.338);
+  --chart-1: #60a5fa;
+  --chart-2: #fbbf24;
+  --chart-3: #34d399;
+  --chart-4: #f472b6;
+  --chart-5: #a78bfa;
+  --chart-6: #22d3ee;
 }
 
 /* Body text sits below the standard regular weight: Inter 400 reads heavier

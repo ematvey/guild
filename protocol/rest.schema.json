@@ -923,7 +923,7 @@
     "Agent": {
       "description": "One persistent agent as its viewers see it: the `agent_list` frame row and the body of the agent reads and writes.",
       "type": "object",
-      "required": ["id", "org_id", "owner_user_id", "owner_label", "owner_email", "owner_avatar_url", "name", "description", "model", "model_alias", "tools", "tools_mode", "visibility", "resources", "status", "is_personal", "team_ids", "integrations", "integration_warnings", "deleted_at", "purge_after", "created_at", "updated_at"],
+      "required": ["id", "org_id", "owner_user_id", "owner_label", "owner_email", "owner_avatar_url", "name", "description", "model", "model_alias", "tools", "tools_mode", "generative_ui", "visibility", "resources", "status", "is_personal", "team_ids", "integrations", "integration_warnings", "deleted_at", "purge_after", "created_at", "updated_at"],
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/Uuid" },
@@ -938,6 +938,7 @@
         "model_alias": { "type": ["string", "null"], "description": "The org's display name for the model; null falls back to the id." },
         "tools": { "type": "array", "items": { "type": "string" } },
         "tools_mode": { "type": "string", "enum": ["selected", "all"] },
+        "generative_ui": { "type": "boolean", "description": "Replies may carry Generated UI (`openui` blocks) the client renders as components." },
         "visibility": { "type": "string", "enum": ["private", "team", "org"] },
         "resources": { "$ref": "#/$defs/Json", "description": "The agent's sandbox budget." },
         "status": { "type": "string", "enum": ["active", "archived", "deleting", "deleted"] },

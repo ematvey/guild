@@ -62,6 +62,7 @@ export function AgentSettings({
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
+  const [generativeUi, setGenerativeUi] = useState<boolean>(agent.generative_ui ?? true);
   const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
   const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -95,6 +96,7 @@ export function AgentSettings({
         model,
         tools,
         tools_mode: toolsMode,
+        generative_ui: generativeUi,
         visibility,
         team_ids: visibility === "team" ? teamIds : [],
         integrations,
@@ -207,6 +209,20 @@ export function AgentSettings({
             </div>
           )}
         </div>
+        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-foreground"
+            checked={generativeUi}
+            onChange={(e) => setGenerativeUi(e.target.checked)}
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">Generated UI</span>
+            <span className="block text-xs text-muted-foreground">
+              Replies can include interactive cards, tables, charts, forms and buttons.
+            </span>
+          </span>
+        </label>
       </Section>
 
       <Section
@@ -379,6 +395,10 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Visibility</dt>
           <dd>{VISIBILITY_LABEL[agent.visibility]}</dd>
+        </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Generated UI</dt>
+          <dd>{agent.generative_ui ? "On" : "Off"}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Tools</dt>

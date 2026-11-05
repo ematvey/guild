@@ -86,6 +86,8 @@ export interface UpdateAgentInput {
   tools?: string[];
   /** `all` follows the org's enabled tools; `selected` uses `tools`. */
   tools_mode?: "selected" | "all";
+  /** Replies may carry Generated UI. */
+  generative_ui?: boolean;
   visibility?: AgentVisibility;
   team_ids?: string[];
   /** The agent's whole Integration list; omitted leaves it unchanged. */

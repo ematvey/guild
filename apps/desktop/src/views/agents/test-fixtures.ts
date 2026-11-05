@@ -19,6 +19,7 @@ export function makeAgent(patch: Partial<Agent> = {}): Agent {
     model_alias: null,
     tools: [],
     tools_mode: "selected",
+    generative_ui: true,
     visibility: "private",
     resources: {},
     status: "active",

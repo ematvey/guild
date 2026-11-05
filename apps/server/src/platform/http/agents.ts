@@ -296,6 +296,13 @@ function toolsModeField(body: Record<string, unknown>): "selected" | "all" | und
   return value;
 }
 
+function generativeUiField(body: Record<string, unknown>): boolean | undefined {
+  const value = body["generative_ui"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw ApiError.badRequest("invalid generative_ui");
+  return value;
+}
+
 function resourcesField(body: Record<string, unknown>): Record<string, unknown> | undefined {
   const value = body["resources"];
   if (value === undefined) return undefined;
@@ -472,6 +479,7 @@ export function registerAgentRoutes(
       model: requiredString(body, "model"),
       tools: toolsField(body),
       tools_mode: toolsModeField(body),
+      generative_ui: generativeUiField(body),
       visibility: visibilityField(body),
       resources: resourcesField(body),
       team_ids: teamIdsField(body),
@@ -524,6 +532,8 @@ export function registerAgentRoutes(
     if (tools !== undefined) patch.tools = tools;
     const toolsMode = toolsModeField(body);
     if (toolsMode !== undefined) patch.tools_mode = toolsMode;
+    const generativeUi = generativeUiField(body);
+    if (generativeUi !== undefined) patch.generative_ui = generativeUi;
     const visibility = visibilityField(body);
     if (visibility !== undefined) patch.visibility = visibility;
     const resources = resourcesField(body);
