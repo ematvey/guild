@@ -116,7 +116,7 @@ that name. A header whose secret is not stored is not sent, so an optional
 secret field makes an optional header. `envelope: false` keeps Guild's
 `x-guild-*` identity headers away from a third-party server.
 
-Each discovered tool arrives disabled. Its class is the admin's choice,
+Each discovered tool is on until an admin turns it off. Its class is the admin's choice,
 else `tool_classes`, else the class the server's `readOnlyHint` or
 `destructiveHint` suggests, else `read` for a name starting with a read
 verb (`get_`, `list_`, `search_` …) and `write` for anything else.

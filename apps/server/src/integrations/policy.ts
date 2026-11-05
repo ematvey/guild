@@ -15,10 +15,12 @@ export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
 export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
 
 /** One tool's admin curation as stored on the integration row's config:
- *  `config.tools[<raw tool name>] = { enabled, approval, class? }`. Absent from the
- *  stored config: adapter-bound (built-in connector) → enabled, follow user
- *  policy; MCP-bound (live discovery) → disabled — nothing is exposed that
- *  the admin did not approve. Unknown approval values read as the default. */
+ *  `config.tools[<raw tool name>] = { enabled, approval, class? }`. A tool
+ *  absent from the stored config is enabled, a connector's declared tool and
+ *  an MCP server's discovered tool alike; its class (the declared one, or for
+ *  MCP the admin's, the manifest's or the suggested one) and the reach
+ *  ceilings decide who gets it. Only MCP tools carry a curated class.
+ *  Unknown approval values read as the default. */
 export function toolCurate(
   rowConfig: JsonObject,
   mcp: boolean,
@@ -30,13 +32,13 @@ export function toolCurate(
   if (stored !== null && typeof stored === "object" && !Array.isArray(stored)) {
     const c = stored as JsonObject;
     return {
-      enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : !mcp,
+      enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : true,
       alwaysAsk: c["approval"] === TOOL_APPROVAL_ALWAYS_ASK,
       alwaysAllow: c["approval"] === TOOL_APPROVAL_ALWAYS_ALLOW,
       cls: mcp && isToolClass(c["class"]) ? c["class"] : null,
     };
   }
-  return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false, cls: null };
+  return { enabled: true, alwaysAsk: false, alwaysAllow: false, cls: null };
 }
 
 const READ_VERB =

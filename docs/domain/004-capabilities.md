@@ -81,7 +81,7 @@ The slugs `catalog`, `connect` and `sources` are reserved: they are addresses of
 
 Each Trait has one provider per Turn: the Integration the Org bound to it when that one is enabled, else the first enabled Integration that declares it (built-ins, then Plugins by slug). The losers keep their other Tools.
 
-An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. A Tool the server starts serving later arrives disabled.
+An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. Every Tool the server serves, including one it starts serving later, is on until an admin turns it off; its class (the admin's, the manifest's, else the one the server's hints and the tool name suggest, `write` when unsure) and the reach ceilings decide who gets it.
 
 Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
 

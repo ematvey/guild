@@ -182,6 +182,17 @@ first. Code comments describe only the present.
   http(s)/mailto. lang-core's postinstall reports installs to its vendor;
   npm 11 blocks it by default and the image sets
   `OPENUI_TELEMETRY_DISABLED`.
+- **Discovered MCP tools are on by default (2026-11-05).** A tool an MCP
+  server serves with no stored curation used to read as disabled, so a
+  configured Stripe offered agents nothing until an admin switched each tool
+  on, and an agent asked about Stripe answered that there was none.
+  `toolCurate` now reads an uncurated tool as enabled for MCP rows as for
+  connectors. What contains it is the class: the admin's, else the
+  manifest's `tool_classes`, else the suggestion (server hints, read verb,
+  else `write`), against the Agent's and audience ceilings, plus approvals.
+  An admin's explicit off stays off. Also fixed the same day: an empty
+  optional secret (Stripe's connected account) made MCP tool listing fail,
+  so the turn skipped the Integration and the Tools tab erred.
 - **"All available tools" covers Integrations through their audiences
   (2026-11-05).** After the 11-04 access change, `all` covered built-in
   tools only, and a personal Agent had to have each new Integration added
