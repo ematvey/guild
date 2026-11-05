@@ -39,6 +39,30 @@ describe("Generated UI blocks", () => {
     expect(html).not.toContain("root = Stack");
   });
 
+  it("render a reply the dev model actually wrote", () => {
+    const html = md(
+      [
+        "Here's the snapshot:",
+        "",
+        "```openui",
+        "root = Stack([kpis, chartCard, next])",
+        "kpis = Grid([m1, m2, m3], 3)",
+        'm1 = Metric("Q3 revenue", "$1.2M", "+14%", "up")',
+        'm2 = Metric("Churn", "2.1%", "-0.4pp", "down")',
+        'm3 = Metric("New customers", 312, "+", "up")',
+        'chartCard = Card([chart], "Monthly revenue", "Q3, in $k")',
+        'chart = BarChart(["Jul", "Aug", "Sep"], [Series("Revenue ($k)", [380, 400, 420])])',
+        'next = Buttons([Button("Break down revenue", @ToAssistant("Break down Q3 revenue by segment")), Button("Q4 outlook", @ToAssistant("Build a Q4 outlook"))])',
+        "```",
+      ].join("\n"),
+    );
+    expect(html).toContain("Q3 revenue");
+    expect(html).toContain("312");
+    expect(html).toContain("Monthly revenue");
+    expect(html).toContain("Break down revenue");
+    expect(html).toContain("Q4 outlook");
+  });
+
   it("leave other code blocks as code", () => {
     const html = md("```ts\nconst x = 1;\n```");
     expect(html).toContain("<pre>");
