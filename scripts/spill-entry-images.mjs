@@ -38,7 +38,8 @@ const databaseUrl =
 const { ObjectStore } = await import("../apps/server/src/platform/s3.ts");
 const { ToolArtifactStore } = await import("../apps/server/src/platform/store/tool-artifacts.ts");
 const { spillImageParts } = await import("../apps/server/src/chats/media-spill.ts");
-const { isImagePart, parseMediaRef } = await import("../apps/server/src/platform/media-ref.ts");
+const { isImagePart, mediaRefOf, parseMediaRef } = await import("../apps/server/src/platform/media-ref.ts");
+const { artifactUuid } = await import("../apps/server/src/platform/store/tool-artifacts.ts");
 
 const objects = new ObjectStore({
   s3Url: process.env.GUILD_S3_URL ?? "http://127.0.0.1:9000",
@@ -52,29 +53,42 @@ const artifacts = new ToolArtifactStore(pool);
 let movedEntries = 0;
 let movedImages = 0;
 let movedEvents = 0;
+let droppedImages = 0;
+/** chat + call → the references its event's images now name. */
+const refsByCall = new Map();
 try {
   const rows = await pool.query(
     `SELECT e.id, e.record, cc.chat_id, c.org_id
        FROM entries e
        JOIN chat_conversations cc ON cc.conversation_id = e.conversation_id
        JOIN chats c ON c.id = cc.chat_id
-      WHERE e.kind = 'pi.tool-result' AND e.record LIKE '%"type":"image"%'
+      WHERE e.record LIKE '%"type":"image"%'
       ORDER BY e.id`,
   );
   for (const row of rows.rows) {
     const record = JSON.parse(row.record);
     let changed = false;
     for (const message of record.model ?? []) {
-      if (message.role !== "toolResult" || !Array.isArray(message.content)) continue;
+      if (!Array.isArray(message.content)) continue;
       const parts = message.content;
       if (!parts.some((part) => isImagePart(part) && parseMediaRef(part.data) === null)) continue;
       const spilled = await spillImageParts(
         { artifacts, objects },
-        { orgId: row.org_id, chatId: row.chat_id, callId: message.toolCallId, toolName: message.toolName ?? "tool" },
+        {
+          orgId: row.org_id,
+          chatId: row.chat_id,
+          // A tool result names its call; any other entry (a member message
+          // with attachments) names the entry, so the ids stay deterministic.
+          callId: message.toolCallId ?? `entry-${row.id}`,
+          toolName: message.toolName ?? "member",
+        },
         parts,
       );
       if (spilled.spilled.length === 0) continue;
       message.content = spilled.parts;
+      if (message.toolCallId !== undefined) {
+        refsByCall.set(`${row.chat_id}:${message.toolCallId}`, spilled.parts.filter(isImagePart).map((part) => part.data));
+      }
       movedImages += spilled.spilled.length;
       changed = true;
     }
@@ -85,29 +99,34 @@ try {
   }
 
   const events = await pool.query(
-    `SELECT id, payload FROM thread_events
-      WHERE type = 'tool_result' AND payload ? 'images'
-      ORDER BY id`,
+    `SELECT e.id, e.chat_id, e.payload, c.org_id
+       FROM thread_events e JOIN chats c ON c.id = e.chat_id
+      WHERE e.type = 'tool_result'
+        AND jsonb_typeof(e.payload->'images') = 'array'
+        AND jsonb_array_length(e.payload->'images') > 0
+      ORDER BY e.id`,
   );
   for (const row of events.rows) {
     const payload = row.payload;
-    const images = Array.isArray(payload.images) ? payload.images : [];
-    const bare = images.filter((uri) => parseMediaRef(uri) !== null).length;
-    if (bare === images.length && images.length > 0) continue;
-    // The event's images follow its entry: after the entry rewrite the
-    // socket copy names references too. An event whose entry had no image
-    // (an old row from a chat whose entry is gone) simply drops them.
-    payload.images = images.map((uri) => {
-      const ref = parseMediaRef(uri);
-      return ref === null ? uri : `data:image/png;base64,guild-media:${ref.store}:${ref.id}`;
-    });
-    if (payload.images.length === 0) delete payload.images;
+    const images = payload.images;
+    if (images.every((uri) => parseMediaRef(uri) !== null)) continue;
+    // The event is the socket copy of its entry: the entry's references are
+    // what it names now. An event whose entry no longer exists keeps none of
+    // its bytes — nothing can read them back.
+    const refs = refsByCall.get(`${row.chat_id}:${payload.call_id}`);
+    if (refs === undefined) {
+      droppedImages += images.length;
+      delete payload.images;
+    } else {
+      payload.images = refs.map((ref) => `data:image/png;base64,${ref}`);
+    }
     movedEvents += 1;
     if (dryRun) continue;
     await pool.query("UPDATE thread_events SET payload = $2 WHERE id = $1", [row.id, JSON.stringify(payload)]);
   }
   console.log(
-    `${dryRun ? "[dry run] " : ""}entries ${movedEntries} (images ${movedImages}), events ${movedEvents}`,
+    `${dryRun ? "[dry run] " : ""}entries ${movedEntries} (images ${movedImages}), ` +
+      `events ${movedEvents} (dropped ${droppedImages} orphaned images)`,
   );
 } finally {
   await pool.end();
