@@ -338,7 +338,7 @@ export function AgentCreate({
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">All available tools</span>
                     <span className="block text-xs text-muted-foreground">
-                      Every built-in tool. Add integrations in the agent's settings.
+                      Every built-in tool and every integration an admin makes available.
                     </span>
                   </span>
                 </label>

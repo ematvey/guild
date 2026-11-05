@@ -357,15 +357,13 @@ export function registerAdminIntegrationRoutes(
   });
 
   // An Integration's audience: who may add it to an agent, and up to which
-  // class; plus every agent that lists it, with the warnings where that
+  // class; plus every agent that reaches it (listed, or derived for `all`
+  // tools), with the warnings where that
   // agent's audience is wider.
   const access = new IntegrationAccessStore(gateway.integrations.pool);
   const accessView = async (orgId: string, id: string): Promise<Record<string, unknown>> => {
-    const [audience, context, agents] = await Promise.all([
-      access.audienceById(orgId, id),
-      access.context(orgId),
-      access.agentsUsing(orgId, id),
-    ]);
+    const [audience, context] = await Promise.all([access.audienceById(orgId, id), access.context(orgId)]);
+    const agents = await access.agentsUsing(orgId, id, context);
     return {
       audience: audience.audience,
       org_ceiling: audience.org_ceiling,

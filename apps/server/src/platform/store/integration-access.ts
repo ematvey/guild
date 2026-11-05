@@ -6,6 +6,7 @@ import { ApiError } from "../errors.js";
 import { withTransaction, type PlatformPool } from "../db.js";
 import { classRank, type ToolClass } from "../domain/tool-class.js";
 import {
+  agentIntegrations,
   classWithin,
   memberCeiling,
   type AccessContext,
@@ -20,6 +21,26 @@ import {
 } from "../domain/integration-access.js";
 
 type Db = { query: PlatformPool["query"] };
+
+/** The agent columns the access rules read (`a` is the agents row). */
+const AGENT_ACCESS_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.visibility, a.is_personal, a.tools_mode, a.tools,
+  COALESCE((SELECT array_agg(tg.team_id::text) FROM agent_team_grants tg WHERE tg.agent_id = a.id), '{}') AS team_ids,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', i.name, 'ceiling', ai.ceiling) ORDER BY i.name)
+              FROM agent_integrations ai JOIN integrations i ON i.id = ai.integration_id
+             WHERE ai.agent_id = a.id), '[]'::jsonb) AS integrations`;
+
+function accessAgent(row: Record<string, unknown>): WarnedAgent & { id: string; org_id: string; tools_mode: string } {
+  return {
+    id: row.id as string,
+    org_id: row.org_id as string,
+    owner_user_id: row.owner_user_id as string,
+    visibility: row.visibility as string,
+    is_personal: row.is_personal === true,
+    tools_mode: row.tools_mode as string,
+    team_ids: row.team_ids as string[],
+    integrations: row.integrations as AgentIntegrationEntry[],
+  };
+}
 
 export class IntegrationAccessStore {
   constructor(private readonly pool: PlatformPool) {}
@@ -194,54 +215,57 @@ export class IntegrationAccessStore {
     });
   }
 
-  /** The Agents that list one Integration, with what their warnings read. */
+  /** The Agents that reach one Integration (by their list, or derived for
+   *  `all` tools), with what their warnings read. */
   async agentsUsing(
     orgId: string,
     integrationId: string,
+    ctx: AccessContext,
   ): Promise<(WarnedAgent & { id: string; name: string; status: string; owner_label: string })[]> {
     const res = await this.pool.query(
-      `SELECT a.id, a.name, a.status, a.owner_user_id, a.visibility, a.is_personal,
+      `SELECT ${AGENT_ACCESS_COLUMNS}, a.name, a.status,
               COALESCE((SELECT u.display_name FROM users u WHERE u.id = a.owner_user_id),
-                       (SELECT u.email FROM users u WHERE u.id = a.owner_user_id), '') AS owner_label,
-              COALESCE((SELECT array_agg(tg.team_id::text) FROM agent_team_grants tg WHERE tg.agent_id = a.id),
-                       '{}') AS team_ids,
-              (SELECT jsonb_agg(jsonb_build_object('slug', i.name, 'ceiling', x.ceiling))
-                 FROM agent_integrations x JOIN integrations i ON i.id = x.integration_id
-                WHERE x.agent_id = a.id AND x.integration_id = $2) AS integrations
-         FROM agents a JOIN agent_integrations ai ON ai.agent_id = a.id
-        WHERE a.org_id = $1 AND ai.integration_id = $2 AND a.status IN ('active', 'archived')
+                       (SELECT u.email FROM users u WHERE u.id = a.owner_user_id), '') AS owner_label
+         FROM agents a
+        WHERE a.org_id = $1 AND a.status IN ('active', 'archived')
+          AND (a.tools_mode = 'all'
+               OR EXISTS (SELECT 1 FROM agent_integrations ai WHERE ai.agent_id = a.id AND ai.integration_id = $2))
         ORDER BY a.name`,
       [orgId, integrationId],
     );
-    return (res.rows as Record<string, unknown>[]).map((row) => ({
-      id: row.id as string,
-      name: row.name as string,
-      status: row.status as string,
-      owner_user_id: row.owner_user_id as string,
-      owner_label: row.owner_label as string,
-      visibility: row.visibility as string,
-      is_personal: row.is_personal === true,
-      team_ids: row.team_ids as string[],
-      integrations: row.integrations as AgentIntegrationEntry[],
-    }));
+    const slug = [...ctx.audiences.values()].find((access) => access.id === integrationId)?.slug;
+    const out: (WarnedAgent & { id: string; name: string; status: string; owner_label: string })[] = [];
+    for (const row of res.rows as Record<string, unknown>[]) {
+      const agent = accessAgent(row);
+      const integrations = agentIntegrations(agent, ctx).filter((entry) => entry.slug === slug);
+      if (integrations.length === 0) continue;
+      out.push({
+        ...agent,
+        integrations,
+        name: row.name as string,
+        status: row.status as string,
+        owner_label: row.owner_label as string,
+      });
+    }
+    return out;
   }
 
   /** The Trait allowlist and Integration entries of the Agent a chat
-   *  belongs to; null for a chat with no Agent. */
+   *  belongs to (derived for `all` tools); null for a chat with no Agent. */
   async chatAgentReach(
     chatId: string,
   ): Promise<{ tools_mode: string; tools: string[]; entries: AgentIntegrationEntry[] } | null> {
-    const res = await this.pool.query<{ tools_mode: string; tools: string[] | null; entries: AgentIntegrationEntry[] }>(
-      `SELECT a.tools_mode, a.tools,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', i.name, 'ceiling', ai.ceiling))
-                          FROM agent_integrations ai JOIN integrations i ON i.id = ai.integration_id
-                         WHERE ai.agent_id = a.id), '[]'::jsonb) AS entries
+    const res = await this.pool.query(
+      `SELECT ${AGENT_ACCESS_COLUMNS}
          FROM agent_threads t JOIN agents a ON a.id = t.agent_id
         WHERE t.chat_id = $1`,
       [chatId],
     );
-    const row = res.rows[0];
-    return row === undefined ? null : { tools_mode: row.tools_mode, tools: row.tools ?? [], entries: row.entries };
+    const row = res.rows[0] as Record<string, unknown> | undefined;
+    if (row === undefined) return null;
+    const agent = accessAgent(row);
+    const entries = agent.tools_mode === "all" ? agentIntegrations(agent, await this.context(agent.org_id)) : agent.integrations;
+    return { tools_mode: agent.tools_mode, tools: (row.tools as string[] | null) ?? [], entries };
   }
 
   /** The Integrations each of `userIds` may attach. */

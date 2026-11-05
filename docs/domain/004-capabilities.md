@@ -47,7 +47,7 @@ Code mode lists the tools a script can call grouped into namespaces: groups of G
 
 ### The allowlist
 
-An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and Trait tool, resolved at each Turn, so a tool added in a later release reaches the Agent without an edit. It never covers an Integration's own tools: those reach an Agent only through its Integration list (see 002). A personal Agent starts with `all` and no Integration.
+An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and Trait tool, resolved at each Turn, so a tool added in a later release reaches the Agent without an edit. It also covers Integrations, through a derived Integration list that follows the Integrations' audiences: an Integration an admin enables or opens up reaches every `all` Agent whose users it covers (see 002). A `selected` Agent's Integrations are an explicit list. A personal Agent starts with `all`.
 
 | Group | Tools |
 | --- | --- |

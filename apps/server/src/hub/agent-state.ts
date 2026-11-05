@@ -25,7 +25,12 @@ import type { WsServerMsg } from "./protocol.js";
 import { sendChanged } from "./sent-frames.js";
 import { KeyedChain, type ChainFailure } from "./keyed-chain.js";
 import type { IntegrationAccessStore } from "../platform/store/integration-access.js";
-import { agentWarnings, type AccessContext, type IntegrationDisplay } from "../platform/domain/integration-access.js";
+import {
+  agentIntegrations,
+  agentWarnings,
+  type AccessContext,
+  type IntegrationDisplay,
+} from "../platform/domain/integration-access.js";
 
 /** The reads the agent and skill frames take. */
 export interface AgentStateDeps {
@@ -56,17 +61,20 @@ const COUNTS_TIMEOUT_MS = 2_000;
 export const BURST_QUIET_MS = 50;
 export const BURST_MAX_MS = 250;
 
-/** An agent row on the wire: every joined field is always present, and the
+/** An agent row on the wire: every joined field is always present, an
+ *  `all`-tools Agent carries its derived Integration list, and the
  *  Integration warnings are computed against the org's audiences. */
 export function agentWire(agent: StoreAgent, access: AccessContext): Agent {
+  const integrations = agentIntegrations(agent, access);
   return {
     ...agent,
+    integrations,
     owner_label: agent.owner_label ?? null,
     owner_email: agent.owner_email ?? null,
     owner_avatar_url: agent.owner_avatar_url ?? null,
     model_alias: agent.model_alias ?? null,
     team_ids: agent.team_ids ?? [],
-    integration_warnings: agentWarnings(agent, access),
+    integration_warnings: agentWarnings({ ...agent, integrations }, access),
   };
 }
 

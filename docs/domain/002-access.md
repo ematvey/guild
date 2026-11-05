@@ -74,7 +74,7 @@ Every Run starts through one path, and that path refuses before creating a Run r
 
 The Tools a Turn may call are the intersection of three things:
 
-1. **The Agent's reach:** its built-in allowlist (all tools, or a selected list), which also decides the Trait tools, and its explicit Integration list, each entry with a class ceiling (`read` < `write` < `admin`). `all` never covers Integrations: an Integration reaches an Agent only when someone adds it.
+1. **The Agent's reach:** its built-in allowlist (all tools, or a selected list), which also decides the Trait tools, and its Integration list, each entry with a class ceiling (`read` < `write` < `admin`). With `selected` tools the list is explicit: an Integration reaches the Agent only when someone adds it. With `all` tools the list is derived at every read and has nothing to set: every enabled Integration that everyone who can use the Agent may reach, at the lowest ceiling the audience grants any of them. A personal Agent follows its owner's reach; a shared one never gives anyone more than their own, so it never warns.
 2. **The Org's curation:** a built-in Integration tool is on unless an admin turned it off; an MCP tool is off until an admin turns it on.
 3. **`admin`-class tools are admin-only,** whatever the Agent's ceiling says.
 

@@ -484,7 +484,8 @@ export function registerAgentRoutes(
       resources: resourcesField(body),
       team_ids: teamIdsField(body),
     });
-    const entries = integrationsField(body);
+    // An `all`-tools Agent derives its Integrations; a submitted list is ignored.
+    const entries = agent.tools_mode === "all" ? undefined : integrationsField(body);
     const created = entries === undefined || entries.length === 0 ? agent : await setIntegrations(user, agent, entries);
     return sendJson(reply, { agent: await wireOne(created), access: await store.access(user, created) });
   });
@@ -542,7 +543,8 @@ export function registerAgentRoutes(
     if (teamIds !== undefined) patch.team_ids = teamIds;
     const entries = integrationsField(body);
     let agent = await store.update(user, agentId, patch);
-    if (entries !== undefined) agent = await setIntegrations(user, agent, entries);
+    // An `all`-tools Agent derives its Integrations; a submitted list is ignored.
+    if (entries !== undefined && agent.tools_mode !== "all") agent = await setIntegrations(user, agent, entries);
     return sendJson(reply, { agent: await wireOne(agent) });
   });
 
