@@ -97,6 +97,22 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **A chat counts as read only while its window has focus (2026-11-05).**
+  Phone pushes went missing for answers and routine deliveries. The
+  device side was fine: a probe signed with the server's VAPID pair got
+  201 from Apple and showed on the iPhone, and the turn-end hook fires
+  in worker mode for plain turns and routine runs alike. The cause was
+  the read check: a finished turn pushes only if the owner's read marker
+  has not passed it after a 4 s grace, and a client marked the open chat
+  read whenever `document.visibilityState` was `visible` — true for any
+  desktop window that is not minimized, a tab on another monitor, an app
+  left open on the digest feed overnight. That client "read" every answer
+  and the push was dropped. The read gate is now visible **and**
+  `document.hasFocus()`, and a window regaining focus (or becoming
+  visible) re-reads the open chat, so its dot clears when the member comes
+  back. Reproduced on dev with an untouched open browser on a QA chat
+  (`read == endSeq`, no send); regression test in
+  `use-member-socket.test.tsx`.
 - **Generated UI: the full component set, images, and an org remote-image
   policy (2026-11-05).** The library grew from 28 to 55 components to
   cover OpenUI's reference set: Accordion, Modal, Carousel, Steps,

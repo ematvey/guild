@@ -21,7 +21,7 @@ Two kinds of data stay as reads, because they are not live state:
 | Frame | One tagged message on a socket | Every tag is declared in `protocol/socket.schema.json` with a fixture. A reader ignores unknown tags and fields, and never fails a frame for what it does not know | A typed contract that older clients survive |
 | Sync | The bracket in which a client asks for one Thread and receives its authoritative view | `sync_begin` … `sync_done`. Holds back deferred frames until the bracket closes. Names the socket's shown Thread | A first view consistent with what follows it |
 | Shown Thread | The Thread a socket's latest Sync named | Thread-view frames go only to sockets showing that Thread. A socket that never syncs receives every Thread of its Member | A socket gets only what it displays |
-| Read marker | A Member's highest read event of a Thread | Moves only forward. A client sets it only while the Thread is open and visible | Unread state, and the presence signal for notifications |
+| Read marker | A Member's highest read event of a Thread | Moves only forward. A client sets it only while the Thread is open, visible and its window has focus, and again when the window regains focus | Unread state, and the presence signal for notifications |
 | Push subscription | A browser or device registered for Web Push | Removed when the push service reports it gone | Tells a Member a Run ended when no client is watching |
 
 ## Frames and where they go

@@ -210,6 +210,40 @@ describe("member socket → thread store (integration)", () => {
     expect(second.readyState).toBe(3);
   });
 
+  it("an open chat in an unfocused window stays unread until the window is focused again", async () => {
+    let focused = true;
+    vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+    renderHook(() => useHarness());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const ws = FakeWebSocket.all[0]!;
+    act(() => ws.open());
+    const reads = () => ws.sent.map((f) => JSON.parse(f)).filter((f) => f.type === "read");
+    await act(async () => {
+      ws.deliver({ type: "sync_begin", chat_id: CHAT });
+      ws.deliver(threadState(1, [echo(1, "hi")], false));
+      ws.deliver({ type: "sync_done", chat_id: CHAT });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // Focused and visible: the open chat is read.
+    expect(reads()).toHaveLength(1);
+
+    // The member looks away; the window stays open on the chat. An answer
+    // that lands now is not read here, so the server still pushes it.
+    focused = false;
+    act(() => ws.deliver(threadState(2, [echo(1, "hi"), echo(2, "answer")], false)));
+    expect(reads()).toHaveLength(1);
+
+    // Back at the window: the open chat is read.
+    focused = true;
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(reads()).toEqual([
+      { type: "read", chat_id: CHAT },
+      { type: "read", chat_id: CHAT },
+    ]);
+  });
+
   it("declares chat_row, applies one changed row in place, and stores pushed context usage", async () => {
     const { result, unmount } = renderHook(() => useHarness());
     await act(async () => {
