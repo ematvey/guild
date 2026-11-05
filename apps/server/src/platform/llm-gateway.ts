@@ -15,6 +15,7 @@ import {
 import { enforceQuota, newRequestId, type UsageEvent, type UsageSink, usageCostUsd, errorText } from "./usage.js";
 import type { TraceStore } from "./trace.js";
 import type { GatewayStore } from "./store/gateway.js";
+import type { MediaResolver } from "./media-ref.js";
 
 /** Gateway request-body rejections are plain text in serde_json's wording:
  *  OpenAI/Anthropic SDK clients surface the body verbatim. */
@@ -38,6 +39,9 @@ export interface GatewayContext {
   gatewayStore: GatewayStore;
   usage: UsageSink;
   trace: TraceStore;
+  /** Image references in the conversation resolve to bytes here, once per
+   *  worker (chats/media-ref.ts). */
+  media: Pick<MediaResolver, "resolveMessages">;
 }
 
 /** The trace-context request headers the in-app harness sets on internal
@@ -177,11 +181,14 @@ export async function dispatch(
   } else {
     maxTokens = routeCap ?? clientCap ?? 0;
   }
+  // A durable entry names its images instead of carrying them; the provider
+  // needs the bytes.
+  const resolved = await ctx.media.resolveMessages(orgId, messages);
   const stream = await provider
     .chatStream({
       model,
       system,
-      messages,
+      messages: resolved,
       apiKey: route.apiKey,
       baseUrl: route.baseUrl,
       tools,

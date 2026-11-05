@@ -87,6 +87,7 @@ import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
 import { ConversationExecutors } from "./executors.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
+import { mediaSpillingRegistry } from "./media-registry.js";
 import { turnBackend, type SubmitTurnInput, type TurnBackend, type TurnPlacement } from "./turn-backend.js";
 
 export { ThreadAgentLocked } from "../agents/thread-binding.js";
@@ -145,7 +146,7 @@ export class GuildRuntime {
   private readonly pool: PlatformPool;
   private readonly log: Logger;
   private readonly stores: RuntimeDeps["stores"];
-  private readonly registry: Registry = createRegistry();
+  private readonly registry: Registry;
   /** The process's one agent store: routes, the scheduler and the agent
    *  feed read through it. */
   readonly agents: AgentStore;
@@ -222,6 +223,21 @@ export class GuildRuntime {
     this.hub = deps.hub;
     this.agents = deps.agents;
     this.toolArtifacts = stores.toolArtifacts;
+    // Every installed extension's tools spill their image parts before the
+    // result is recorded (see media-registry.ts). Without object storage
+    // there is nowhere to put the bytes, so the registry stays plain.
+    this.registry =
+      objects === undefined
+        ? createRegistry()
+        : mediaSpillingRegistry(createRegistry(), {
+            stores: { artifacts: stores.toolArtifacts, objects },
+            scopeOf: async (conversationId) => {
+              const chatId = await this.chatOfConversation(conversationId);
+              if (chatId === null) return null;
+              const identity = await stores.chats.identityOf(chatId);
+              return identity === null ? null : { orgId: identity.org_id, chatId };
+            },
+          });
     this.durableDb = new SharedPoolDatabase(pool);
     this.host = new ConversationHost((step, error) => log.warn({ err: error, step }, "harness teardown step failed"));
     this.turns = turnBackend(deps.placement, {
@@ -504,9 +520,14 @@ export class GuildRuntime {
   }
 
   /** The base conversation configuration: the guild, coding, and codemode
-   *  extensions with their tools — every configure starts from this. */
+   *  extensions with their tools — every configure starts from this. The
+   *  extensions come from the registry, never from the objects handed to
+   *  `install`: the registry's copy carries the install-time wrappers
+   *  (media-registry.ts) and the raw object does not. */
   private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
-    const extensions = [this.guildExtension, this.codingTools, this.codemodeExtension];
+    const extensions = [this.guildExtension, this.codingTools, this.codemodeExtension].map(
+      (extension) => this.registry.snapshot().extension(extension.name) ?? extension,
+    );
     return { extensions, tools: extensions.flatMap((extension) => extension.tools ?? []) };
   }
 
@@ -655,7 +676,11 @@ export class GuildRuntime {
           models: this.orgModels.models,
           registry: this.registry,
           settings: {
-            extensions: [this.registry.snapshot().extension("guild")!, this.codingTools, this.codemodeExtension],
+            extensions: [
+              this.registry.snapshot().extension("guild")!,
+              this.registry.snapshot().extension(this.codingTools.name)!,
+              this.registry.snapshot().extension(this.codemodeExtension.name)!,
+            ],
             // Automatic background compaction on (built-in default
             // thresholds), steering/follow-ups on (the inbox boundary places
             // queued inputs; "one-at-a-time" keeps turn semantics).

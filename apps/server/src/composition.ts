@@ -13,6 +13,7 @@ import { createPlatformPool, type PlatformPool } from "./platform/db.js";
 import { applyPlatformMigrations } from "./platform/migrations.js";
 import { ObjectStore } from "./platform/s3.js";
 import { createStores, type PlatformStores } from "./platform/stores.js";
+import { MediaResolver } from "./platform/media-ref.js";
 import { pendingWorkQuery, seedRecoveryBoundary } from "./storage/postgres/queries.js";
 import { applyPostgresMigrations } from "./storage/postgres/index.js";
 import { SharedPoolDatabase } from "./chats/durable-mapping.js";
@@ -101,6 +102,9 @@ export class PlatformContext implements PlatformStores {
   /** The ClickHouse skill-read sink (read_skill analytics; the skill
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
+  /** Image references resolve to bytes here, cached per process: a durable
+   *  entry names its images and never carries them (chats/media-ref.ts). */
+  readonly media: MediaResolver;
   readonly clickhouse: ClickhouseClient;
   /** Postgres LISTEN hub — one dedicated connection shared by all
    *  subscribers. */
@@ -177,6 +181,11 @@ export class PlatformContext implements PlatformStores {
     });
     this.clickhouse = clickhouseFromConfig(config);
     this.usage = new UsageSink(this.clickhouse);
+    this.media = new MediaResolver({
+      objects: this.objects,
+      artifacts: this.toolArtifacts,
+      attachments: this.attachments,
+    });
     this.usageReports = new UsageReports(this.clickhouse);
     this.trace = new TraceStore(this.clickhouse, config.tracePayloads);
     this.conversationHistory = stores.conversationHistory;
